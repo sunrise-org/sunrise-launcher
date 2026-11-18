@@ -370,7 +370,9 @@ impl Launcher {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(3.))
+                    // The two lines close together: the type's own leading spread them apart.
+                    .gap(px(1.))
+                    .line_height(gpui::relative(1.15))
                     .child(
                         div()
                             .text_size(px(tokens::BODY))
