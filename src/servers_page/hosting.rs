@@ -14,7 +14,7 @@ fn title(text: impl Into<SharedString>) -> Div {
     div()
         .text_size(px(tokens::DISPLAY))
         .font_weight(FontWeight::BOLD)
-        .child(text.into())
+        .child(crate::selectable::selectable(text))
 }
 
 fn label(text: &'static str) -> Div {
@@ -27,7 +27,7 @@ fn caption(text: &str) -> Div {
         .text_size(px(tokens::CAPTION))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(rgb(MUTED))
-        .child(text.to_uppercase())
+        .child(crate::selectable::selectable(text.to_uppercase()))
 }
 
 fn card() -> Div {

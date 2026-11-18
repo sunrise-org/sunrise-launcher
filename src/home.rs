@@ -210,7 +210,7 @@ fn heading(label: &str) -> Div {
         .text_size(px(tokens::HEADING))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(rgb(TEXT))
-        .child(label.to_string())
+        .child(crate::selectable::selectable(label.to_string()))
 }
 
 fn muted(text: impl Into<SharedString>) -> Div {
@@ -871,13 +871,13 @@ impl Launcher {
                             .child(tr("Welcome to Sunrise")),
                     )
                     .child(
-                        div().text_size(px(tokens::BODY)).text_color(rgb(TEXT)).child(tr(
+                        div().text_size(px(tokens::BODY)).text_color(rgb(TEXT)).child(crate::selectable::selectable(tr(
                             "Sign in with the Microsoft account that owns Minecraft: Java Edition. Sunrise then installs itself and you can play.",
-                        )),
+                        ))),
                     )
-                    .child(div().text_size(px(tokens::SMALL)).text_color(rgb(MUTED)).child(tr(
+                    .child(div().text_size(px(tokens::SMALL)).text_color(rgb(MUTED)).child(crate::selectable::selectable(tr(
                         "While you play, Sunrise counts you as playing once a minute. Nothing else is sent.",
-                    )))
+                    ))))
                     .child(
                         div()
                             .id("alt-privacy")

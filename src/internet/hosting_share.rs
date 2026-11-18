@@ -94,9 +94,9 @@ impl Launcher {
             None => return panel.child(hint(tr("Looking for Tailscale…"))),
             Some(State::Missing) => {
                 return panel
-                    .child(tr(
+                    .child(crate::selectable::selectable(tr(
                         "Tailscale lets friends anywhere join without opening your router to the internet. It's free: install it, sign in, then invite them here.",
-                    ))
+                    )))
                     .child(actions(
                         link("share-install", "Install Tailscale", tailscale::install_url()),
                         check,
@@ -111,9 +111,9 @@ impl Launcher {
                         this.internet.read = None;
                     });
                 panel = panel
-                    .child(tr(
+                    .child(crate::selectable::selectable(tr(
                         "Tailscale is installed but not running. Open it and switch it on.",
-                    ))
+                    )))
                     .children((!why.is_empty()).then(|| hint(why)))
                     .child(actions(open, check));
                 return self.share_message(panel);
@@ -137,9 +137,9 @@ impl Launcher {
                     },
                 );
                 panel = panel
-                    .child(tr(
+                    .child(crate::selectable::selectable(tr(
                         "Tailscale is installed. Sign in with your own account in Tailscale (Sunrise never sees it), then come back here.",
-                    ))
+                    )))
                     .children(cfg!(target_os = "linux").then(|| {
                         hint(trf(
                             "On Linux, run `{cmd}` in a terminal and open the link it prints.",
@@ -409,9 +409,9 @@ impl Launcher {
                         )
                 }
                 Reach::Everything => div()
-                    .child(tr(
+                    .child(crate::selectable::selectable(tr(
                         "Friends you share this computer with can reach all of it, not only Minecraft (Tailscale's default).",
-                    ))
+                    )))
                     .child(div().flex().child(self.share_button(
                         "share-limit",
                         tr("Limit them to Minecraft…"),
@@ -433,10 +433,10 @@ impl Launcher {
                                     .rounded(px(4.))
                                     .bg(rgb(0x7fd6a0)),
                             )
-                            .child(div().flex_1().min_w_0().child(trf(
+                            .child(div().flex_1().min_w_0().child(crate::selectable::selectable(trf(
                                 "Friends you share with reach only the Minecraft server (port {port}).",
                                 &[("port", &port.to_string())],
-                            )))
+                            ))))
                             .child(self.share_button(
                                 "share-unlimit",
                                 tr("Remove the limit"),
@@ -457,9 +457,9 @@ impl Launcher {
                 Reach::Custom => {
                     let snippet = tailscale::snippet(ip, port);
                     div()
-                        .child(tr(
+                        .child(crate::selectable::selectable(tr(
                             "Your access controls are your own, so Sunrise leaves them alone. To keep shared friends to Minecraft, add this rule in the admin console:",
-                        ))
+                        )))
                         .child(
                             div()
                                 .p(px(12.))

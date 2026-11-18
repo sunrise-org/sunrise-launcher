@@ -91,7 +91,7 @@ pub(crate) fn hint(text: impl Into<SharedString>) -> Div {
     div()
         .text_color(rgb(MUTED))
         .text_size(px(tokens::SMALL))
-        .child(text.into())
+        .child(crate::selectable::selectable(text))
 }
 
 pub(crate) fn row(
@@ -111,7 +111,11 @@ pub(crate) fn row(
                 .flex()
                 .flex_col()
                 .gap(px(2.))
-                .child(div().font_weight(FontWeight::SEMIBOLD).child(title.into()))
+                .child(
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(crate::selectable::selectable(title)),
+                )
                 .when(!about.is_empty(), |d| d.child(hint(about))),
         )
         .child(actions.flex_none().flex().items_center().gap(px(6.)))
@@ -128,7 +132,11 @@ fn stacked(title: impl Into<SharedString>, about: impl Into<SharedString>, below
                 .flex()
                 .flex_col()
                 .gap(px(2.))
-                .child(div().font_weight(FontWeight::SEMIBOLD).child(title.into()))
+                .child(
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(crate::selectable::selectable(title)),
+                )
                 .child(hint(about)),
         )
         .child(below)
@@ -163,7 +171,7 @@ pub(crate) fn warning(text: impl Into<SharedString>) -> Div {
     div()
         .text_size(px(tokens::SMALL))
         .text_color(rgb(BAD))
-        .child(text.into())
+        .child(crate::selectable::selectable(text))
 }
 
 impl Launcher {
@@ -219,7 +227,7 @@ impl Launcher {
                         div()
                             .text_size(px(tokens::HEADING))
                             .font_weight(FontWeight::BOLD)
-                            .child(tr(section.label())),
+                            .child(crate::selectable::selectable(tr(section.label()))),
                     )
                     .child(hint(tr(section.about()))),
             )

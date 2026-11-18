@@ -138,10 +138,10 @@ impl Launcher {
                 .bg(rgb(CARD))
                 .text_size(px(tokens::LABEL))
                 .text_color(rgb(MUTED))
-                .child(trf(
+                .child(crate::selectable::selectable(trf(
                     "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
                     &[("size", &bytes.div_ceil(1_000_000).to_string())],
-                ))
+                )))
         })
     }
 }

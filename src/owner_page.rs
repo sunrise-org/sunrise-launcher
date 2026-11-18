@@ -289,12 +289,12 @@ impl Launcher {
                     .flex()
                     .flex_col()
                     .gap(px(8.))
-                    .child(ui::text(14., FontWeight::NORMAL, ink::BODY).child(tr(
+                    .child(ui::text(14., FontWeight::NORMAL, ink::BODY).child(crate::selectable::selectable(tr(
                         "Sunrise needs a Microsoft account that owns Minecraft: Java Edition, like other launchers.",
-                    )))
-                    .child(ui::text(14., FontWeight::NORMAL, ink::BODY).child(tr(
+                    ))))
+                    .child(ui::text(14., FontWeight::NORMAL, ink::BODY).child(crate::selectable::selectable(tr(
                         "No Minecraft install needed: Sunrise downloads it from Mojang for your account.",
-))),
+)))),
             );
         card = match state {
             Shown::Code(uri, user_code) => {
@@ -314,10 +314,12 @@ impl Launcher {
                                 .flex()
                                 .flex_col()
                                 .gap(px(4.))
-                                .child(ui::text(13., FontWeight::NORMAL, ink::NOTE).child(trf(
-                                    "Open {link} in your browser and enter this code:",
-                                    &[("link", short_link(uri))],
-                                )))
+                                .child(ui::text(13., FontWeight::NORMAL, ink::NOTE).child(
+                                    crate::selectable::selectable(trf(
+                                        "Open {link} in your browser and enter this code:",
+                                        &[("link", short_link(uri))],
+                                    )),
+                                ))
                                 .child(
                                     div()
                                         .font_family(theme::MONO)
@@ -342,9 +344,11 @@ impl Launcher {
                         .items_start()
                         .gap(px(4.))
                         .when(!microsoft::has_private_window(), |col| {
-                            col.child(ui::text(13., FontWeight::NORMAL, ink::QUIET).child(tr(
-                                "Open this link in a private window to pick another account.",
-                            )))
+                            col.child(ui::text(13., FontWeight::NORMAL, ink::QUIET).child(
+                                crate::selectable::selectable(tr(
+                                    "Open this link in a private window to pick another account.",
+                                )),
+                            ))
                         })
                         .child(
                             div()
@@ -464,7 +468,9 @@ impl Launcher {
             card = card.child(
                 ui::text(13., FontWeight::NORMAL, ink::QUIET)
                     .mt(px(12.))
-                    .child(tr("Waiting for Microsoft… the window goes on by itself.")),
+                    .child(crate::selectable::selectable(tr(
+                        "Waiting for Microsoft… the window goes on by itself.",
+                    ))),
             );
         }
         div()

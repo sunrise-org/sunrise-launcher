@@ -276,10 +276,10 @@ impl Launcher {
                                         .child(tr("Settings were not saved.")),
                                 )
                                 .child(
-                                    shell::text(theme::night::CAPTION, t.ink_soft).child(trf(
+                                    shell::text(theme::night::CAPTION, t.ink_soft).child(crate::selectable::selectable(trf(
                                         "Your changes are still in this window. Retry to save them. {error}",
                                         &[("error", error)],
-                                    )),
+                                    ))),
                                 ),
                         )
                         .child(

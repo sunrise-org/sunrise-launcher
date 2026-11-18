@@ -198,14 +198,16 @@ impl Launcher {
                     true,
                     true,
                 );
-                bar = bar
-                    .child(div().text_size(px(tokens::LABEL)).child(trf(
-                        "{count} selected of {shown} shown",
-                        &[
-                            ("count", &n_sel.to_string()),
-                            ("shown", &shown_ids.len().to_string()),
-                        ],
-                    )))
+                bar =
+                    bar.child(div().text_size(px(tokens::LABEL)).child(
+                        crate::selectable::selectable(trf(
+                            "{count} selected of {shown} shown",
+                            &[
+                                ("count", &n_sel.to_string()),
+                                ("shown", &shown_ids.len().to_string()),
+                            ],
+                        )),
+                    ))
                     .child(if !busy {
                         on.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.bulk_on();
@@ -272,10 +274,10 @@ impl Launcher {
                             n => trf("{names} and {more} more", &[("names", &names), ("more", &n.to_string())]),
                         }))
                         .children(dependents.into_iter().map(|(who, needed)| {
-                            div().text_size(px(tokens::LABEL)).text_color(c(GOLD)).child(trf(
+                            div().text_size(px(tokens::LABEL)).text_color(c(GOLD)).child(crate::selectable::selectable(trf(
                                 "{who} needs {needed}: it may stop working.",
                                 &[("who", &who), ("needed", &needed.join(", "))],
-                            ))
+                            )))
                         }))
                         .child(muted(tr("Their files are deleted. Worlds saved with them may lose what they added.")))
                         .child(
@@ -300,17 +302,17 @@ impl Launcher {
                     let action = action.clone();
                     let n = worlds.len();
                     panel
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(trf(
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::selectable::selectable(trf(
                             "{count} of your worlds were saved with these mods",
                             &[("count", &n.to_string())],
-                        )))
+                        ))))
                         .children(worlds.iter().map(|(world, mods)| {
                             div().text_size(px(tokens::LABEL)).child(trf("{world}: {mods}", &[("world", world), ("mods", &mods.join(", "))]))
                         }))
-                        .child(div().text_size(px(tokens::LABEL)).text_color(c(GOLD)).child(trf(
+                        .child(div().text_size(px(tokens::LABEL)).text_color(c(GOLD)).child(crate::selectable::selectable(trf(
                             "{what} can permanently remove blocks, items and other content from these worlds. Nothing has been changed yet.",
                             &[("what", action.consequence())],
-                        )))
+                        ))))
                         .child(muted(tr("Sunrise backs up each of these worlds first (a zip in backups/) and reads the backup back. If one can't be made or checked, nothing is changed.")))
                         .child(
                             div()
@@ -332,7 +334,7 @@ impl Launcher {
                     panel
                         .child(div().font_weight(FontWeight::SEMIBOLD).child(trf("Update {count} mods?", &[("count", &included.len().to_string())])))
                         .children(included.iter().take(14).map(|i| {
-                            div().text_size(px(tokens::LABEL)).child(trf(
+                            div().text_size(px(tokens::LABEL)).child(crate::selectable::selectable(trf(
                                 "{title} {from} → {to}{native}",
                                 &[
                                     ("title", &i.title),
@@ -340,7 +342,7 @@ impl Launcher {
                                     ("to", &i.to),
                                     ("native", &if i.native { trf("  ({code})", &[("code", tr("native code"))]) } else { String::new() }),
                                 ],
-                            ))
+                            )))
                         }))
                         .children((included.len() > 14).then(|| muted(trf("and {count} more", &[("count", &(included.len() - 14).to_string())]))))
                         .children((!plan.skipped.is_empty()).then(|| {
@@ -350,10 +352,10 @@ impl Launcher {
                         }))
                         .child(muted(tr("Each file is checked against the registry's size, hash and signature before it replaces anything. Mods that are off stay off.")))
                         .children((natives > 0).then(|| {
-                            div().text_size(px(tokens::SMALL)).text_color(c(GOLD)).child(trf(
+                            div().text_size(px(tokens::SMALL)).text_color(c(GOLD)).child(crate::selectable::selectable(trf(
                                 "{count} of these run native code. A new build is made only when you Play or choose Build…, after the usual checks.",
                                 &[("count", &natives.to_string())],
-                            ))
+                            )))
                         }))
                         .child(
                             div()
@@ -406,10 +408,10 @@ impl Launcher {
                         div()
                             .text_size(px(tokens::CAPTION))
                             .text_color(c(MUTED))
-                            .child(trf(
+                            .child(crate::selectable::selectable(trf(
                                 "{title} · {count}",
                                 &[("title", title), ("count", &count.to_string())],
-                            )),
+                            ))),
                     );
                 if g == Group::Updates {
                     let b = crate::frame::button(

@@ -552,9 +552,9 @@ impl Launcher {
                 .flex()
                 .flex_col()
                 .child(heading)
-                .child(div().text_size(px(tokens::LABEL)).child(tr(
+                .child(div().text_size(px(tokens::LABEL)).child(crate::selectable::selectable(tr(
                     "A data pack goes into a world, and this setup has none yet. Make one in the game first.",
-                )))
+                ))))
                 .child(div().flex().justify_end().child(close(tr("Close"))));
             return Some(crate::sheets::frame("alt-pick", 520., body, cx));
         }

@@ -816,9 +816,9 @@ impl Launcher {
             Page::Hosting => self.hosting(cx),
             _ if self.selected_instance().is_some_and(|i| i.java.is_some()) => div()
                 .p(px(24.))
-                .child(tr(
+                .child(crate::selectable::selectable(tr(
                     "Choose a Sunrise setup in the play bar. Your other setups haven't changed.",
-                ))
+                )))
                 .into_any_element(),
             Page::Home => self.home(window, cx),
             _ => self.mods(window, cx),

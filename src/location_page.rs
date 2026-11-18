@@ -257,10 +257,10 @@ impl Launcher {
                     .flex()
                     .flex_col()
                     .gap(px(8.))
-                    .child(div().child(trf(
+                    .child(div().child(crate::selectable::selectable(trf(
                         "Move all data to {path}?",
                         &[("path", &target.display().to_string())],
-                    )))
+                    ))))
                     .child(div().flex().gap(px(8.)).child(confirm).child(
                         button("alt-cancel-move-data", tr("Cancel")).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
