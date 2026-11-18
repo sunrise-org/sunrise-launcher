@@ -46,13 +46,16 @@ pub(crate) fn chip(
         .id(id)
         .flex_none()
         .px(px(14.))
+        // Shaped like a button.
         .h(px(tokens::CONTROL))
         .flex()
         .items_center()
-        .rounded(px(tokens::R_PANEL))
+        .justify_center()
+        .rounded(px(tokens::R_CONTROL))
+        // Solid, both: an outline on one would make it read larger than the other.
         .border_1()
         .border_color(if on { c(TEXT) } else { c(LINE) })
-        .bg(if on { c(TEXT) } else { c(BG) })
+        .bg(if on { c(TEXT) } else { c(LINE) })
         .text_color(if on { c(BG) } else { c(TEXT) })
         .text_size(px(tokens::LABEL))
         .cursor_pointer()
@@ -83,17 +86,20 @@ pub(crate) fn choices(
         // Room for the ring, taken back so the chips stay where they were.
         .p(px(3.))
         .m(px(-4.))
-        .rounded(px(tokens::R_PANEL + 4.))
+        .rounded(px(tokens::R_CONTROL + 4.))
         .border_1()
         .border_color(gpui::transparent_black())
         .focus_visible(|s| s.border_color(c(tokens::GOLD)));
     for (n, (label, on, pick)) in chips.into_iter().enumerate() {
-        group = group.child(chip((id, n), label, on).on_click(cx.listener(
-            move |this, _: &ClickEvent, _, cx| {
-                pick(this, cx);
-                cx.notify();
-            },
-        )));
+        // A few options side by side: short words don't make one smaller than the others.
+        group = group.child(
+            chip((id, n), label, on)
+                .min_w(px(96.))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    pick(this, cx);
+                    cx.notify();
+                })),
+        );
     }
     group.on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
         let step = match ev.keystroke.key.as_str() {
