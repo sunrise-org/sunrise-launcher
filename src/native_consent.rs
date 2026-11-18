@@ -21,7 +21,13 @@ impl PendingConsent {
         match self {
             Self::Build(ids) => ids.join(", "),
             Self::Toggle(entry) => entry.title.clone(),
-            Self::Install(_, id, _) | Self::Local(id) => id.clone(),
+            // The mod as its page names it ("JEI"), not its id ("jei").
+            Self::Install(_, id, project) => project
+                .as_ref()
+                .map(|p| p.title.clone())
+                .filter(|title| !title.is_empty())
+                .unwrap_or_else(|| id.clone()),
+            Self::Local(id) => id.clone(),
             Self::Github(found, _) => found.label(),
         }
     }
@@ -68,6 +74,30 @@ pub(super) fn resolve(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_install_is_named_as_its_page_names_the_mod() {
+        let project = |title: &str| Project {
+            source: SourceId::Sunrise,
+            id: "jei".into(),
+            slug: "jei".into(),
+            title: title.into(),
+            summary: String::new(),
+            author: String::new(),
+            downloads: 0,
+            page: String::new(),
+            icon: None,
+            license: String::new(),
+            kind: sunrise_launcher::browser::Kind::Mod,
+            game_versions: Vec::new(),
+            loaders: Vec::new(),
+            blocked: None,
+        };
+        let install = |p| PendingConsent::Install(SourceId::Sunrise, "jei".into(), p);
+        assert_eq!(install(Some(project("JEI"))).name(), "JEI");
+        assert_eq!(install(Some(project(""))).name(), "jei");
+        assert_eq!(install(None).name(), "jei");
+    }
 
     #[test]
     fn cancel_escape_and_allow_consume_only_the_pending_toggle() {

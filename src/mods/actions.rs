@@ -86,6 +86,14 @@ impl Launcher {
         true
     }
 
+    /// A registry mod's name as its card shows it ("JEI" for `jei`), once the catalog has it.
+    pub(crate) fn mod_name(&self, id: &str) -> Option<String> {
+        match &self.ui.mods.catalog {
+            Catalog::Ready(cards, _) => cards.iter().find(|c| c.id == id).map(|c| c.name.clone()),
+            _ => None,
+        }
+    }
+
     /// Add `id` to the game: the existing install path, which asks first for native code, checks
     /// the file against the index and its signature, and refuses what was taken down. Only a mod
     /// the registry says fits this build.
