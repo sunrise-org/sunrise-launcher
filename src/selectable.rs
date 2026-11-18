@@ -12,8 +12,8 @@ use std::ops::Range;
 use gpui::{
     fill, rgb, App, Bounds, CursorStyle, DispatchPhase, Element, ElementId, EntityId, FocusHandle,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, KeyDownEvent,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    SharedString, StyledText, TextLayout, Window,
+    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput,
+    Point, ScrollDelta, ScrollEvent, SharedString, StyledText, TextLayout, Window,
 };
 
 use crate::tokens::GOLD;
@@ -34,6 +34,11 @@ struct Active {
     column: (Pixels, Pixels),
     /// For the move being handled: where it is and the top of the lowest block found above it.
     probe: Option<(Point<Pixels>, Pixels)>,
+    /// The part of the page the text shows in, and the pointer: a drag past its top or bottom
+    /// scrolls the page while `scrolling`.
+    viewport: Bounds<Pixels>,
+    pointer: Point<Pixels>,
+    scrolling: bool,
 }
 
 struct Painted {
@@ -175,29 +180,88 @@ fn word(text: &str, ix: usize) -> Range<usize> {
     start..end
 }
 
-/// The rectangles a selection covers: from its start to the end of that row, every row between,
-/// and the last row up to its end.
-fn rows(layout: &TextLayout, range: &Range<usize>, bounds: Bounds<Pixels>) -> Vec<Bounds<Pixels>> {
+/// How far to scroll the page per frame while a drag holds the pointer `past` pixels beyond
+/// its edge: faster the further out, as in a browser.
+fn scroll_step(past: f32) -> f32 {
+    (past / 4.).clamp(2., 40.)
+}
+
+/// Scrolls the page every frame while a drag holds the pointer above or below it, then replays
+/// the pointer so the selection follows into the text that came into view.
+fn auto_scroll(window: &Window, cx: &mut App) {
+    window
+        .spawn(cx, async move |cx| loop {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(16))
+                .await;
+            let step = ACTIVE.with_borrow_mut(|a| {
+                let a = a.as_mut()?;
+                let (vp, at) = (a.viewport, a.pointer);
+                let dy = match () {
+                    _ if !a.dragging => None,
+                    _ if at.y < vp.top() => Some(scroll_step(f32::from(vp.top() - at.y))),
+                    _ if at.y > vp.bottom() => Some(-scroll_step(f32::from(at.y - vp.bottom()))),
+                    _ => None,
+                };
+                if dy.is_none() {
+                    a.scrolling = false;
+                }
+                let (left, right) = a.column;
+                let inside = gpui::point((left + right) / 2., vp.center().y);
+                Some((dy?, inside, at))
+            });
+            let Some((dy, inside, at)) = step else {
+                break;
+            };
+            let sent = cx.update(|window, cx| {
+                window.dispatch_event(
+                    PlatformInput::Scroll(ScrollEvent {
+                        position: inside,
+                        delta: ScrollDelta::Pixels(gpui::point(Pixels::ZERO, gpui::px(dy))),
+                        ..Default::default()
+                    }),
+                    cx,
+                );
+                window.dispatch_event(
+                    PlatformInput::MouseMove(MouseMoveEvent {
+                        position: at,
+                        pressed_button: Some(MouseButton::Left),
+                        ..Default::default()
+                    }),
+                    cx,
+                );
+            });
+            if sent.is_err() {
+                break;
+            }
+        })
+        .detach();
+}
+
+/// The rectangles a selection covers, one per visual row, each from the first selected
+/// character on that row to the end of the last, as a browser draws it.
+fn rows(layout: &TextLayout, text: &str, range: &Range<usize>) -> Vec<Bounds<Pixels>> {
     let line = layout.line_height();
-    let (Some(start), Some(end)) = (
-        layout.position_for_index(range.start),
-        layout.position_for_index(range.end),
-    ) else {
-        return Vec::new();
-    };
-    let span = |top: Pixels, left: Pixels, right: Pixels| {
-        Bounds::from_corners(gpui::point(left, top), gpui::point(right, top + line))
-    };
-    if start.y == end.y {
-        return vec![span(start.y, start.x, end.x)];
+    let left = layout.bounds().left();
+    let edges = text[range.clone()]
+        .char_indices()
+        .map(|(i, _)| range.start + i)
+        .chain([range.end]);
+    let mut out: Vec<Bounds<Pixels>> = Vec::new();
+    for at in edges.filter_map(|ix| layout.position_for_index(ix)) {
+        match out.last_mut() {
+            Some(row) if row.top() == at.y => {
+                row.size.width = row.size.width.max(at.x - row.left());
+            }
+            // A row after the first starts at the text's left edge: the index at a wrap reports
+            // the end of the row above, not the start of its own.
+            Some(_) => out.push(Bounds::new(
+                gpui::point(left, at.y),
+                gpui::size(at.x - left, line),
+            )),
+            None => out.push(Bounds::new(at, gpui::size(Pixels::ZERO, line))),
+        }
     }
-    let mut out = vec![span(start.y, start.x, bounds.right())];
-    let mut top = start.y + line;
-    while top < end.y {
-        out.push(span(top, bounds.left(), bounds.right()));
-        top += line;
-    }
-    out.push(span(end.y, bounds.left(), end.x));
     out
 }
 
@@ -329,11 +393,20 @@ impl Element for Selectable {
         if dragging {
             let drag = layout.clone();
             let mine = id.clone();
-            window.on_mouse_event(move |ev: &MouseMoveEvent, phase, _, cx| {
-                if phase != DispatchPhase::Bubble || ev.pressed_button != Some(MouseButton::Left) {
+            window.on_mouse_event(move |ev: &MouseMoveEvent, phase, window, cx| {
+                if phase != DispatchPhase::Capture || ev.pressed_button != Some(MouseButton::Left) {
                     return;
                 }
                 let y = ev.position.y;
+                let start_scrolling = ACTIVE.with_borrow_mut(|a| {
+                    let a = a.as_mut().filter(|a| a.dragging)?;
+                    a.pointer = ev.position;
+                    let outside = y < a.viewport.top() || y > a.viewport.bottom();
+                    (outside && !a.scrolling).then(|| a.scrolling = true)
+                });
+                if start_scrolling.is_some() {
+                    auto_scroll(window, cx);
+                }
                 let moved = ACTIVE.with_borrow_mut(|a| {
                     let a = a.as_mut().filter(|a| a.dragging)?;
                     let (left, right) = a.column;
@@ -367,7 +440,9 @@ impl Element for Selectable {
             });
         }
 
+        let viewport = window.content_mask().bounds;
         let press = layout.clone();
+        let pressed_text = text.clone();
         let hit = hitbox.clone();
         window.on_mouse_event(move |ev: &MouseDownEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble
@@ -380,10 +455,10 @@ impl Element for Selectable {
             let (start, end) = match ev.click_count {
                 1 => (ix, ix),
                 2 => {
-                    let w = word(&text, ix);
+                    let w = word(&pressed_text, ix);
                     (w.start, w.end)
                 }
-                _ => (0, text.len()),
+                _ => (0, pressed_text.len()),
             };
             let handle = focus(cx);
             clear(window, cx);
@@ -399,6 +474,9 @@ impl Element for Selectable {
                     view,
                     column: (bounds.left(), bounds.right()),
                     probe: None,
+                    viewport,
+                    pointer: ev.position,
+                    scrolling: false,
                 })
             });
             window.focus(&handle, cx);
@@ -412,7 +490,7 @@ impl Element for Selectable {
         let _ = layout.paint_background(window, cx);
         if let Some(range) = &selected {
             let tint = Hsla::from(rgb(GOLD)).opacity(0.35);
-            for row in rows(&layout, range, bounds) {
+            for row in rows(&layout, &text, range) {
                 window.paint_quad(fill(row, tint));
             }
         }
