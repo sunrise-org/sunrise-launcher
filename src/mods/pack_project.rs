@@ -162,7 +162,7 @@ impl Launcher {
                         div()
                             .text_size(px(tokens::DISPLAY))
                             .font_weight(FontWeight::BOLD)
-                            .child(p.title.clone()),
+                            .child(crate::selectable::selectable(p.title.clone())),
                     )
                     .child(
                         div()
@@ -173,7 +173,7 @@ impl Launcher {
                             .gap_y(px(4.))
                             .children(
                                 (!authors.is_empty())
-                                    .then(|| muted(trf("by {authors}", &[("authors", &authors)]))),
+                                    .then(|| note(trf("by {authors}", &[("authors", &authors)]))),
                             )
                             .child(tag(super::pack_discover::source_label(p.source)))
                             .child(tag(support.label())),
@@ -237,7 +237,7 @@ impl Launcher {
                     .gap(px(10.))
                     .child(action)
                     .children(within.map(muted))
-                    .children(support.reason().map(|why| muted(why.to_owned()))),
+                    .children(support.reason().map(|why| note(why.to_owned()))),
             )
             .child(
                 card()
@@ -284,15 +284,19 @@ impl Launcher {
                 .flex()
                 .flex_col()
                 .gap(px(6.))
-                .child(div().text_size(px(tokens::LABEL)).child(p.summary.clone()))
-                .child(muted(trf(
+                .child(
+                    div()
+                        .text_size(px(tokens::LABEL))
+                        .child(crate::selectable::selectable(p.summary.clone())),
+                )
+                .child(note(trf(
                     "The rest of this page couldn't be read: {why}",
                     &[("why", why)],
                 )))
                 .into_any_element(),
             Some(Ok(page)) if page.0.body.trim().is_empty() => div()
                 .text_size(px(tokens::LABEL))
-                .child(p.summary.clone())
+                .child(crate::selectable::selectable(p.summary.clone()))
                 .into_any_element(),
             Some(Ok(page)) => prose(self.theme, &without_pictures(&page.0.body)),
         };

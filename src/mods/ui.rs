@@ -29,6 +29,14 @@ pub(super) fn muted(text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
+/// `muted` text a reader may want to copy: an error, a reason, a note.
+pub(super) fn note(text: impl Into<SharedString>) -> Div {
+    div()
+        .text_size(px(tokens::SMALL))
+        .text_color(c(MUTED))
+        .child(crate::selectable::selectable(text))
+}
+
 /// The main action on a screen, in cream: gold is Play's alone.
 pub(super) use crate::frame::primary;
 

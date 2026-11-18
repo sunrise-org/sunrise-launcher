@@ -163,7 +163,11 @@ pub fn render(source: &str, t: &Theme) -> AnyElement {
             };
             (range, style)
         });
-        StyledText::new(SharedString::from(text)).with_highlights(highlights.collect::<Vec<_>>())
+        let text = SharedString::from(text);
+        crate::selectable::Selectable::styled(
+            text.clone(),
+            StyledText::new(text).with_highlights(highlights.collect::<Vec<_>>()),
+        )
     };
     // The glass look sets notes as the mockup's: 14 px on 1.55 at 75 %, lists with square
     // bullets, 6 px apart.
@@ -220,7 +224,7 @@ pub fn render(source: &str, t: &Theme) -> AnyElement {
                 .text_size(px(12.))
                 .line_height(px(18.))
                 .text_color(t.ink)
-                .child(code.trim_end().to_string())
+                .child(crate::selectable::selectable(code.trim_end().to_string()))
                 .into_any_element(),
             Block::Rule => div().h(px(1.)).bg(t.rule).my(px(8.)).into_any_element(),
             Block::Table(rows) => {
