@@ -1,5 +1,5 @@
 //! A panel that stays in view beside a long column as the page scrolls (CSS `position: sticky;
-//! top: 0`, which GPUI has no style for): a mod page's side panel.
+//! top: 0`, which GPUI has no style for): a mod page's side panel, Settings' categories.
 //!
 //! The panel scrolls with the page until its top reaches the top of the view, then is drawn moved
 //! down (`top`, which takes nothing from the layout) by how far the page has scrolled past the
@@ -13,7 +13,7 @@ pub struct Sticky {
 }
 
 impl Sticky {
-    /// For the row's `track_scroll`: it records how tall the panel, the row's second child, is.
+    /// For the row's `track_scroll`: it records how tall its children, the panel among them, are.
     pub fn row(&self) -> &ScrollHandle {
         &self.row
     }
@@ -23,10 +23,11 @@ impl Sticky {
         self.row = ScrollHandle::new();
     }
 
-    /// How far down to draw the panel. `page` scrolls the row, its child `index`; both handles
-    /// hold the last frame's layout, which is unscrolled.
-    pub fn shift(&self, page: &ScrollHandle, index: usize) -> f32 {
-        let (Some(row), Some(panel)) = (page.bounds_for_item(index), self.row.bounds_for_item(1))
+    /// How far down to draw the panel, the row's child `panel`. `page` scrolls the row, its child
+    /// `index`; both handles hold the last frame's layout, which is unscrolled.
+    pub fn shift(&self, page: &ScrollHandle, index: usize, panel: usize) -> f32 {
+        let (Some(row), Some(panel)) =
+            (page.bounds_for_item(index), self.row.bounds_for_item(panel))
         else {
             return 0.;
         };

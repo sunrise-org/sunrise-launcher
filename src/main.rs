@@ -185,6 +185,8 @@ struct Launcher {
     settings_nav_open: bool,
     /// A mod page's side panel, kept in view beside its description.
     mods_sticky: sticky::Sticky,
+    /// Settings' categories, kept in view beside the section.
+    settings_sticky: sticky::Sticky,
     /// The rows of the page's long list (Versions) last drawn.
     long_list: cull::Cull,
     updates: Updates,

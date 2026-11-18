@@ -171,7 +171,15 @@ impl Launcher {
         self.args_focused = self.args_focus.is_focused(window);
         self.proxy_focused = self.proxy_focus.is_focused(window);
         let section = self.ui.settings.section;
-        let mut nav = div().flex().flex_col().gap(px(2.)).w(px(180.)).flex_none();
+        let scroll = crate::frame::scrolls("settings");
+        let mut nav = div()
+            .relative()
+            .top(px(self.settings_sticky.shift(&scroll, 0, 0)))
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .w(px(180.))
+            .flex_none();
         for (n, s) in Section::ALL.into_iter().enumerate() {
             let on = s == section;
             nav = nav.child(
@@ -225,30 +233,41 @@ impl Launcher {
             )
             .children(self.location_error.clone().map(warning))
             .child(body);
+        // The title stays put above the scroll, and the categories stay in view as the section
+        // scrolls (`Sticky`, which reads this row as the scroll's item 0).
         div()
-            .id("alt-settings-scroll")
             .size_full()
-            .overflow_y_scroll()
-            .track_scroll(&crate::frame::scrolls("settings"))
-            .px(px(32.))
-            .py(px(24.))
-            .text_color(rgb(TEXT))
             .flex()
             .flex_col()
-            .gap(px(20.))
+            .text_color(rgb(TEXT))
             .child(
                 div()
+                    .px(px(32.))
+                    .pt(px(24.))
+                    .pb(px(20.))
                     .text_size(px(tokens::DISPLAY))
                     .font_weight(FontWeight::BOLD)
                     .child(tr("Settings")),
             )
             .child(
                 div()
-                    .flex()
-                    .items_start()
-                    .gap(px(28.))
-                    .child(nav)
-                    .child(pane),
+                    .id("alt-settings-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .track_scroll(&scroll)
+                    .px(px(32.))
+                    .pb(px(24.))
+                    .child(
+                        div()
+                            .id("alt-settings-columns")
+                            .track_scroll(self.settings_sticky.row())
+                            .flex()
+                            .items_start()
+                            .gap(px(28.))
+                            .child(nav)
+                            .child(pane),
+                    ),
             )
             .into_any_element()
     }

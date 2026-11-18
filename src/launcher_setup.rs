@@ -71,6 +71,7 @@ impl Launcher {
             settings_query: line_edit::LineEdit::new(String::new(), 80, 40),
             settings_nav_open: false,
             mods_sticky: sticky::Sticky::default(),
+            settings_sticky: sticky::Sticky::default(),
             long_list: cull::Cull::default(),
             updates: Updates::default(),
             checked: None,
@@ -336,6 +337,7 @@ impl Launcher {
             self.content_scroll = Scrollbar::default();
             self.long_list = cull::Cull::default();
             self.mods_sticky.reset();
+            self.settings_sticky.reset();
             if page == Page::Mods {
                 self.mods.reset_lists();
             }
