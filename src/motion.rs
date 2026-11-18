@@ -19,7 +19,6 @@ pub const PAGE: tokens::Motion = tokens::Motion {
 };
 
 /// A switch's knob (`transition-[translate] duration-200`, Tailwind's default curve).
-#[cfg_attr(not(windows), allow(dead_code))] // the Windows setup window
 const SLIDE: tokens::Motion = tokens::Motion {
     name: "slide",
     ms: 200,
@@ -141,7 +140,6 @@ thread_local! {
 
 /// When switch `id`'s knob started sliding towards `on`, while it still slides: a switch seen
 /// for the first time, or changed long ago, is already there.
-#[cfg_attr(not(windows), allow(dead_code))] // the Windows setup window
 fn slide(id: &str, on: bool, now: Instant) -> Option<Instant> {
     SWITCHES.with_borrow_mut(|switches| {
         let seen = switches.entry(id.to_string()).or_insert((on, None));
@@ -151,6 +149,20 @@ fn slide(id: &str, on: bool, now: Instant) -> Option<Instant> {
         seen.1
             .filter(|since| now.duration_since(*since) < SLIDE.duration())
     })
+}
+
+/// While switch `id` slides towards `on`: a number for this slide, to give each of its
+/// animations its own id so they play once, together.
+pub fn sliding(id: &str, on: bool) -> Option<usize> {
+    let since = slide(id, on, Instant::now())?;
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let start = *START.get_or_init(Instant::now);
+    Some(since.saturating_duration_since(start).as_micros() as usize)
+}
+
+/// How a switch slides: [`SLIDE`], or at its end at once under reduced motion.
+pub fn slide_motion() -> Animation {
+    eased(SLIDE)
 }
 
 /// A switch's knob at `left` px when off and `left + travel` when on, sliding there when the

@@ -107,27 +107,85 @@ pub(crate) fn choices(
     }))
 }
 
+/// An on/off switch: a knob that slides across its track when it changes, the track and the
+/// knob turning to their new colours as it goes.
 pub(crate) fn switch(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
+    let id = id.into();
+    let key = id.to_string();
+    // `v` runs from 0 (off) to 1 (on).
+    let fill = move |d: Div, v: f32| d.opacity(v);
+    let knob = move |d: Div, v: f32| d.left(px(INSET + TRAVEL * v)).bg(mix(c(MUTED), c(BG), v));
+    let (fill_el, knob_el): (AnyElement, AnyElement) = {
+        let fill_div = div()
+            .absolute()
+            .size_full()
+            .rounded(px(tokens::R_CONTROL))
+            .bg(c(TEXT));
+        let knob_div = div()
+            .absolute()
+            .top(px(INSET))
+            .size(px(KNOB))
+            .rounded(px(tokens::R_CONTROL - INSET));
+        match crate::motion::sliding(&key, on) {
+            Some(slide) => {
+                let toward = move |p: f32| if on { p } else { 1. - p };
+                (
+                    fill_div
+                        .with_animation(
+                            ElementId::named_usize(format!("{key}-fill"), slide),
+                            crate::motion::slide_motion(),
+                            move |d, p| fill(d, toward(p)),
+                        )
+                        .into_any_element(),
+                    knob_div
+                        .with_animation(
+                            ElementId::named_usize(format!("{key}-knob"), slide),
+                            crate::motion::slide_motion(),
+                            move |d, p| knob(d, toward(p)),
+                        )
+                        .into_any_element(),
+                )
+            }
+            None => {
+                let v = if on { 1. } else { 0. };
+                (
+                    fill(fill_div, v).into_any_element(),
+                    knob(knob_div, v).into_any_element(),
+                )
+            }
+        }
+    };
     div()
         .id(id)
         .flex_none()
         .tab_index(0)
         .seen()
         .focus_visible(|s| s.shadow(crate::frame::focus_ring(tokens::GOLD)))
+        .relative()
         .w(px(40.))
         .h(px(22.))
         .rounded(px(tokens::R_CONTROL))
-        .p(px(2.))
-        .flex()
-        .bg(if on { c(TEXT) } else { c(LINE) })
-        .when(on, |d| d.justify_end())
+        .bg(c(LINE))
         .cursor_pointer()
-        .child(
-            div()
-                .size(px(18.))
-                .rounded(px(tokens::R_CONTROL))
-                .bg(if on { c(BG) } else { c(MUTED) }),
-        )
+        .child(fill_el)
+        .child(knob_el)
+}
+
+/// A switch's knob, the room around it, and how far it slides.
+const KNOB: f32 = 16.;
+const INSET: f32 = 3.;
+const TRAVEL: f32 = 40. - KNOB - 2. * INSET;
+
+/// `a` turning into `b`, `v` of the way.
+fn mix(a: Hsla, b: Hsla, v: f32) -> Hsla {
+    let (a, b) = (gpui::Rgba::from(a), gpui::Rgba::from(b));
+    let m = |x: f32, y: f32| x + (y - x) * v;
+    Hsla::from(gpui::Rgba {
+        r: m(a.r, b.r),
+        g: m(a.g, b.g),
+        b: m(a.b, b.b),
+        a: m(a.a, b.a),
+    })
 }
 
 pub(crate) fn checkbox(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
