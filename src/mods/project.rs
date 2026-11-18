@@ -16,6 +16,8 @@ impl Launcher {
         const PREVIEWS: usize = sunrise_launcher_smod::index::page::MAX_SCREENSHOTS;
         let count = urls.len().min(PREVIEWS);
         let columns = if self.window_width < 950. { 3 } else { 4 };
+        // A tile's tooltip would float over its own picture once that is open.
+        let viewing = self.ui.mods.viewer.is_some();
         let mut tiles = urls.iter().take(PREVIEWS).enumerate().map(|(i, url)| {
             let photo = self.mods_image(url, images::GALLERY);
             let all = urls.clone();
@@ -39,7 +41,7 @@ impl Launcher {
                 .border_color(c(palette().divider))
                 .bg(palette().card())
                 .overflow_hidden()
-                .tooltip(crate::glass_ui::tip(label))
+                .when(!viewing, |d| d.tooltip(crate::glass_ui::tip(label)))
                 .children(photo.map(|path| {
                     gpui::img(path)
                         .size_full()
@@ -56,9 +58,9 @@ impl Launcher {
                             .child(format!("+{}", urls.len() - PREVIEWS)),
                     )
                 })
+                .track_scroll(&super::viewer::tile(i))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.ui.sheets.gallery = Some((all.clone(), i));
-                    this.open_sheet(crate::sheets::Sheet::Picture);
+                    this.viewer_open(all.clone(), i);
                     cx.notify();
                 }))
         });
@@ -73,86 +75,6 @@ impl Launcher {
             );
         }
         Some(grid)
-    }
-
-    pub(crate) fn gallery_picture(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let (urls, index) = self.ui.sheets.gallery.as_ref()?;
-        let n = urls.len();
-        let index = *index;
-        let url = urls.get(index)?.clone();
-        let image = self.mods_image(&url, images::GALLERY);
-        let mut bar = div()
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .child(div().flex_1().child(trf(
-                "Picture {number} of {total}",
-                &[
-                    ("number", &(index + 1).to_string()),
-                    ("total", &n.to_string()),
-                ],
-            )));
-        for (id, label, to) in [
-            ("picture-prev", tr("Previous"), index.checked_sub(1)),
-            (
-                "picture-next",
-                tr("Next"),
-                (index + 1 < n).then_some(index + 1),
-            ),
-        ] {
-            let btn = crate::frame::button(id, label);
-            bar = bar.child(match to {
-                None => btn.opacity(0.4).cursor_default().tab_stop(false),
-                Some(to) => btn.on_click(cx.listener(move |this, _, _, cx| {
-                    if let Some((_, i)) = &mut this.ui.sheets.gallery {
-                        *i = to;
-                    }
-                    cx.notify();
-                })),
-            });
-        }
-        bar = bar.child(
-            crate::frame::button("picture-close", tr("Close")).on_click(cx.listener(
-                |this, _, _, cx| {
-                    this.close_sheet();
-                    cx.notify();
-                },
-            )),
-        );
-        let body = div()
-            .flex()
-            .flex_col()
-            .gap(px(10.))
-            .child(bar)
-            .child(match image {
-                Some(path) => div()
-                    .w_full()
-                    .h(px((self.window_height - 160.).max(80.)))
-                    .child(
-                        gpui::img(path)
-                            .size_full()
-                            .object_fit(gpui::ObjectFit::Contain),
-                    ),
-                None => muted(tr("Picture unavailable.")).py(px(32.)),
-            })
-            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
-                let Some((pages, i)) = &mut this.ui.sheets.gallery else {
-                    return;
-                };
-                match ev.keystroke.key.as_str() {
-                    "left" => *i = i.saturating_sub(1),
-                    "right" => *i = (*i + 1).min(pages.len() - 1),
-                    _ => return,
-                }
-                cx.stop_propagation();
-                cx.notify();
-            }));
-        Some(crate::sheets::frame(
-            "gallery-full",
-            self.window_width - 48.,
-            body,
-            cx,
-        ))
     }
 }
 

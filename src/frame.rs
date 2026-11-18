@@ -561,6 +561,9 @@ impl Launcher {
                             window.focus_next(cx)
                         }
                     }
+                    "escape" if this.viewer_close(cx) => {}
+                    "left" if this.viewer_step(-1, cx) => {}
+                    "right" if this.viewer_step(1, cx) => {}
                     "escape" if this.owner_screen_open => {
                         this.cancel_sign_in();
                         this.owner_screen_open = false;
@@ -611,6 +614,7 @@ impl Launcher {
             .collect();
         let top = self.modal(layers.pop(), window, cx);
         frame = frame.children(layers).children(top);
+        frame = frame.children(self.viewer(window, cx));
         self.pictures.free_retired(window);
         let scenery = self.ui.backdrop.render(&self.settings, &self.theme, window);
         div()
