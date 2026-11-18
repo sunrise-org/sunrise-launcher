@@ -183,7 +183,7 @@ struct Launcher {
     settings_query: line_edit::LineEdit,
     /// Narrow Settings: the category list is dropped open from the switcher row; it starts folded and folds again on a pick.
     settings_nav_open: bool,
-    /// The Mods page's project card, kept in view beside its list.
+    /// A mod page's side panel, kept in view beside its description.
     mods_sticky: sticky::Sticky,
     /// The rows of the page's long list (Versions) last drawn.
     long_list: cull::Cull,

@@ -108,13 +108,10 @@ impl Launcher {
             Page::Installed => tr("Installed"),
             _ => tr("Discover"),
         };
-        let mut page = div()
-            .size_full()
+        let header = div()
             .flex()
             .flex_col()
             .gap(px(14.))
-            .p(px(24.))
-            .text_color(c(TEXT))
             .child(
                 back(back_label).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.ui.page = back_to;
@@ -122,12 +119,30 @@ impl Launcher {
                 })),
             )
             .children(self.strip(cx));
+        let page = div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .p(px(24.))
+            .text_color(c(TEXT));
         let loaded = self.ui.mods.open.as_ref().map(|o| o.page.clone());
         let p = match loaded {
-            None => return page.child(muted(tr("No mod is open."))).into_any_element(),
-            Some(None) => return page.child(muted(tr("Loading…"))).into_any_element(),
+            None => {
+                return page
+                    .child(header)
+                    .child(muted(tr("No mod is open.")))
+                    .into_any_element()
+            }
+            Some(None) => {
+                return page
+                    .child(header)
+                    .child(muted(tr("Loading…")))
+                    .into_any_element()
+            }
             Some(Some(Err(e))) => {
                 return page
+                    .child(header)
                     .child(
                         div()
                             .font_weight(FontWeight::SEMIBOLD)
@@ -351,7 +366,10 @@ impl Launcher {
                 "•",
             ));
         }
+        let scroll = crate::frame::scrolls("project");
         let right = div()
+            .relative()
+            .top(px(self.mods_sticky.shift(&scroll, 1)))
             .w(px(360.))
             .flex_none()
             .flex()
@@ -413,22 +431,28 @@ impl Launcher {
                     .child(tr("Versions")),
             )
             .child(versions);
-        page = page.child(
+        page.child(
             div()
                 .id("alt-project-scroll")
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .track_scroll(&crate::frame::scrolls("project"))
+                .track_scroll(&scroll)
+                .flex()
+                .flex_col()
+                .gap(px(14.))
+                .child(header)
                 .child(
                     div()
+                        .id("alt-project-columns")
+                        .track_scroll(self.mods_sticky.row())
                         .flex()
                         .gap(px(24.))
                         .items_start()
                         .child(left)
                         .child(right),
                 ),
-        );
-        page.into_any_element()
+        )
+        .into_any_element()
     }
 }
