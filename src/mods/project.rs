@@ -16,10 +16,17 @@ impl Launcher {
         const PREVIEWS: usize = sunrise_launcher_smod::index::page::MAX_SCREENSHOTS;
         let count = urls.len().min(PREVIEWS);
         let columns = if self.window_width < 950. { 3 } else { 4 };
+        let height = if count == 1 { 220. } else { 104. };
         // A tile's tooltip would float over its own picture once that is open.
         let viewing = self.ui.mods.viewer.is_some();
         let mut tiles = urls.iter().take(PREVIEWS).enumerate().map(|(i, url)| {
             let photo = self.mods_image(url, images::GALLERY);
+            // No wider than the picture's own shape at the row's height: a wide window would
+            // otherwise blow it up and crop it.
+            let ratio = photo
+                .as_deref()
+                .and_then(super::viewer::picture_size)
+                .map_or(16. / 9., |(w, h)| w.max(1) as f32 / h.max(1) as f32);
             let all = urls.clone();
             let label = trf(
                 "Picture {number} of {total}",
@@ -35,6 +42,7 @@ impl Launcher {
                 .flex_1()
                 .min_h_0()
                 .w_full()
+                .max_w(px(height * ratio))
                 .cursor_pointer()
                 .rounded(px(tokens::R_CONTROL))
                 .border_1()
@@ -70,7 +78,7 @@ impl Launcher {
                 div()
                     .flex()
                     .gap(px(6.))
-                    .h(px(if count == 1 { 220. } else { 104. }))
+                    .h(px(height))
                     .children(tiles.by_ref().take(columns)),
             );
         }

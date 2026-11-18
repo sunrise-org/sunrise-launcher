@@ -56,7 +56,7 @@ fn tile_bounds(slot: usize) -> Option<Bounds<Pixels>> {
 }
 
 /// A picture's width and height in pixels, when its file says.
-fn picture_size(path: &std::path::Path) -> Option<(u32, u32)> {
+pub(super) fn picture_size(path: &std::path::Path) -> Option<(u32, u32)> {
     SIZES.with_borrow_mut(|sizes| {
         *sizes
             .entry(path.to_path_buf())
@@ -105,8 +105,8 @@ fn lerp(a: Bounds<Pixels>, b: Bounds<Pixels>, t: f32) -> Bounds<Pixels> {
     )
 }
 
-/// A round control over the dark: ✕, ‹ or ›.
-fn control(id: &'static str, glyph: &'static str) -> Stateful<Div> {
+/// A round control over the dark: an icon, drawn square, not a glyph of the type.
+fn control(id: &'static str, icon: gpui::Svg) -> Stateful<Div> {
     div()
         .id(id)
         .size(px(40.))
@@ -119,9 +119,11 @@ fn control(id: &'static str, glyph: &'static str) -> Stateful<Div> {
         .bg(gpui::black().opacity(0.45))
         .hover(|s| s.bg(gpui::black().opacity(0.7)))
         .cursor_pointer()
-        .text_size(px(20.))
-        .text_color(c(palette().text))
-        .child(glyph)
+        .child(icon)
+}
+
+fn icon(name: &'static str) -> gpui::Svg {
+    crate::blocks::icon(name, 18., c(palette().text))
 }
 
 impl Launcher {
@@ -293,7 +295,7 @@ impl Launcher {
             .child(picture);
         if !closing {
             let mut controls = div().absolute().size_full().child(
-                control("alt-viewer-close", "✕")
+                control("alt-viewer-close", icon("close"))
                     .absolute()
                     .top(px(ROOM.0 - 8.))
                     .right(px(16.))
@@ -305,16 +307,23 @@ impl Launcher {
                 let mid = full.center().y - px(20.);
                 controls = controls
                     .child(
-                        control("alt-viewer-back", "‹")
-                            .absolute()
-                            .left(px(16.))
-                            .top(mid)
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        control(
+                            "alt-viewer-back",
+                            icon("chevron-right").with_transformation(
+                                gpui::Transformation::rotate(gpui::radians(std::f32::consts::PI)),
+                            ),
+                        )
+                        .absolute()
+                        .left(px(16.))
+                        .top(mid)
+                        .on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
                                 this.viewer_step(-1, cx);
-                            })),
+                            },
+                        )),
                     )
                     .child(
-                        control("alt-viewer-next", "›")
+                        control("alt-viewer-next", icon("chevron-right"))
                             .absolute()
                             .right(px(16.))
                             .top(mid)
