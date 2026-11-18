@@ -38,8 +38,6 @@ const CARD_MIN: f32 = 190.;
 const CARD_MAX: f32 = 600.;
 /// The room between the header and the panel under it.
 const GAP: f32 = 20.;
-/// How far the header stands in from the panel's edge.
-const INSET: f32 = 32.;
 
 #[derive(Default)]
 pub(crate) struct HomeState {
@@ -53,7 +51,7 @@ impl HomeState {
         match self.picker.get() {
             Some(picker) => (f32::from(picker.left()), f32::from(picker.bottom()) + 6.),
             // Home was not drawn yet; it is by the next frame.
-            None => (INSET, 96.),
+            None => (0., 96.),
         }
     }
 }
@@ -132,9 +130,9 @@ impl Launcher {
             .flex_col()
             .gap(px(GAP))
             .pt(px(24.))
-            // Home paints no page of its own: the header stands on the scenery, inset like the
-            // text of the panel under it.
-            .child(header.flex_none().px(px(INSET)))
+            // Home paints no page of its own: the header stands on the scenery, its buttons'
+            // edges in line with the panel's under it.
+            .child(header.flex_none())
             // The panel is the sidebar's material and fills Home's box to its left, right and
             // bottom edges, so the frame lines it up with the sidebar. It reaches the foot when
             // the worlds leave room and is never squeezed: a short window scrolls the page.
