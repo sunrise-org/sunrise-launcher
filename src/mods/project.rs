@@ -232,23 +232,33 @@ impl Launcher {
                 .child(
                     div()
                         .w(px(70.))
+                        .flex_none()
+                        .truncate()
                         .font_family(crate::theme::MONO)
                         .child(v.number.clone()),
                 )
                 .child(
                     div()
                         .w(px(90.))
+                        .flex_none()
                         .text_color(c(MUTED))
                         .child(v.published.clone()),
                 )
-                .child(match (&v.fit.reason(), installed, will) {
-                    (_, true, _) => div().text_color(c(0x7fd6a0)).child(tr("Added")),
-                    (None, _, true) => div()
-                        .text_color(c(0x7fd6a0))
-                        .child(tr("Fits your game · what Add installs")),
-                    (None, _, false) => div().text_color(c(0x7fd6a0)).child(tr("Fits your game")),
-                    (Some(why), _, _) => div().text_color(c(MUTED)).child(why.clone()),
-                })
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(match (&v.fit.reason(), installed, will) {
+                            (_, true, _) => div().text_color(c(0x7fd6a0)).child(tr("Added")),
+                            (None, _, true) => div()
+                                .text_color(c(0x7fd6a0))
+                                .child(tr("Fits your game · what Add installs")),
+                            (None, _, false) => {
+                                div().text_color(c(0x7fd6a0)).child(tr("Fits your game"))
+                            }
+                            (Some(why), _, _) => div().text_color(c(MUTED)).child(why.clone()),
+                        }),
+                )
         }));
 
         // The right column: the action and what it changes, then the facts.
