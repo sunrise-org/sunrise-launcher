@@ -829,7 +829,7 @@ impl Launcher {
             .min_h_0()
             .flex()
             .flex_col()
-            .rounded_l(px(tokens::R_PANEL))
+            .rounded_bl(px(tokens::R_PANEL))
             .bg(rgb(BG))
             .border_1()
             .border_color(rgb(SOFT))
