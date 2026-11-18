@@ -38,6 +38,7 @@ mod pack_project;
 mod packs;
 mod project;
 mod ui;
+mod viewer;
 use std::rc::Rc;
 pub(crate) use ui::{checkbox, chip, choices, field_theme, switch, Choose};
 
@@ -159,6 +160,8 @@ pub(crate) struct ModsState {
     /// Discover or Installed, as the player last chose on Mods and on Packs this session.
     last_mods: Option<Page>,
     last_packs: Option<Page>,
+    /// A gallery picture enlarged over the window.
+    viewer: Option<viewer::Viewer>,
 }
 
 impl Default for ModsState {
@@ -192,6 +195,7 @@ impl Default for ModsState {
             unfit_details: false,
             last_mods: None,
             last_packs: None,
+            viewer: None,
         }
     }
 }

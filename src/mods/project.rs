@@ -5,42 +5,56 @@ use super::*;
 use crate::frame::{CARD, GOLD, LINE, MUTED, SOFT, TEXT};
 use sunrise_launcher::browser::images;
 
+/// How tall a page's gallery is.
+const HEIGHT: f32 = 280.;
+
 /// A page's pictures: the first large, up to three small beside it. None when it has none.
-pub(super) fn gallery(shots: Vec<Option<PathBuf>>) -> Option<Div> {
+/// A click on one enlarges it ([`super::viewer`]).
+pub(super) fn gallery(shots: Vec<Option<PathBuf>>, cx: &mut Context<Launcher>) -> Option<Div> {
     if shots.is_empty() {
         return None;
     }
-    let pic = |path: Option<PathBuf>| match path {
+    let pic = |path: &Option<PathBuf>| match path {
         Some(path) => div()
             .rounded(px(tokens::R_CONTROL))
             .overflow_hidden()
             // Filled edge to edge: a picture of another shape is cropped, never boxed.
             .child(
-                gpui::img(path)
+                gpui::img(path.clone())
                     .size_full()
                     .object_fit(gpui::ObjectFit::Cover),
             ),
         None => div().rounded(px(tokens::R_CONTROL)).bg(c(CARD)),
     };
-    let mut shots = shots.into_iter();
+    let ratio = shots[0]
+        .as_deref()
+        .and_then(super::viewer::picture_size)
+        .map_or(16. / 9., |(w, h)| w.max(1) as f32 / h.max(1) as f32);
+    let first = super::viewer::thumb(0, pic(&shots[0]).size_full(), &shots, cx);
+    let rest: Vec<AnyElement> = (1..shots.len())
+        .map(|i| super::viewer::thumb(i, pic(&shots[i]).flex_1().w_full(), &shots, cx))
+        .collect();
     Some(
         div()
             .flex()
             .gap(px(10.))
-            .h(px(280.))
+            .h(px(HEIGHT))
+            // The first no wider than its own shape: a frame as wide as the row would blow it up
+            // and crop it. A narrow window still narrows it, cropping its sides.
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(pic(shots.next().flatten()).size_full()),
+                    .max_w(px(HEIGHT * ratio))
+                    .child(first),
             )
-            .children((shots.len() > 0).then(|| {
+            .children((!rest.is_empty()).then(|| {
                 div()
                     .flex()
                     .flex_col()
                     .gap(px(10.))
                     .w(px(150.))
-                    .children(shots.map(|s| pic(s).flex_1().w_full()))
+                    .children(rest)
             })),
     )
 }
@@ -212,7 +226,7 @@ impl Launcher {
                     ),
             );
 
-        let gallery = gallery(shots);
+        let gallery = gallery(shots, cx);
         let about = prose(self.theme, &p.description);
 
         let versions = card().children(p.versions.iter().enumerate().map(|(i, v)| {

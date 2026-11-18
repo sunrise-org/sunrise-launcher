@@ -344,7 +344,10 @@ impl Launcher {
             true => (Some(side), None),
             false => (None, Some(side.w(px(360.)).flex_none())),
         };
-        main = main.children(above).children(gallery(shots)).child(about);
+        main = main
+            .children(above)
+            .children(gallery(shots, cx))
+            .child(about);
         if let Some(list) = list {
             main = main
                 .child(
