@@ -183,7 +183,7 @@ pub fn enabled(home: &Path) -> Vec<Mod> {
                 if mod_list::is_enabled(home, &b.manifest.id) {
                     let digest =
                         archive_digest(b.files.iter().map(|(n, d)| (n.as_str(), d.as_slice())));
-                    out.push((b.manifest.id, b.manifest.version, Some(digest)));
+                    out.push((b.manifest.id, b.manifest.version.to_string(), Some(digest)));
                 }
             }
             Err(_) => out.push((stem(&path), String::new(), None)),
@@ -191,7 +191,7 @@ pub fn enabled(home: &Path) -> Vec<Mod> {
     }
     out.extend(wasm_points(home).into_iter().map(|b| {
         let digest = native_mods::digest(b.files.iter().map(|(n, d)| (n.as_str(), d.as_slice())));
-        (b.manifest.id, b.manifest.version, Some(digest))
+        (b.manifest.id, b.manifest.version.to_string(), Some(digest))
     }));
     out
 }
@@ -248,7 +248,7 @@ pub fn untracked(home: &Path) -> Vec<Installed> {
             let package = sunrise_launcher_smod::manifest::Package::read(&path);
             let (id, version) = package
                 .as_ref()
-                .map(|p| (p.manifest.id.clone(), p.manifest.version.clone()))
+                .map(|p| (p.manifest.id.clone(), p.manifest.version.to_string()))
                 .unwrap_or_else(|_| (stem(&path), String::new()));
             let origin = (path.file_stem()?.to_str()? == id)
                 .then(|| crate::github_mods::origin(home, &id))

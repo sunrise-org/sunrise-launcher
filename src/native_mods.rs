@@ -2961,9 +2961,9 @@ mod tests {
         assert_eq!(
             (
                 found[0].manifest.id.as_str(),
-                found[0].manifest.version.as_str()
+                found[0].manifest.version.to_string()
             ),
-            ("hello", "0.1.0")
+            ("hello", "0.1.0".to_owned())
         );
         let many = dir("many");
         write_bundle(&many.join("b"), "beta", "fn hook() {}");
@@ -3067,7 +3067,15 @@ mod tests {
         write_native(&root, "example", A, B);
         assert_eq!(bundle_in(&root).unwrap().unwrap().manifest.id, "example");
         // Cargo's different name/version do not change mod identity.
-        assert_eq!(bundle_in(&root).unwrap().unwrap().manifest.version, "0.3.0");
+        assert_eq!(
+            bundle_in(&root)
+                .unwrap()
+                .unwrap()
+                .manifest
+                .version
+                .to_string(),
+            "0.3.0"
+        );
         fs::write(
             root.join(NATIVE_MANIFEST),
             project_manifest("../escape", "1", A, B),

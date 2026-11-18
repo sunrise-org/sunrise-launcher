@@ -124,7 +124,7 @@ impl LeftOut {
     pub(super) fn new(bundle: &Bundle, why: Why) -> Self {
         Self {
             id: bundle.manifest.id.clone(),
-            version: bundle.manifest.version.clone(),
+            version: bundle.manifest.version.to_string(),
             why,
             detail: None,
         }
