@@ -120,7 +120,7 @@ impl Entry {
 }
 
 /// The rows of Settings found by name, as their sections title them.
-const SETTINGS_ROWS: [(&str, Section); 17] = [
+const SETTINGS_ROWS: [(&str, Section); 16] = [
     ("While you play", Section::Game),
     ("Minecraft folder", Section::Game),
     ("Remove old game builds", Section::Game),
@@ -133,7 +133,6 @@ const SETTINGS_ROWS: [(&str, Section); 17] = [
     ("Show the cat", Section::Appearance),
     ("Native code", Section::Mods),
     ("Game files and worlds", Section::Storage),
-    ("World backups", Section::Storage),
     ("Downloads kept for reuse", Section::Storage),
     ("Keep at most", Section::Storage),
     ("Your data", Section::Privacy),
@@ -233,7 +232,7 @@ pub(crate) fn rank(query: &str, label: &str) -> Option<u32> {
 /// The rows for `query`, as indexes into `entries`, in the order they are listed: group after
 /// group, the group holding the best match first, each group's best matches first. With no
 /// query: the pages and the profiles, then the keyboard shortcuts, which are never crowded out.
-pub(crate) fn results(entries: &[Entry], query: &str) -> Vec<usize> {
+fn results(entries: &[Entry], query: &str) -> (Vec<usize>, usize) {
     let query = query.trim();
     if query.is_empty() {
         let of = |shortcuts: bool| {
@@ -248,10 +247,13 @@ pub(crate) fn results(entries: &[Entry], query: &str) -> Vec<usize> {
             })
         };
         let keys = of(true).count();
-        return of(false)
-            .take(SHOWN.saturating_sub(keys))
-            .chain(of(true))
-            .collect();
+        return (
+            of(false)
+                .take(SHOWN.saturating_sub(keys))
+                .chain(of(true))
+                .collect(),
+            of(false).count() + keys,
+        );
     }
     let mut groups: Vec<(Group, Vec<(u32, usize)>)> = Vec::new();
     for (i, entry) in entries.iter().enumerate() {
@@ -263,18 +265,22 @@ pub(crate) fn results(entries: &[Entry], query: &str) -> Vec<usize> {
             None => groups.push((entry.group, vec![(score, i)])),
         }
     }
+    let total = groups.iter().map(|(_, found)| found.len()).sum();
     for (_, found) in &mut groups {
         // Stable: rows that match equally keep the order they were gathered in.
         found.sort_by_key(|(score, _)| *score);
         found.truncate(PER_GROUP);
     }
     groups.sort_by_key(|(_, found)| found[0].0);
-    groups
-        .into_iter()
-        .flat_map(|(_, found)| found)
-        .map(|(_, i)| i)
-        .take(SHOWN)
-        .collect()
+    (
+        groups
+            .into_iter()
+            .flat_map(|(_, found)| found)
+            .map(|(_, i)| i)
+            .take(SHOWN)
+            .collect(),
+        total,
+    )
 }
 
 /// What a key did.
@@ -294,6 +300,7 @@ pub(crate) struct Search {
     entries: Vec<Entry>,
     /// The rows listed, as indexes into `entries`, and the one the keyboard is on.
     shown: Vec<usize>,
+    total: usize,
     index: usize,
     /// The worlds the entries were gathered with: the folder they are of, and how many.
     worlds: (Option<PathBuf>, usize),
@@ -314,7 +321,7 @@ impl Search {
 
     /// Lists the rows for the query as it is now, the keyboard on the first.
     fn list(&mut self) {
-        self.shown = results(&self.entries, self.query.text());
+        (self.shown, self.total) = results(&self.entries, self.query.text());
         self.index = 0;
     }
 
@@ -581,6 +588,19 @@ impl Launcher {
             self.search.index = index.min(self.search.shown.len().saturating_sub(1));
         }
         let rows: Vec<Entry> = self.search.rows().cloned().collect();
+        let count = if rows.len() < self.search.total {
+            trf(
+                "Showing {shown} of {total}",
+                &[
+                    ("shown", &rows.len().to_string()),
+                    ("total", &self.search.total.to_string()),
+                ],
+            )
+        } else if rows.len() == 1 {
+            tr("1 result").to_owned()
+        } else {
+            trf("{count} results", &[("count", &rows.len().to_string())])
+        };
         let index = self.search.index;
         let query = self.search.query.text().trim().to_string();
 
@@ -661,7 +681,8 @@ impl Launcher {
                     .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                     .cursor_pointer()
                     .when(n == index, |d| d.bg(rgb(palette().selected)))
-                    .child(self.search_art(&entry.art, &entry.label))
+                    .tooltip(crate::glass_ui::tip(entry.label.clone()))
+                    .child(self.search_art(&entry.art, &entry.label).flex_none())
                     .child(
                         div()
                             .flex_1()
@@ -672,7 +693,9 @@ impl Launcher {
                     )
                     .child(
                         div()
-                            .flex_none()
+                            .min_w_0()
+                            .max_w(relative(0.33))
+                            .truncate()
                             .text_size(px(tokens::SMALL))
                             .text_color(rgb(palette().muted))
                             // A shortcut's key reads as a key.
@@ -736,7 +759,18 @@ impl Launcher {
                     .border_color(rgb(palette().divider))
                     .text_size(px(tokens::CAPTION))
                     .text_color(rgb(palette().muted))
-                    .child(tr("↑ ↓ to move · Enter to open · Esc to close")),
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(12.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(tr("↑ ↓ to move · Enter to open · Esc to close")),
+                    )
+                    .child(div().flex_none().child(count)),
             );
         div()
             .id("search")
@@ -824,6 +858,7 @@ mod tests {
 
     fn listed(entries: &[Entry], query: &str) -> Vec<(Group, String)> {
         results(entries, query)
+            .0
             .into_iter()
             .map(|i| (entries[i].group, entries[i].label.clone()))
             .collect()
@@ -871,7 +906,8 @@ mod tests {
     fn the_shortcuts_are_listed_with_their_keys_however_many_profiles_there_are() {
         let mut entries = sample();
         entries.extend((0..40).map(|n| entry(Group::Profiles, &format!("Profile {n}"))));
-        let found = results(&entries, "");
+        let (found, total) = results(&entries, "");
+        assert!(total > found.len());
         assert_eq!(found.len(), SHOWN);
         let shown: Vec<&str> = found[SHOWN - 2..]
             .iter()
@@ -879,7 +915,7 @@ mod tests {
             .collect();
         assert_eq!(shown, [keys("K"), keys("B")]);
         // Found by name too, and each does what its key does.
-        let i = results(&entries, "sidebar")[0];
+        let i = results(&entries, "sidebar").0[0];
         assert!(entries[i].target == Target::Sidebar);
     }
 
@@ -923,7 +959,7 @@ mod tests {
         assert_eq!(labels(&entries, "priv"), ["Settings › Privacy"]);
         let found = listed(&entries, "language");
         assert_eq!(found, [(Group::Settings, "Language".to_string())]);
-        let i = results(&entries, "language")[0];
+        let i = results(&entries, "language").0[0];
         assert!(entries[i].target == Target::Section(Section::Launcher));
         assert_eq!(entries[i].hint, "Settings › Launcher");
     }
@@ -952,7 +988,9 @@ mod tests {
             let of = found.iter().filter(|(g, _)| *g == group).count();
             assert!((1..=PER_GROUP).contains(&of), "{group:?}: {of}");
         }
-        assert!(results(&entries, "").len() <= SHOWN);
+        assert!(results(&entries, "").0.len() <= SHOWN);
+        let (_, total) = results(&entries, "meadow");
+        assert_eq!(total, 122);
     }
 
     #[test]

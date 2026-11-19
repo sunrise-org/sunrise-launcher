@@ -769,11 +769,20 @@ fn game_releases_with(
     out
 }
 
-/// This launcher's releases, from [`LAUNCHER_REPO`] on GitHub only, or why they couldn't be read.
-fn launcher_releases() -> Result<Vec<Release>, String> {
-    launcher_releases_from(crate::github::json_optional(&format!(
-        "https://api.github.com/repos/{LAUNCHER_REPO}/releases?per_page=100"
-    )))
+/// Check the launcher's own release feed. An explicit check must ask GitHub even if the
+/// cache is fresh, and must not report old cached results as a successful check.
+pub fn refresh_launcher_update() -> Result<Option<Release>, String> {
+    Ok(launcher_update(&launcher_releases(
+        crate::github::CachePolicy::Revalidate,
+    )?))
+}
+
+/// This launcher's release feed, or why it couldn't be read.
+fn launcher_releases(policy: crate::github::CachePolicy) -> Result<Vec<Release>, String> {
+    launcher_releases_from(crate::github::json_optional_with_policy(
+        &format!("https://api.github.com/repos/{LAUNCHER_REPO}/releases?per_page=100"),
+        policy,
+    ))
 }
 
 /// The releases in the launcher's release list: only a list counts as checked (a repository with no release answers an empty one), never a 404 or anything else.
@@ -3083,7 +3092,12 @@ fn launcher_update_from(releases: &[Release], own: &str) -> Option<Release> {
 
 /// Both release lists and both update kinds: the game's releases published first, and neither feed's failure stopping the other's check.
 pub fn releases_and_updates(on_releases: impl FnOnce(Result<Vec<Release>, String>)) -> Updates {
-    releases_and_updates_with(release_list, installed, launcher_releases, on_releases)
+    releases_and_updates_with(
+        release_list,
+        installed,
+        || launcher_releases(crate::github::CachePolicy::PreferCache),
+        on_releases,
+    )
 }
 
 fn releases_and_updates_with(

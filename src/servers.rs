@@ -30,7 +30,7 @@ pub const EULA_URL: &str = "https://aka.ms/MinecraftEULA";
 // ----- The list of servers -----------------------------------------------------------------------
 
 /// One server the launcher knows: its name and its folder, on this computer or on `host`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct Entry {
     pub name: String,
     pub dir: PathBuf,
@@ -82,8 +82,13 @@ pub fn list() -> Vec<Entry> {
 }
 
 fn save_list(entries: &[Entry]) -> Result<(), String> {
-    let path = list_file();
-    fs::create_dir_all(backend::data_dir()).map_err(|e| e.to_string())?;
+    save_entries(&list_file(), entries)
+}
+
+fn save_entries(path: &Path, entries: &[Entry]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
     let text = serde_json::to_string_pretty(entries).map_err(|e| e.to_string())?;
     // A torn write would drop every server from the sidebar: write beside
     // the list, flush it, and rename it into place. Without the flush a
@@ -94,7 +99,7 @@ fn save_list(entries: &[Entry]) -> Result<(), String> {
         .and_then(|()| file.sync_all())
         .map_err(|e| e.to_string())?;
     drop(file);
-    fs::rename(&partial, &path).map_err(|e| e.to_string())
+    fs::rename(&partial, path).map_err(|e| e.to_string())
 }
 
 /// Adds a server folder to the list (once).
@@ -117,6 +122,84 @@ pub fn forget_remote(host: &str, dir: &Path) -> Result<(), String> {
     let mut all = list();
     all.retain(|e| e.host.as_deref() != Some(host) || e.dir != dir);
     save_list(&all)
+}
+
+/// What a reviewed unregister operation changed, and what it refused to unregister.
+pub struct Unregistered {
+    pub removed: usize,
+    pub refused: Vec<(Entry, String)>,
+}
+
+/// Unregisters reviewed local, stopped servers, without deleting any server files.
+pub fn forget_reviewed(reviewed: &[Entry]) -> Result<Unregistered, String> {
+    forget_reviewed_in(&list_file(), reviewed)
+}
+
+fn forget_reviewed_in(path: &Path, reviewed: &[Entry]) -> Result<Unregistered, String> {
+    let bytes = fs::read(path).map_err(|e| e.to_string())?;
+    let mut registered: Vec<Entry> = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    let mut report = Unregistered {
+        removed: 0,
+        refused: Vec::new(),
+    };
+    let mut locks = Vec::new();
+    for entry in reviewed {
+        if registered
+            .iter()
+            .filter(|candidate| *candidate == entry)
+            .count()
+            != 1
+        {
+            report.refused.push((
+                entry.clone(),
+                tr("The registered server changed. Review the list and try again.").into(),
+            ));
+            continue;
+        }
+        match can_unregister(entry) {
+            Ok(lock) => {
+                locks.extend(lock);
+                registered.retain(|e| e != entry);
+                report.removed += 1;
+            }
+            Err(why) => report.refused.push((entry.clone(), why)),
+        }
+    }
+    if report.removed > 0 {
+        save_entries(path, &registered)?;
+    }
+    // Hold the existing supervisor locks through the list write.
+    drop(locks);
+    Ok(report)
+}
+
+fn can_unregister(entry: &Entry) -> Result<Option<fs::File>, String> {
+    if entry.host.is_some() {
+        return Err(tr("Unregister remote servers from the launcher command line.").into());
+    }
+    if service_installed(&entry.dir) {
+        return Err(
+            tr("Turn off running in the background before unregistering this server.").into(),
+        );
+    }
+    let busy = || tr("Stop the server before unregistering it.").to_owned();
+    if status(&entry.dir).running() {
+        return Err(busy());
+    }
+    // No lock has been made when the supervisor has never started. Do not create files
+    // in somebody else's server folder just to take that folder off the launcher list.
+    match fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(entry.dir.join(".sunrise/lock"))
+    {
+        Ok(lock) => {
+            lock.try_lock().map_err(|_| busy())?;
+            Ok(Some(lock))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 /// Removes a registered, stopped server, retaining its files in the system trash.

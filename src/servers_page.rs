@@ -18,6 +18,7 @@ mod glass_server_dialog;
 #[path = "glass_servers.rs"]
 mod glass_servers;
 
+pub(crate) mod collection;
 mod hosting;
 #[path = "servers_format.rs"]
 mod servers_format;
@@ -60,9 +61,10 @@ pub(super) enum Field {
     /// The instance dialog's (`instances_page.rs`).
     InstanceName,
     InstanceGroup,
-    /// Home's Multiplayer section's (`multiplayer_page.rs`).
+    /// The Join page's Add server form.
     ServerName,
     ServerAddress,
+    HostSearch,
     /// The Launch panel's (`launch_page.rs`).
     PreLaunch,
     Wrapper,
@@ -116,6 +118,7 @@ pub(super) enum Event {
         dir: PathBuf,
         result: Result<(), String>,
     },
+    Unregistered(Result<servers::Unregistered, String>),
     Details {
         dir: PathBuf,
         config: Option<Value>,
@@ -159,30 +162,6 @@ impl Servers {
                 .values()
                 .any(|s| matches!(s.phase.as_str(), "running" | "starting" | "stopping"))
     }
-
-    /// A stopped server's line in the list: "Survival · stopped", as the mockup's. The open
-    /// server's mode is the one its settings show now, once read; the others' (and the open one's
-    /// until then) come from their files.
-    pub(super) fn stopped_line(&mut self, dir: &std::path::Path) -> String {
-        let open = Some(self.shown("world", "game_mode"))
-            .filter(|m| !m.is_empty() && self.open.as_deref() == Some(dir));
-        let mode = open.or_else(|| {
-            self.modes
-                .entry(dir.to_path_buf())
-                .or_insert_with(|| servers::game_mode(dir))
-                .clone()
-        });
-        match mode {
-            Some(mode) => {
-                let label = MODES
-                    .iter()
-                    .find(|(id, _)| *id == mode)
-                    .map_or(mode.clone(), |(_, label)| tr(label).to_string());
-                trf("{mode} · stopped", &[("mode", &label)])
-            }
-            None => tr("Stopped").to_string(),
-        }
-    }
 }
 
 pub(super) struct Servers {
@@ -191,8 +170,9 @@ pub(super) struct Servers {
     pub(super) open: Option<PathBuf>,
     tab: Tab,
     statuses: HashMap<PathBuf, Status>,
-    /// Each listed server's game mode from its `server.toml`, read once while it is listed.
-    modes: HashMap<PathBuf, Option<String>>,
+    selected_hosts: BTreeSet<Entry>,
+    host_thumb: crate::scrollbar::Thumb,
+    review_unregister: Option<Vec<Entry>>,
     polling: bool,
     polled: Option<Instant>,
     log: VecDeque<String>,
@@ -245,7 +225,9 @@ impl Servers {
             open: None,
             tab: Tab::Overview,
             statuses: HashMap::new(),
-            modes: HashMap::new(),
+            selected_hosts: BTreeSet::new(),
+            host_thumb: crate::scrollbar::Thumb::default(),
+            review_unregister: None,
             polling: false,
             polled: None,
             log: VecDeque::new(),
@@ -446,8 +428,6 @@ impl Launcher {
         }
         let s = &mut self.servers;
         s.open = Some(dir);
-        // Its settings may have changed while it was open.
-        s.modes.clear();
         s.tab = Tab::Overview;
         s.config = None;
         s.backups.clear();
@@ -603,7 +583,6 @@ impl Launcher {
                     Ok(entry) => {
                         s.create = None;
                         s.list = servers::list();
-                        s.modes.clear();
                         self.open_server(entry.dir.clone());
                         self.servers.note = Some(format!(
                             "{} is ready. Press Start, then give your friends the address below.",
@@ -633,7 +612,7 @@ impl Launcher {
                 s.busy = None;
                 s.confirm_delete = false;
                 s.list = servers::list();
-                s.modes.clear();
+                s.selected_hosts.retain(|entry| s.list.contains(entry));
                 s.statuses.remove(&dir);
                 STARTED_HERE
                     .lock()
@@ -646,6 +625,43 @@ impl Launcher {
                 match result {
                     Ok(()) => s.note = Some("Server moved to the trash.".into()),
                     Err(e) => s.problem = Some(Problem::plain(e)),
+                }
+                true
+            }
+            Event::Unregistered(result) => {
+                s.busy = None;
+                s.list = servers::list();
+                s.selected_hosts.retain(|entry| s.list.contains(entry));
+                self.side_servers = s.list.clone();
+                match result {
+                    Ok(report) => {
+                        let summary = match report.removed {
+                            1 => tr("Unregistered 1 server").to_owned(),
+                            count => trf(
+                                "Unregistered {count} servers",
+                                &[("count", &count.to_string())],
+                            ),
+                        };
+                        if report.refused.is_empty() {
+                            s.note = Some(summary);
+                        } else {
+                            let first = trf(
+                                "{removed} · {count} kept",
+                                &[
+                                    ("removed", &summary),
+                                    ("count", &report.refused.len().to_string()),
+                                ],
+                            );
+                            let details = report
+                                .refused
+                                .iter()
+                                .map(|(entry, why)| format!("{}: {why}", entry.name))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            s.problem = Some(Problem::plain(format!("{first}\n\n{details}")));
+                        }
+                    }
+                    Err(error) => s.problem = Some(Problem::plain(error)),
                 }
                 true
             }
@@ -768,8 +784,17 @@ impl Launcher {
         let Some(dir) = self.servers.open.clone() else {
             return;
         };
+        self.start_hosted(dir);
+    }
+
+    fn start_hosted(&mut self, dir: PathBuf) {
+        if self.servers.busy.is_some() {
+            return;
+        }
         STARTED_HERE.lock().unwrap().push(dir.clone());
-        self.servers.restart_needed.clear();
+        if self.servers.open.as_ref() == Some(&dir) {
+            self.servers.restart_needed.clear();
+        }
         let tx = self.tx.clone();
         self.server_job("Starting", move |log| {
             if let Some(api) = servers::Api::open(&dir) {
@@ -790,6 +815,10 @@ impl Launcher {
         let Some(dir) = self.servers.open.clone() else {
             return;
         };
+        self.stop_hosted(dir);
+    }
+
+    fn stop_hosted(&mut self, dir: PathBuf) {
         self.server_job("Stopping", move |log| {
             // The running server's API first; when it can't be reached or refuses, the CLI,
             // whose error is the job's.
@@ -799,6 +828,22 @@ impl Launcher {
                 return Ok(String::new());
             }
             servers::run_streamed(&dir, &["stop"], log).map(|_| String::new())
+        });
+    }
+
+    fn unregister_hosted(&mut self) {
+        let Some(reviewed) = self.servers.review_unregister.take() else {
+            return;
+        };
+        if self.servers.busy.is_some() || self.servers.creating {
+            return;
+        }
+        self.servers.busy = Some(tr("Unregistering servers…").into());
+        self.servers.problem = None;
+        self.servers.note = None;
+        let tx = self.servers.tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(Event::Unregistered(servers::forget_reviewed(&reviewed)));
         });
     }
 
@@ -1110,6 +1155,9 @@ impl Launcher {
                     }
                     Key::Enter => this.field_enter(f),
                     Key::Escape => {
+                        if matches!(f, Field::ServerName | Field::ServerAddress) {
+                            this.close_add_server();
+                        }
                         this.servers.confirm_delete = false;
                         if this.servers.create.is_some() && !this.servers.creating {
                             this.servers.create = None;
@@ -1152,8 +1200,11 @@ impl Launcher {
             Field::Port => self.save_port(),
             Field::Token => self.save_token(),
             Field::Email => self.invite_friend(),
-            Field::InstanceName | Field::InstanceGroup | Field::DeleteServer | Field::AccentHex => {
-            }
+            Field::InstanceName
+            | Field::InstanceGroup
+            | Field::DeleteServer
+            | Field::AccentHex
+            | Field::HostSearch => {}
             Field::PreLaunch | Field::Wrapper | Field::LaunchEnv | Field::PostExit => {
                 self.save_launch()
             }

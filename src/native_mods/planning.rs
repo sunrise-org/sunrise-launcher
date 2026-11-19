@@ -171,8 +171,7 @@ pub struct UpdateCheck {
     pub to: String,
     /// What the player reads: how many mods fit, and each one switched off and why.
     pub summary: String,
-    /// The worlds saved with a mod the update would switch off: then backing them up is the
-    /// other choice to staying.
+    /// The worlds saved with a mod the update would switch off.
     pub worlds: Vec<String>,
     /// A mod the tool refuses on any build: `summary` names it, and there is no update to take until it is fixed or removed.
     pub blocked: bool,

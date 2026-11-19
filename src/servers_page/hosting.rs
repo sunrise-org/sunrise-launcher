@@ -9,13 +9,6 @@ use crate::settings::{danger, group, hint, off, row, warning};
 use gpui::rgb;
 use std::rc::Rc;
 
-fn title(text: impl Into<SharedString>) -> Div {
-    div()
-        .text_size(px(tokens::DISPLAY))
-        .font_weight(FontWeight::BOLD)
-        .child(crate::selectable::selectable(text))
-}
-
 fn label(text: &'static str) -> Div {
     caption(tr(text))
 }
@@ -63,7 +56,7 @@ fn notice(color: u32, text: impl Into<SharedString>, actions: Div) -> Div {
         .px(px(16.))
         .py(px(12.))
         .child(dot(color))
-        .child(div().flex_1().min_w_0().child(text.into()))
+        .child(div().flex_1().min_w_0().line_clamp(2).child(text.into()))
         .child(actions.flex_none().flex().items_center().gap(px(6.)))
 }
 
@@ -189,8 +182,11 @@ impl Launcher {
         })
     }
 
-    /// Escape closes the Create dialog, or takes back a delete that was being confirmed.
+    /// Escape closes Create or cancels a pending removal.
     pub(crate) fn hosting_escape(&mut self) -> bool {
+        if self.servers.review_unregister.take().is_some() {
+            return true;
+        }
         if self.servers.confirm_delete {
             self.servers.confirm_delete = false;
             return true;
@@ -208,28 +204,25 @@ impl Launcher {
     pub(crate) fn hosting(&mut self, cx: &mut Context<Self>) -> AnyElement {
         if !self.servers.loaded {
             self.servers.list = servers::list();
-            self.servers.modes.clear();
+            self.servers
+                .selected_hosts
+                .retain(|entry| self.servers.list.contains(entry));
             self.servers.loaded = true;
-            if self.servers.open.is_none() && self.servers.list.len() == 1 {
-                let dir = self.servers.list[0].dir.clone();
-                self.open_server(dir);
-            }
         }
         let open = self
             .servers
             .open
             .clone()
             .filter(|dir| self.servers.list.iter().any(|e| &e.dir == dir));
-        let body = match open {
-            Some(dir) => self.host_server(&dir, cx),
-            None => {
-                self.servers.open = None;
-                self.host_list(cx)
-            }
+        let Some(dir) = open else {
+            self.servers.open = None;
+            return self.host_list(cx).into_any_element();
         };
+        let body = self.host_server(&dir, cx);
         div()
             .id("alt-hosting-scroll")
-            .size_full()
+            .flex_1()
+            .min_h_0()
             .overflow_y_scroll()
             .track_scroll(&crate::frame::scrolls("host"))
             .px(px(24.))
@@ -257,6 +250,18 @@ impl Launcher {
                     }),
                 );
         }
+        let summary = p.message.lines().next().unwrap_or_default().to_owned();
+        if summary != p.message || summary.chars().count() > 60 {
+            actions = actions.child(self.host_button(
+                "host-problem-details",
+                tr("Details…"),
+                true,
+                cx,
+                move |this, _| {
+                    this.open_notice(p.message.clone(), None);
+                },
+            ));
+        }
         actions = actions.child(self.host_button(
             "host-problem-dismiss",
             tr("Dismiss"),
@@ -264,7 +269,7 @@ impl Launcher {
             cx,
             |this, _| this.servers.problem = None,
         ));
-        Some(notice(palette().danger, p.message, actions))
+        Some(notice(palette().danger, summary, actions))
     }
 
     /// The Servers page's fixes; preparing the game files is Play's work in this look.
@@ -281,95 +286,263 @@ impl Launcher {
     }
 
     fn host_list(&mut self, cx: &mut Context<Self>) -> Div {
-        let creating = self.servers.creating;
-        let mut page = div()
+        let narrow = self.servers_narrow();
+        let query = self.servers.value(Field::HostSearch).trim().to_lowercase();
+        let visible: Vec<_> = self
+            .servers
+            .list
+            .iter()
+            .filter(|entry| {
+                entry.name.to_lowercase().contains(&query)
+                    || entry.dir.to_string_lossy().to_lowercase().contains(&query)
+                    || entry
+                        .host
+                        .as_ref()
+                        .is_some_and(|host| host.to_lowercase().contains(&query))
+            })
+            .cloned()
+            .collect();
+        let idle = !self.servers.creating && self.servers.busy.is_none();
+        let toolbar = collection::toolbar()
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(hint(tr(
-                        "Host a world for your friends on this computer. Create a server, press Start, and give them the address.",
-                    ))),
+                self.host_field(
+                    Field::HostSearch,
+                    tr("Search hosted servers"),
+                    if narrow { 195. } else { 420. },
+                    cx,
+                )
+                .flex_1()
+                .min_w_0()
+                .h(px(36.)),
             )
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(primary(self.host_button(
-                        "host-create",
-                        tr("Create a server"),
-                        true,
-                        cx,
-                        |this, cx| this.open_create(cx),
-                    )))
-                    .child(self.host_button(
-                        "host-add",
-                        tr("Add a server folder…"),
-                        !creating,
-                        cx,
-                        |this, cx| this.add_server_folder(cx),
-                    )),
+                self.host_button("host-add", tr("Add folder…"), idle, cx, |this, cx| {
+                    this.add_server_folder(cx)
+                })
+                .h(px(36.)),
             )
-            .children(
-                self.host_problem(cx)
-                    .filter(|_| self.servers.create.is_none()),
+            .child(
+                primary(
+                    self.host_button("host-create", "", idle, cx, |this, cx| this.open_create(cx)),
+                )
+                .h(px(36.))
+                .gap(px(6.))
+                .child(crate::glass_ui::icon(
+                    "plus-sign",
+                    14.,
+                    rgb(palette().background).into(),
+                ))
+                .child(tr("Create server")),
             );
-        if self.servers.list.is_empty() {
-            return page.child(card().p(px(20.)).child(hint(tr("No server yet."))));
-        }
-        let mut rows = Vec::new();
-        for (i, e) in self.servers.list.clone().into_iter().enumerate() {
-            let status = self
-                .servers
-                .statuses
-                .get(&e.dir)
-                .cloned()
-                .unwrap_or_else(Status::stopped);
-            let detail = if status.running() {
-                format!(
-                    "{} · {}",
-                    phase_label(&status),
+        let selection = if let Some(remove) = &self.servers.review_unregister {
+            collection::confirmation(
+                "host-unregister-review",
+                if remove.len() == 1 {
+                    tr("Unregister this server? Its files stay.").into()
+                } else {
                     trf(
-                        "{online} of {max} players",
-                        &[
-                            ("online", &status.players.len().to_string()),
-                            ("max", &status.max_players.unwrap_or(0).to_string()),
-                        ]
+                        "Unregister {count} servers? Their files stay.",
+                        &[("count", &remove.len().to_string())],
                     )
+                },
+                tr("Unregister"),
+                |this| this.servers.review_unregister = None,
+                Launcher::unregister_hosted,
+                cx,
+            )
+        } else {
+            let selected = self.servers.selected_hosts.len();
+            let all = !visible.is_empty()
+                && visible
+                    .iter()
+                    .all(|entry| self.servers.selected_hosts.contains(entry));
+            let check = collection::check("host-select-all", all, tr("Select all shown servers"));
+            let check = if idle && !visible.is_empty() {
+                let visible = visible.clone();
+                check.on_click(cx.listener(move |this, _, _, cx| {
+                    if all {
+                        for entry in &visible {
+                            this.servers.selected_hosts.remove(entry);
+                        }
+                    } else {
+                        this.servers.selected_hosts.extend(visible.iter().cloned());
+                    }
+                    cx.notify();
+                }))
+            } else {
+                check.opacity(0.45).tab_stop(false)
+            };
+            let label = if selected > 0 {
+                trf("{count} selected", &[("count", &selected.to_string())])
+            } else if visible.len() != self.servers.list.len() {
+                trf(
+                    "{shown} of {total} hosted servers",
+                    &[
+                        ("shown", &visible.len().to_string()),
+                        ("total", &self.servers.list.len().to_string()),
+                    ],
+                )
+            } else if visible.len() == 1 {
+                tr("1 hosted server").into()
+            } else {
+                trf(
+                    "{count} hosted servers",
+                    &[("count", &visible.len().to_string())],
+                )
+            };
+            let actions = if selected > 0 && idle {
+                collection::bulk_actions(
+                    "host-selection",
+                    tr("Unregister selected"),
+                    |this| this.servers.selected_hosts.clear(),
+                    |this| {
+                        this.servers.review_unregister =
+                            Some(this.servers.selected_hosts.iter().cloned().collect())
+                    },
+                    cx,
                 )
             } else {
-                format!("{} · {}", self.servers.stopped_line(&e.dir), short(&e.dir))
-            };
-            let dir = e.dir.clone();
-            rows.push(
                 div()
-                    .flex()
-                    .items_center()
-                    .gap(px(12.))
-                    .child(dot(phase_color(&status)))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.))
-                            .child(div().font_weight(FontWeight::SEMIBOLD).child(e.name))
-                            .child(hint(detail)),
-                    )
-                    .child(self.host_button(
-                        ElementId::named_usize("host-open", i),
-                        tr("Open"),
-                        true,
-                        cx,
-                        move |this, _| this.open_server(dir.clone()),
-                    )),
+            };
+            collection::selection_bar(check, label, actions)
+        };
+        let mut controls = div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .child(toolbar)
+            .child(selection);
+        if let Some(problem) = self
+            .host_problem(cx)
+            .filter(|_| self.servers.create.is_none())
+        {
+            controls = controls.child(div().px(px(12.)).pb(px(8.)).child(problem));
+        } else if let Some(note) = self.servers.busy.as_ref().or(self.servers.note.as_ref()) {
+            controls = controls.child(hint(tr(note)).truncate().px(px(12.)).pb(px(8.)));
+        }
+        let mut list = collection::rows("host-list");
+        if visible.is_empty() {
+            list = list.child(
+                collection::toolbar()
+                    .border_t_1()
+                    .border_color(rgb(palette().divider))
+                    .child(hint(if query.is_empty() {
+                        tr("No hosted servers")
+                    } else {
+                        tr("No servers match this search")
+                    }))
+                    .children((!query.is_empty()).then(|| {
+                        button("host-clear-search", tr("Clear search")).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.servers.text(Field::HostSearch).set(String::new());
+                                cx.notify();
+                            },
+                        ))
+                    })),
             );
         }
-        page = page.child(group(rows));
-        page
+        for (i, entry) in visible.into_iter().enumerate() {
+            let status = self.servers.statuses.get(&entry.dir);
+            let (first, second) = match (entry.host.is_some(), status) {
+                (true, _) => (tr("Remote").to_owned(), None),
+                (_, None) => (tr("Checking…").to_owned(), None),
+                (_, Some(status)) => {
+                    let players = (status.phase == "running").then(|| {
+                        let online = status.players.len().to_string();
+                        match status.max_players {
+                            Some(max) => trf(
+                                "{online}/{max} players",
+                                &[("online", &online), ("max", &max.to_string())],
+                            ),
+                            None => trf("{count} playing", &[("count", &online)]),
+                        }
+                    });
+                    (
+                        tr(match status.phase.as_str() {
+                            "running" => "Running",
+                            "starting" => "Starting",
+                            "restarting" => "Restarting",
+                            "stopping" => "Stopping",
+                            _ => "Stopped",
+                        })
+                        .to_owned(),
+                        players,
+                    )
+                }
+            };
+            let checked = self.servers.selected_hosts.contains(&entry);
+            let choose = collection::check(
+                ("host-select", i),
+                checked,
+                trf("Select {name}", &[("name", &entry.name)]),
+            );
+            let choose = if idle {
+                let entry = entry.clone();
+                choose.on_click(cx.listener(move |this, _, _, cx| {
+                    this.servers.review_unregister = None;
+                    if !this.servers.selected_hosts.remove(&entry) {
+                        this.servers.selected_hosts.insert(entry.clone());
+                    }
+                    cx.notify();
+                }))
+            } else {
+                choose.opacity(0.45).tab_stop(false)
+            };
+            let manage = self.host_button(
+                ("host-manage", i),
+                tr("Manage"),
+                entry.host.is_none(),
+                cx,
+                {
+                    let dir = entry.dir.clone();
+                    move |this, _| this.open_server(dir.clone())
+                },
+            );
+            let power = status.filter(|_| !narrow && entry.host.is_none()).map(|s| {
+                let running = s.running();
+                let label = if running { tr("Stop") } else { tr("Start") };
+                let can = idle && matches!(s.phase.as_str(), "running" | "stopped");
+                let dir = entry.dir.clone();
+                self.host_button(("host-power", i), label, can, cx, move |this, _| {
+                    if running {
+                        this.stop_hosted(dir.clone());
+                    } else {
+                        this.start_hosted(dir.clone());
+                    }
+                })
+                .min_w(px(58.))
+            });
+            let unregister = collection::remove(("host-unregister", i), tr("Unregister server"));
+            let unregister = if idle {
+                let entry = entry.clone();
+                unregister.on_click(cx.listener(move |this, _, _, cx| {
+                    this.servers.review_unregister = Some(vec![entry.clone()]);
+                    cx.notify();
+                }))
+            } else {
+                unregister.opacity(0.45).tab_stop(false)
+            };
+            let location = entry.host.as_ref().map_or_else(
+                || entry.dir.display().to_string(),
+                |host| format!("{host}:{}", entry.dir.display()),
+            );
+            list = list.child(
+                collection::row(narrow)
+                    .when(checked, |d| d.bg(rgb(palette().selected)))
+                    .child(choose)
+                    .child(crate::join::tile(&entry.name, 32.))
+                    .child(collection::identity(
+                        ("host-identity", i),
+                        entry.name,
+                        location,
+                    ))
+                    .child(collection::status(narrow, first, second))
+                    .children(power)
+                    .child(manage)
+                    .child(unregister),
+            );
+        }
+        collection::table(controls, list, "host-list", &self.servers.host_thumb, cx)
     }
 
     fn host_server(&mut self, dir: &Path, cx: &mut Context<Self>) -> Div {
@@ -424,9 +597,11 @@ impl Launcher {
             },
         );
         let folder = dir.to_path_buf();
+        let narrow = self.servers_narrow();
         let head = div()
             .flex()
-            .items_center()
+            .when(narrow, |d| d.flex_col().items_start())
+            .when(!narrow, |d| d.items_center())
             .gap(px(12.))
             .child(
                 div()
@@ -435,7 +610,16 @@ impl Launcher {
                     .flex()
                     .flex_col()
                     .gap(px(4.))
-                    .child(title(name))
+                    .max_w_full()
+                    .child(
+                        div()
+                            .id("host-title")
+                            .truncate()
+                            .text_size(px(tokens::DISPLAY))
+                            .font_weight(FontWeight::BOLD)
+                            .tooltip(crate::glass_ui::tip(name.clone()))
+                            .child(name),
+                    )
                     .child(
                         div()
                             .flex()
@@ -465,9 +649,8 @@ impl Launcher {
                             .text_size(px(tokens::BODY)),
                     ),
             );
-        let mut page = div();
-        if self.servers.list.len() > 1 {
-            page = page.child(
+        let mut page = div()
+            .child(
                 div().flex().child(
                     div()
                         .id("host-back")
@@ -488,9 +671,8 @@ impl Launcher {
                             cx.notify();
                         })),
                 ),
-            );
-        }
-        page = page.child(head);
+            )
+            .child(head);
         if status.crashes > 0 {
             let last = status
                 .last_crash
@@ -518,28 +700,43 @@ impl Launcher {
             page = page.child(notice(palette().success, note, div()));
         }
         if running && !self.servers.restart_needed.is_empty() {
-            let names: Vec<String> = self
+            let names: Vec<_> = self
                 .servers
                 .restart_needed
                 .iter()
-                .map(|k| tr(setting_name(k)).to_string())
+                .map(|key| tr(setting_name(key)))
                 .collect();
+            let summary = match &names[..] {
+                [name] => trf("Restart to apply: {setting}", &[("setting", name)]),
+                _ => trf(
+                    "Restart to apply {count} settings.",
+                    &[("count", &names.len().to_string())],
+                ),
+            };
+            let detail = format!("{summary}\n\n{}", names.join("\n"));
             page = page.child(notice(
                 palette().warning,
-                trf(
-                    "Saved. Restart to apply: {settings}.",
-                    &[("settings", &names.join(", "))],
-                ),
-                div().child(self.host_button(
-                    "host-restart-apply",
-                    tr("Restart now"),
-                    idle,
-                    cx,
-                    |this, _| {
-                        this.servers.restart_needed.clear();
-                        this.restart_server();
-                    },
-                )),
+                summary,
+                div()
+                    .child(self.host_button(
+                        "host-restart-details",
+                        tr("Details…"),
+                        true,
+                        cx,
+                        move |this, _| {
+                            this.open_details(detail.clone());
+                        },
+                    ))
+                    .child(self.host_button(
+                        "host-restart-apply",
+                        tr("Restart now"),
+                        idle,
+                        cx,
+                        |this, _| {
+                            this.servers.restart_needed.clear();
+                            this.restart_server();
+                        },
+                    )),
             ));
         }
         let chosen = self.servers.tab;
@@ -1532,27 +1729,41 @@ impl Launcher {
         } else if worlds.is_empty() {
             hint(tr("No single-player world yet. Choose New world."))
         } else {
-            let mut list = div().flex().flex_col().gap(px(2.));
-            for (i, (name, path)) in worlds.into_iter().take(8).enumerate() {
+            let count = worlds.len();
+            let mut list = div()
+                .id("host-create-worlds")
+                .flex_none()
+                .flex()
+                .flex_col()
+                .min_h_0()
+                .max_h(px(144.))
+                .overflow_y_scroll()
+                .track_scroll(&crate::frame::scrolls("host-create-worlds"))
+                .on_scroll(|_, _, cx| cx.stop_propagation());
+            for (i, (name, path)) in worlds.into_iter().enumerate() {
                 let chosen = copy.as_ref() == Some(&path);
                 list = list.child(
                     div()
                         .id(ElementId::named_usize("host-create-copy", i))
+                        .flex_none()
                         .tab_index(0)
                         .seen()
+                        .aria_label(name.clone())
+                        .tooltip(crate::glass_ui::tip(name.clone()))
                         .border_1()
                         .border_color(gpui::transparent_black())
                         .focus_visible(|s| s.border_color(rgb(palette().focus)))
                         .flex()
                         .items_center()
                         .gap(px(10.))
-                        .h(px(tokens::CONTROL))
+                        .h(px(32.))
                         .px(px(10.))
                         .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                         .cursor_pointer()
                         .when(chosen, |d| d.bg(rgb(palette().selected)))
                         .child(
                             div()
+                                .flex_none()
                                 .size(px(12.))
                                 .rounded(crate::tokens::r(crate::tokens::R_SMALL))
                                 .border_1()
@@ -1563,7 +1774,7 @@ impl Launcher {
                                 }))
                                 .when(chosen, |d| d.bg(rgb(palette().text))),
                         )
-                        .child(name)
+                        .child(div().flex_1().min_w_0().truncate().child(name))
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             if let Some(c) = &mut this.servers.create {
                                 c.copy = Some(path.clone());
@@ -1572,9 +1783,18 @@ impl Launcher {
                         })),
                 );
             }
-            list.child(hint(tr(
-                "The server gets a copy: your single-player world stays as it is.",
-            )))
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .child(caption(&trf(
+                    "Your worlds · {count}",
+                    &[("count", &count.to_string())],
+                )))
+                .child(list)
+                .child(hint(tr(
+                    "The server gets a copy: your single-player world stays as it is.",
+                )))
         };
         let step = |id: &'static str, sign: &'static str, delta: i32, cx: &mut Context<Self>| {
             button(id, sign).w(px(32.)).px(px(0.)).on_click(cx.listener(
@@ -1611,6 +1831,7 @@ impl Launcher {
             cx,
         ));
         if friends_only {
+            let count = friends.len();
             let mut names = div().flex().flex_wrap().items_center().gap(px(6.));
             for (i, friend) in friends.into_iter().enumerate() {
                 names = names.child(
@@ -1627,8 +1848,15 @@ impl Launcher {
                         .border_color(rgb(palette().line))
                         .text_size(px(tokens::LABEL))
                         .cursor_pointer()
-                        .child(friend)
-                        .child(div().text_color(rgb(palette().muted)).child("×"))
+                        .max_w_full()
+                        .tooltip(crate::glass_ui::tip(friend.clone()))
+                        .child(div().min_w_0().truncate().child(friend))
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_color(rgb(palette().muted))
+                                .child("×"),
+                        )
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             if let Some(c) = &mut this.servers.create {
                                 if i < c.friends.len() {
@@ -1640,12 +1868,21 @@ impl Launcher {
                 );
             }
             who = who
-                .child(names.child(self.host_field(
-                    Field::Players,
-                    tr("A player's name, then Enter"),
-                    240.,
-                    cx,
+                .child(caption(&trf(
+                    "Invited players · {count}",
+                    &[("count", &count.to_string())],
                 )))
+                .children((count > 0).then(|| {
+                    div()
+                        .id("host-create-invites")
+                        .min_h_0()
+                        .max_h(px(104.))
+                        .overflow_y_scroll()
+                        .track_scroll(&crate::frame::scrolls("host-create-invites"))
+                        .on_scroll(|_, _, cx| cx.stop_propagation())
+                        .child(names)
+                }))
+                .child(self.host_field(Field::Players, tr("A player's name, then Enter"), 240., cx))
                 .child(hint(tr(
                     "The first one becomes an operator. Add more later under Players.",
                 )));
@@ -1737,12 +1974,31 @@ impl Launcher {
             ))
             .child(part("Most players at once", players))
             .child(part("Who can join", who))
-            .child(eula_line);
+            .child(eula_line)
+            .children(self.servers.problem.as_ref().filter(|_| !creating).map(|p| {
+                div()
+                    .id("host-create-problem")
+                    .flex_none()
+                    .min_h_0()
+                    .max_h(px(96.))
+                    .overflow_y_scroll()
+                    .track_scroll(&crate::frame::scrolls("host-create-problem"))
+                    .on_scroll(|_, _, cx| cx.stop_propagation())
+                    .child(warning(p.message.clone()))
+            }));
         let said = if creating {
             let last = self.servers.job_log.back().cloned().unwrap_or_default();
-            hint(format!("{} {last}", tr("Creating…")))
+            div()
+                .text_size(px(tokens::LABEL))
+                .text_color(rgb(palette().muted))
+                .line_clamp(2)
+                .child(format!("{} {last}", tr("Creating…")))
         } else if let Some(p) = &self.servers.problem {
-            warning(p.message.clone())
+            div()
+                .text_size(px(tokens::LABEL))
+                .text_color(rgb(palette().danger))
+                .line_clamp(2)
+                .child(p.message.clone())
         } else if eula_missing {
             warning(tr("Tick the EULA box to create the server."))
         } else {

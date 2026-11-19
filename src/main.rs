@@ -162,6 +162,13 @@ enum SelfUpdate {
     Failed(String),
 }
 
+#[derive(Clone, Copy)]
+enum UpdateCheck {
+    Startup,
+    Scheduled,
+    ManualLauncher,
+}
+
 /// The last game the launcher started ended badly: what it left behind.
 #[derive(Clone)]
 struct Crash {
@@ -200,7 +207,8 @@ struct Launcher {
     long_list: cull::Cull,
     updates: Updates,
     checked: Option<Instant>,
-    update_error: Option<String>,
+    checking_updates: bool,
+    launcher_checked_now: Option<Instant>,
     self_update: SelfUpdate,
     /// The Sunrise version being installed as an update: whether it becomes the selected one is
     /// judged when it finishes.
@@ -238,7 +246,7 @@ struct Launcher {
     storage_revoke_error: Option<String>,
     /// The build asked for (its base and back-up choice) while the permission question is open:
     /// Allow resumes it, not a plain build.
-    native_consent_build: Option<(Option<String>, bool)>,
+    native_consent_build: Option<(Option<String>, Vec<String>)>,
     install_error: Option<(String, String)>,
     /// Import a game build (`build_import`, on the Versions page): whether one is being copied in,
     /// and why the last one failed.

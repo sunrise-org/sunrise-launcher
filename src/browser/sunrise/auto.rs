@@ -16,7 +16,7 @@
 //! file and saving the list) is rolled back from it then.
 use super::{install_version_guarded, Index};
 use crate::browser::{installed, Kind, SourceId};
-use crate::i18n::trf;
+use crate::i18n::{tr, trf};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -52,18 +52,50 @@ pub struct Report {
 }
 
 impl Report {
-    /// The lines the launcher shows: nothing when nothing happened.
-    pub fn lines(&self) -> Vec<String> {
-        let mut out = Vec::new();
+    /// The status strip's summary first, then the reviewed identities and reasons for Details.
+    pub fn notice(self) -> Option<Result<String, String>> {
+        if self.updated.is_empty() && self.held.is_empty() && self.failed.is_empty() {
+            return None;
+        }
+        let mut summary = Vec::new();
         if !self.updated.is_empty() {
-            out.push(trf(
-                "Updated automatically: {list}.",
-                &[("list", &self.updated.join(", "))],
+            summary.push(match self.updated.len() {
+                1 => tr("Updated 1 mod automatically").to_owned(),
+                count => trf(
+                    "Updated {count} mods automatically",
+                    &[("count", &count.to_string())],
+                ),
+            });
+        }
+        if !self.held.is_empty() {
+            summary.push(trf(
+                "{count} waiting for review",
+                &[("count", &self.held.len().to_string())],
             ));
         }
-        out.extend(self.held.iter().cloned());
-        out.extend(self.failed.iter().cloned());
-        out
+        if !self.failed.is_empty() {
+            summary.push(trf(
+                "{count} failed",
+                &[("count", &self.failed.len().to_string())],
+            ));
+        }
+        let ok = self.held.is_empty() && self.failed.is_empty();
+        let mut details = vec![summary.join(" · ")];
+        for (label, lines) in [
+            (tr("Updated:"), self.updated),
+            (tr("Waiting for review:"), self.held),
+            (tr("Failed:"), self.failed),
+        ] {
+            if !lines.is_empty() {
+                details.extend([String::new(), label.into()]);
+                details.extend(lines);
+            }
+        }
+        Some(if ok {
+            Ok(details.join("\n"))
+        } else {
+            Err(details.join("\n"))
+        })
     }
 }
 

@@ -76,7 +76,8 @@ impl Launcher {
             long_list: cull::Cull::default(),
             updates: Updates::default(),
             checked: None,
-            update_error: None,
+            checking_updates: false,
+            launcher_checked_now: None,
             // The installer the last Update started could not put the new launcher in place.
             self_update: sunrise_launcher::update_handoff::take_failure()
                 .map_or(SelfUpdate::Idle, |e| SelfUpdate::Stuck(Some(e))),
@@ -244,7 +245,7 @@ impl Launcher {
         });
         this.load_profile_heads();
         this.load_auth_statuses(true);
-        this.fetch_startup_releases();
+        this.check_updates(UpdateCheck::Startup);
         this.fetch_links();
         telemetry::send_in_background();
         telemetry::watch_playing(this.tx.clone());
@@ -351,11 +352,29 @@ impl Launcher {
         }
     }
 
-    pub(crate) fn check_updates(&mut self) {
-        self.checked = Some(Instant::now());
+    pub(crate) fn check_updates(&mut self, check: UpdateCheck) {
+        if self.checking_updates {
+            return;
+        }
+        self.checking_updates = true;
+        if !matches!(check, UpdateCheck::ManualLauncher) {
+            self.checked = Some(Instant::now());
+        }
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(Msg::Updates(Box::new(backend::check_updates())));
+            let message = match check {
+                UpdateCheck::Startup => {
+                    let updates = backend::releases_and_updates(|releases| {
+                        let _ = tx.send(Msg::Releases(releases));
+                    });
+                    Msg::Updates(Box::new(updates))
+                }
+                UpdateCheck::Scheduled => Msg::Updates(Box::new(backend::check_updates())),
+                UpdateCheck::ManualLauncher => {
+                    Msg::LauncherChecked(Box::new(backend::refresh_launcher_update()))
+                }
+            };
+            let _ = tx.send(message);
         });
     }
 
@@ -454,17 +473,6 @@ impl Launcher {
             .entry(version.to_owned())
             .or_insert_with(|| native_status::Build::read(version))
             .clone()
-    }
-
-    pub(crate) fn fetch_startup_releases(&mut self) {
-        self.checked = Some(Instant::now());
-        let tx = self.tx.clone();
-        std::thread::spawn(move || {
-            let updates = backend::releases_and_updates(|releases| {
-                let _ = tx.send(Msg::Releases(releases));
-            });
-            let _ = tx.send(Msg::Updates(Box::new(updates)));
-        });
     }
 
     pub(crate) fn fetch_links(&self) {

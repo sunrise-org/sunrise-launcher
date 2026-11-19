@@ -1,6 +1,5 @@
 //! The status strip: what Play is doing or what went wrong, with its one action, on every page
-//! where Play itself is not in view. Home says the same beside Play, so the strip is drawn
-//! there only once Home is scrolled past Play (`HomeState::play_in_view`): never both at once.
+//! except Home. Its fixed Play bar always shows this feedback.
 //! It is not drawn at all while there is nothing to tell (`launch_state::View::strip`).
 use super::*;
 use crate::frame::button;
@@ -11,7 +10,14 @@ use gpui::rgb;
 impl Launcher {
     /// A registry warning can coexist with progress, Stop, or a separate launch error.
     pub(super) fn registry_notice_strip(&self, cx: &mut Context<Self>) -> Option<Div> {
-        let line = self.play_registry_notices.first()?.clone();
+        let line = match self.play_registry_notices.as_slice() {
+            [] => return None,
+            [notice] => notice.clone(),
+            notices => trf(
+                "{count} registry notices",
+                &[("count", &notices.len().to_string())],
+            ),
+        };
         Some(
             strip()
                 .child(
@@ -21,17 +27,15 @@ impl Launcher {
                         .rounded_full()
                         .bg(rgb(palette().warning)),
                 )
-                .child(div().flex_1().min_w_0().child(line))
-                .when(self.play_registry_notices.len() > 1, |d| {
-                    d.child(
-                        button("play-registry-details", tr("Details…")).on_click(cx.listener(
-                            |this, _, _, cx| {
-                                this.open_notice(this.play_registry_notices.join("\n"), None);
-                                cx.notify();
-                            },
-                        )),
-                    )
-                })
+                .child(div().flex_1().min_w_0().truncate().child(line))
+                .child(
+                    button("play-registry-details", tr("Details…")).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.open_details(this.play_registry_notices.join("\n"));
+                            cx.notify();
+                        },
+                    )),
+                )
                 .child(
                     button("play-registry-dismiss", tr("Dismiss")).on_click(cx.listener(
                         |this, _, _, cx| {
@@ -45,14 +49,10 @@ impl Launcher {
 
     /// The strip, for the frame to place above the page: one row, as wide as it is given.
     pub(crate) fn status_strip(&mut self, cx: &mut Context<Self>) -> Option<Div> {
-        let home = self.ui.page == crate::frame::Page::Home;
-        if home {
-            if self.ui.home.play_in_view() {
-                return None;
-            }
-        } else {
-            self.refresh_home_inventory(cx);
+        if self.ui.page == crate::frame::Page::Home {
+            return None;
         }
+        self.refresh_home_inventory(cx);
         let view = self.launch_facts().view();
         let Some((says, act)) = view.strip() else {
             // Nothing runs or failed. A build that just ended in the background is said here
@@ -119,10 +119,6 @@ impl Launcher {
                 .children(bar)
                 .child(
                     button(id, act.label()).on_click(cx.listener(move |this, _, _, cx| {
-                        if home && act == StripAct::Home {
-                            // Already there: back up to Play.
-                            crate::frame::scrolls("home").set_offset(gpui::Point::default());
-                        }
                         this.strip_act(&act);
                         cx.notify();
                     })),

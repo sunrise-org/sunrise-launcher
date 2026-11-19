@@ -146,15 +146,32 @@ impl Launcher {
                             Err(e) => refused.push(e),
                         }
                     }
-                    let mut parts = Vec::new();
-                    if !added.is_empty() {
-                        parts.push(trf("Imported {name}.", &[("name", &added.join(", "))]));
+                    let mut summary = match added.len() {
+                        1 => tr("Imported 1 pack").to_owned(),
+                        count => trf("Imported {count} packs", &[("count", &count.to_string())]),
+                    };
+                    let ok = refused.is_empty();
+                    if !ok {
+                        summary = trf(
+                            "{added} · {failed} failed",
+                            &[("added", &summary), ("failed", &refused.len().to_string())],
+                        );
                     }
-                    if refused.is_empty() {
-                        Ok(parts.join(" "))
+                    let mut details = vec![summary];
+                    if !added.is_empty() {
+                        details.push(String::new());
+                        details.push(tr("Imported:").into());
+                        details.extend(added);
+                    }
+                    if !ok {
+                        details.push(String::new());
+                        details.push(tr("Failed:").into());
+                        details.extend(refused);
+                    }
+                    if ok {
+                        Ok(details.join("\n"))
                     } else {
-                        parts.extend(refused);
-                        Err(parts.join("\n"))
+                        Err(details.join("\n"))
                     }
                 })
                 .await;

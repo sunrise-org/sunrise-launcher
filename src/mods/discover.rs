@@ -108,45 +108,84 @@ impl Launcher {
         );
         let make_label = f.make.map_or(tr("Any kind"), Make::label);
         // A menu opens under its dropdown, from the side the dropdown sits on.
-        let popover = |options: Vec<MenuOption>, from_left: bool, cx: &mut Context<Self>| {
+        let popover = |options: Vec<MenuOption>, menu: Menu, cx: &mut Context<Self>| {
+            let from_left = menu != Menu::Sort;
+            let category = menu == Menu::Category;
+            let count = options.len().saturating_sub(1);
+            let rows = options
+                .into_iter()
+                .enumerate()
+                .map(|(i, (label, on, pick))| {
+                    div()
+                        .id(("alt-menu-option", i))
+                        .reach()
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .h(px(30.))
+                        .px(px(10.))
+                        .text_size(px(tokens::LABEL))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(c(palette().hover)))
+                        .when(on, |d| d.font_weight(FontWeight::SEMIBOLD))
+                        .tooltip(crate::glass_ui::tip(label.clone()))
+                        .child(div().min_w_0().truncate().child(label))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            pick(this);
+                            this.ui.mods.menu = None;
+                            cx.notify();
+                        }))
+                });
+            let list = div()
+                .id("alt-menu-list")
+                .flex()
+                .flex_col()
+                .min_h_0()
+                .when(category, |d| {
+                    d.overflow_y_scroll()
+                        .track_scroll(&crate::frame::scrolls("alt-category-options"))
+                        .on_scroll(|_, _, cx| cx.stop_propagation())
+                })
+                .children(rows);
+            let card = div()
+                .id("alt-filter-popup")
+                .w(px(if category { 216. } else { 200. }))
+                .max_h(px(256.))
+                .p(px(6.))
+                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                .border_1()
+                .border_color(c(palette().line))
+                .bg(c(palette().raised))
+                .shadow_lg()
+                .occlude()
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .flex()
+                .flex_col()
+                .children(category.then(|| {
+                    muted(trf(
+                        "Categories · {count}",
+                        &[("count", &count.to_string())],
+                    ))
+                    .flex_none()
+                    .px(px(10.))
+                    .py(px(4.))
+                }))
+                .child(list);
             deferred(
                 div()
                     .absolute()
                     .top(px(38.))
-                    .when(from_left, |d| d.left(px(0.)))
-                    .when(!from_left, |d| d.right(px(0.)))
-                    .w(px(200.))
-                    .p(px(6.))
-                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-                    .border_1()
-                    .border_color(c(palette().line))
-                    .bg(c(palette().raised))
-                    .shadow_lg()
-                    .occlude()
-                    .flex()
-                    .flex_col()
-                    .children(
-                        options
-                            .into_iter()
-                            .enumerate()
-                            .map(|(i, (label, on, pick))| {
-                                div()
-                                    .id(("alt-menu-option", i))
-                                    .reach()
-                                    .px(px(10.))
-                                    .py(px(7.))
-                                    .rounded(crate::tokens::r(crate::tokens::R_SMALL))
-                                    .text_size(px(tokens::LABEL))
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(c(palette().hover)))
-                                    .when(on, |d| d.font_weight(FontWeight::SEMIBOLD))
-                                    .child(label)
-                                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                        pick(this);
-                                        this.ui.mods.menu = None;
-                                        cx.notify();
-                                    }))
-                            }),
+                    .when(from_left, |d| d.left_0())
+                    .when(!from_left, |d| d.right_0())
+                    .child(
+                        gpui::anchored()
+                            .anchor(if from_left {
+                                gpui::Anchor::TopLeft
+                            } else {
+                                gpui::Anchor::TopRight
+                            })
+                            .snap_to_window_with_margin(px(8.))
+                            .child(card),
                     ),
             )
             .with_priority(10)
@@ -161,8 +200,12 @@ impl Launcher {
                 .h(px(tokens::CONTROL))
                 .cursor_pointer()
                 .text_size(px(tokens::LABEL))
-                .child(label.to_owned())
-                .child(blocks::icon("chevron-down", 13., c(palette().muted)))
+                .when(which == Menu::Category, |d| {
+                    d.max_w(px(170.))
+                        .tooltip(crate::glass_ui::tip(label.to_owned()))
+                })
+                .child(div().min_w_0().truncate().child(label.to_owned()))
+                .child(blocks::icon("chevron-down", 13., c(palette().muted)).flex_none())
                 // A press here is the dropdown's: the page closing any open menu on a press would
                 // shut this one just before its click opened it again.
                 .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -229,19 +272,19 @@ impl Launcher {
                         Menu::Category,
                         cx,
                     ))
-                    .children(category_open.then(|| popover(category_options, true, cx))),
+                    .children(category_open.then(|| popover(category_options, Menu::Category, cx))),
             )
             .child(
                 div()
                     .relative()
                     .child(dropdown("alt-make-menu", make_label, Menu::Make, cx))
-                    .children(make_open.then(|| popover(make_options, true, cx))),
+                    .children(make_open.then(|| popover(make_options, Menu::Make, cx))),
             )
             .child(fits);
         let order = div()
             .relative()
             .child(dropdown("alt-sort-menu", f.sort.label(), Menu::Sort, cx))
-            .children(sort_open.then(|| popover(sort_options, false, cx)));
+            .children(sort_open.then(|| popover(sort_options, Menu::Sort, cx)));
         page = page.child(
             div()
                 .flex()

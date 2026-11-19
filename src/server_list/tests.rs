@@ -130,6 +130,35 @@ fn adding_and_removing_keeps_every_other_field_and_the_hidden_servers() {
 }
 
 #[test]
+fn reviewed_removal_follows_identity_and_keeps_hidden_and_unselected_servers() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path();
+    vanilla_file(home);
+    List::add_saved(home, "Hub", "hub.example:25570").unwrap();
+    let mut list = List::load(home);
+    let keys = SavedKey::of_list(list.servers().iter());
+    list.entries.swap(0, 1);
+    list.save(home).unwrap();
+    List::remove_saved(home, &[keys[1].clone()].into()).unwrap();
+    let all = entries(home);
+    assert_eq!(all.len(), 2);
+    assert_eq!(List::load(home).servers()[0].ip, "friends.example:25570");
+    assert!(matches!(all[1].get("hidden"), Some(Tag::Byte(1))));
+}
+
+#[test]
+fn a_changed_duplicate_count_refuses_removal_without_writing() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path();
+    List::add_saved(home, "Hub", "hub.example").unwrap();
+    let reviewed = SavedKey::of_list(List::load(home).servers().iter());
+    List::add_saved(home, "Hub", "hub.example").unwrap();
+    let original = fs::read(home.join(FILE)).unwrap();
+    assert!(List::remove_saved(home, &reviewed.into_iter().collect()).is_err());
+    assert_eq!(fs::read(home.join(FILE)).unwrap(), original);
+}
+
+#[test]
 fn a_server_without_a_name_gets_the_games_default() {
     let home = scratch("default");
     let mut list = List::load(home.as_path());

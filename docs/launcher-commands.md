@@ -158,7 +158,6 @@ Native mods (docs/modding/src/how-to/native-mods.md): compile flat Rust mod proj
 - `--update`: Move to the newest installed release or Nightly instead of the Sunrise the profile plays (rebuilds the mods for that pinned SDK)
 - `--trust-native-code`: Allow native code for this install (remembered; revoke in Settings, Storage)
 - `--profile` (optimized): Native mods use the pinned SDK's optimized compilation settings. The game is never rebuilt by a mod build
-- `--back-up-worlds`: When a mod this build can't use was saved into the profile's worlds, back those worlds up (into the game folder's backups/) and build without it. Without this the build stops and names the worlds, leaving the profile as it is
 
 MCP: none: the player's switch.
 

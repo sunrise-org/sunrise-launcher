@@ -421,15 +421,16 @@ fn an_update_cut_short_is_rolled_back_at_the_next_start() {
 
 #[test]
 fn the_report_says_what_changed_and_nothing_otherwise() {
-    assert!(Report::default().lines().is_empty());
+    assert!(Report::default().notice().is_none());
     let r = Report {
         updated: vec!["Ruby 1.1.0".into(), "Glow 2.0".into()],
         held: vec!["held".into()],
         ..Report::default()
     };
+    let notice = r.notice().unwrap().unwrap_err();
     assert_eq!(
-        r.lines(),
-        ["Updated automatically: Ruby 1.1.0, Glow 2.0.", "held"]
+        notice,
+        "Updated 2 mods automatically · 1 waiting for review\n\nUpdated:\nRuby 1.1.0\nGlow 2.0\n\nWaiting for review:\nheld"
     );
 }
 

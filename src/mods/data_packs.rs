@@ -189,18 +189,6 @@ fn world_facts(world: &World) -> String {
     )
 }
 
-/// "A", "A and B", "A, B and C".
-pub(crate) fn names(list: &[String]) -> String {
-    match list {
-        [] => String::new(),
-        [one] => one.clone(),
-        [rest @ .., last] => trf(
-            "{names} and {last}",
-            &[("names", &rest.join(", ")), ("last", last)],
-        ),
-    }
-}
-
 impl Launcher {
     /// Reads the selected setup's worlds and their data packs when they aren't in memory, the
     /// setup changed, a world came or went, or something was added or removed.
@@ -544,10 +532,19 @@ impl Launcher {
                 cx.notify();
             }))
         };
-        let heading = crate::sheets::title(trf(
-            "Add {pack} to your worlds",
-            &[("pack", pick.what.title())],
-        ));
+        let pack = pick.what.title().to_owned();
+        let heading = div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .child(crate::sheets::title(tr("Add to worlds").into()))
+            .child(
+                muted(pack.clone())
+                    .id("alt-pick-pack")
+                    .truncate()
+                    .tooltip(crate::glass_ui::tip(pack)),
+            );
         if worlds.is_empty() {
             let body = div()
                 .flex()
@@ -560,12 +557,17 @@ impl Launcher {
             return Some(crate::sheets::frame("alt-pick", 520., body, cx));
         }
         let mut list = div()
+            .id("alt-pick-list")
             .flex()
             .flex_col()
+            .min_h_0()
+            .max_h(px(300.))
             .rounded(crate::tokens::r(crate::tokens::R_CARD))
             .border_1()
             .border_color(c(palette().line))
-            .overflow_hidden();
+            .overflow_y_scroll()
+            .track_scroll(&crate::frame::scrolls("alt-pick-list"))
+            .on_scroll(|_, _, cx| cx.stop_propagation());
         let mut free = 0;
         for (n, (world, packs)) in worlds.iter().enumerate() {
             let has = pick.what.in_world(world, packs);
@@ -573,11 +575,13 @@ impl Launcher {
             free += usize::from(!has);
             let row = div()
                 .id(ElementId::named_usize("alt-pick-world", n))
+                .flex_none()
                 .flex()
                 .items_center()
                 .gap(px(12.))
+                .h(px(46.))
                 .px(px(14.))
-                .py(px(10.))
+                .tooltip(crate::glass_ui::tip(world.name.clone()))
                 .when(n > 0, |d| d.border_t_1().border_color(c(palette().divider)))
                 .child(match has {
                     // Its place is kept so the names line up.
@@ -589,7 +593,7 @@ impl Launcher {
                             .into_any_element()
                     }
                 })
-                .child(world_icon(world, 36.))
+                .child(world_icon(world, 32.).flex_none())
                 .child(
                     div()
                         .flex_1()
@@ -638,14 +642,37 @@ impl Launcher {
             0 => tr("Every world of this profile has it already."),
             _ => tr("Choose the worlds it goes into. The game turns it on when a world opens."),
         };
+        let count = if worlds.len() == 1 {
+            trf(
+                "1 world · {chosen} selected",
+                &[("chosen", &chosen.to_string())],
+            )
+        } else {
+            trf(
+                "{count} worlds · {chosen} selected",
+                &[
+                    ("count", &worlds.len().to_string()),
+                    ("chosen", &chosen.to_string()),
+                ],
+            )
+        };
         let body = div()
             .flex()
             .flex_col()
             .child(heading)
-            .child(div().text_size(px(tokens::LABEL)).child(say))
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(muted(count))
+                    .child(div().text_size(px(tokens::LABEL)).child(say)),
+            )
             .child(list)
             .child(
                 div()
+                    .flex_none()
                     .flex()
                     .justify_end()
                     .gap(px(8.))
@@ -714,31 +741,53 @@ fn add_to_worlds(
             Err(why) => failed.push(format!("{}: {why}", world.name)),
         }
     }
-    if !notes.is_empty() {
-        note_origins(home, notes)?;
-    }
+    let record_error = (!notes.is_empty())
+        .then(|| note_origins(home, notes).err())
+        .flatten();
     let title = match (what, &origin) {
         (What::Project(p), Some(o)) => format!("{} {}", p.title, o.number),
         _ => what.title().to_owned(),
     };
-    let said = (!added.is_empty()).then(|| {
-        let mut said = trf(
-            "Added {pack} to {worlds}. The game turns it on when the world opens.",
-            &[("pack", &title), ("worlds", &names(&added))],
+    let added_count = match added.len() {
+        1 => tr("Added to 1 world").to_owned(),
+        count => trf("Added to {count} worlds", &[("count", &count.to_string())]),
+    };
+    let mut summary = if failed.is_empty() {
+        added_count
+    } else {
+        trf(
+            "{added} · {failed} failed",
+            &[
+                ("added", &added_count),
+                ("failed", &failed.len().to_string()),
+            ],
+        )
+    };
+    if record_error.is_some() {
+        summary = trf(
+            "{result} · Could not record pack source",
+            &[("result", &summary)],
         );
-        if let Some(coverage) = &coverage {
-            said.push(' ');
-            said.push_str(coverage);
-        }
-        said
-    });
-    match (said, failed.is_empty()) {
-        (Some(said), true) => Ok(said),
-        (said, _) => Err(said
-            .into_iter()
-            .chain(failed)
-            .collect::<Vec<_>>()
-            .join("\n")),
+    }
+    let ok = failed.is_empty() && record_error.is_none();
+    let mut details = vec![summary, String::new(), title];
+    if !added.is_empty() {
+        details.push(tr("The game turns the pack on when a world opens.").into());
+        details.extend(coverage);
+        details.push(String::new());
+        details.push(tr("Added to:").into());
+        details.extend(added);
+    }
+    if !failed.is_empty() {
+        details.push(String::new());
+        details.push(tr("Failed:").into());
+        details.extend(failed);
+    }
+    details.extend(record_error);
+    if ok {
+        Ok(details.join("\n"))
+    } else {
+        Err(details.join("\n"))
     }
 }
 

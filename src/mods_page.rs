@@ -15,7 +15,7 @@ pub(super) enum Event {
     Progress(String, f32),
     Done(Result<String, String>),
     /// What the automatic updates did (`sunrise::auto`).
-    AutoUpdated(Vec<String>),
+    AutoUpdated(Result<String, String>),
     /// A project page's part, an image or a filter's values (`mods_project`).
     Loaded(super::mods_project::Loaded),
 }
@@ -171,19 +171,17 @@ impl Launcher {
                     done = true;
                     m.busy = None;
                     if let Ok(said) = &result {
-                        crate::glass_toast::say(said.clone());
+                        crate::glass_toast::say(said.lines().next().unwrap_or_default().to_owned());
                     }
                     m.message = Some(result);
                     m.reload_installed();
                     m.installed_list.reset();
                 }
                 Event::Loaded(l) => loaded.push(l),
-                Event::AutoUpdated(lines) => {
-                    if !lines.is_empty() {
-                        m.message = Some(Ok(lines.join("\n")));
-                        m.reload_installed();
-                        m.installed_list.reset();
-                    }
+                Event::AutoUpdated(notice) => {
+                    m.message = Some(notice);
+                    m.reload_installed();
+                    m.installed_list.reset();
                 }
             }
         }
@@ -212,9 +210,8 @@ impl Launcher {
             .collect();
         let tx = self.mods.tx.clone();
         std::thread::spawn(move || {
-            let lines = auto_update(&list, enabled);
-            if !lines.is_empty() {
-                let _ = tx.send(Event::AutoUpdated(lines));
+            if let Some(notice) = auto_update(&list, enabled) {
+                let _ = tx.send(Event::AutoUpdated(notice));
             }
         });
     }
@@ -354,29 +351,25 @@ impl Launcher {
                     ));
                 }
                 let done = installed::install(&*source, &p, everything, &home, &game, &progress)?;
-                if p.source == SourceId::Sunrise && p.kind == PackKind::Mod {
-                    let names = done.into_iter().map(|e| e.title).collect::<Vec<_>>();
-                    return Ok(trf(
-                        "Installed {mods}.",
-                        &[("mods", &crate::mods::names(&names))],
-                    ));
-                }
-                let names: Vec<String> = done
-                    .iter()
-                    .map(|e| format!("{} {}", e.title, e.number))
-                    .collect();
-                let mods = names.join(", ");
+                let summary = match (p.kind, done.len()) {
+                    (PackKind::Mod, 1) => tr("Installed 1 mod").to_owned(),
+                    (PackKind::Mod, count) => {
+                        trf("Installed {count} mods", &[("count", &count.to_string())])
+                    }
+                    (_, 1) => tr("Installed 1 pack").to_owned(),
+                    (_, count) => trf("Installed {count} packs", &[("count", &count.to_string())]),
+                };
+                let mut details = vec![summary, String::new()];
                 if done.iter().any(|e| native_status::is_native_file(&e.file)) {
-                    return Ok(trf(
-                        "Installed {mods} into {instance}. Build to play with it.",
-                        &[("mods", &mods), ("instance", &instance)],
+                    details.push(trf(
+                        "Installed into {instance}. Build to play with these mods.",
+                        &[("instance", &instance)],
                     ));
+                } else if !(p.source == SourceId::Sunrise && p.kind == PackKind::Mod) {
+                    details.push(tr("Checksums checked. Turn packs on in the game: Options > Resource Packs.").into());
                 }
-                Ok(trf(
-                    "Installed {mods}, checksums checked. Turn it on in the game: Options \
-                         > Resource Packs.",
-                    &[("mods", &mods)],
-                ))
+                details.extend(done.iter().map(|e| format!("{} {}", e.title, e.number)));
+                Ok(details.join("\n"))
             })();
             let _ = tx.send(Event::Done(result));
         });
@@ -392,8 +385,8 @@ pub(super) struct AutoTarget {
 
 /// Updates the registry projects of `targets`: Sunrise's own instances only, never a modpack's
 /// profile, whose pack pins its mods. Returns what happened for the page's notice.
-pub(super) fn auto_update(targets: &[AutoTarget], enabled: bool) -> Vec<String> {
-    let mut lines = Vec::new();
+pub(super) fn auto_update(targets: &[AutoTarget], enabled: bool) -> Option<Result<String, String>> {
+    let mut reports = sunrise::auto::Report::default();
     for t in targets {
         let i = &t.instance;
         if i.id.starts_with("pack:") {
@@ -404,10 +397,12 @@ pub(super) fn auto_update(targets: &[AutoTarget], enabled: bool) -> Vec<String> 
             game: &t.game,
         };
         if let Some(report) = sunrise::auto::run(&i.home, &ctx, enabled, &|_, _| {}) {
-            lines.extend(report.lines());
+            reports.updated.extend(report.updated);
+            reports.held.extend(report.held);
+            reports.failed.extend(report.failed);
         }
     }
-    lines
+    reports.notice()
 }
 
 #[cfg(test)]

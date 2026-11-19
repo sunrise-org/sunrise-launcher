@@ -45,13 +45,35 @@ pub fn json(url: &str) -> Result<serde_json::Value, String> {
     json_optional(url)?.ok_or_else(|| format!("{url} answered 404"))
 }
 
+/// Whether the saved answer can stand in for a new request.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CachePolicy {
+    PreferCache,
+    Revalidate,
+}
+
 /// GitHub's JSON when the resource may not exist, such as a repository's latest release.
 /// A 404 is None, distinct from a connection or rate-limit failure.
 pub fn json_optional(url: &str) -> Result<Option<serde_json::Value>, String> {
+    json_optional_with_policy(url, CachePolicy::PreferCache)
+}
+
+pub(crate) fn json_optional_with_policy(
+    url: &str,
+    policy: CachePolicy,
+) -> Result<Option<serde_json::Value>, String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    json_with(url, &cache_dir(), now, &mirror_base(), github, mirror)
+    json_with(
+        url,
+        &cache_dir(),
+        now,
+        &mirror_base(),
+        policy,
+        github,
+        mirror,
+    )
 }
 
 /// [`json`] with its cache folder, the time (Unix seconds), the mirror's base and its two sources
@@ -61,6 +83,7 @@ pub(crate) fn json_with(
     cache: &Path,
     now: u64,
     mirror_base: &str,
+    policy: CachePolicy,
     github: impl Fn(&str, Option<&str>) -> Answer,
     mirror: impl Fn(&str) -> Answer,
 ) -> Result<Option<serde_json::Value>, String> {
@@ -68,10 +91,12 @@ pub(crate) fn json_with(
     // The launcher's own releases are kept only as GitHub answered them (with its ETag), never a mirror's copy.
     let launcher = launcher_url(url);
     let kept = read_kept(&file, url).filter(|k| !(launcher && k.etag.is_empty()));
-    if let Some(k) = kept.as_ref() {
-        // A copy saved "later" than now (the clock was set back) is not trusted as fresh.
-        if now >= k.saved && now - k.saved < FRESH_SECS {
-            return Ok(Some(k.body.clone()));
+    if policy == CachePolicy::PreferCache {
+        if let Some(k) = kept.as_ref() {
+            // A copy saved "later" than now (the clock was set back) is not trusted as fresh.
+            if now >= k.saved && now - k.saved < FRESH_SECS {
+                return Ok(Some(k.body.clone()));
+            }
         }
     }
     let etag = kept
@@ -110,8 +135,10 @@ pub(crate) fn json_with(
         },
         None => None,
     };
-    if let Some(k) = kept {
-        return Ok(Some(k.body));
+    if policy == CachePolicy::PreferCache {
+        if let Some(k) = kept {
+            return Ok(Some(k.body));
+        }
     }
     Err(match from_mirror {
         Some(m) => format!(

@@ -30,6 +30,7 @@ fn json_with(
         cache,
         now,
         "https://mcp.example/github/public",
+        CachePolicy::PreferCache,
         github,
         mirror,
     )
@@ -340,6 +341,7 @@ fn no_mirror_is_built_in() {
         &cache,
         T0,
         MIRROR,
+        CachePolicy::PreferCache,
         |_, _| Answer::RateLimited,
         no_mirror,
     )
@@ -386,6 +388,61 @@ fn a_corrupt_or_foreign_copy_is_ignored() {
         no_mirror,
     );
     assert_eq!(got.unwrap(), Some(list("v2")));
+    let _ = fs::remove_dir_all(cache);
+}
+
+#[test]
+fn a_manual_launcher_check_revalidates_even_a_fresh_release_list() {
+    let url = format!(
+        "{API}/repos/{}/releases?per_page=100",
+        backend::LAUNCHER_REPO
+    );
+    let cache = scratch("manual-launcher-check");
+    write_kept(
+        &cache.join(cache_name(&url)),
+        &url,
+        "old",
+        &list("v1.1.0"),
+        T0,
+    );
+    assert_eq!(
+        json_with(
+            &url,
+            &cache,
+            T0 + 1,
+            |_, _| panic!("fresh cached list"),
+            no_mirror
+        )
+        .unwrap(),
+        Some(list("v1.1.0")),
+    );
+
+    let forced = |answer: &dyn Fn() -> Answer, etag: &str| {
+        super::json_with(
+            &url,
+            &cache,
+            T0 + 1,
+            "",
+            CachePolicy::Revalidate,
+            |_, sent| {
+                assert_eq!(sent, Some(etag));
+                answer()
+            },
+            no_mirror,
+        )
+    };
+    assert_eq!(
+        forced(&|| Answer::Fresh(list("v1.1.1"), Some("new".into())), "old").unwrap(),
+        Some(list("v1.1.1")),
+    );
+    assert_eq!(
+        forced(&|| Answer::NotModified, "new").unwrap(),
+        Some(list("v1.1.1"))
+    );
+    assert_eq!(
+        forced(&|| Answer::Failed("offline".into()), "new"),
+        Err("offline".into())
+    );
     let _ = fs::remove_dir_all(cache);
 }
 

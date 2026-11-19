@@ -93,7 +93,9 @@ impl Launcher {
                 }
                 Msg::Playing(playing) => self.playing = playing,
                 Msg::Session(session) => self.handle_game_session(session),
-                Msg::JarConsent { jars, reply } => jar_launch::consent(window, jars, reply, cx),
+                Msg::JarConsent { jars, reply } => {
+                    self.ask_jars(jar_launch::Consent::new(jars, reply))
+                }
                 Msg::JarClient {
                     run,
                     account: accepted,
@@ -243,13 +245,25 @@ impl Launcher {
                     }
                 }
                 Msg::Updates(updates) => {
-                    self.update_error = updates.sunrise_error.clone();
+                    self.checking_updates = false;
+                    self.launcher_checked_now = None;
                     self.updates = *updates;
                     if self.settings.auto_install() {
                         self.install_update();
                     }
                     if let Some(release) = self.updates.launcher.clone() {
                         self.update_launcher(release);
+                    }
+                }
+                Msg::LauncherChecked(result) => {
+                    self.checking_updates = false;
+                    self.launcher_checked_now = result.is_ok().then(Instant::now);
+                    match *result {
+                        Ok(release) => {
+                            self.updates.launcher = release;
+                            self.updates.launcher_error = None;
+                        }
+                        Err(error) => self.updates.launcher_error = Some(error),
                     }
                 }
                 Msg::NativeConsentRead(read, inputs) => {
@@ -287,7 +301,12 @@ impl Launcher {
                     if let (Err(e), false) = (&result, cancelled || no_consent) {
                         if let native_mods::Failed::Worlds(stake) = e {
                             if let Some(run) = &mut self.ui.mods.build {
-                                run.at_stake(&stake.mods, &stake.unbuilt);
+                                let incompatible = if stake.incompatible {
+                                    &stake.mods[..]
+                                } else {
+                                    &[]
+                                };
+                                run.at_stake(incompatible, &stake.unbuilt);
                             }
                             self.keep_stop(stake);
                         }
@@ -299,6 +318,8 @@ impl Launcher {
                     // The build window's build ends as the build did. With its window closed,
                     // the strip says how it went for a moment.
                     let shown = self.ui.sheet == Some(crate::sheets::Sheet::ModBuild);
+                    let resolve =
+                        shown && self.native_worlds.is_some() && self.held_update().is_some();
                     if no_consent {
                         self.ui.mods.build = None;
                     } else if let Some(run) = &mut self.ui.mods.build {
@@ -322,6 +343,9 @@ impl Launcher {
                                 crate::wake::wake();
                             });
                         }
+                    }
+                    if resolve {
+                        self.open_sheet(crate::sheets::Sheet::Resolve);
                     }
                     // The build the instance plays now: its own, or its channel's when every mod
                     // was left out and it follows one.
@@ -519,11 +543,13 @@ impl Launcher {
                 changed = true;
             }
         }
-        if self
-            .checked
-            .is_some_and(|at| at.elapsed() > backend::CHECK_EVERY)
+        if !self.checking_updates
+            && self
+                .checked
+                .is_some_and(|at| at.elapsed() > backend::CHECK_EVERY)
         {
-            self.check_updates();
+            self.check_updates(UpdateCheck::Scheduled);
+            changed = true;
         }
         if changed {
             cx.notify();

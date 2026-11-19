@@ -150,6 +150,7 @@ impl Launcher {
             .as_ref()
             .map_or(Page::Discover, |o| o.from);
         let back_label = match back_to {
+            Page::Home => tr("Home"),
             Page::Installed => tr("Installed"),
             _ => tr("Discover"),
         };

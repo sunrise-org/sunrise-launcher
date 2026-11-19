@@ -140,8 +140,14 @@ impl Launcher {
             )
             .child(
                 div()
+                    .id("new-picture-version")
+                    .max_w_full()
+                    .truncate()
                     .text_size(px(tokens::SMALL))
                     .text_color(rgb(p.muted))
+                    .tooltip(crate::glass_ui::tip(
+                        pin.clone().unwrap_or_else(|| current.clone()),
+                    ))
                     .child(current),
             )
             .child(
@@ -211,14 +217,24 @@ impl Launcher {
                     .child(tr("No stable release yet")),
             );
         }
+        let version_count = if tags.len() == 1 {
+            tr("Version · 1 build").to_owned()
+        } else {
+            trf(
+                "Version · {count} builds",
+                &[("count", &tags.len().to_string())],
+            )
+        };
         let mut versions = div()
             .id("new-versions")
+            .min_h_0()
             .max_h(px(94.))
             .flex()
             .flex_col()
             .gap(px(3.))
             .overflow_y_scroll()
-            .track_scroll(&crate::frame::scrolls("new-versions"));
+            .track_scroll(&crate::frame::scrolls("new-versions"))
+            .on_scroll(|_, _, cx| cx.stop_propagation());
         for (idx, tag) in channel_available
             .then_some(None)
             .into_iter()
@@ -230,8 +246,13 @@ impl Launcher {
                 .map(|t| self.version_label(t))
                 .unwrap_or_else(|| tr("Follow latest").into());
             versions = versions.child(
-                button(ElementId::named_usize("new-version", idx), label)
+                button(ElementId::named_usize("new-version", idx), "")
                     .justify_start()
+                    .min_w_0()
+                    .tooltip(crate::glass_ui::tip(
+                        tag.clone().unwrap_or_else(|| label.clone()),
+                    ))
+                    .child(div().min_w_0().truncate().child(label))
                     .when(pin == tag, |d| {
                         d.bg(rgb(p.selected)).border_color(rgb(p.accent_ink))
                     })
@@ -243,7 +264,7 @@ impl Launcher {
                     })),
             );
         }
-        form = form.child(channels).child(versions);
+        form = form.child(version_count).child(channels).child(versions);
         let mut start = row();
         let copy_lock = self.profile_copy_lock();
         for (id, duplicate, label) in [
@@ -314,14 +335,32 @@ impl Launcher {
                     .child(tr("Name it, pick what it plays, then an icon.")),
             )
             .child(
-                row()
-                    .items_stretch()
-                    .child(preview)
-                    .child(form.child(start).child(icons)),
+                div()
+                    .id("new-profile-form")
+                    .flex()
+                    .flex_col()
+                    .min_h_0()
+                    .gap(px(10.))
+                    .overflow_y_scroll()
+                    .track_scroll(&crate::frame::scrolls("new-profile-form"))
+                    .on_scroll(|_, _, cx| cx.stop_propagation())
+                    .child(
+                        row()
+                            .flex_none()
+                            .items_stretch()
+                            .child(preview)
+                            .child(form.child(start).child(icons)),
+                    )
+                    .children(error.map(|e| {
+                        div()
+                            .flex_none()
+                            .text_color(rgb(p.danger))
+                            .child(crate::selectable::selectable(e))
+                    })),
             )
-            .children(error.map(|e| div().text_color(rgb(p.danger)).child(e)))
             .child(
                 row()
+                    .flex_none()
                     .justify_end()
                     .child(button("new-cancel", tr("Cancel")).on_click(cx.listener(
                         |this, _, _, cx| {

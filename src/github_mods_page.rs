@@ -23,7 +23,6 @@ enum Stage {
 pub(super) struct Github {
     text: LineEdit,
     stage: Stage,
-    message: Option<Result<String, String>>,
     /// The mods installed from GitHub in `home`, and what the last update check found for each.
     home: Option<PathBuf>,
     newer: std::collections::HashMap<String, Resolved>,
@@ -41,7 +40,6 @@ impl Github {
         Self {
             text: LineEdit::new(String::new(), 300, 40),
             stage: Stage::Idle,
-            message: None,
             home: None,
             newer: Default::default(),
             tx,
@@ -62,18 +60,48 @@ fn finish(
     only: Option<&str>,
     all: bool,
 ) -> Result<String, String> {
-    let done = github_mods::choose(mods, only, all)?
-        .into_iter()
-        .map(|p| github_mods::install(home, found, p))
-        .collect::<Result<Vec<_>, _>>()?;
-    let names: Vec<String> = done
-        .iter()
-        .map(|o| format!("{} {}", o.id, o.version))
-        .collect();
-    Ok(trf(
-        "Installed {mods} from GitHub ({source}). Build it on the Mods page.",
-        &[("mods", &names.join(", ")), ("source", &found.label())],
-    ))
+    let mut chosen = github_mods::choose(mods, only, all)?.into_iter();
+    let mut installed = Vec::new();
+    let mut failure = None;
+    for p in chosen.by_ref() {
+        match github_mods::install(home, found, p) {
+            Ok(o) => installed.push(format!("{} {}", o.id, o.version)),
+            Err(e) => {
+                failure = Some(format!("{} {}: {e}", p.id, p.version));
+                break;
+            }
+        }
+    }
+    let mut summary = match installed.len() {
+        1 => tr("Installed 1 mod from GitHub").to_owned(),
+        count => trf(
+            "Installed {count} mods from GitHub",
+            &[("count", &count.to_string())],
+        ),
+    };
+    if failure.is_some() {
+        summary = trf("{installed} · 1 failed", &[("installed", &summary)]);
+        if !chosen.as_slice().is_empty() {
+            summary = trf(
+                "{result} · {count} not attempted",
+                &[("result", &summary), ("count", &chosen.len().to_string())],
+            );
+        }
+    }
+    let mut details = vec![summary, String::new(), found.label()];
+    if !installed.is_empty() {
+        details.push(tr("Build installed mods on the Mods page.").into());
+        details.extend(installed);
+    }
+    if let Some(error) = failure {
+        details.extend([String::new(), tr("Failed:").into(), error]);
+        if !chosen.as_slice().is_empty() {
+            details.push(tr("Not attempted:").into());
+            details.extend(chosen.map(|p| format!("{} {}", p.id, p.version)));
+        }
+        return Err(details.join("\n"));
+    }
+    Ok(details.join("\n"))
 }
 
 impl Launcher {
@@ -85,7 +113,8 @@ impl Launcher {
                 Event::Fetched(Ok(_)) => self.github.stage = Stage::Pick,
                 Event::Fetched(Err(e)) => {
                     self.github.stage = Stage::Idle;
-                    self.github.message = Some(Err(e));
+                    self.dismiss_notice();
+                    self.mods.message = Some(Err(e));
                 }
                 Event::Installed(result) => {
                     self.github.stage = Stage::Idle;
@@ -94,7 +123,8 @@ impl Launcher {
                         self.github.newer.clear();
                     }
                     self.instance_mods_changed();
-                    self.github.message = Some(result);
+                    self.dismiss_notice();
+                    self.mods.message = Some(result);
                     let home = self.mods.home();
                     self.github.reread(&home);
                 }

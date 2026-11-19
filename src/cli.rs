@@ -742,11 +742,6 @@ enum Cmd {
         /// prebuilt one: for CI, which keeps that path proven
         #[arg(long, hide = true)]
         mixins_from_source: bool,
-        /// When a mod this build can't use was saved into the profile's worlds, back those
-        /// worlds up (into the game folder's backups/) and build without it. Without this the
-        /// build stops and names the worlds, leaving the profile as it is
-        #[arg(long, conflicts_with = "server_output")]
-        back_up_worlds: bool,
     },
     /// Show a release's patch notes (default: the newest)
     Notes { tag: Option<String> },
@@ -1228,7 +1223,6 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             trust_native_code,
             profile,
             mixins_from_source,
-            back_up_worlds,
         } => {
             native_permission(trust_native_code)?;
             native_mods::mixins_from_source(mixins_from_source);
@@ -1313,7 +1307,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             };
             let profile = explicit.then_some(target.native_profile);
             let built =
-                match native_mods::build(&base, &folder, &target, profile, back_up_worlds, &native_mods::Cancellation::default(), steps, registry_consent, || backend::releases().ok()) {
+                match native_mods::build(&base, &folder, &target, profile, &[], &native_mods::Cancellation::default(), steps, registry_consent, || backend::releases().ok()) {
                     // A content mod needs no build: the instance stays as it is.
                     Err(nothing @ native_mods::Failed::Nothing) => {
                         println!("{nothing}");
@@ -1324,11 +1318,10 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 .map_err(|error| {
                     if let native_mods::Failed::Worlds(stake) = &error {
                         return trf(
-                            "{error}\n{stay}: nothing changed. Or run again with --back-up-worlds to back them up into {backups} and build without the mods named.",
+                            "{error}\n{stay}: nothing changed. To build without the mods named, turn them off first.",
                             &[
                                 ("error", &stake.text),
                                 ("stay", &native_mods::fit::stay(&stake.stay)),
-                                ("backups", &stake.backups.display().to_string()),
                             ],
                         );
                     }
@@ -3465,15 +3458,7 @@ mod tests {
             })
         ));
         assert!(parse(&["mods", "--allow-jar-downloads"]).is_err());
-        // Backing up worlds is for an instance's build; a server export switches nothing off.
-        assert!(matches!(
-            parse(&["--back-up-worlds"]).unwrap().command,
-            Some(Cmd::NativeBuild {
-                back_up_worlds: true,
-                ..
-            })
-        ));
-        assert!(parse(&["mods", "--server-output", "engine-out", "--back-up-worlds"]).is_err());
+        assert!(parse(&["--back-up-worlds"]).is_err());
         // The mod folder is explicit in export mode: no default from an instance.
         assert!(parse(&["--server-output", "engine-out"]).is_err());
         // Export mode never touches an instance.

@@ -50,10 +50,33 @@ impl Launcher {
                     .flex_col()
                     .gap(px(4.))
                     .child(crate::sheets::title(run.headline()))
-                    .child(muted(trf(
-                        "{profile} · Sunrise {build}",
-                        &[("profile", &run.profile), ("build", &run.on)],
-                    ))),
+                    .child({
+                        let build = trf("Sunrise {build}", &[("build", &run.on)]);
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .text_size(px(tokens::LABEL))
+                            .text_color(c(palette().muted))
+                            .child(
+                                div()
+                                    .id("build-profile")
+                                    .min_w_0()
+                                    .truncate()
+                                    .tooltip(crate::glass_ui::tip(run.profile.clone()))
+                                    .child(run.profile.clone()),
+                            )
+                            .child(div().flex_none().child("·"))
+                            .child(
+                                div()
+                                    .id("build-context")
+                                    .max_w(px(148.))
+                                    .flex_none()
+                                    .truncate()
+                                    .tooltip(crate::glass_ui::tip(build.clone()))
+                                    .child(build),
+                            )
+                    }),
             )
             .child(close);
 
@@ -70,7 +93,15 @@ impl Launcher {
                         .items_baseline()
                         .gap(px(12.))
                         .text_size(px(tokens::LABEL))
-                        .child(div().flex_1().min_w_0().truncate().child(run.step.clone()))
+                        .child(
+                            div()
+                                .id("build-step")
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .tooltip(crate::glass_ui::tip(run.step.clone()))
+                                .child(run.step.clone()),
+                        )
                         .child(
                             div()
                                 .flex_none()
@@ -154,11 +185,6 @@ impl Launcher {
                         )),
                 )
                 .children(match &run.end {
-                    Some(End::Stopped(said)) => {
-                        // The tool's own words can run long: the first lines here, all of it
-                        // in the build log.
-                        Some(div().text_size(px(tokens::LABEL)).line_clamp(4).child(said.clone()))
-                    }
                     Some(End::Cancelled) => Some(
                         div()
                             .text_size(px(tokens::LABEL))
@@ -173,25 +199,78 @@ impl Launcher {
                 })
         };
 
-        // ---- one line per mod
+        // Completed runs group by outcome; running ones keep the supplied order.
         let mut list = div().flex().flex_col();
-        for (n, line) in run.lines.iter().enumerate() {
-            list = list.child(self.build_line_of(n, line, run.details));
+        if running {
+            for (n, line) in run.lines.iter().enumerate() {
+                list = list.child(self.build_line_of(n, line, run.details));
+            }
+        } else {
+            for (group, label, count) in [
+                (0, tr("Failed"), counts.failed),
+                (1, tr("Needs an update"), counts.needs_update),
+                (2, tr("Not built"), counts.other),
+                (3, tr("Built"), counts.built),
+            ] {
+                if count == 0 {
+                    continue;
+                }
+                list = list.child(
+                    div()
+                        .flex_none()
+                        .px(px(14.))
+                        .py(px(6.))
+                        .text_size(px(tokens::SMALL))
+                        .text_color(c(palette().muted))
+                        .child(trf(
+                            "{label} · {count}",
+                            &[("label", label), ("count", &count.to_string())],
+                        )),
+                );
+                for (n, line) in run.lines.iter().enumerate().filter(|(_, l)| {
+                    let current = match l.state {
+                        State::Failed(_) => 0,
+                        State::NeedsUpdate { .. } => 1,
+                        State::Built => 3,
+                        _ => 2,
+                    };
+                    current == group
+                }) {
+                    list = list.child(self.build_line_of(n, line, run.details));
+                }
+            }
         }
-        let list = card().overflow_hidden().child(
-            div()
-                .id("build-lines")
-                .max_h(px((self.window_height - 330.).max(120.)))
-                .overflow_y_scroll()
-                .track_scroll(&crate::frame::scrolls("build-lines"))
-                .child(list),
-        );
+        let stop = match &run.end {
+            Some(End::Stopped(said)) => Some(
+                muted(if run.details {
+                    said.clone()
+                } else {
+                    said.lines()
+                        .find(|line| !line.trim().is_empty())
+                        .unwrap_or_default()
+                        .to_owned()
+                })
+                .flex_none()
+                .px(px(14.))
+                .py(px(10.))
+                .when(!run.details, |d| d.line_clamp(2)),
+            ),
+            _ => None,
+        };
+        let list = div()
+            .id("build-lines")
+            .min_h_0()
+            .max_h(px(440.))
+            .overflow_y_scroll()
+            .track_scroll(&crate::frame::scrolls("build-lines"))
+            .child(card().flex_none().children(stop).child(list));
 
         // ---- the foot: stop it, or put it aside
         let has_details =
             run.lines.iter().any(
                 |l| matches!(&l.state, State::NeedsUpdate { details, .. } if !details.is_empty()),
-            ) || counts.failed > 0;
+            ) || counts.failed > 0
+                || matches!(&run.end, Some(End::Stopped(text)) if !text.is_empty());
         let details = (!running && has_details).then(|| {
             div()
                 .id("build-details")
@@ -270,11 +349,11 @@ impl Launcher {
         let body = div()
             .flex()
             .flex_col()
-            .child(head)
-            .child(top)
+            .child(head.flex_none())
+            .child(top.flex_none())
             .child(list)
-            .child(foot);
-        Some(crate::sheets::frame("build-window", 600., body, cx))
+            .child(foot.flex_none().flex_wrap());
+        Some(crate::sheets::bounded_frame("build-window", 600., body, cx))
     }
 
     /// One mod's line: its picture, its name and version, and where it stands.
@@ -306,7 +385,7 @@ impl Launcher {
         // "Needs an update" says it on the right, and the summary above says why for all of
         // them: no sentence repeated under each one.
         let said = match &line.state {
-            State::Skipped(why) | State::Failed(why) => Some(why.clone()),
+            State::Skipped(why) | State::Failed(why) if details => Some(why.clone()),
             _ => None,
         };
         let technical = match &line.state {
@@ -332,6 +411,7 @@ impl Launcher {
         div()
             .flex()
             .flex_col()
+            .flex_none()
             .when(n > 0, |d| d.border_t_1().border_color(c(palette().divider)))
             .when(building, |d| d.bg(c(palette().selected)))
             .child(
@@ -359,7 +439,12 @@ impl Launcher {
                                     .gap(px(8.))
                                     .child(
                                         div()
+                                            .id(("build-mod-title", n))
                                             .min_w_0()
+                                            .tooltip(crate::glass_ui::tip(format!(
+                                                "{} · {}",
+                                                line.title, line.id
+                                            )))
                                             .truncate()
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .when(waiting, |d| d.text_color(c(palette().muted)))
@@ -367,7 +452,11 @@ impl Launcher {
                                     )
                                     .child(
                                         div()
+                                            .id(("build-mod-version", n))
                                             .flex_none()
+                                            .max_w(px(96.))
+                                            .truncate()
+                                            .tooltip(crate::glass_ui::tip(line.version.clone()))
                                             .text_size(px(tokens::SMALL))
                                             .font_family(crate::theme::MONO)
                                             .text_color(c(palette().muted))
@@ -401,7 +490,7 @@ impl Launcher {
                     .text_size(px(tokens::SMALL))
                     .font_family(crate::theme::MONO)
                     .text_color(c(palette().muted))
-                    .children(technical)
+                    .children(technical.into_iter().map(crate::selectable::selectable))
             }))
     }
 }

@@ -1,25 +1,26 @@
-//! The selected instance's server list on Home (`sunrise_launcher::server_list`, the game's own
-//! `servers.dat`): each server with the picture the game last saw, Join (the game starts straight
-//! into it), Remove after a confirmation, and a line to add one.
+//! The selected profile's server list (`servers.dat`) and the answers to its status requests.
 use super::*;
 use gpui::{Image, ImageFormat};
 use servers_page::Field;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
-use sunrise_launcher::server_list::{self, Server};
+use sunrise_launcher::server_list::{self, SavedKey, Server};
 
 #[derive(Default)]
 pub(super) struct Multiplayer {
     /// The game folder the list is of, and the list as last read with each picture decoded.
     home: Option<PathBuf>,
     pub(super) list: Vec<(Server, Option<Arc<Image>>)>,
+    pub(super) keys: Arc<[SavedKey]>,
     fresh: bool,
-    pub(super) adding: bool,
-    pub(super) confirm_remove: Option<usize>,
+    /// The profile bound when the Add form opened, not whichever profile is selected later.
+    pub(super) adding: Option<PathBuf>,
     pub(super) error: Option<String>,
-    /// The saved server whose Remove button is showing, and whether it was asked once.
-    pub(super) menu: Option<(usize, bool)>,
+    pub(super) selected: BTreeSet<SavedKey>,
+    pub(super) remove: Option<BTreeSet<SavedKey>>,
+    pub(super) focuses: BTreeMap<SavedKey, FocusHandle>,
+    pub(super) thumb: crate::scrollbar::Thumb,
     /// What each address answered to the status ping, asked once per list.
     pub(super) reach: HashMap<String, Reach>,
     /// The picture each address sent with that answer, for a server the game hasn't saved one
@@ -31,7 +32,11 @@ pub(super) struct Multiplayer {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Reach {
     Asking,
-    Online { players: u64, max: u64 },
+    Online {
+        players: u64,
+        max: u64,
+        latency: std::time::Duration,
+    },
     Offline,
 }
 
@@ -74,13 +79,14 @@ impl Launcher {
     pub(super) fn server_answered(
         &mut self,
         address: String,
-        answer: Option<(
-            sunrise_launcher_telemetry::server_status::Players,
-            Option<Vec<u8>>,
-        )>,
+        answer: Option<sunrise_launcher::telemetry::ServerStatus>,
     ) {
         let reach = match answer {
-            Some((players, icon)) => {
+            Some(sunrise_launcher::telemetry::ServerStatus {
+                players,
+                icon,
+                latency,
+            }) => {
                 if let Some(png) = icon {
                     let image = Arc::new(Image::from_bytes(ImageFormat::Png, png));
                     self.multiplayer.icons.insert(address.clone(), image);
@@ -88,6 +94,7 @@ impl Launcher {
                 Reach::Online {
                     players: players.online,
                     max: players.max,
+                    latency,
                 }
             }
             None => Reach::Offline,
@@ -117,31 +124,52 @@ impl Launcher {
                 (s, icon)
             })
             .collect();
+        let keys = SavedKey::of_list(self.multiplayer.list.iter().map(|(s, _)| s));
+        self.multiplayer.selected.retain(|key| keys.contains(key));
+        self.multiplayer.focuses.retain(|key, _| keys.contains(key));
+        self.multiplayer.keys = keys.into();
         self.multiplayer.fresh = true;
-    }
-
-    pub(super) fn edit_servers(
-        &mut self,
-        edit: impl FnOnce(&mut server_list::List) -> Result<(), String>,
-    ) {
-        let Some(home) = self.multiplayer.home.clone() else {
-            return;
-        };
-        let mut list = server_list::List::load(&home);
-        self.multiplayer.error = edit(&mut list).and_then(|()| list.save(&home)).err();
-        self.multiplayer.confirm_remove = None;
-        self.multiplayer.stale();
     }
 
     /// Enter in the address field, or Add.
     pub(super) fn add_server(&mut self) {
-        let name = self.servers.value(Field::ServerName).to_string();
-        let address = self.servers.value(Field::ServerAddress).to_string();
-        self.edit_servers(|list| list.add(&name, &address));
-        if self.multiplayer.error.is_none() {
-            self.servers.text(Field::ServerName).set(String::new());
-            self.servers.text(Field::ServerAddress).set(String::new());
-            self.multiplayer.adding = false;
+        let Some(home) = &self.multiplayer.adding else {
+            return;
+        };
+        if !self.selected_instance().is_some_and(|i| &i.home == home) {
+            self.close_add_server();
+            return;
         }
+        let name = self.servers.value(Field::ServerName);
+        let crate::join::Entry::Address(address) =
+            crate::join::entry(self.servers.value(Field::ServerAddress))
+        else {
+            self.multiplayer.error = Some(tr("Enter a server address, not an invite code.").into());
+            return;
+        };
+        self.multiplayer.error = server_list::List::add_saved(home, name, &address).err();
+        if self.multiplayer.error.is_none() {
+            self.close_add_server();
+            self.multiplayer.stale();
+        }
+    }
+
+    pub(super) fn remove_saved_servers(&mut self) {
+        let Some(reviewed) = self.multiplayer.remove.take() else {
+            return;
+        };
+        let Some(home) = &self.multiplayer.home else {
+            return;
+        };
+        if !self.selected_instance().is_some_and(|i| &i.home == home) {
+            return;
+        }
+        self.multiplayer.error = server_list::List::remove_saved(home, &reviewed).err();
+        if self.multiplayer.error.is_none() {
+            self.multiplayer
+                .selected
+                .retain(|key| !reviewed.contains(key));
+        }
+        self.multiplayer.stale();
     }
 }

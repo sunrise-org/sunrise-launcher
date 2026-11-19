@@ -550,13 +550,18 @@ fn install(
     match project.kind {
         Kind::ResourcePack | Kind::Shader => {
             let done = installed::install(&*source, project, false, home, game, progress)?;
-            let names: Vec<String> = done
+            let summary = match done.len() {
+                1 => tr("Installed 1 pack").to_owned(),
+                count => trf("Installed {count} packs", &[("count", &count.to_string())]),
+            };
+            let names = done
                 .iter()
                 .map(|e| format!("{} {}", e.title, e.number))
-                .collect();
-            Ok(trf(
-                "Installed {mods}, checksums checked. Turn it on under Installed.",
-                &[("mods", &names.join(", "))],
+                .collect::<Vec<_>>()
+                .join("\n");
+            Ok(format!(
+                "{summary}\n\n{}\n\n{names}",
+                tr("Checksums checked. Turn packs on under Installed.")
             ))
         }
         _ => Err(tr("Only resource, data and shader packs install from here.").to_string()),

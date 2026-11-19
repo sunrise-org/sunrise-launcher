@@ -80,7 +80,8 @@ fn a_copy_lands_in_each_chosen_world_and_is_known_there_afterwards() {
     assert!(!what.in_world(&worlds[1], &listed(dir.path(), &worlds[1])));
 
     let said = add_to_worlds(&what, dir.path(), &worlds[1..], "26.3", &|_| {}).unwrap();
-    assert!(said.contains("Two and Three"), "{said}");
+    assert_eq!(said.lines().next(), Some("Added to 2 worlds"));
+    assert!(said.contains("Two\nThree"), "{said}");
     for world in &worlds[1..] {
         assert!(world.path.join("datapacks/lanterns.zip").is_file());
         // The project it came from travels with the file.
@@ -106,7 +107,9 @@ fn a_world_that_left_the_setup_is_named_and_the_others_still_get_the_pack() {
     let said = add_to_worlds(&what, dir.path(), &worlds[1..], "26.3", &|_| {}).unwrap_err();
     assert!(worlds[1].path.join("datapacks/lanterns.zip").is_file());
     assert!(
-        said.contains("Added lanterns to Two") && said.contains("Gone:"),
+        said.starts_with("Added to 1 world · 1 failed\n")
+            && said.contains("Added to:\nTwo\n")
+            && said.contains("Failed:\nGone:"),
         "{said}"
     );
 }

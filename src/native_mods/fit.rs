@@ -449,26 +449,6 @@ pub fn stay(current: &str) -> String {
     trf("Stay on {build}", &[("build", &name)])
 }
 
-/// The other choice, said on its button.
-pub fn back_up_and_update(worlds: usize) -> &'static str {
-    match worlds {
-        1 => tr("Back up this world and update"),
-        _ => tr("Back up these worlds and update"),
-    }
-}
-
-/// [`back_up_and_update`] on the Build panel, where nothing is being updated.
-pub fn back_up_and_build(worlds: usize, mods: usize, unbuilt: usize) -> &'static str {
-    match (worlds, unbuilt) {
-        (1, 0) => tr("Back up this world and build without what doesn't fit"),
-        (_, 0) => tr("Back up these worlds and build without what doesn't fit"),
-        (1, n) if n == mods => tr("Back up this world and build without what didn't build"),
-        (_, n) if n == mods => tr("Back up these worlds and build without what didn't build"),
-        (1, _) => tr("Back up this world and build without those mods"),
-        (_, _) => tr("Back up these worlds and build without those mods"),
-    }
-}
-
 /// The choice on the Build panel that builds nothing.
 pub fn dont_build() -> &'static str {
     tr("Don't build; keep the game as it is")

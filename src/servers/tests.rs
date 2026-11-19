@@ -16,6 +16,58 @@ fn folder_names_are_plain() {
     assert_eq!(service_suffix(Path::new("/x/My World")), "my-world");
 }
 
+#[cfg(unix)]
+#[test]
+fn unregister_keeps_running_servers_and_never_moves_worlds() {
+    const CHILD: &str = "SUNRISE_TEST_UNREGISTER";
+    if std::env::var_os(CHILD).is_none() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "servers::tests::unregister_keeps_running_servers_and_never_moves_worlds"
+            ])
+            .env(CHILD, "1")
+            .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+            .env("SUNRISE_HOME", root.path().join("game"))
+            .status()
+            .unwrap()
+            .success());
+        return;
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let make = |name: &str| {
+        let dir = root.path().join(name);
+        fs::create_dir_all(dir.join(".sunrise")).unwrap();
+        fs::write(dir.join("level.dat"), name).unwrap();
+        Entry {
+            name: name.to_owned(),
+            dir,
+            host: None,
+        }
+    };
+    let stopped = make("Stopped world");
+    let running = make("Running world");
+    let active = fs::File::create(running.dir.join(".sunrise/lock")).unwrap();
+    active.try_lock().unwrap();
+    let current = [stopped.clone(), running.clone()];
+    let list = root.path().join("servers.json");
+    save_entries(&list, &current).unwrap();
+    let report = forget_reviewed_in(&list, &current).unwrap();
+    assert_eq!(report.removed, 1);
+    assert_eq!(report.refused.len(), 1);
+    assert_eq!(report.refused[0].0, running);
+    assert_eq!(
+        serde_json::from_slice::<Vec<Entry>>(&fs::read(list).unwrap()).unwrap(),
+        [running]
+    );
+    assert_eq!(
+        fs::read_to_string(stopped.dir.join("level.dat")).unwrap(),
+        stopped.name
+    );
+}
+
 #[test]
 fn create_asks_init_and_config_set() {
     let spec = NewServer {

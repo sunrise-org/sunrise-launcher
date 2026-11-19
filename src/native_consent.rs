@@ -59,9 +59,32 @@ impl PendingConsent {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Origin {
+    Sunrise,
+    Local,
+    Revoked,
+    Unchecked,
+}
+
+impl Origin {
+    pub(super) const ALL: [Self; 4] = [Self::Sunrise, Self::Local, Self::Revoked, Self::Unchecked];
+
+    pub(super) fn label(self) -> &'static str {
+        crate::i18n::tr(match self {
+            Self::Sunrise => "Sunrise registry",
+            Self::Local => "Local files",
+            Self::Revoked => "Taken down",
+            Self::Unchecked => "Not checked",
+        })
+    }
+}
+
 pub(super) struct BuildRow {
     pub(super) id: String,
     pub(super) name: String,
+    pub(super) file: String,
+    pub(super) origin: Origin,
     pub(super) label: String,
     pub(super) icon: Option<String>,
 }
@@ -70,25 +93,38 @@ pub(super) struct BuildRow {
 /// and artwork. A package put in the folder under that mod's id never reads as that mod.
 fn build_row(input: &BuildInput) -> BuildRow {
     let own = [("id", input.id.as_str()), ("file", input.file.as_str())];
-    let on_disk = |label| (input.id.as_str(), None, crate::i18n::trf(label, &own));
-    let (name, icon, label) = match &input.registry {
+    let on_disk = |origin, label| {
+        (
+            input.id.as_str(),
+            None,
+            origin,
+            crate::i18n::trf(label, &own),
+        )
+    };
+    let (name, icon, origin, label) = match &input.registry {
         Registry::Listed { name, icon } if !name.is_empty() => (
             name.as_str(),
             icon.clone(),
+            Origin::Sunrise,
             crate::i18n::trf(
                 "{name} ({id}, from the Sunrise registry)",
                 &[("name", name), ("id", &input.id)],
             ),
         ),
         Registry::Listed { .. } | Registry::NotListed => {
-            on_disk("{id} ({file}, not from the registry)")
+            on_disk(Origin::Local, "{id} ({file}, not from the registry)")
         }
-        Registry::Revoked => on_disk("{id} ({file}, taken down)"),
-        Registry::Unchecked => on_disk("{id} ({file}, not checked against the registry)"),
+        Registry::Revoked => on_disk(Origin::Revoked, "{id} ({file}, taken down)"),
+        Registry::Unchecked => on_disk(
+            Origin::Unchecked,
+            "{id} ({file}, not checked against the registry)",
+        ),
     };
     BuildRow {
         id: input.id.clone(),
         name: name.to_owned(),
+        origin,
+        file: input.file.clone(),
         label,
         icon,
     }
@@ -183,6 +219,8 @@ mod tests {
             icon: Some("https://example.com/jei.png".into()),
         }));
         assert_eq!(listed.name, "JEI");
+        assert_eq!(listed.origin, Origin::Sunrise);
+        assert_eq!(listed.file, "jei.smod");
         assert_eq!(listed.icon.as_deref(), Some("https://example.com/jei.png"));
         assert_eq!(listed.label, "JEI (jei, from the Sunrise registry)");
         assert_eq!(
@@ -199,6 +237,7 @@ mod tests {
         );
         let revoked = row(input(Registry::Revoked));
         assert_eq!(revoked.name, "jei");
+        assert_eq!(revoked.origin, Origin::Revoked);
         assert!(revoked.icon.is_none());
         assert_eq!(revoked.label, "jei (jei.smod, taken down)");
     }
@@ -211,6 +250,7 @@ mod tests {
             registry: Registry::Unchecked,
         }]);
         assert_eq!(build.name(), "this mod");
+        assert_eq!(build.rows()[0].origin, Origin::Unchecked);
         assert_eq!(
             build.rows()[0].label,
             "jei (jei.smod, not checked against the registry)"

@@ -26,6 +26,16 @@ pub fn is_enabled(home: &Path, id: &str) -> bool {
         .any(|(k, v)| k.trim() == key && v.trim() == "true")
 }
 
+/// The enabled IDs for a view that needs the whole selection, read and parsed once.
+pub fn enabled_ids(home: &Path) -> std::collections::HashSet<String> {
+    selection_text(home)
+        .lines()
+        .filter_map(|line| line.split_once(':'))
+        .filter(|(_, value)| value.trim() == "true")
+        .filter_map(|(key, _)| key.trim().strip_prefix("mod.").map(str::to_owned))
+        .collect()
+}
+
 /// Turns mod `id` on (or off) in `sunrise-mods.txt`, keeping the other lines.
 pub fn set_enabled(home: &Path, id: &str, on: bool) -> Result<(), String> {
     set_all_enabled(home, &[id], on)
@@ -70,6 +80,7 @@ mod tests {
             "mod.coords_hud:true\nmod.ruby:false\n",
         )
         .unwrap();
+        assert_eq!(enabled_ids(&home), ["coords_hud".to_owned()].into());
         set_enabled(&home, "ruby", true).unwrap();
         set_enabled(&home, "gem", true).unwrap();
         assert_eq!(

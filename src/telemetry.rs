@@ -94,30 +94,38 @@ pub fn watch_playing(tx: std::sync::mpsc::Sender<backend::Msg>) {
 /// A server's players by its server-list status ping, as the game's Multiplayer list sends it
 /// (through the address's SRV record), with a 3-second timeout. None when it doesn't answer.
 pub fn server_players(address: &str) -> Option<sunrise_launcher_telemetry::server_status::Players> {
-    server_status(address).map(|(players, _)| players)
+    server_status(address).map(|answer| answer.players)
 }
 
-/// [`server_players`], with the server's own picture (a PNG) when its answer carries one.
-pub fn server_status(
-    address: &str,
-) -> Option<(
-    sunrise_launcher_telemetry::server_status::Players,
-    Option<Vec<u8>>,
-)> {
+pub struct ServerStatus {
+    pub players: sunrise_launcher_telemetry::server_status::Players,
+    pub icon: Option<Vec<u8>>,
+    /// TCP connection and Minecraft status exchange, excluding SRV lookup.
+    pub latency: std::time::Duration,
+}
+
+/// [`server_players`], with the server's own picture (a PNG) and the status exchange latency.
+pub fn server_status(address: &str) -> Option<ServerStatus> {
     use base64::Engine as _;
     let (host, port) = sunrise_launcher_telemetry::server_status::split_address(address)?;
     let (host, port) = sunrise_launcher_resolver::server_redirect(&host, port);
+    let started = std::time::Instant::now();
     let (players, favicon) = sunrise_launcher_telemetry::server_status::status_at(
         address,
         (&host, port),
         std::time::Duration::from_secs(3),
     )
     .ok()?;
+    let latency = started.elapsed();
     // A server sends what it likes: only a PNG is kept (64×64 is a few kilobytes).
     let icon = favicon
         .and_then(|text| base64::engine::general_purpose::STANDARD.decode(text).ok())
         .filter(|png| png.starts_with(b"\x89PNG\r\n\x1a\n"));
-    Some((players, icon))
+    Some(ServerStatus {
+        players,
+        icon,
+        latency,
+    })
 }
 
 pub fn home() -> PathBuf {

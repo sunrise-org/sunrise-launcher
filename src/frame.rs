@@ -319,7 +319,7 @@ impl Launcher {
                     }
                 });
                 if matches!(self.releases, Load::Failed(_)) {
-                    self.fetch_startup_releases();
+                    self.check_updates(UpdateCheck::Startup);
                 }
             }
             return;
@@ -346,6 +346,9 @@ impl Launcher {
     }
 
     pub(super) fn navigate(&mut self, page: Page) {
+        if !matches!(page, Page::Join | Page::Hosting) {
+            self.clear_home_server_target();
+        }
         match page {
             Page::Discover => self.open_mods(),
             Page::Packs => self.open_packs(),
@@ -497,6 +500,7 @@ impl Launcher {
                 // The page's header, as Mods has it: its name, then Join and Host as one
                 // control, the chosen one filled.
                 let tabs = div()
+                    .flex_none()
                     .flex()
                     .items_center()
                     .gap(px(20.))
@@ -527,7 +531,15 @@ impl Launcher {
                         ],
                         Launcher::navigate,
                         cx,
-                    ));
+                    ))
+                    .when(self.returning_to_home_server(), |tabs| {
+                        tabs.child(button("servers-back-home", tr("Back to Home")).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.navigate(Page::Home);
+                                cx.notify();
+                            }),
+                        ))
+                    });
                 div()
                     .flex()
                     .flex_col()
@@ -606,6 +618,12 @@ impl Launcher {
                     "escape" if this.instances.dialog.is_some() => {
                         this.instance_escape();
                     }
+                    "escape" if this.ui.page == Page::Join && this.multiplayer.adding.is_some() => {
+                        this.close_add_server();
+                    }
+                    "escape" if this.ui.page == Page::Join && this.multiplayer.remove.is_some() => {
+                        this.multiplayer.remove = None;
+                    }
                     "escape" if this.ui.page == Page::Hosting && this.hosting_escape() => {}
                     _ => return,
                 }
@@ -639,10 +657,13 @@ impl Launcher {
         let create = (page == Page::Hosting)
             .then(|| self.hosting_create(cx))
             .flatten();
+        let add_server = (page == Page::Join)
+            .then(|| self.add_server_dialog(cx))
+            .flatten();
         let sheet = self.live_sheet(cx);
         let sign_in = self.owner_screen_open.then(|| self.owner_screen(cx));
         let profile = self.profile_dialog(window, cx);
-        let mut layers: Vec<_> = [create, profile, sheet, sign_in]
+        let mut layers: Vec<_> = [create, add_server, profile, sheet, sign_in]
             .into_iter()
             .flatten()
             .collect();

@@ -11,7 +11,7 @@ impl Launcher {
     /// A build stopped for worlds at stake: the choice is shown, and the mods that failed to
     /// compile stay marked past it.
     pub(super) fn keep_stop(&mut self, stake: &native_mods::AtStake) {
-        self.native_worlds = Some(stake.clone());
+        self.native_worlds = stake.incompatible.then(|| stake.clone());
         self.mods.unbuilt = self
             .native_for
             .clone()

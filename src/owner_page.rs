@@ -73,7 +73,7 @@ impl Launcher {
             .w(px(580.))
             .max_w_full()
             .max_h_full()
-            .overflow_y_scroll().track_scroll(&crate::frame::scrolls("sign-in"))
+            .when(!matches!(state, Shown::Error(_)), |d| d.overflow_y_scroll().track_scroll(&crate::frame::scrolls("sign-in")))
             .p(px(28.))
             .rounded(crate::tokens::r(crate::tokens::R_PANEL))
             .border_1()
@@ -204,11 +204,17 @@ impl Launcher {
             Shown::Starting(what) => {
                 card.child(panel().child(said(tr(what).into(), tokens::BODY, palette().muted)))
             }
-            Shown::Error(e) => card.child(panel().child(said(
-                e.to_string().into(),
-                tokens::BODY,
-                palette().danger,
-            ))),
+            Shown::Error(e) => card.child(
+                panel()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(
+                        said(tr("Sign-in failed").into(), tokens::BODY, palette().danger)
+                            .flex_none(),
+                    )
+                    .child(sign_in_error(e)),
+            ),
             Shown::Idle => card,
         };
         let again = match state {
@@ -229,6 +235,7 @@ impl Launcher {
         card = card.child(
             div()
                 .flex()
+                .flex_none()
                 .flex_wrap()
                 .items_center()
                 .justify_end()
@@ -284,6 +291,7 @@ impl Launcher {
             // A set width: text measured at it wraps where it is drawn.
             .w(px(520.))
             .max_w_full()
+            .when(matches!(state, Shown::Error(_)), |d| d.max_h_full())
             .p(px(32.))
             .child(ui::text(13., FontWeight::MEDIUM, ink::QUIET).child(tr("Microsoft account")))
             .child(
@@ -406,11 +414,17 @@ impl Launcher {
             Shown::Starting(what) => card
                 .child(panel().child(ui::text(14., FontWeight::NORMAL, ink::BODY).child(tr(what)))),
             Shown::Error(e) => card.child(
-                panel().child(
-                    ui::text(14., FontWeight::NORMAL, ink::FULL)
-                        .text_color(ui::color(sunrise_launcher_theme::glass::DANGER))
-                        .child(e.to_string()),
-                ),
+                panel()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(
+                        ui::text(14., FontWeight::SEMIBOLD, ink::FULL)
+                            .text_color(ui::color(sunrise_launcher_theme::glass::DANGER))
+                            .flex_none()
+                            .child(tr("Sign-in failed")),
+                    )
+                    .child(sign_in_error(e)),
             ),
             Shown::Idle => card,
         };
@@ -471,6 +485,8 @@ impl Launcher {
         card = card.child(
             div()
                 .flex()
+                .flex_none()
+                .flex_wrap()
                 .items_center()
                 .gap(px(8.))
                 .mt(px(24.))
@@ -528,6 +544,23 @@ fn short_link(uri: &str) -> &str {
         .trim_start_matches("https://")
         .trim_start_matches("http://");
     uri.strip_prefix("www.").unwrap_or(uri)
+}
+
+/// The platform's original sign-in message, selectable even when it wraps a long path.
+fn sign_in_error(error: &str) -> Stateful<Div> {
+    div()
+        .id("sign-in-diagnostic")
+        .min_h_0()
+        .max_h(px(144.))
+        .overflow_y_scroll()
+        .track_scroll(&crate::frame::scrolls("sign-in-diagnostic"))
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .text_size(px(tokens::LABEL))
+                .child(crate::selectable::selectable(error.to_owned())),
+        )
 }
 
 #[cfg(test)]

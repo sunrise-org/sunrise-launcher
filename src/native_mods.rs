@@ -666,8 +666,6 @@ pub enum Step {
     },
     /// Each mod is checked against the build: how many.
     Checking(usize),
-    /// A world was backed up before the mods saved in it were switched off: where.
-    BackedUp(String),
     /// The mods compile against the prebuilt game.
     PrebuiltMods,
     /// One mod's own library starts compiling: which, and how far through the mods.
@@ -729,8 +727,7 @@ impl Step {
             | Self::Plan(..)
             | Self::Crates
             | Self::LeftOut(_)
-            | Self::Checking(_)
-            | Self::BackedUp(_) => (Stage::Prepare, None),
+            | Self::Checking(_) => (Stage::Prepare, None),
             Self::ToolsKept { .. } => (Stage::Prepare, Some(1.)),
             Self::Tools { done, total, .. } => (
                 Stage::Prepare,
@@ -780,7 +777,6 @@ impl Step {
                 "Using the mod tools for {build} kept from an earlier build",
                 &[("build", build)],
             ),
-            Self::BackedUp(said) => said.clone(),
             Self::Checking(count) => match count {
                 1 => tr("Checking 1 mod").into(),
                 count => trf("Checking {count} mods", &[("count", &count.to_string())]),
@@ -847,9 +843,7 @@ impl Step {
                 ],
             ),
             Self::ToolsKept { .. } => tr("Using the mod tools already downloaded").into(),
-            // The log keeps the backup destination and the full compatibility report. Neither
-            // belongs in the shared Play header while the remaining mods are being built.
-            Self::BackedUp(_) => tr("World backup saved").into(),
+            // The full compatibility report stays in the log while the other mods build.
             Self::LeftOut(left) => trf("Leaving out {mod} for this build", &[("mod", &left.id)]),
             Self::Compile { .. } => tr("Building the game with your mods").into(),
             Self::Mod { id, done, total } => trf(
@@ -992,9 +986,8 @@ struct BuildOptions<'a> {
     /// The game folder whose worlds a mod switched off for this build must not be lost from:
     /// the instance's ([`guard_worlds`]).
     worlds: Option<&'a Path>,
-    /// The player chose to back up the worlds saved with mods this build switches off, then
-    /// build without them.
-    back_up: bool,
+    /// Mod IDs the player agreed to leave out of this update.
+    reviewed_omissions: &'a [String],
 }
 
 /// Mods saved into worlds that a build would switch off ([`Failed::Worlds`]): what the player
@@ -1010,8 +1003,10 @@ pub struct AtStake {
     pub mods: Vec<String>,
     /// The mods among them that looked compatible and didn't build.
     pub unbuilt: Vec<String>,
-    /// Where backups go.
-    pub backups: PathBuf,
+    /// The SDK reported a compatibility mismatch, not a compiler failure.
+    pub incompatible: bool,
+    /// Full compatibility diagnostics, separate from the short stop message.
+    pub details: Vec<String>,
     /// The build the instance plays now, as people read it: "Stay on" it is the default.
     pub stay: String,
     /// The release or Nightly the stopped build was on: the other choice builds on it again.
@@ -1101,22 +1096,22 @@ fn refused(refusal: sdk_cache::Refusal) -> String {
     refusal.to_string()
 }
 
-/// Never switch a mod off silently in a game folder with worlds (SDK design §10.1, "Worlds"):
-/// when a world in `home` was saved with a mod of `left`, the build stops with
-/// [`Failed::Worlds`] naming them, unless the player chose `back_up`; then each of those worlds
-/// is backed up first, and a backup that fails stops the build with nothing switched off.
-/// The scan fails closed: a `saves/` that can't be listed stops the build, and a world whose
-/// `level.dat` and `level.dat_old` can't be read is unknown, so it counts as saved with every
-/// mod of `left` (named, then backed up on the player's choice) and is never taken for "no mods".
-/// Each backup is read back before anything is switched off.
+/// Stops a build before it silently omits unreviewed mods from worlds that used them. Names
+/// unknown worlds too: unreadable metadata is not proof that the world uses no mods.
 fn guard_worlds(
     home: &Path,
     left: &[LeftOut],
     build: &str,
-    back_up: bool,
-    progress: &impl Fn(Step),
+    reviewed_omissions: &[String],
 ) -> Result<(), Failed> {
-    let ids: Vec<String> = left.iter().map(|l| l.id.clone()).collect();
+    let ids: Vec<String> = left
+        .iter()
+        .filter(|l| !reviewed_omissions.contains(&l.id))
+        .map(|l| l.id.clone())
+        .collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
     let at_stake = crate::worlds::at_risk(home, &ids).map_err(|error| {
         Failed::Other(trf(
             "Your worlds can't be read, so Sunrise can't tell whether they use these mods. Nothing was changed. ({error})",
@@ -1126,74 +1121,60 @@ fn guard_worlds(
     if at_stake.is_empty() {
         return Ok(());
     }
-    if !back_up {
-        // One short summary for every mod at stake, not a paragraph per mod: the build window's
-        // rows already name each mod.
-        let at: Vec<&LeftOut> = left
-            .iter()
-            .filter(|l| at_stake.iter().any(|(_, mods, _)| mods.contains(&l.id)))
-            .collect();
-        let worlds: Vec<String> = at_stake
-            .iter()
-            .map(|(world, _, known)| match known {
-                true => world.name.clone(),
-                false => trf(
-                    "{name} (its list of mods can't be read)",
-                    &[("name", &world.name)],
-                ),
-            })
-            .collect();
-        let text = match at.as_slice() {
-            [one] => match one.why {
-                isolate::Why::DidNotBuild => fit::worlds_at_stake_unbuilt(&one.id, build, &worlds),
-                _ => fit::worlds_at_stake(&one.id, build, &worlds),
-            },
-            many => fit::mods_at_stake(
-                &many.iter().map(|l| l.id.clone()).collect::<Vec<_>>(),
-                build,
-                &worlds,
+    let at: Vec<&LeftOut> = left
+        .iter()
+        .filter(|l| at_stake.iter().any(|(_, mods, _)| mods.contains(&l.id)))
+        .collect();
+    let worlds: Vec<String> = at_stake
+        .iter()
+        .map(|(world, _, known)| match known {
+            true => world.name.clone(),
+            false => trf(
+                "{name} (its list of mods can't be read)",
+                &[("name", &world.name)],
             ),
-        };
-        return Err(Failed::Worlds(Box::new(AtStake {
-            text,
-            worlds: at_stake
-                .iter()
-                .map(|(world, _, _)| world.name.clone())
-                .collect(),
-            mods: left
-                .iter()
-                .filter(|l| at_stake.iter().any(|(_, mods, _)| mods.contains(&l.id)))
-                .map(|l| l.id.clone())
-                .collect(),
-            unbuilt: left
-                .iter()
-                .filter(|l| matches!(l.why, isolate::Why::DidNotBuild))
-                .filter(|l| at_stake.iter().any(|(_, mods, _)| mods.contains(&l.id)))
-                .map(|l| l.id.clone())
-                .collect(),
-            backups: home.join("backups"),
-            stay: String::new(),
-            base: String::new(),
-        })));
+        })
+        .collect();
+    let text = match at.as_slice() {
+        [one] => match one.why {
+            isolate::Why::DidNotBuild => fit::worlds_at_stake_unbuilt(&one.id, build, &worlds),
+            _ => fit::worlds_at_stake(&one.id, build, &worlds),
+        },
+        many => fit::mods_at_stake(
+            &many.iter().map(|l| l.id.clone()).collect::<Vec<_>>(),
+            build,
+            &worlds,
+        ),
+    };
+    let incompatible = left.iter().any(|l| matches!(l.why, isolate::Why::Unfit(_)));
+    // Retain the SDK's evidence separately, so the status strip doesn't repeat it.
+    let mut details = Vec::new();
+    if incompatible {
+        for reason in left {
+            details.push(reason.label());
+            if let Some(detail) = &reason.detail {
+                details.extend(detail.changes.iter().cloned());
+            }
+        }
     }
-    for (world, _, _) in &at_stake {
-        let made = crate::worlds::backup_verified(home, world).map_err(|error| {
-            Failed::Other(trf(
-                "Backing up {world} failed, so nothing was switched off or updated: {error}",
-                &[("world", &world.name), ("error", &error)],
-            ))
-        })?;
-        let said = trf(
-            "Backed up {world} to {path}",
-            &[
-                ("world", &world.name),
-                ("path", &made.display().to_string()),
-            ],
-        );
-        append_log(&said)?;
-        progress(Step::BackedUp(said));
-    }
-    Ok(())
+    Err(Failed::Worlds(Box::new(AtStake {
+        text,
+        worlds: at_stake
+            .into_iter()
+            .map(|(world, _, _)| world.name)
+            .collect(),
+        // Review all omissions for this pass, so the action and list describe the same mods.
+        mods: left.iter().map(|l| l.id.clone()).collect(),
+        unbuilt: left
+            .iter()
+            .filter(|l| matches!(l.why, isolate::Why::DidNotBuild))
+            .map(|l| l.id.clone())
+            .collect(),
+        incompatible,
+        details,
+        stay: String::new(),
+        base: String::new(),
+    })))
 }
 
 /// The pipeline both targets build with ([`build`], [`build_server`]): `folder`'s mods on the
@@ -1438,7 +1419,7 @@ fn pipeline(
                 .collect();
             let left = isolate::with_dependents(&unfit, &pairs);
             if let Some(home) = options.worlds {
-                guard_worlds(home, &left, &shown, options.back_up, progress)?;
+                guard_worlds(home, &left, &shown, options.reviewed_omissions)?;
             }
             return Err(Failed::Mods {
                 left,
@@ -1462,10 +1443,8 @@ fn pipeline(
     }
     // A mod made for another build that fits this one and still doesn't compile is switched off
     // here, and the others build: the compile is the final check.
-    // Switching it off follows the world rules like any other switch-off: when worlds were saved
-    // with it (or with a mod that needs it), the build stops unless the player chose to back
-    // them up.
-    let (worlds, back_up) = (options.worlds, options.back_up);
+    // Resolving a compatibility hold never consents to a subsequent compiler failure.
+    let worlds = options.worlds;
     let shown = sdk
         .as_ref()
         .map_or_else(|| sdk_cache::shown(&revision, None), |sdk| sdk.shown());
@@ -1475,7 +1454,7 @@ fn pipeline(
             return Failed::Other(e);
         };
         if let Some(home) = worlds {
-            if let Err(stop) = guard_worlds(home, &going, &shown, back_up, progress) {
+            if let Err(stop) = guard_worlds(home, &going, &shown, &[]) {
                 return stop;
             }
         }
@@ -1848,7 +1827,7 @@ pub fn build(
     folder: &Path,
     instance: &Instance,
     profile: Option<Profile>,
-    back_up: bool,
+    reviewed_omissions: &[String],
     cancellation: &Cancellation,
     progress: impl Fn(Step),
     registry_consent: impl Fn(&Consent) -> bool,
@@ -1859,6 +1838,7 @@ pub fn build(
     if let Some(error) = backend::native_mod_architecture_error() {
         return Err(Failed::Other(error));
     }
+    let stay = playing(instance);
     logged(|cache| {
         let lease = cache.map_err(|error| Failed::Other(error.into()))?;
         let profile = select_build_profile(instance.native_profile, profile, cancellation, || {
@@ -1877,7 +1857,7 @@ pub fn build(
                         skip,
                         registry_consent: Some(&registry_consent),
                         worlds: Some(&instance.home),
-                        back_up,
+                        reviewed_omissions,
                         ..BuildOptions::default()
                     },
                     &progress,
@@ -1906,6 +1886,7 @@ pub fn build(
                 catalogue,
                 || cancellation.check(),
             )?;
+            disable_reviewed(&instance.home, left, reviewed_omissions)?;
             instances::edit(&instance.id, |meta| {
                 let unchanged = meta.version == instance.version
                     && meta.channel.unwrap_or_default() == instance.channel;
@@ -1918,13 +1899,14 @@ pub fn build(
         let built = built.map_err(|failed| match failed {
             // "Stay" keeps the build the instance plays now.
             Failed::Worlds(stake) => Failed::Worlds(Box::new(AtStake {
-                stay: playing(instance),
+                stay,
                 base: base.to_owned(),
                 ..*stake
             })),
             other => other,
         })?;
         cancellation.check()?;
+        disable_reviewed(&instance.home, &built.left_out, reviewed_omissions)?;
         isolate::forget(&instance.home);
         // A version or channel the player saved while this built wins: the build stays
         // available, the instance keeps their choice.
@@ -1945,6 +1927,19 @@ pub fn build(
         }
         Ok(ClientBuild::Native(built.version))
     })
+}
+
+/// Keeps the packages installed and turns off only reviewed mods that this build left out.
+fn disable_reviewed(home: &Path, left: &[LeftOut], reviewed: &[String]) -> Result<(), String> {
+    let ids: Vec<&str> = left
+        .iter()
+        .filter(|m| reviewed.contains(&m.id))
+        .map(|m| m.id.as_str())
+        .collect();
+    if !ids.is_empty() {
+        crate::browser::mod_list::set_all_enabled(home, &ids, false)?;
+    }
+    Ok(())
 }
 
 /// Clearing the pin must play the checked base both in the window and on the command line.
@@ -2227,7 +2222,7 @@ mod tests {
             Path::new(""),
             &instance,
             None,
-            false,
+            &[],
             &worker,
             |_| panic!("a stopped attempt cannot report a step"),
             |_| panic!("a stopped attempt cannot request consent"),
@@ -2246,9 +2241,6 @@ mod tests {
         assert!(!rust.contains("Rust") && !rust.contains('%'), "{rust}");
         assert!(!Step::Tool.shown().contains("mixins"));
         assert!(!Step::Mixins.shown().contains("mixins"));
-        let backup = Step::BackedUp("Backed up Test to /home/player/saves/Test".into());
-        assert_eq!(backup.shown(), "World backup saved");
-        assert!(backup.label().contains("/home/player/"));
         let skipped = Step::LeftOut(LeftOut {
             id: "example".into(),
             version: "1.0.0".into(),
@@ -2474,7 +2466,7 @@ mod tests {
                 vec![],
             ),
         ] {
-            let stopped = guard_worlds(&home, &[left(why)], build, false, &|_| {});
+            let stopped = guard_worlds(&home, &[left(why)], build, &[]);
             let Err(Failed::Worlds(stake)) = stopped else {
                 panic!("a world saved with the mod must stop the build");
             };
@@ -2482,7 +2474,6 @@ mod tests {
             assert_eq!(stake.worlds, ["Home"]);
             assert_eq!(stake.mods, ["greeter"]);
             assert_eq!(stake.unbuilt, unbuilt);
-            assert_eq!(stake.backups, home.join("backups"));
             assert!(
                 !home.join("backups").exists(),
                 "nothing is backed up unasked"
@@ -2497,25 +2488,25 @@ mod tests {
                 other
             }],
             build,
-            false,
-            &|_| {},
+            &[],
         ) else {
             panic!("a world saved with the mod must stop the build");
         };
-        assert_eq!(stake.mods, ["greeter"]);
-        assert_eq!(stake.unbuilt, ["greeter"]);
-        // Chosen: the world is backed up first, then the build may go on without the mod.
-        let said = std::cell::RefCell::new(Vec::new());
-        guard_worlds(
-            &home,
-            &[left(isolate::Why::DidNotBuild)],
-            build,
-            true,
-            &|step| said.borrow_mut().push(step),
-        )
-        .unwrap();
-        assert_eq!(fs::read_dir(home.join("backups")).unwrap().count(), 1);
-        assert!(matches!(said.borrow().as_slice(), [Step::BackedUp(_)]));
+        assert_eq!(stake.mods, ["greeter", "elsewhere"]);
+        assert!(!stake.incompatible);
+        // Explicit permission only covers the IDs the player saw. It never creates a backup.
+        let reviewed = ["greeter".to_string()];
+        guard_worlds(&home, &[left(isolate::Why::DidNotBuild)], build, &reviewed).unwrap();
+        assert!(!home.join("backups").exists());
+        assert!(matches!(
+            guard_worlds(
+                &home,
+                &[left(isolate::Why::DidNotBuild)],
+                build,
+                &["elsewhere".into()]
+            ),
+            Err(Failed::Worlds(_))
+        ));
         // A mod no world was saved with is switched off with no question.
         let other = LeftOut {
             id: "other".into(),
@@ -2523,12 +2514,12 @@ mod tests {
             why: isolate::Why::DidNotBuild,
             detail: None,
         };
-        assert!(guard_worlds(&home, &[other], build, false, &|_| {}).is_ok());
+        assert!(guard_worlds(&home, &[other], build, &[]).is_ok());
         fs::remove_dir_all(home).unwrap();
     }
 
     #[test]
-    fn the_native_switch_backs_up_unknown_worlds_and_stops_if_the_scan_or_backup_fails() {
+    fn the_native_build_checks_unknown_worlds_for_unreviewed_omissions() {
         let _guard = scratch_state();
         let home = dir("native-switch-worlds");
         let saves = home.join("saves");
@@ -2539,34 +2530,46 @@ mod tests {
             why: isolate::Why::DidNotBuild,
             detail: None,
         }];
-        let switch = |allow| guard_worlds(&home, &changed, "nightly", allow, &|_| {});
+        let switch = |reviewed: &[String]| guard_worlds(&home, &changed, "nightly", reviewed);
         fs::write(&saves, b"not a directory").unwrap();
-        assert!(matches!(switch(true), Err(Failed::Other(_))));
+        assert!(matches!(switch(&[]), Err(Failed::Other(_))));
         fs::remove_file(&saves).unwrap();
         fs::create_dir_all(&world).unwrap();
         fs::write(world.join("level.dat"), b"truncated").unwrap();
         fs::write(world.join("level.dat_old"), b"also truncated").unwrap();
-        let Err(Failed::Worlds(stake)) = switch(false) else {
+        let Err(Failed::Worlds(stake)) = switch(&[]) else {
             panic!("unknown is not an empty mod list")
         };
         assert_eq!(stake.worlds, ["Uncertain"]);
         assert!(stake.text.contains("can't be read"));
         assert!(!home.join("backups").exists());
-        let lock = fs::File::create(world.join("session.lock")).unwrap();
-        lock.try_lock().unwrap();
-        assert!(matches!(switch(true), Err(Failed::Other(_))));
-        lock.unlock().unwrap();
-        switch(true).unwrap();
-        let zip = fs::read_dir(home.join("backups"))
-            .unwrap()
-            .next()
-            .unwrap()
-            .unwrap()
-            .path();
-        let mut saved = zip::ZipArchive::new(fs::File::open(zip).unwrap()).unwrap();
-        assert!(saved.by_name("Uncertain/level.dat_old").is_ok());
-        drop(saved);
-        drop(lock);
+        switch(&["greeter".into()]).unwrap();
+        assert!(!home.join("backups").exists());
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn accepting_the_update_only_disables_reviewed_omissions() {
+        use crate::browser::mod_list;
+        let _guard = scratch_state();
+        let home = dir("disable-reviewed-native");
+        mod_list::set_all_enabled(&home, &["greeter", "other", "now-fits"], true).unwrap();
+        let omission = |id: &str| LeftOut {
+            id: id.into(),
+            version: "1.0.0".into(),
+            why: isolate::Why::Unfit("SDK mismatch".into()),
+            detail: None,
+        };
+        disable_reviewed(
+            &home,
+            &[omission("greeter"), omission("other")],
+            &["greeter".into(), "now-fits".into()],
+        )
+        .unwrap();
+        assert!(!mod_list::is_enabled(&home, "greeter"));
+        assert!(mod_list::is_enabled(&home, "other"));
+        assert!(mod_list::is_enabled(&home, "now-fits"));
+        assert!(!home.join("backups").exists());
         fs::remove_dir_all(home).unwrap();
     }
 
@@ -3712,7 +3715,7 @@ mod tests {
             &folder,
             &instance,
             None,
-            false,
+            &[],
             &Cancellation::default(),
             |_| {},
             |_| false,
@@ -3871,7 +3874,7 @@ mod tests {
                 &folder,
                 &instances::selected(),
                 choice,
-                false,
+                &[],
                 &Cancellation::default(),
                 |_| {},
                 |_| false,

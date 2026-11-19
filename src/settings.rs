@@ -698,11 +698,6 @@ impl Launcher {
 
     fn settings_storage(&mut self, cx: &mut Context<Self>) -> Div {
         let game = backend::game_home();
-        let backups = self
-            .selected_instance()
-            .map_or_else(|| game.clone(), |i| i.home.clone())
-            .join("backups");
-        let has_backups = backups.is_dir();
         let files = row(
             tr("Game files and worlds"),
             short(&game),
@@ -710,21 +705,6 @@ impl Launcher {
                 let dir = game.clone();
                 button("alt-open-game", tr("Open folder"))
                     .on_click(move |_, _, cx| glass_toast::open(cx, &dir))
-            }),
-        );
-        let open_backups = button("alt-open-backups", tr("Open folder"));
-        let kept = row(
-            tr("World backups"),
-            if has_backups {
-                short(&backups)
-            } else {
-                tr("None yet. Sunrise makes one before a mod change that could harm a world.")
-                    .to_string()
-            },
-            div().child(if has_backups {
-                open_backups.on_click(move |_, _, cx| glass_toast::open(cx, &backups))
-            } else {
-                off(open_backups)
             }),
         );
 
@@ -923,7 +903,7 @@ impl Launcher {
             .flex_col()
             .gap(px(14.))
             .child(group(vec![self.location_row(cx)]))
-            .child(group(vec![files, kept]))
+            .child(group(vec![files]))
             .child(group(cache))
             .children(notes.into_iter().flatten())
     }
@@ -1477,10 +1457,31 @@ impl Launcher {
                         false,
                     )
                 }
-                None if self.checked.is_some() && self.update_error.is_none() => {
-                    (tr("up to date").to_string(), None, false)
+                None if self.checking_updates => (
+                    String::new(),
+                    Some(off(button("alt-launcher-check", tr("Checking…")))),
+                    false,
+                ),
+                None => {
+                    let (about, bad) = match &self.updates.launcher_error {
+                        Some(error) => (trf("Not checked: {error}", &[("error", error)]), true),
+                        None if self
+                            .launcher_checked_now
+                            .is_some_and(|checked| checked.elapsed() < Duration::from_secs(60)) =>
+                        {
+                            (tr("up to date · checked just now").to_string(), false)
+                        }
+                        None if self.checked.is_some() => (tr("up to date").to_string(), false),
+                        None => (String::new(), false),
+                    };
+                    let check = button("alt-launcher-check", tr("Check for updates")).on_click(
+                        cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.check_updates(UpdateCheck::ManualLauncher);
+                            cx.notify();
+                        }),
+                    );
+                    (about, Some(check), bad)
                 }
-                None => (String::new(), None, false),
             },
         };
         let mut words = div().flex().flex_col().gap(px(2.));

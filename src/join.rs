@@ -11,8 +11,9 @@
 use super::*;
 use crate::frame::button;
 use crate::frame::Reach as _;
-use crate::home::{card, muted};
+use crate::home::muted;
 use crate::paint::palette;
+use crate::servers_page::collection;
 use gpui::{rgb, rgba};
 
 /// Horizon Minecraft's address, passed to the game as written. Empty: the row has no Join.
@@ -110,7 +111,12 @@ pub(crate) fn entry(text: &str) -> Entry {
         Entry::Empty
     } else if sunrise_launcher_friends::invite::parse(text).is_some() {
         Entry::Invite
-    } else if text.chars().any(|c| c.is_whitespace() || c.is_control()) {
+    } else if text
+        .chars()
+        .any(|c| c.is_whitespace() || c.is_control() || c == '/')
+        || !sunrise_launcher_telemetry::server_status::split_address(text)
+            .is_some_and(|(host, port)| !host.is_empty() && port > 0)
+    {
         Entry::Unusable
     } else {
         Entry::Address(text.to_string())
@@ -150,16 +156,16 @@ fn server_picture(
     match (icon, badge) {
         (Some(image), _) => gpui::img(image)
             .flex_none()
-            .size(px(36.))
+            .size(px(32.))
             .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
             .into_any_element(),
-        (None, Some(Badge::Horizon)) => horizon_mark(36.).into_any_element(),
-        (None, Some(Badge::Sunrise)) => crate::mark(36.).into_any_element(),
-        (None, None) => tile(name, 36.).into_any_element(),
+        (None, Some(Badge::Horizon)) => horizon_mark(32.).into_any_element(),
+        (None, Some(Badge::Sunrise)) => crate::mark(32.).into_any_element(),
+        (None, None) => tile(name, 32.).into_any_element(),
     }
 }
 
-fn tile(label: &str, side: f32) -> Div {
+pub(crate) fn tile(label: &str, side: f32) -> Div {
     // A colour of its own from its name, the same every time, kept quiet enough to sit on the
     // card: the letter reads as the server's badge rather than a missing picture.
     let hash = label.bytes().fold(0x811c_9dc5_u32, |h, b| {
@@ -180,6 +186,27 @@ fn tile(label: &str, side: f32) -> Div {
         .child(initial(label))
 }
 
+fn reach_labels(reach: multiplayer_page::Reach) -> (String, Option<String>) {
+    match reach {
+        multiplayer_page::Reach::Online {
+            players,
+            max,
+            latency,
+        } => (
+            trf(
+                "{online}/{max} players",
+                &[("online", &players.to_string()), ("max", &max.to_string())],
+            ),
+            Some(trf(
+                "{ping} ms",
+                &[("ping", &latency.as_millis().to_string())],
+            )),
+        ),
+        multiplayer_page::Reach::Offline => (tr("No answer").into(), None),
+        multiplayer_page::Reach::Asking => (tr("Checking…").into(), None),
+    }
+}
+
 impl Launcher {
     /// The Join page: the servers of the selected profile.
     pub(crate) fn join(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -189,20 +216,112 @@ impl Launcher {
         self.load_servers(home);
         self.ping_servers(cx);
         self.ping_featured(cx);
-        let servers = self.servers(cx);
-        div()
-            .id("alt-join")
-            .size_full()
-            .overflow_y_scroll()
-            .track_scroll(&crate::frame::scrolls("join"))
-            .px(px(24.))
-            .pt(px(18.))
-            .pb(px(24.))
-            .child(servers.max_w(px(720.)))
-            .into_any_element()
+        let narrow = self.servers_narrow();
+        let saved = self.multiplayer.list.clone();
+        let keys = self.multiplayer.keys.clone();
+        let toolbar = self.join_toolbar(cx);
+        let selection = if let Some(remove) = &self.multiplayer.remove {
+            collection::confirmation(
+                "join-remove-review",
+                if remove.len() == 1 {
+                    tr("Remove this saved server?").into()
+                } else {
+                    trf(
+                        "Remove {count} saved servers?",
+                        &[("count", &remove.len().to_string())],
+                    )
+                },
+                tr("Remove"),
+                |this| this.multiplayer.remove = None,
+                Launcher::remove_saved_servers,
+                cx,
+            )
+        } else {
+            let selected = self.multiplayer.selected.len();
+            let all = !keys.is_empty() && selected == keys.len();
+            let check = collection::check("join-select-all", all, tr("Select all saved servers"));
+            let check = if keys.is_empty() {
+                check.opacity(0.45).tab_stop(false)
+            } else {
+                let keys = keys.clone();
+                check.on_click(cx.listener(move |this, _, _, cx| {
+                    if all {
+                        this.multiplayer.selected.clear()
+                    } else {
+                        this.multiplayer.selected.extend(keys.iter().cloned());
+                    }
+                    cx.notify();
+                }))
+            };
+            let label = match (selected, saved.len()) {
+                (0, 1) => tr("1 saved server").to_owned(),
+                (0, count) => trf("{count} saved servers", &[("count", &count.to_string())]),
+                (count, _) => trf("{count} selected", &[("count", &count.to_string())]),
+            };
+            let actions = if selected == 0 {
+                div()
+            } else {
+                collection::bulk_actions(
+                    "join-selection",
+                    tr("Remove selected"),
+                    |this| this.multiplayer.selected.clear(),
+                    |this| this.multiplayer.remove = Some(this.multiplayer.selected.clone()),
+                    cx,
+                )
+            };
+            collection::selection_bar(check, label, actions)
+        };
+        let controls = div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .child(toolbar)
+            .child(selection)
+            .children(
+                self.multiplayer
+                    .error
+                    .as_ref()
+                    .filter(|_| self.multiplayer.adding.is_none())
+                    .map(|e| {
+                        div()
+                            .id("join-notice")
+                            .px(px(12.))
+                            .pb(px(8.))
+                            .text_size(px(tokens::LABEL))
+                            .text_color(rgb(palette().warning))
+                            .line_clamp(2)
+                            .tooltip(crate::glass_ui::tip(e.clone()))
+                            .child(e.clone())
+                    }),
+            );
+        let mut list = collection::rows("join");
+        if saved.is_empty() {
+            list = list.child(
+                collection::toolbar()
+                    .border_t_1()
+                    .border_color(rgb(palette().divider))
+                    .child(muted(tr("No saved servers"))),
+            );
+        }
+        for (i, ((server, icon), key)) in
+            saved.iter().cloned().zip(keys.iter().cloned()).enumerate()
+        {
+            list = list.child(self.server_row(i, server, icon, key, narrow, cx));
+        }
+        for (i, server) in featured().into_iter().enumerate() {
+            // A featured host saved already, on any port, shows just once as the saved row.
+            if saved
+                .iter()
+                .any(|(s, _)| featured_at(&s.ip).as_ref() == Some(&server))
+            {
+                continue;
+            }
+            list = list.child(self.featured_row(i, server, narrow, cx));
+        }
+        collection::table(controls, list, "join", &self.multiplayer.thumb, cx).into_any_element()
     }
 
-    fn servers(&mut self, cx: &mut Context<Self>) -> Div {
+    fn join_toolbar(&mut self, cx: &mut Context<Self>) -> Div {
         let typed = entry(self.friend_code.text());
         let focused = self.friend_focused;
         let field = crate::frame::input(focused)
@@ -210,8 +329,8 @@ impl Launcher {
             .track_focus(&self.friend_focus)
             .seen()
             .flex_1()
-            .min_w(px(0.))
-            .h(px(tokens::FIELD))
+            .min_w_0()
+            .h(px(36.))
             .px(px(12.))
             .text_size(px(tokens::BODY))
             .text_color(rgb(palette().text))
@@ -239,20 +358,8 @@ impl Launcher {
                 cx.notify();
             }));
         let field = line_edit::mouse(field, cx, |this| &mut this.friend_code);
-        let address = matches!(typed, Entry::Address(_));
-        // As tall as the address field they stand beside.
-        let save = button("alt-server-save", tr("Save")).h(px(tokens::FIELD));
-        let save = if address {
-            save.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.save_typed();
-                cx.notify();
-            }))
-        } else {
-            save.opacity(0.4).cursor_default().tab_stop(false)
-        };
-        let joinable = matches!(typed, Entry::Address(_) | Entry::Invite);
-        let join = button("alt-server-join", tr("Join")).h(px(tokens::FIELD));
-        let join = if joinable {
+        let join = button("alt-server-join", tr("Join")).h(px(36.));
+        let join = if matches!(typed, Entry::Address(_) | Entry::Invite) {
             join.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.join_typed();
                 cx.notify();
@@ -260,101 +367,64 @@ impl Launcher {
         } else {
             join.opacity(0.4).cursor_default().tab_stop(false)
         };
-        let mut list = div().flex().flex_col();
-        if let Some(e) = self.multiplayer.error.clone() {
-            list = list.child(
-                div()
-                    .px(px(14.))
-                    .py(px(8.))
-                    .text_size(px(tokens::SMALL))
-                    .text_color(rgb(palette().warning))
-                    .child(e),
-            );
-        }
-        if let Entry::Unusable = typed {
-            list = list.child(
-                div()
-                    .px(px(14.))
-                    .py(px(8.))
-                    .text_size(px(tokens::SMALL))
-                    .text_color(rgb(palette().muted))
-                    .child(tr("That isn't an address or an invite code.")),
-            );
-        }
-        let saved = self.multiplayer.list.clone();
-        let mut shown = 0;
-        for server in featured() {
-            // Saved already, on any port: it shows once, as the saved row.
-            if saved
-                .iter()
-                .any(|(s, _)| featured_at(&s.ip).as_ref() == Some(&server))
-            {
-                continue;
-            }
-            list = list.child(self.featured_row(shown, server, cx));
-            shown += 1;
-        }
-        for (i, (server, icon)) in saved.into_iter().enumerate() {
-            list = list.child(self.server_row(i, server, icon, cx));
-            shown += 1;
-        }
-        if shown == 0 {
-            list = list.child(
-                div()
-                    .px(px(14.))
-                    .py(px(14.))
-                    .child(muted(tr("No saved servers."))),
-            );
-        }
-        div().flex().flex_col().gap(px(12.)).child(
-            card()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(10.))
-                        .p(px(12.))
-                        .child(field)
-                        .child(save)
-                        .child(join),
-                )
-                .child(list),
-        )
+        let add = crate::frame::primary("alt-server-add", "")
+            .h(px(36.))
+            .gap(px(6.))
+            .child(crate::glass_ui::icon(
+                "plus-sign",
+                14.,
+                rgb(palette().background).into(),
+            ))
+            .child(tr("Add server"))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.open_add_server(cx);
+                cx.notify();
+            }));
+        div()
+            .flex()
+            .flex_col()
+            .child(collection::toolbar().child(field).child(join).child(add))
+            .children((typed == Entry::Unusable).then(|| {
+                muted(tr("That isn't an address or an invite code."))
+                    .px(px(12.))
+                    .pb(px(8.))
+            }))
     }
 
-    fn featured_row(&mut self, i: usize, server: Featured, cx: &mut Context<Self>) -> Div {
-        use multiplayer_page::Reach;
-        let (end, line) = match server.address {
+    fn featured_row(
+        &mut self,
+        i: usize,
+        server: Featured,
+        narrow: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let (line, end) = match server.address {
             Some(address) => {
-                let line = match self.multiplayer.reach.get(address) {
-                    Some(Reach::Online { players, .. }) => {
-                        trf("{count} playing", &[("count", &players.to_string())])
-                    }
-                    Some(Reach::Offline) => tr("No answer").to_string(),
-                    _ => tr(server.note).to_string(),
-                };
-                let join = button(format!("alt-featured-{i}"), tr("Join")).on_click(cx.listener(
+                let (first, second) = reach_labels(
+                    self.multiplayer
+                        .reach
+                        .get(address)
+                        .copied()
+                        .unwrap_or(multiplayer_page::Reach::Asking),
+                );
+                let join = button(("featured-join", i), tr("Join")).on_click(cx.listener(
                     move |this, _: &ClickEvent, _, cx| {
                         this.play_to("--server", address.to_string());
                         cx.notify();
                     },
                 ));
-                (join.into_any_element(), line)
+                (
+                    collection::status(narrow, first, second),
+                    join.into_any_element(),
+                )
             }
             None => (
-                muted(tr(server.inert)).into_any_element(),
-                tr(server.note).to_string(),
+                collection::status(narrow, tr(server.inert).into(), None),
+                div().w(px(43.)).into_any_element(),
             ),
         };
-        div()
-            .flex()
-            .items_center()
-            .gap(px(12.))
-            .px(px(14.))
-            .py(px(10.))
-            .border_t_1()
-            .border_color(rgb(palette().divider))
-            // The picture the server sends wins; until it does, the bundled one.
+        collection::row(narrow)
+            .child(div().flex_none().w(px(18.)))
             .child(server_picture(
                 server
                     .address
@@ -362,20 +432,14 @@ impl Launcher {
                 Some(server.badge),
                 server.name,
             ))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .child(
-                        div()
-                            .text_size(px(tokens::BODY))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(palette().text))
-                            .child(tr(server.name)),
-                    )
-                    .child(muted(line)),
-            )
+            .child(collection::identity(
+                ("featured-server", i),
+                tr(server.name).into(),
+                server.address.unwrap_or_else(|| tr(server.note)).into(),
+            ))
+            .child(line)
             .child(end)
+            .child(div().flex_none().w(px(32.)))
     }
 
     /// Asks the featured servers that can be joined for their players, once each.
@@ -406,8 +470,10 @@ impl Launcher {
         i: usize,
         server: sunrise_launcher::server_list::Server,
         icon: Option<std::sync::Arc<gpui::Image>>,
+        key: sunrise_launcher::server_list::SavedKey,
+        narrow: bool,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> Stateful<Div> {
         use multiplayer_page::Reach;
         let reach = self
             .multiplayer
@@ -415,88 +481,85 @@ impl Launcher {
             .get(&server.ip)
             .copied()
             .unwrap_or(Reach::Asking);
-        let line = match reach {
-            Reach::Online { players, max } => trf(
-                "{online} of {max}",
-                &[("online", &players.to_string()), ("max", &max.to_string())],
+        let (first, second) = reach_labels(reach);
+        let checked = self.multiplayer.selected.contains(&key);
+        let join_focus = self
+            .multiplayer
+            .focuses
+            .entry(key.clone())
+            .or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
+            .clone();
+        let reveal = self.home_server_target(&key, &join_focus);
+        let select = collection::check(
+            ("join-select", i),
+            checked,
+            trf(
+                "Select {name} · {address}",
+                &[("name", &server.name), ("address", &server.ip)],
             ),
-            Reach::Offline => tr("No answer").to_string(),
-            Reach::Asking => server.ip.clone(),
-        };
-        let offline = reach == Reach::Offline;
-        let ip = server.ip.clone();
-        let join = button(format!("alt-server-{i}-join"), tr("Join"));
-        let join = if offline {
-            join.opacity(0.4)
+        )
+        .on_click(cx.listener({
+            let key = key.clone();
+            move |this, _, _, cx| {
+                this.multiplayer.remove = None;
+                if !this.multiplayer.selected.remove(&key) {
+                    this.multiplayer.selected.insert(key.clone());
+                }
+                cx.notify();
+            }
+        }));
+        let remove = collection::remove(("join-remove", i), tr("Remove server")).on_click(
+            cx.listener(move |this, _, _, cx| {
+                this.multiplayer.remove = Some([key.clone()].into());
+                cx.notify();
+            }),
+        );
+        let action = button(("join-server", i), tr("Join"));
+        let join = if reach == Reach::Offline {
+            action
+                .opacity(0.4)
                 .cursor_default()
+                .tab_stop(false)
                 .tooltip(crate::glass_ui::tip(tr(
                     "This server doesn't answer right now",
                 )))
         } else {
-            join.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.play_to("--server", ip.clone());
-                cx.notify();
-            }))
-        };
-        let open = self.multiplayer.menu.filter(|(row, _)| *row == i);
-        let more = match open {
-            Some((_, asked)) => button(
-                format!("alt-server-{i}-remove"),
-                if asked {
-                    tr("Click again to remove")
-                } else {
-                    tr("Remove")
-                },
-            )
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                if asked {
-                    this.multiplayer.menu = None;
-                    this.edit_servers(|list| list.remove(i).map(|_| ()));
-                } else {
-                    this.multiplayer.menu = Some((i, true));
-                }
-                cx.notify();
-            })),
-            None => button(format!("alt-server-{i}-more"), "…").on_click(cx.listener(
-                move |this, _: &ClickEvent, _, cx| {
-                    this.multiplayer.menu = Some((i, false));
+            let ip = server.ip.clone();
+            action
+                .track_focus(&join_focus)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.play_to("--server", ip.clone());
                     cx.notify();
-                },
-            )),
+                }))
         };
-        // The picture the game saved, else the one the server just sent.
         let picture = server_picture(
             icon.or_else(|| self.multiplayer.icons.get(&server.ip).cloned()),
             featured_at(&server.ip).map(|f| f.badge),
             &server.name,
         );
-        div()
-            .flex()
-            .items_center()
-            .gap(px(12.))
-            .px(px(14.))
-            .py(px(10.))
-            .border_t_1()
-            .border_color(rgb(palette().divider))
+        collection::row(narrow)
+            .id(("join-row", i))
+            .when(checked, |d| d.bg(rgb(palette().selected)))
+            .when(reach == Reach::Offline, |d| {
+                d.track_focus(&join_focus)
+                    .seen()
+                    .aria_label(trf(
+                        "{name} · {address} · No answer",
+                        &[("name", &server.name), ("address", &server.ip)],
+                    ))
+                    .focus_visible(|s| s.bg(rgb(palette().hover)))
+            })
+            .children(reveal)
+            .child(select)
             .child(picture)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .child(
-                        div()
-                            .text_size(px(tokens::BODY))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(palette().text))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(server.name),
-                    )
-                    .child(muted(line)),
-            )
+            .child(collection::identity(
+                ("saved-server", i),
+                server.name,
+                server.ip,
+            ))
+            .child(collection::status(narrow, first, second))
             .child(join)
-            .child(more)
+            .child(remove)
     }
 
     /// Join with what is typed: an invite code joins the friend, an address the server.
@@ -511,15 +574,96 @@ impl Launcher {
         }
     }
 
-    /// Save with what is typed: the address goes into the game's own server list.
-    fn save_typed(&mut self) {
-        let Entry::Address(address) = entry(self.friend_code.text()) else {
+    pub(crate) fn open_add_server(&mut self, cx: &mut Context<Self>) {
+        use crate::servers_page::Field;
+        let Some(home) = self.selected_instance().map(|i| i.home.clone()) else {
             return;
         };
-        self.edit_servers(|list| list.add(&address, &address));
-        if self.multiplayer.error.is_none() {
-            self.friend_code.set(String::new());
-        }
+        self.load_servers(home.clone());
+        let address = match entry(self.friend_code.text()) {
+            Entry::Address(address) => address,
+            _ => String::new(),
+        };
+        self.multiplayer.adding = Some(home);
+        self.multiplayer.error = None;
+        self.servers.text(Field::ServerName).set(String::new());
+        self.servers.text(Field::ServerAddress).set(address);
+        self.focus_handle(Field::ServerName, cx);
+        self.servers.focus_soon = Some(Field::ServerName);
+    }
+
+    pub(crate) fn close_add_server(&mut self) {
+        self.multiplayer.adding = None;
+        self.multiplayer.error = None;
+    }
+
+    pub(crate) fn add_server_dialog(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        use crate::servers_page::Field;
+        self.multiplayer.adding.as_ref()?;
+        let field = |this: &mut Self, f, label, example, cx: &mut Context<Self>| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .child(muted(tr(label)))
+                .child(
+                    this.field(f, example, 352., cx)
+                        .w_full()
+                        .h(px(36.))
+                        .aria_label(tr(label)),
+                )
+        };
+        let name = field(self, Field::ServerName, "Name", "Minecraft Server", cx);
+        let address = field(
+            self,
+            Field::ServerAddress,
+            "Address",
+            "play.example.net:25565",
+            cx,
+        );
+        let body = div()
+            .flex()
+            .flex_col()
+            .child(crate::sheets::title(tr("Add server").into()))
+            .child(name)
+            .child(address)
+            .children(self.multiplayer.error.as_ref().map(|e| {
+                div()
+                    .id("join-add-error")
+                    .text_size(px(tokens::SMALL))
+                    .text_color(rgb(palette().warning))
+                    .line_clamp(2)
+                    .tooltip(crate::glass_ui::tip(e.clone()))
+                    .child(e.clone())
+            }))
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        button("join-add-cancel", tr("Cancel")).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.close_add_server();
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(crate::frame::primary("join-add-save", tr("Add")).on_click(
+                        cx.listener(|this, _, _, cx| {
+                            this.add_server();
+                            cx.notify();
+                        }),
+                    )),
+            );
+        Some(crate::sheets::modal_frame(
+            "join-add-server",
+            410.,
+            body,
+            cx,
+            Launcher::close_add_server,
+        ))
     }
 }
 

@@ -17,6 +17,9 @@ fn the_box_tells_an_address_from_an_invite_code() {
     );
     assert_eq!(entry("   "), Entry::Empty);
     assert_eq!(entry("a b"), Entry::Unusable);
+    assert_eq!(entry("survival.example:no"), Entry::Unusable);
+    assert_eq!(entry("https://survival.example"), Entry::Unusable);
+    assert_eq!(entry("[::1]:25566"), Entry::Address("[::1]:25566".into()));
 }
 
 #[test]

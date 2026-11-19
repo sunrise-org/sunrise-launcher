@@ -216,9 +216,8 @@ impl Launcher {
             backend::complete_assets(&tag);
             if let Some(auto) = auto {
                 backend::play_step("updating registry mods");
-                let lines = mods_page::auto_update(&[auto], auto_enabled);
-                if !lines.is_empty() {
-                    let _ = mods_tx.send(mods_page::Event::AutoUpdated(lines));
+                if let Some(notice) = mods_page::auto_update(&[auto], auto_enabled) {
+                    let _ = mods_tx.send(mods_page::Event::AutoUpdated(notice));
                 }
             }
             backend::play_step("reading the sign-in");

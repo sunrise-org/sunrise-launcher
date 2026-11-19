@@ -238,6 +238,14 @@ impl Launcher {
             return None;
         }
         let rows = rows(&self.accounts);
+        let heading = if rows.len() > 1 {
+            trf(
+                "Play as · {count} accounts",
+                &[("count", &rows.len().to_string())],
+            )
+        } else {
+            tr("Play as").to_owned()
+        };
         let mut list = div()
             .id("account-menu-list")
             .flex()
@@ -259,7 +267,8 @@ impl Launcher {
                     .px(px(8.))
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(palette().hover)))
-                    .child(self.face(&row.uuid))
+                    .tooltip(crate::glass_ui::tip(row.name.clone()))
+                    .child(self.face(&row.uuid).flex_none())
                     .child(
                         div()
                             .flex_1()
@@ -328,7 +337,8 @@ impl Launcher {
                     .text_size(px(tokens::SMALL))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(rgb(palette().muted))
-                    .child(tr("Play as")),
+                    .truncate()
+                    .child(heading),
             )
             .child(list)
             .child(

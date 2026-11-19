@@ -5,6 +5,7 @@
 //! The launcher only adds and removes entries: every other field of every entry is written back
 //! as it was read.
 use base64::Engine;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use sunrise_launcher_nbt::{self as nbt, Compound, JavaString, Limits, NamedTag, Tag};
@@ -16,6 +17,39 @@ pub struct Server {
     pub ip: String,
     /// The server's picture, as the game last saw it (PNG).
     pub icon: Option<Vec<u8>>,
+}
+
+/// A visible entry's identity. Duplicates are positional among identical names and addresses,
+/// and only match a later read when the number of those duplicates is unchanged.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct SavedKey {
+    pub name: String,
+    pub address: String,
+    occurrence: usize,
+    copies: usize,
+}
+
+impl SavedKey {
+    pub fn of_list<'a>(servers: impl Iterator<Item = &'a Server> + Clone) -> Vec<Self> {
+        let mut counts = BTreeMap::new();
+        for s in servers.clone() {
+            *counts.entry((&s.name, &s.ip)).or_insert(0) += 1;
+        }
+        let mut seen = BTreeMap::new();
+        servers
+            .map(|s| {
+                let pair = (&s.name, &s.ip);
+                let position = seen.entry(pair).or_insert(0);
+                *position += 1;
+                Self {
+                    name: s.name.clone(),
+                    address: s.ip.clone(),
+                    occurrence: *position,
+                    copies: counts[&pair],
+                }
+            })
+            .collect()
+    }
 }
 
 /// The entries as they are in the file, the hidden ones (servers joined with Direct
@@ -133,6 +167,39 @@ impl List {
             .unwrap();
         self.entries.remove(at);
         Ok(server)
+    }
+
+    /// Adds to the current list without replacing a file the launcher could not read.
+    pub fn add_saved(home: &Path, name: &str, address: &str) -> Result<(), String> {
+        let mut list = Self::read(home)
+            .ok_or_else(|| crate::i18n::tr("Could not read the saved servers.").to_owned())?;
+        list.add(name, address)?;
+        list.save(home)
+    }
+
+    /// Removes exactly the reviewed visible entries in one save. Refuses a stale review rather
+    /// than deleting a changed or missing entry by its former row number.
+    pub fn remove_saved(home: &Path, reviewed: &BTreeSet<SavedKey>) -> Result<(), String> {
+        let mut list = Self::read(home)
+            .ok_or_else(|| crate::i18n::tr("Could not read the saved servers.").to_owned())?;
+        list.remove_reviewed(reviewed)?;
+        list.save(home)
+    }
+
+    fn remove_reviewed(&mut self, reviewed: &BTreeSet<SavedKey>) -> Result<(), String> {
+        let shown = self.servers();
+        let keys = SavedKey::of_list(shown.iter());
+        let removed: Vec<bool> = keys.iter().map(|key| reviewed.contains(key)).collect();
+        if removed.iter().filter(|&&take| take).count() != reviewed.len() {
+            return Err(crate::i18n::tr(
+                "The saved servers changed. Review the list and try again.",
+            )
+            .into());
+        }
+        let mut removed = removed.into_iter();
+        self.entries
+            .retain(|e| hidden(e) || !removed.next().unwrap_or(false));
+        Ok(())
     }
 
     /// Writes the list as the game does: a new file first, the old one kept as `servers.dat_old`.
