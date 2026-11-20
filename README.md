@@ -78,10 +78,9 @@ The opening, then Play ([clip](docs/opening.webm)):
 - **Play**: prepares resources as `PLAY.txt` describes (your launcher's 26.3 install, the
   26.3 server jar from that version's own json, and Java 25) and copies its sounds from your
   launcher's asset store (`sunrise-prepare sounds`; a launcher install without them only
-  leaves the game silent), then starts the client. Preparing is
-  sunrise-prepare: linked into the launcher, used in-process when a version ships the same
-  preparer sources, else that version's own `sunrise-prepare`; versions released before it
-  still prepare with their Python script and need Python 3.10+. Before importing,
+  leaves the game silent), then starts the client. Preparing runs that version's own
+  `sunrise-prepare`; versions released before it still prepare with their Python script and
+  need Python 3.10+. Before importing,
   preparation reuses checksum-verified game jars and libraries from the current
   or another installed Sunrise version, so the original Minecraft install is
   only required when no valid imported copy exists.

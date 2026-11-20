@@ -1669,7 +1669,7 @@ const LEGACY_EXPORTERS: [&str; 18] = [
     "VanillaPlayerHealthOracle.java",
 ];
 
-/// The digest `sunrise_prepare::sources_sha256` gives a preparer crate's sources: `Cargo.toml`, `build.rs` and `src/*.rs`, CRs dropped.
+/// The digest preparers before `OUTPUT_VERSION` gave their crate's sources: `Cargo.toml`, `build.rs` and `src/*.rs`, CRs dropped.
 fn preparer_sources_sha256(crate_dir: &Path) -> Option<String> {
     use sha2::Digest;
     let mut files = Vec::new();
