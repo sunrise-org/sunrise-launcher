@@ -445,6 +445,12 @@ pub fn profile_target<'a>(
     installed: &'a [String],
     launcher_version: Option<&'a String>,
 ) -> Option<&'a String> {
+    if pin.is_none() && releases.is_empty() && channel == Channel::Stable {
+        // Before the release list arrives, protect the locally installed Stable target.
+        if let Some(stable) = installed.iter().find(|tag| backend::is_game_tag(tag)) {
+            return Some(stable);
+        }
+    }
     pin.or_else(|| match channel.following(releases) {
         Channel::Stable => {
             // Keep the existing policy: prefer an installed Stable build.
@@ -554,7 +560,16 @@ pub(crate) fn profile_homes_strict(game: &Path) -> Result<Vec<PathBuf>, String> 
     Ok(homes)
 }
 
+/// Storage checks profile state while holding the publication lock, without editing old metadata.
+pub(crate) fn list_for_storage() -> Vec<Instance> {
+    scan_profiles(&backend::game_home(), &backend::data_dir(), false)
+}
+
 fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
+    scan_profiles(game_home, data, true)
+}
+
+fn scan_profiles(game_home: &Path, data: &Path, prune_stale: bool) -> Vec<Instance> {
     let mut store = Store::load(data);
     let mut found = vec![(
         DEFAULT.to_string(),
@@ -575,7 +590,7 @@ fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
     // the metadata lock, so an old listing cannot drop a concurrently created profile's record.
     let root = game_home.join(OWN);
     let missing_from_list = |id: &String| id != DEFAULT && !id.contains(':') && !own.contains(id);
-    if root.is_dir() && store.instances.keys().any(missing_from_list) {
+    if prune_stale && root.is_dir() && store.instances.keys().any(missing_from_list) {
         match Store::mutate(data, |live| {
             live.instances.retain(|id, _| {
                 !missing_from_list(id) || crate::browser::safe_name(id) != Some(id.as_str())

@@ -19,7 +19,6 @@ pub(super) enum Page {
     Project,
     Join,
     Hosting,
-    Versions,
     Settings,
 }
 
@@ -395,13 +394,12 @@ impl Launcher {
     }
 
     pub(super) fn navigate(&mut self, page: Page) {
+        if page != Page::Settings {
+            self.storage_builds.confirm = None;
+        }
         match page {
             Page::Discover => self.open_mods(),
             Page::Packs => self.open_packs(),
-            Page::Versions => {
-                self.reset_versions();
-                self.ui.page = page;
-            }
             Page::Join | Page::Hosting => {
                 self.ui.last_server = Some(page);
                 self.ui.page = page;
@@ -425,7 +423,6 @@ impl Launcher {
             (Page::Discover, "nav-mods", "puzzle", tr("Mods")),
             (Page::Packs, "nav-packs", "package", tr("Packs")),
             (Page::Join, "nav-servers", "server", tr("Servers")),
-            (Page::Versions, "nav-versions", "archive", tr("Versions")),
         ] {
             let on = active == dest;
             let colour = if on { p.chrome_text } else { p.chrome_muted };
@@ -538,7 +535,6 @@ impl Launcher {
         let header = self.header(cx);
         let content = match page {
             Page::Settings => self.settings(window, cx),
-            Page::Versions => self.versions_page(cx).into_any_element(),
             Page::Home => self.home(window, cx),
             Page::Join | Page::Hosting => {
                 let body = if page == Page::Hosting {

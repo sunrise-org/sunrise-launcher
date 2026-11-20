@@ -2,7 +2,7 @@
 use super::*;
 
 /// Whether a version installed as an update becomes the selected one: when the player had none,
-/// was on the newest installed Nightly (an older one picked on Versions stays), or on the newest
+/// was on the newest installed Nightly (an older one the player chose stays), or on the newest
 /// installed release (so a player of the release channel moves
 /// to the Nightly at the first check, docs/release-flow.md). An older release picked by hand
 /// stays, and so does an imported build (`build_import`) or a snapshot (installed by its tag

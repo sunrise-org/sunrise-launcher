@@ -7,12 +7,8 @@
 //! Before that it was opt-in and played in its own "Nightly" instance (`instances/nightly/`):
 //! that instance, and its worlds, stay, and keep following the Nightly.
 use crate::backend::{self, Release};
-use crate::instances;
 use std::{fs, path::Path};
 use sunrise_launcher_release_verify::NIGHTLY;
-
-/// The id of the instance (its folder in `instances/`) the opt-in Nightly played in.
-pub const INSTANCE: &str = "nightly";
 
 /// The version a nightly installs as: `nightly-2026-10-28-0c02067`, from its title
 /// ("Nightly 2026-10-28 · 0c02067"), else its publication date.
@@ -142,7 +138,7 @@ pub fn same_day_time(version: &str) -> Option<String> {
         .map(|(_, time)| time.clone())
 }
 
-/// A Nightly as the Versions page names it, "the Nov 13 update" for `nightly-2026-11-13` (with
+/// A Nightly as the launcher names it, "the Nov 13 update" for `nightly-2026-11-13` (with
 /// or without its commit), with its time when another came out that day ("the Nov 13, 07:22 UTC
 /// update"); None for anything that is not one.
 pub fn update_name(version: &str) -> Option<String> {
@@ -188,46 +184,6 @@ fn is_date(text: &str) -> bool {
                 c.is_ascii_digit()
             }
         })
-}
-
-/// Prune old auto-installed Nightlies after an update. The committed profiles do not move.
-pub fn after_update(version: &str) {
-    let selected = backend::Settings::load().selected;
-    let pinned: Vec<String> = instances::list()
-        .into_iter()
-        .filter_map(|i| i.version)
-        .collect();
-    for old in stale(
-        &backend::installed(),
-        version,
-        selected.as_deref(),
-        &pinned,
-        backend::auto_installed,
-    ) {
-        // A removal stops at the first running program, with half the version already gone.
-        if !backend::in_use(&old) {
-            let _ = backend::remove(&old);
-        }
-    }
-}
-
-/// The automatically installed Nightlies to remove once `current` is installed: every other one
-/// that is neither selected nor pinned by an instance. Manual and legacy installs stay.
-fn stale(
-    installed: &[String],
-    current: &str,
-    selected: Option<&str>,
-    pinned: &[String],
-    auto: impl Fn(&str) -> bool,
-) -> Vec<String> {
-    installed
-        .iter()
-        .filter(|v| {
-            date_of(v).is_some() && auto(v) && *v != current && Some(v.as_str()) != selected
-        })
-        .filter(|v| !pinned.contains(v))
-        .cloned()
-        .collect()
 }
 
 #[cfg(test)]
@@ -364,40 +320,5 @@ mod tests {
         );
         assert_eq!(label("nightly-2026-10-29").as_deref(), Some("Nightly"));
         assert_eq!(label("v0.2.97"), None);
-    }
-
-    #[test]
-    fn only_unused_older_nightlies_are_removed() {
-        let installed = [
-            "nightly-2026-10-29-aaaaaaa",
-            "nightly-2026-10-28-bbbbbbb",
-            "nightly-2026-10-28-ccccccc",
-            "nightly-2026-10-27-ddddddd",
-            "v0.2.95",
-        ]
-        .map(String::from);
-        let pinned = ["nightly-2026-10-27-ddddddd".to_string()];
-        assert_eq!(
-            stale(
-                &installed,
-                "nightly-2026-10-29-aaaaaaa",
-                Some("nightly-2026-10-28-ccccccc"),
-                &pinned,
-                |tag| tag != "nightly-2026-10-28-ccccccc"
-            ),
-            ["nightly-2026-10-28-bbbbbbb"]
-        );
-    }
-
-    #[test]
-    fn cli_update_keeps_unselected_manual_nightly() {
-        let current = "nightly-2026-11-05-aaaaaaa";
-        let manual = "nightly-2026-11-03-bbbbbbb";
-        let previous_auto = "nightly-2026-11-02-ccccccc";
-        let installed = [current, manual, previous_auto].map(String::from);
-        assert_eq!(
-            stale(&installed, current, None, &[], |tag| tag != manual),
-            [previous_auto]
-        );
     }
 }

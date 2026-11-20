@@ -187,7 +187,7 @@ impl Launcher {
         self.ui.sheets.versions.pick = Some(tag);
     }
 
-    pub(crate) fn reset_versions(&mut self) {
+    fn reset_versions(&mut self) {
         self.ui.sheets.error = None;
         let pinned = self.selected_instance().and_then(|i| i.version.clone());
         let v = &mut self.ui.sheets.versions;
@@ -203,22 +203,11 @@ impl Launcher {
     }
 
     pub(super) fn versions_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let body = self.versions_content(true, cx);
+        let body = self.versions_content(cx);
         frame("alt-versions", 560., body, cx)
     }
 
-    pub(crate) fn versions_page(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        self.versions_content(false, cx)
-            .id("versions-page")
-            .flex_1()
-            .min_h_0()
-            .p(px(24.))
-            .gap(px(12.))
-            .overflow_y_scroll()
-            .track_scroll(&crate::frame::scrolls("versions-page"))
-    }
-
-    fn versions_content(&mut self, sheet: bool, cx: &mut Context<Self>) -> Div {
+    fn versions_content(&mut self, cx: &mut Context<Self>) -> Div {
         let Some(instance) = self.selected_instance() else {
             return div().child(tr("No profile selected."));
         };
@@ -442,14 +431,7 @@ impl Launcher {
                 cx.stop_propagation();
                 cx.notify();
             }))
-            .child(title(
-                if sheet {
-                    tr("Choose a version")
-                } else {
-                    tr("Versions")
-                }
-                .into(),
-            ))
+            .child(title(tr("Choose a version").into()))
             .child(field)
             .child(
                 div()
@@ -471,7 +453,7 @@ impl Launcher {
                     .flex()
                     .justify_end()
                     .gap(px(8.))
-                    .when(sheet, |d| d.child(cancel))
+                    .child(cancel)
                     .child(keep),
             );
         body

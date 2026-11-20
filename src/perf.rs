@@ -220,7 +220,7 @@ pub enum Step {
     Wait,
     /// Show this page (an index into `Page::ALL`, wrapping).
     Go(usize),
-    /// Show the longest list (Versions) and scroll it on every frame while [`Bench::scrolling`].
+    /// Show Storage, the scrollable list of installed builds and caches.
     Scroll,
     Quit,
 }

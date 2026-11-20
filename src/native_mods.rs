@@ -562,9 +562,13 @@ fn about_in(dir: &Path) -> Option<About> {
 /// The newest installed release or Nightly in `installed` (newest first).
 /// Installed native clients retain their base's prepared data even when not selected.
 pub(crate) fn resource_dependents(tag: &str) -> bool {
+    resource_dependent(tag).is_some()
+}
+
+pub(crate) fn resource_dependent(tag: &str) -> Option<String> {
     backend::installed()
-        .iter()
-        .any(|version| about(version).is_some_and(|about| about.base == tag))
+        .into_iter()
+        .find(|version| about(version).is_some_and(|about| about.base == tag))
 }
 
 /// The newest installed release or Nightly in the launcher's newest-first build list.
@@ -2016,7 +2020,16 @@ mod tests {
                 prerelease: false,
                 nightly: None,
             };
-            backend::install_as(&release, tag, &sha256, None, None, |_| {}).unwrap();
+            backend::install_as(
+                &release,
+                tag,
+                &sha256,
+                None,
+                None,
+                backend::version_storage::Download::Requested,
+                |_| {},
+            )
+            .unwrap();
             server.join().unwrap();
             // `sunrise-launcher prepare` writes the resources from the player's own Minecraft.
             let resources = backend::resources(tag);
@@ -2040,8 +2053,26 @@ mod tests {
             prerelease: false,
             nightly: None,
         };
-        backend::install_as(&colliding, old, &sha256, None, None, |_| {}).unwrap();
-        assert!(backend::install_as(&colliding, old, &"0".repeat(64), None, None, |_| {}).is_err());
+        backend::install_as(
+            &colliding,
+            old,
+            &sha256,
+            None,
+            None,
+            backend::version_storage::Download::Requested,
+            |_| {},
+        )
+        .unwrap();
+        assert!(backend::install_as(
+            &colliding,
+            old,
+            &"0".repeat(64),
+            None,
+            None,
+            backend::version_storage::Download::Requested,
+            |_| {}
+        )
+        .is_err());
         assert_eq!(
             fs::read(backend::version_dir(old).join(backend::CLIENT)).unwrap(),
             b"release game"

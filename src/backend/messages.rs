@@ -7,12 +7,11 @@ pub enum Msg {
     Links(Links),
     Progress(String, f32),
     Installed(String, Result<(), String>),
-    /// A version's files are gone (or could not be deleted).
-    Removed(String, Result<(), String>),
-    /// `prune_old_versions` ended; these versions were deleted.
-    Pruned(Vec<String>),
-    /// What each installed version takes on disk (`disk_use`).
-    DiskUse(Vec<(String, u64)>),
+    /// Manual build cleanup ended, with any rows it could not delete.
+    Removed(Vec<(String, String)>),
+    /// Automatic build cleanup ended; refresh the installed list.
+    Pruned(Vec<(String, String)>),
+    BuildInventory(u64, Vec<version_storage::Build>),
     Line(Job, String),
     Exit(Job, Result<(), String>),
     /// Boxed: two releases, the largest message by far.

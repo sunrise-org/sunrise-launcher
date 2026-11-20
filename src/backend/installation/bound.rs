@@ -147,6 +147,7 @@ impl GameDownload {
         &self,
         tag: &str,
         proof: &GameProof,
+        provenance: version_storage::Download,
         progress: impl Fn(f32),
     ) -> Result<(), String> {
         let release = Release {
@@ -173,6 +174,7 @@ impl GameDownload {
             &proof.archive,
             self.requested,
             facts.as_ref().map(|(bytes, sha)| (bytes.as_slice(), *sha)),
+            provenance,
             progress,
         )?;
         if !self.is_installed(tag, proof) {

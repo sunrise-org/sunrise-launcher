@@ -253,7 +253,7 @@ impl Launcher {
                             (true, Some(d)) => d.busy = false,
                             _ => this.instances.dialog = None,
                         }
-                        // Play shows the download's progress; Versions shows it too.
+                        // Play shows the download's progress.
                         if let Some(release) = download {
                             this.install_for_instance(release);
                         }

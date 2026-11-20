@@ -21,7 +21,8 @@ impl Launcher {
                 changed = true;
             }
             Some(perf::Step::Scroll) => {
-                self.go(Page::Versions);
+                self.settings_open(settings::Section::Storage);
+                self.navigate(frame::Page::Settings);
                 changed = true;
             }
             Some(perf::Step::Quit) => cx.quit(),
@@ -38,6 +39,7 @@ impl Launcher {
                         sunrise_launcher::nightly::note_published(list);
                     }
                     self.releases = r.map_or_else(Load::Failed, Load::Ready);
+                    self.refresh_open_storage_builds();
                     // Once the list is in (or failed), each instance resolves to the build it plays.
                     if !self.mods.recovered {
                         self.mods.recovered = true;
@@ -46,7 +48,10 @@ impl Launcher {
                 }
                 Msg::Links(links) => self.links = links,
                 // The page reads is_prepared when drawn; `changed` redraws it.
-                Msg::Reused(_) => self.installed = backend::installed(),
+                Msg::Reused(_) => {
+                    self.installed = backend::installed();
+                    self.refresh_open_storage_builds();
+                }
                 Msg::Keychain(said) => self.keychain = said,
                 Msg::Owner(owns) => self.owner = Some(owns),
                 Msg::AccountHead(uuid, url, face, failed) => {
@@ -154,16 +159,10 @@ impl Launcher {
                     self.installing = None;
                     self.bar = (0., 0.);
                     self.installed = backend::installed();
-                    let as_update = self.update_install.take().filter(|t| *t == tag);
                     let for_instance = self.instance_install.take_if(|t| *t == tag).is_some();
                     let cache_only = self.switch_cache_download_finished(&tag);
                     if let (Ok(()), Some(started)) = (&result, self.install_started.take()) {
-                        let name = if as_update.is_some() {
-                            "launcher.update_ms"
-                        } else {
-                            "launcher.install_ms"
-                        };
-                        self.perf.record_since(name, started);
+                        self.perf.record_since("launcher.install_ms", started);
                     }
                     let resume = self
                         .ui
@@ -172,47 +171,34 @@ impl Launcher {
                         .filter(|_| result.is_ok());
                     match result {
                         Ok(()) => {
-                            if as_update.is_some()
-                                && sunrise_launcher::nightly::date_of(&tag).is_some()
-                            {
-                                if let Err(e) = backend::mark_auto_installed(&tag) {
-                                    eprintln!("Could not mark updated Nightly {tag}: {e}");
-                                }
-                            }
-                            if self.updates.sunrise.as_ref().is_some_and(|r| r.tag == tag) {
-                                self.updates.sunrise = None;
-                            }
-                            // An instance's own version leaves the other instances on theirs.
-                            // Judged now, not when the download started: a version picked on
-                            // Versions meanwhile stays picked.
-                            let before: Vec<String> = self
-                                .installed
-                                .iter()
-                                .filter(|t| **t != tag)
-                                .cloned()
-                                .collect();
-                            let select = as_update.is_none_or(|_| {
-                                backend::select_after_update(
-                                    self.settings.selected.as_deref(),
-                                    &before,
-                                )
-                            }) && (!for_instance || self.launcher_version().is_none());
-                            if resume.is_none() && !cache_only {
-                                if select {
+                            settle_download_offer(&mut self.updates, &tag, cache_only);
+                            // An instance's install does not change other profiles. A picker
+                            // download is only a staged candidate, not a profile switch.
+                            if resume.is_none() {
+                                if !cache_only
+                                    && (!for_instance || self.launcher_version().is_none())
+                                {
                                     self.settings.selected = Some(tag.clone());
                                 }
-                                // Pruning reads settings from disk: protect the selection only once
-                                // it has been saved there. A failed save leaves all versions in place.
-                                if self.save_settings() {
+                                // Pruning reads the selection from disk. A failed save leaves
+                                // everything in place, and the just-downloaded build always stays.
+                                if (cache_only || self.save_settings())
+                                    && self.settings.auto_prune()
+                                {
                                     let tx = self.tx.clone();
+                                    let releases = self.game_releases().to_vec();
                                     std::thread::spawn(move || {
-                                        let _ = tx.send(Msg::Pruned(backend::prune_old_versions()));
+                                        let errors = backend::version_storage::prune_old_versions(
+                                            &releases, &tag, cache_only,
+                                        );
+                                        let _ = tx.send(Msg::Pruned(errors));
                                     });
                                 }
                             }
                         }
                         Err(e) => self.install_error = Some((tag, e)),
                     }
+                    self.refresh_open_storage_builds();
                     if let Some((intent, _)) = resume {
                         self.resume_play(intent);
                     }
@@ -220,35 +206,13 @@ impl Launcher {
                         self.install_for_instance(next);
                     }
                 }
-                Msg::Removed(tag, result) => {
-                    self.removing.retain(|t| *t != tag);
-                    self.installed = backend::installed();
-                    let selected = if self.settings_save_error.is_some() {
-                        self.settings.selected.take()
-                    } else {
-                        Settings::load().selected
-                    };
-                    self.settings.selected = selection_after_removal(&self.installed, selected);
-                    if let Err(e) = result {
-                        self.install_error = Some((tag, e));
-                    }
+                Msg::Removed(errors) => self.storage_builds_removed(errors),
+                Msg::BuildInventory(generation, rows) => {
+                    self.storage_builds_arrived(generation, rows)
                 }
-                Msg::DiskUse(disk) => self.disk = disk,
                 Msg::Storage(result) => self.storage_arrived(result),
-                Msg::Imported(result) => {
-                    self.importing_build = false;
-                    self.installed = backend::installed();
-                    match result {
-                        // `build_import::import` saved the selection; this keeps the window's copy.
-                        Ok(tag) => self.settings.selected = Some(tag),
-                        Err(e) => self.import_error = Some(e),
-                    }
-                }
-                Msg::Pruned(gone) => {
-                    if !gone.is_empty() {
-                        self.installed = backend::installed();
-                    }
-                }
+                Msg::Imported(result) => self.storage_build_imported(result),
+                Msg::Pruned(errors) => self.storage_builds_pruned(errors),
                 Msg::Updates(updates) => {
                     self.checking_updates = false;
                     self.launcher_checked_now = None;
@@ -256,9 +220,6 @@ impl Launcher {
                         settings::log_launcher_check_failure(error, |line| eprintln!("{line}"));
                     }
                     self.updates = *updates;
-                    if self.settings.auto_install() {
-                        self.install_update();
-                    }
                     if let Some(release) = self.updates.launcher.clone() {
                         self.update_launcher(release);
                     }
@@ -320,6 +281,7 @@ impl Launcher {
                     self.first_build = None;
                     let cancelled = matches!(&result, Err(native_mods::Failed::Other(error)) if error == native_mods::CANCELLED);
                     self.installed = backend::installed();
+                    self.refresh_open_storage_builds();
                     self.reload_instances();
                     let built = std::mem::take(&mut self.native_built_mods);
                     if let (Err(error), false) = (&result, cancelled) {
@@ -392,6 +354,7 @@ impl Launcher {
                     match job {
                         Job::Prepare => {
                             self.preparing = false;
+                            self.refresh_open_storage_builds();
                             // Play pressed before the version was prepared plays now.
                             if let Some((tag, intent)) = self.play_when_prepared.take() {
                                 if error.is_none() && backend::check_prepared(&tag) {
@@ -415,6 +378,7 @@ impl Launcher {
                         }
                         Job::Client => {
                             self.client = None;
+                            self.refresh_open_storage_builds();
                             // Any session file the game didn't read (it crashed first).
                             account::discard_unread_sessions();
                             self.come_back(cx);
@@ -537,5 +501,45 @@ impl Launcher {
         if changed {
             cx.notify();
         }
+    }
+}
+
+// Downloading a candidate is not the update. An abandoned picker must leave its offer intact.
+fn settle_download_offer(updates: &mut backend::Updates, tag: &str, cache_only: bool) {
+    if !cache_only
+        && updates
+            .sunrise
+            .as_ref()
+            .is_some_and(|release| release.tag == tag)
+    {
+        updates.sunrise = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_cached_candidate_does_not_consume_the_offer_if_the_picker_is_cancelled() {
+        let tag = "nightly-2026-11-20-aaaaaaa";
+        let mut updates = backend::Updates {
+            sunrise: Some(backend::Release {
+                tag: tag.into(),
+                name: String::new(),
+                body: String::new(),
+                date: String::new(),
+                time: String::new(),
+                asset: None,
+                prerelease: false,
+                nightly: None,
+            }),
+            ..Default::default()
+        };
+        settle_download_offer(&mut updates, tag, true);
+        // Cancel leaves the candidate cached but does not commit a Switch.
+        assert_eq!(updates.sunrise.as_ref().map(|r| r.tag.as_str()), Some(tag));
+        settle_download_offer(&mut updates, tag, false);
+        assert!(updates.sunrise.is_none());
     }
 }

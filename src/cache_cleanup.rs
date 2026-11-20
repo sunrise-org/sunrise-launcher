@@ -366,25 +366,34 @@ pub(crate) fn delete_game_unit_observed(
     path: &Path,
     after_classification: impl FnOnce(),
 ) -> Result<(), Error> {
-    delete_unit(path, false, after_classification)
+    delete_unit(path, false, || {
+        after_classification();
+        Ok(())
+    })
 }
 
-/// Removes an installed version folder. A build from before runtime leases carries no lease
-/// marker and can never take one, so the caller, having found no program running from the
-/// folder, vouches for it with `idle` instead.
-pub(crate) fn delete_version(path: &Path, idle: bool) -> Result<(), Error> {
-    delete_unit(path, idle, || {})
+/// Removes an installed version folder. The caller checks usage while the publication lock is
+/// held, including for older builds that cannot take a runtime lease.
+pub(crate) fn delete_version(
+    path: &Path,
+    guard: impl FnOnce() -> Result<(), Error>,
+) -> Result<(), Error> {
+    delete_unit(path, true, guard)
 }
 
-fn delete_unit(path: &Path, idle: bool, after_classification: impl FnOnce()) -> Result<(), Error> {
+fn delete_unit(
+    path: &Path,
+    allow_uninstrumented: bool,
+    after_classification: impl FnOnce() -> Result<(), Error>,
+) -> Result<(), Error> {
     use sunrise_launcher_smod::{locks::Release, runtime_leases::Registry};
     let registry = Registry::with_release(&crate::backend::data_dir(), Release::Close)?;
     registry.remove_unit(path, |directory, is_directory| {
         match Access::for_unit(path)? {
-            Access::UninstrumentedGame if idle => {}
+            Access::UninstrumentedGame if allow_uninstrumented => {}
             access => access.check()?,
         }
-        after_classification();
+        after_classification()?;
         // Selection can be older than an admission, copy or switch. Recheck under the
         // same publication lock, at the point of invalidation, for both eviction and Remove.
         let versions = crate::backend::version_dir("");

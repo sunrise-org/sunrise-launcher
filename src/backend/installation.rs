@@ -12,6 +12,7 @@ pub(crate) fn install_as(
     sha256: &str,
     requested_architecture: Option<GameArchitecture>,
     release_facts: Option<(&[u8], &str)>,
+    provenance: version_storage::Download,
     progress: impl Fn(f32),
 ) -> Result<(), String> {
     let _publication =
@@ -30,6 +31,9 @@ pub(crate) fn install_as(
     };
     match fs::symlink_metadata(&target) {
         Ok(meta) if matches_archive(&meta) => {
+            if matches!(provenance, version_storage::Download::Requested) {
+                provenance.mark(&target)?;
+            }
             progress(1.0);
             return Ok(());
         }
@@ -84,6 +88,7 @@ pub(crate) fn install_as(
     fs::File::create_new(top.join(ARCHIVE_ID))
         .and_then(|mut file| file.write_all(sha256.as_bytes()))
         .map_err(|e| e.to_string())?;
+    provenance.mark(&top)?;
     crate::nightly::record_install_time(&top, release).map_err(|e| e.to_string())?;
     match crate::run_leases::publish_build(&top, &target) {
         Ok(()) => {}
@@ -95,6 +100,9 @@ pub(crate) fn install_as(
                 .is_ok_and(matches_archive)
             {
                 return Err(existing_build(tag));
+            }
+            if matches!(provenance, version_storage::Download::Requested) {
+                provenance.mark(&target)?;
             }
             progress(1.0);
             return Ok(());

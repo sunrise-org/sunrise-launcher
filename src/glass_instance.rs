@@ -36,7 +36,7 @@ impl Launcher {
         )
     }
 
-    fn game_releases(&self) -> &[Release] {
+    pub(super) fn game_releases(&self) -> &[Release] {
         match &self.releases {
             Load::Ready(releases) => releases,
             _ => &[],
@@ -73,7 +73,7 @@ impl Launcher {
 
 /// Every Nightly published with a build for this platform, newest first, then the installed
 /// versions that list lacks (older Nightlies, imported builds). Picking one not installed installs
-/// it on Create. Never a build made with mods (as on Versions): that is one profile's, made from
+/// it on Create. Never a build made with mods: that is one profile's, made from
 /// its mods with the player's permission, not a game to start another profile on.
 pub(super) fn sunrise_choices(releases: &[Release], installed: &[String]) -> Vec<String> {
     let published = Channel::Nightly.builds(releases).map(|r| &r.tag);
@@ -88,7 +88,7 @@ pub(super) fn sunrise_choices(releases: &[Release], installed: &[String]) -> Vec
 }
 
 impl Launcher {
-    /// A version as a player reads it: the Versions page's name for a build of the game ("Nov 13
+    /// A version as a player reads it: a build of the game ("Nov 13
     /// update", with its time when another came out that day; its commit stays in the details),
     /// "Imported · 2026-10-30", a developer build's name, or the tag. Players who don't know what
     /// a nightly is see the day it came out, not the channel's jargon.
@@ -107,7 +107,10 @@ impl Launcher {
             };
         }
         match sunrise_launcher::nightly::date_of(tag) {
-            Some(_) => self.version_name(tag),
+            Some(date) => {
+                let time = sunrise_launcher::nightly::same_day_time(tag).unwrap_or_default();
+                trf("{date} update", &[("date", &published(date, &time))])
+            }
             None => build_import::label(tag).unwrap_or_else(|| tag.to_string()),
         }
     }
@@ -126,6 +129,16 @@ pub(crate) fn native_base(tag: &str) -> Option<String> {
             .or_insert_with(|| native_mods::about(tag).map(|about| about.base))
             .clone()
     })
+}
+
+/// A release's day as the mockup writes it ("Nov 1"), with its time in UTC when known.
+pub(super) fn published(date: &str, time: &str) -> String {
+    let day = sunrise_launcher::nightly::day(date);
+    if time.is_empty() {
+        day
+    } else {
+        trf("{day}, {time} UTC", &[("day", &day), ("time", time)])
+    }
 }
 
 #[cfg(test)]

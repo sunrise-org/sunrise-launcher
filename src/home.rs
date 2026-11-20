@@ -646,7 +646,7 @@ impl Launcher {
                             sunrise_launcher::nightly::same_day_time(base).unwrap_or_default();
                         trf(
                             "Sunrise · {build}",
-                            &[("build", &crate::glass_versions::published(date, &time))],
+                            &[("build", &crate::glass_instance::published(date, &time))],
                         )
                     }
                     None => self.version_label(tag),

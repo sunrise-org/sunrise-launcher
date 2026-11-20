@@ -470,17 +470,6 @@ pub(crate) fn starts_now(prepared: bool, preparing: bool, running: bool) -> bool
     play_press(prepared, None, preparing || running) == PlayPress::Play
 }
 
-/// The selected version once one has been removed: the saved choice if it is still installed,
-/// else the newest left.
-pub(crate) fn selection_after_removal(
-    installed: &[String],
-    saved: Option<String>,
-) -> Option<String> {
-    saved
-        .filter(|s| installed.contains(s))
-        .or_else(|| installed.first().cloned())
-}
-
 pub(crate) fn disabled(b: Stateful<Div>) -> Stateful<Div> {
     b.opacity(theme::DISABLED).cursor_default().tab_stop(false)
 }

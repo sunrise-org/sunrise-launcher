@@ -73,7 +73,6 @@ impl Launcher {
             settings_nav_open: false,
             mods_sticky: sticky::Sticky::default(),
             settings_sticky: sticky::Sticky::default(),
-            long_list: cull::Cull::default(),
             updates: Updates::default(),
             checked: None,
             checking_updates: false,
@@ -82,7 +81,6 @@ impl Launcher {
             // The installer the last Update started could not put the new launcher in place.
             self_update: sunrise_launcher::update_handoff::take_failure()
                 .map_or(SelfUpdate::Idle, |e| SelfUpdate::Stuck(Some(e))),
-            update_install: None,
             instance_install: None,
             install_next: None,
             bar: (0., 0.),
@@ -90,7 +88,7 @@ impl Launcher {
             installed,
             installing: None,
             removing: Vec::new(),
-            disk: Vec::new(),
+            storage_builds: Default::default(),
             storage_report: None,
             storage_pending: false,
             storage_confirm: None,
@@ -100,7 +98,6 @@ impl Launcher {
             native_consent_build: None,
             install_error: None,
             importing_build: false,
-            import_error: None,
             native_step: None,
             native_progress: None,
             native_cancellation: None,
@@ -220,7 +217,7 @@ impl Launcher {
             settings::startup_section(this.location_error.is_some(), this.location_note.is_some())
         {
             this.ui.page = frame::Page::Settings;
-            this.ui.settings.section = section;
+            this.settings_open(section);
         }
         this.reload_instances();
         if this.bench.is_some() {
@@ -339,7 +336,6 @@ impl Launcher {
             self.page = page;
             self.switches += 1;
             self.content_scroll = Scrollbar::default();
-            self.long_list = cull::Cull::default();
             self.mods_sticky.reset();
             self.settings_sticky.reset();
             if page == Page::Mods {
@@ -434,19 +430,6 @@ impl Launcher {
             Ok(false) => self.self_update = SelfUpdate::Failed(backend::restart()),
             Err(e) => self.self_update = SelfUpdate::Failed(e),
         }
-    }
-
-    /// Installs the Sunrise version the last check found, keeping the player's choice of
-    /// version unless they were on the newest one.
-    pub(crate) fn install_update(&mut self) {
-        let Some(release) = self.updates.sunrise.clone() else {
-            return;
-        };
-        if self.installing.is_some() || self.removing.contains(&release.tag) {
-            return;
-        }
-        self.update_install = Some(release.tag.clone());
-        self.install(&release);
     }
 
     pub(crate) fn fetch_links(&self) {

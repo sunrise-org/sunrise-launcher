@@ -61,7 +61,7 @@ impl Section {
             Section::Game => "How the game starts. Its build is chosen beside Play on Home.",
             Section::Appearance => "The theme, its accent and what is behind Home.",
             Section::Mods => "Updates, and what native mods may do on this computer.",
-            Section::Storage => "Where your files are, and the space downloads take.",
+            Section::Storage => "Manage game builds, downloads and where your files are kept.",
             Section::Privacy => "What Sunrise sends, and what it never does.",
             Section::Launcher => "Language, network and this version.",
         }
@@ -79,6 +79,14 @@ pub(super) struct SettingsView {
 
 /// A card of rows with a rule between them.
 pub(crate) fn group(rows: Vec<Div>) -> Div {
+    group_rows(rows, 14.)
+}
+
+pub(super) fn compact_group(rows: Vec<Div>) -> Div {
+    group_rows(rows, 10.)
+}
+
+fn group_rows(rows: Vec<Div>, row_padding: f32) -> Div {
     let mut card = div()
         .flex()
         .flex_col()
@@ -87,7 +95,7 @@ pub(crate) fn group(rows: Vec<Div>) -> Div {
         .border_color(rgb(palette().divider))
         .bg(palette().card());
     for (i, row) in rows.into_iter().enumerate() {
-        card = card.child(row.px(px(16.)).py(px(14.)).when(i > 0, |d| {
+        card = card.child(row.px(px(16.)).py(px(row_padding)).when(i > 0, |d| {
             d.border_t_1().border_color(rgb(palette().divider))
         }));
     }
@@ -422,8 +430,10 @@ impl Launcher {
         view.note = None;
         self.storage_revoke = false;
         self.storage_confirm = None;
+        self.storage_builds.confirm = None;
         self.collection.confirm_delete = false;
         if section == Section::Storage {
+            self.refresh_storage_builds();
             self.refresh_storage(None, false);
         }
     }
@@ -624,19 +634,6 @@ impl Launcher {
             tr("Extra arguments for the game, passed through as they are. They apply the next time it starts."),
             args,
         );
-        let prune = row(
-            tr("Remove old game builds"),
-            tr("After an update, builds nothing uses any more are deleted."),
-            div().child(
-                switch("alt-prune", self.settings.auto_prune()).on_click(cx.listener(
-                    |this, _: &ClickEvent, _, cx| {
-                        this.settings.prune_old_versions = Some(!this.settings.auto_prune());
-                        this.save_settings();
-                        cx.notify();
-                    },
-                )),
-            ),
-        );
         let asking = self.ui.settings.setup;
         let mut setup = row(
             tr("Profiles"),
@@ -690,7 +687,7 @@ impl Launcher {
             .flex_col()
             .gap(px(14.))
             .child(group(vec![while_playing, args]))
-            .child(group(vec![source, prune]))
+            .child(group(vec![source]))
             .child(group(vec![setup]))
     }
 
@@ -945,6 +942,8 @@ impl Launcher {
             .flex()
             .flex_col()
             .gap(px(14.))
+            .child(self.storage_build_rows(cx))
+            .child(self.storage_build_options(cx))
             .child(group(vec![self.location_row(cx)]))
             .child(group(vec![files]))
             .child(group(cache))

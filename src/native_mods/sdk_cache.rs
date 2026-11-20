@@ -190,7 +190,7 @@ fn megabytes(bytes: u64) -> String {
     )
 }
 
-/// A build as people read it: as the Versions page names its Nightly ("the Nov 13 update"),
+/// A build as people read it: with the Nightly’s date ("the Nov 13 update"),
 /// found from an installed version when the index has no name, else "your Sunrise version"
 /// (an imported build or a snapshot), never a commit. Anything but a build id (a mod's manifest
 /// may say anything) is shown as it is, cut where a character ends.
@@ -219,7 +219,7 @@ pub(super) fn nightly_of(commit: &str) -> Option<String> {
         })
 }
 
-/// Build `commit`'s name as the Versions page gives it, when it is known here (a kept index, or
+/// Build `commit`'s display name, when it is known here (a kept index, or
 /// an installed version). `commit` may come from a mod's manifest: anything but a build id is
 /// never looked up.
 pub fn name_of(commit: &str) -> Option<String> {
