@@ -126,6 +126,13 @@ pub struct Consent {
 }
 
 impl Consent {
+    /// No added crate has a build script or a proc macro, so nothing of theirs runs while
+    /// building: their code only goes into the mod, which native permission already covers.
+    /// There is nothing to ask.
+    pub fn runs_nothing_at_build(&self) -> bool {
+        self.build_scripts.is_empty() && self.proc_macros.is_empty()
+    }
+
     pub fn label(&self) -> String {
         trf(
             "Native mod adds {count} registry crates",
@@ -520,9 +527,11 @@ fn talk(
                     build_scripts,
                     proc_macros,
                 };
-                let yes = consent.is_some_and(|ask| ask(&question));
+                let yes =
+                    question.runs_nothing_at_build() || consent.is_some_and(|ask| ask(&question));
                 // The answer can arrive after revoke and regrant. Bind the affirmative
-                // write, not the dialog, to this attempt's original revision.
+                // write, not the dialog, to this attempt's original revision; an answer
+                // given without asking is bound the same way.
                 let _permission = if yes {
                     cancellation
                         .publication_guard()

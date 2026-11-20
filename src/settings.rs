@@ -1020,20 +1020,28 @@ impl Launcher {
                     cx.notify();
                 }));
             let said = shown.then(|| {
-                // Under the "?", or over it when the row is low in the window.
+                // Under the "?", or above its row when the row is low in the window,
+                // but never on top of the "?": covering it ends the hover, which hides
+                // the card, which uncovers the "?" again, and the card flickers.
+                // The anchor sits just above the row. The offset puts the card below
+                // the "?"; when that does not fit, gpui flips the card to end at the
+                // anchor (dropping the offset), so it ends above the row.
+                // The side padding keeps the card off the window edge when it is shifted.
                 gpui::deferred(
-                    div().absolute().top(px(24.)).left_0().child(
-                        gpui::anchored().snap_to_window_with_margin(px(8.)).child(
-                            div()
-                                .w(px(340.))
-                                .p(px(12.))
-                                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-                                .border_1()
-                                .border_color(rgb(palette().line))
-                                .bg(rgb(palette().raised))
-                                .shadow_lg()
-                                .occlude()
-                                .child(hint(tr(full))),
+                    div().absolute().top(px(-6.)).left(px(-8.)).child(
+                        gpui::anchored().offset(gpui::point(px(0.), px(30.))).child(
+                            div().px(px(8.)).child(
+                                div()
+                                    .w(px(340.))
+                                    .p(px(12.))
+                                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                                    .border_1()
+                                    .border_color(rgb(palette().line))
+                                    .bg(rgb(palette().raised))
+                                    .shadow_lg()
+                                    .occlude()
+                                    .child(hint(tr(full))),
+                            ),
                         ),
                     ),
                 )
