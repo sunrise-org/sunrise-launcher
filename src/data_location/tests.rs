@@ -527,3 +527,49 @@ fn unit_tests_never_resolve_the_real_profile() {
         );
     }
 }
+
+#[test]
+fn copy_tree_except_skips_only_root_entries_and_keeps_the_root_private_while_copying() {
+    let temp = Temp::new();
+    let (source, dest) = (temp.0.join("source"), temp.0.join("dest"));
+    fs::create_dir_all(source.join("cache")).unwrap();
+    fs::write(source.join("cache/left.bin"), [7]).unwrap();
+    fs::create_dir_all(source.join("saves/cache")).unwrap();
+    fs::write(source.join("saves/cache/kept.bin"), [1]).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let mut copied = 0;
+    copy_tree_except(
+        &source,
+        &dest,
+        &temp.0.join("location.json"),
+        &["cache"],
+        &mut |_| {
+            copied += 1;
+            // No one else can enter the root before its contents are all in place.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                assert_eq!(
+                    fs::metadata(&dest).unwrap().permissions().mode() & 0o777,
+                    0o700
+                );
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(copied, 1);
+    assert!(!dest.join("cache").exists());
+    assert_eq!(fs::read(dest.join("saves/cache/kept.bin")).unwrap(), [1]);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&dest).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+    }
+}

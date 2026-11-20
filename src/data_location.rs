@@ -622,6 +622,19 @@ pub(crate) fn copy_tree(
     bootstrap: &Path,
     progress: &mut impl FnMut(&str),
 ) -> Result<()> {
+    copy_tree_except(source, dest, bootstrap, &[], progress)
+}
+
+/// [`copy_tree`], leaving out the entries directly in `source` named in `skip`. The root is
+/// refused when it is a link, made private and given the source's access controls first, as in
+/// [`copy_tree`]; deeper entries with a name in `skip` are copied.
+pub(crate) fn copy_tree_except(
+    source: &Path,
+    dest: &Path,
+    bootstrap: &Path,
+    skip: &[&str],
+    progress: &mut impl FnMut(&str),
+) -> Result<()> {
     let meta = match fs::symlink_metadata(source) {
         Ok(meta) => meta,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return private_dir(dest),
@@ -633,6 +646,9 @@ pub(crate) fn copy_tree(
         copy_acl(source, dest)?;
         for entry in fs::read_dir(source).map_err(|e| problem(source, e))? {
             let entry = entry.map_err(|e| problem(source, e))?;
+            if skip.iter().any(|name| entry.file_name() == *name) {
+                continue;
+            }
             let path = entry.path();
             let controls = [
                 bootstrap.to_path_buf(),
