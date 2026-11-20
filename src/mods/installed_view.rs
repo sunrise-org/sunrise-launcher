@@ -166,13 +166,7 @@ impl Launcher {
                 .border_color(c(palette().divider))
                 .child(select_all);
             if n_sel == 0 {
-                bar = bar.child(muted(trf(
-                    "{shown} of {total} mods shown",
-                    &[
-                        ("shown", &shown_ids.len().to_string()),
-                        ("total", &rows.len().to_string()),
-                    ],
-                )));
+                bar = bar.child(muted(model::visible_count(&rows, &visible)));
             } else {
                 let on = bulk(
                     "alt-bulk-on",
@@ -428,7 +422,6 @@ impl Launcher {
             .clone()
             .and_then(|u| self.mods_image(&u, images::ROW));
         let error = self.ui.mods.errors.get(&r.id).cloned();
-        let project = r.entry.as_ref().map(|e| e.project.clone());
 
         let check = {
             let id = r.id.clone();
@@ -480,10 +473,11 @@ impl Launcher {
             let model::RowAction::Update = action;
             let b = crate::frame::button(("alt-row-update", n), tr("Update"));
             if busy {
-                return dim(b);
+                return dim(b).on_click(|_, _, cx| cx.stop_propagation());
             }
             let row = r.clone();
             b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
                 this.update_one(&row);
                 cx.notify();
             }))
@@ -493,48 +487,38 @@ impl Launcher {
             if cells.switch {
                 let row = r.clone();
                 s.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
                     this.toggle(&row);
                     cx.notify();
                 }))
             } else {
-                s.opacity(0.45).cursor_default().tab_stop(false)
+                s.opacity(0.45)
+                    .cursor_default()
+                    .tab_stop(false)
+                    .on_click(|_, _, cx| cx.stop_propagation())
             }
         };
-        let title = {
-            let d = div()
-                .id(("alt-row-title", n))
-                .reach()
-                .min_w_0()
-                .flex()
-                .items_baseline()
-                .gap(px(8.))
-                .child(
-                    div()
-                        .min_w_0()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .truncate()
-                        .child(r.title.clone()),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .text_size(px(tokens::SMALL))
-                        .text_color(c(palette().muted))
-                        .truncate()
-                        .child(r.authors.clone()),
-                );
-            match project {
-                Some(id) => {
-                    d.cursor_pointer()
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.mods_show_project(id.clone());
-                            cx.notify();
-                        }))
-                }
-                None => d,
-            }
-        };
+        let title = div()
+            .min_w_0()
+            .flex()
+            .items_baseline()
+            .gap(px(8.))
+            .child(
+                div()
+                    .min_w_0()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .truncate()
+                    .child(r.title.clone()),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_size(px(tokens::SMALL))
+                    .text_color(c(palette().muted))
+                    .truncate()
+                    .child(r.authors.clone()),
+            );
         let title =
             div()
                 .flex()
@@ -634,13 +618,20 @@ impl Launcher {
             )
             .children(action)
         };
-        row.child(
-            div()
-                .w(px(column::SWITCH))
-                .flex_none()
-                .flex()
-                .justify_end()
-                .child(sw),
-        )
+        row.reach()
+            .cursor_pointer()
+            .hover(|s| s.bg(c(palette().hover)))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.mods_show_installed_project(r.clone());
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .w(px(column::SWITCH))
+                    .flex_none()
+                    .flex()
+                    .justify_end()
+                    .child(sw),
+            )
     }
 }

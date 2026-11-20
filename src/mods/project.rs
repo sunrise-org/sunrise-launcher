@@ -167,7 +167,7 @@ impl Launcher {
             .child(
                 back(back_label).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     match &parent {
-                        Some(collection) => this.mods_load_page(collection.clone(), back_to),
+                        Some(collection) => this.mods_load_page(collection.clone(), back_to, None),
                         None => this.ui.page = back_to,
                     }
                     cx.notify();
@@ -183,13 +183,7 @@ impl Launcher {
             .gap(px(14.))
             .p(px(24.))
             .text_color(c(palette().text));
-        if self
-            .ui
-            .mods
-            .open
-            .as_ref()
-            .is_some_and(|o| self.is_collection(&o.id))
-        {
+        if self.ui.mods.open.as_ref().is_some_and(|o| o.collection) {
             return self.collection_page(header, page, cx);
         }
         let loaded = self.ui.mods.open.as_ref().map(|o| o.page.clone());
@@ -220,13 +214,14 @@ impl Launcher {
             Some(Some(Ok(p))) => p,
         };
 
-        let installed_here = self
-            .ui
-            .mods
-            .snapshot
-            .as_ref()
-            .and_then(|s| s.entries.iter().find(|e| e.project == p.id))
-            .map(|e| e.number.clone());
+        let installed_here = p.installed.clone().or_else(|| {
+            self.ui.mods.snapshot.as_ref().and_then(|s| {
+                s.entries
+                    .iter()
+                    .find(|e| e.project == p.id)
+                    .map(|e| e.number.clone())
+            })
+        });
         let picture = p
             .icon
             .clone()
@@ -261,7 +256,7 @@ impl Launcher {
                             .gap_x(px(8.))
                             .gap_y(px(4.))
                             .child(note(credit))
-                            .child(tag(p.make.label()))
+                            .children(p.make.map(|make| tag(make.label())))
                             .children(p.categories.first().map(|k| {
                                 div()
                                     .flex_none()
@@ -273,7 +268,7 @@ impl Launcher {
                                     .text_color(c(palette().muted))
                                     .child(sunrise_launcher::browser::details::category_label(k))
                             }))
-                            .child(
+                            .children(p.about.as_ref().map(|about| {
                                 div()
                                     .flex_none()
                                     .px(px(6.))
@@ -282,8 +277,8 @@ impl Launcher {
                                     .border_color(c(palette().line))
                                     .text_size(px(tokens::CAPTION))
                                     .text_color(c(palette().muted))
-                                    .child(p.side),
-                            ),
+                                    .child(about.side)
+                            })),
                     ),
             );
 
@@ -456,12 +451,16 @@ impl Launcher {
                 palette().muted,
             ));
         }
-        facts = facts.child(match p.make {
+        facts = facts.children(p.make.map(|make| match make {
             Make::Native => fact(
                 "alt-fact-code",
                 "shield",
                 tr("Native code").into(),
-                tr("Native code: it is built into the game on this computer and runs with full access to your computer. Listed after a person reviewed its entry and file.").into(),
+                if p.about.is_some() {
+                    tr("Native code: it is built into the game on this computer and runs with full access to your computer. Listed after a person reviewed its entry and file.")
+                } else {
+                    tr("native code, built on this computer after you allow it")
+                }.into(),
                 palette().accent_ink,
             ),
             Make::Content => fact(
@@ -471,8 +470,8 @@ impl Launcher {
                 tr("Content only: it adds no native code.").into(),
                 palette().muted,
             ),
-        });
-        if !p.signed {
+        }));
+        if p.about.as_ref().is_some_and(|about| !about.signed) {
             facts = facts.child(fact(
                 "alt-fact-signed",
                 "information-circle",
@@ -583,8 +582,10 @@ impl Launcher {
         let details = open.then(|| {
             let facts_line = p.will_install.as_ref().map(|w| {
                 let code = match p.make {
-                    Make::Native => tr("native code, built on this computer after you allow it"),
-                    Make::Content => tr("content only, no native code"),
+                    Some(Make::Native) => {
+                        tr("native code, built on this computer after you allow it")
+                    }
+                    _ => tr("content only, no native code"),
                 };
                 trf(
                     "Version {version} · {size} to download · {code}",
@@ -634,6 +635,16 @@ impl Launcher {
                             .child(v)
                     })),
             );
+        let source_button = p.source.map(|source| {
+            let (icon, label, url) = match source {
+                model::SourceLink::GitHub(url) => ("github", tr("Open on GitHub"), url),
+                model::SourceLink::Other(url) => ("link-01", tr("Open source page"), url),
+            };
+            crate::frame::button("alt-project-source", "")
+                .child(crate::glass_ui::icon(icon, 15., c(palette().text)))
+                .child(div().pl(px(8.)).child(label))
+                .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| Launcher::open_url(&url, cx)))
+        });
         let scroll = crate::frame::scrolls("project");
         let right = div()
             .flex()
@@ -647,15 +658,23 @@ impl Launcher {
                     .gap(px(12.))
                     .child(panel_head)
                     .child(action)
-                    .child(facts)
+                    .when(p.make.is_some(), |d| d.child(facts))
                     .children(game_line)
                     .children(changes)
-                    .child(details_toggle)
+                    .when(p.about.is_some() || source_button.is_some(), |d| {
+                        d.child(
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .items_center()
+                                .gap(px(8.))
+                                .when(p.about.is_some(), |d| d.child(details_toggle))
+                                .children(source_button.map(|button| button.ml_auto())),
+                        )
+                    })
                     .children(details),
             )
-            .child({
-                let row = about_row;
-                let source = p.source.clone();
+            .children(p.about.as_ref().map(|about| {
                 card()
                     .p(px(16.))
                     .flex()
@@ -667,15 +686,10 @@ impl Launcher {
                             .pb(px(6.))
                             .child(tr("ABOUT")),
                     )
-                    .child(row(tr("Downloads"), p.downloads.to_string()))
-                    .child(row(tr("Updated"), p.updated.clone()))
-                    .child(row(tr("Licence"), p.license.clone()))
-                    .children((source.starts_with("https://")).then(|| {
-                        about_link("alt-project-source", tr("Source code")).on_click(cx.listener(
-                            move |_, _: &ClickEvent, _, cx| Launcher::open_url(&source, cx),
-                        ))
-                    }))
-            });
+                    .child(about_row(tr("Downloads"), about.downloads.to_string()))
+                    .child(about_row(tr("Updated"), about.updated.clone()))
+                    .child(about_row(tr("Licence"), about.license.clone()))
+            }));
 
         // A narrow window has one column: the action stays near the top. Beside the column, the
         // panel stays in view while the page scrolls.
@@ -701,14 +715,16 @@ impl Launcher {
             .child(head)
             .children(above)
             .children(gallery)
-            .child(about)
-            .child(
-                div()
-                    .text_size(px(tokens::HEADING))
-                    .font_weight(FontWeight::BOLD)
-                    .child(tr("Versions")),
-            )
-            .child(versions);
+            .when(!p.description.is_empty(), |d| d.child(about))
+            .when(!p.versions.is_empty(), |d| {
+                d.child(
+                    div()
+                        .text_size(px(tokens::HEADING))
+                        .font_weight(FontWeight::BOLD)
+                        .child(tr("Versions")),
+                )
+                .child(versions)
+            });
         page.child(
             div()
                 .id("alt-project-scroll")

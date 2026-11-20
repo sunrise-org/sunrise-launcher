@@ -3,6 +3,44 @@ use sunrise_launcher::browser::installed::Entry;
 
 const GAME: &str = "26.3";
 
+#[test]
+fn source_links_only_trim_repositories_on_github() {
+    for (source, expected) in [
+        (
+            "https://github.com/Hollowfen/Trail-Markers.git/tree/main/mods?tab=readme#install",
+            Some(SourceLink::GitHub(
+                "https://github.com/Hollowfen/Trail-Markers".into(),
+            )),
+        ),
+        (
+            "https://github.com/Hollowfen/Trail-Markers/blob/main/README.md",
+            Some(SourceLink::GitHub(
+                "https://github.com/Hollowfen/Trail-Markers".into(),
+            )),
+        ),
+        (
+            "https://github.com.example.test/owner/repo.git/tree/main?keep=1#readme",
+            Some(SourceLink::Other(
+                "https://github.com.example.test/owner/repo.git/tree/main?keep=1#readme".into(),
+            )),
+        ),
+        (
+            "https://code.example.test/owner/repo?keep=1#readme",
+            Some(SourceLink::Other(
+                "https://code.example.test/owner/repo?keep=1#readme".into(),
+            )),
+        ),
+        ("https://github.com/owner", None),
+        ("https://@github.com/owner/repo", None),
+        ("https://user:pass@github.com/owner/repo", None),
+        ("http://github.com/owner/repo", None),
+        ("https:///owner/repo", None),
+        ("", None),
+    ] {
+        assert_eq!(SourceLink::read(source), expected, "{source}");
+    }
+}
+
 fn project(
     id: &str,
     kind: &str,
@@ -153,7 +191,7 @@ fn the_page_names_the_version_add_installs() {
         Some("2.0.0")
     );
     assert_eq!(p.versions[1].fit, Fit::OtherBuild("25.1".into()));
-    assert_eq!(p.side, "Not needed on servers");
+    assert_eq!(p.about.unwrap().side, "Not needed on servers");
     assert!(page(&idx, "missing", GAME, vec![], false).is_none());
 }
 
@@ -391,6 +429,7 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
             name: "mine".into(),
             version: "0.3".into(),
             github: false,
+            source: None,
             native: true,
             unreadable: false,
         },
@@ -399,6 +438,7 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
             name: "By Hand".into(),
             version: "1.0".into(),
             github: false,
+            source: None,
             native: false,
             unreadable: false,
         },
@@ -417,6 +457,9 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
     assert_eq!((content.make, &content.need), (None, &None));
     assert!(content.local.is_some() && content.entry.is_none());
     assert!(updatable(&r).iter().all(|r| r.id != "mine"));
+    let shown = visible(&r, &RowFilter::default());
+    assert_eq!(shown.len(), 6, "four managed mods and two hand-added mods");
+    assert_eq!(visible_count(&r, &shown), "6 of 6 mods shown");
 }
 
 #[test]
@@ -927,6 +970,7 @@ fn an_unreadable_file_is_never_on_and_cannot_switch_a_working_mod_of_its_name() 
         name: "ruby".into(),
         version: String::new(),
         github: false,
+        source: None,
         native: true,
         unreadable,
     };
