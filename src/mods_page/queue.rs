@@ -24,13 +24,16 @@ pub(crate) enum Request {
     },
     /// A collection's mods and title.
     Many(Target, Vec<String>, String),
+    Github(Target, crate::github_mods_page::GithubInput),
 }
 
 impl Request {
     /// The profile and game it is for.
     pub(crate) fn target(&self) -> &Target {
         match self {
-            Request::One { target, .. } | Request::Many(target, ..) => target,
+            Request::One { target, .. }
+            | Request::Many(target, ..)
+            | Request::Github(target, ..) => target,
         }
     }
 }

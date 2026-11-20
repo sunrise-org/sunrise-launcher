@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use sunrise_launcher::{
     backend::Settings,
-    github_mods::Resolved,
     native_status::{BuildInput, Registry},
 };
 
@@ -17,7 +16,7 @@ pub(super) enum PendingConsent {
     Edit(Box<crate::mods_page::ModEditRequest>),
     /// The displayed title; the queue retains the original install request.
     Install(String),
-    Github(Resolved, Option<String>),
+    Github(String),
 }
 
 impl PendingConsent {
@@ -39,7 +38,7 @@ impl PendingConsent {
             },
             Self::Edit(request) => request.name.clone(),
             Self::Install(name) => name.clone(),
-            Self::Github(found, _) => found.label(),
+            Self::Github(label) => label.clone(),
         }
     }
 

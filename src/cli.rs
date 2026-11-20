@@ -2374,7 +2374,14 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
         } => {
             let link = github_mods::parse(&url)?;
             let found = github_mods::resolve(&link, &github_mods::api)?;
-            github_native(&home, &found, mod_id.as_deref(), all, trust_native_code)?;
+            github_native(
+                &instance,
+                found,
+                mod_id.as_deref(),
+                all,
+                trust_native_code,
+                None,
+            )?;
         }
         ModsCmd::UpdateGithub {
             id,
@@ -2403,7 +2410,14 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     o.label()
                 );
                 if !check {
-                    github_native(&home, &latest, Some(&o.id), false, trust_native_code)?;
+                    github_native(
+                        &instance,
+                        latest,
+                        Some(&o.id),
+                        false,
+                        trust_native_code,
+                        Some(&o),
+                    )?;
                 }
             }
         }

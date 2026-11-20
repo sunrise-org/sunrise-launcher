@@ -925,6 +925,8 @@ pub enum Failed {
         left: Vec<LeftOut>,
         error: String,
     },
+    /// The exact candidate has a missing dependency or an incompatible package.
+    Fit(String),
     /// The folder holds no native mod to build.
     Nothing,
     Other(String),
@@ -939,7 +941,7 @@ impl From<String> for Failed {
 impl std::fmt::Display for Failed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Mods { error, .. } | Self::Other(error) => f.write_str(error),
+            Self::Mods { error, .. } | Self::Fit(error) | Self::Other(error) => f.write_str(error),
             Self::Nothing => f.write_str(no_mods_to_build()),
             Self::NoConsent => f.write_str(tr("Native mods run inside your game with your rights; mixins compile code into the game. Allow native mods in Settings, Storage, or pass --trust-native-code.")),
         }

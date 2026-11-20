@@ -1,5 +1,10 @@
-//! Compare the IDs declared by two content packages.
-use std::{collections::BTreeSet, fs, path::Path};
+//! Compare the content definitions carried by packages.
+use sha2::{Digest, Sha256};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs, io,
+    path::Path,
+};
 
 /// The kinds a content mod declares one file each for (`data/<namespace>/sunrise/<kind>/<id>.json`), as notices name them.
 const DECLARED: [(&str, &str); 6] = [
@@ -48,4 +53,27 @@ fn content_ids(path: &Path) -> Result<BTreeSet<String>, String> {
 pub(super) fn dropped(old: &Path, new: &Path) -> Result<Vec<String>, String> {
     let new = content_ids(new)?;
     Ok(content_ids(old)?.difference(&new).cloned().collect())
+}
+
+/// Compare data definitions by path and bytes, rather than ZIP metadata or declaration IDs.
+/// Paths have already been validated by the package inventory.
+pub(super) fn definitions_changed(old: &Path, new: &Path) -> Result<bool, String> {
+    fn definitions(path: &Path) -> Result<BTreeMap<String, [u8; 32]>, String> {
+        let read = || -> io::Result<_> {
+            let mut zip = zip::ZipArchive::new(fs::File::open(path)?).map_err(io::Error::other)?;
+            let mut entries = BTreeMap::new();
+            for i in 0..zip.len() {
+                let mut entry = zip.by_index(i).map_err(io::Error::other)?;
+                let name = entry.name().map_err(io::Error::other)?.into_owned();
+                if !entry.is_dir() && name.starts_with("data/") {
+                    let mut hash = Sha256::new();
+                    io::copy(&mut entry, &mut hash)?;
+                    entries.insert(name, hash.finalize().into());
+                }
+            }
+            Ok(entries)
+        };
+        read().map_err(|error| format!("{}: {error}", path.display()))
+    }
+    Ok(definitions(old)? != definitions(new)?)
 }

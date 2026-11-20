@@ -19,6 +19,9 @@ use std::{
 };
 use sunrise_launcher_smod::{index, mod_list};
 
+mod github;
+pub use github::{prepare_github_install, GithubInstall, GithubInstallError};
+
 /// The profile stays admitted while a complete candidate and optional sidecars are prepared.
 pub(in crate::browser::sunrise) struct StagedInstall {
     owner: Arc<Lease>,
@@ -170,6 +173,43 @@ impl StagedInstall {
         Ok(after)
     }
 
+    fn world_risk(
+        &self,
+        after: &switch::Inventory,
+        requested_off: &[String],
+    ) -> Result<(Option<worlds::switch::Fence>, worlds::SwitchQuestion), String> {
+        let home = self.owner.home();
+        let mut changed = Vec::new();
+        for (id, old) in &self.before.packages {
+            let risks_content = match after.packages.get(id) {
+                None => true,
+                Some(_) if !old.on || requested_off.contains(id) => false,
+                Some(new) if !new.on => true,
+                Some(new) if old.digest != new.digest => {
+                    super::super::content_loss::definitions_changed(
+                        &home.join(&old.relative),
+                        &self.stage.join(&new.relative),
+                    )? || old.manifest.namespaces != new.manifest.namespaces
+                        // Native code can change definitions not present in the archive.
+                        || old.manifest.native.is_some() || new.manifest.native.is_some()
+                }
+                Some(_) => false,
+            };
+            if risks_content {
+                changed.push(worlds::switch::Changed {
+                    id,
+                    title: &old.manifest.name,
+                    namespaces: &old.manifest.namespaces,
+                });
+            }
+        }
+        if changed.is_empty() {
+            return Ok((None, worlds::SwitchQuestion::default()));
+        }
+        let (fence, question) = worlds::switch::Fence::hold(home, &changed, None)?;
+        Ok((Some(fence), question))
+    }
+
     fn seal(
         self,
         after: switch::Inventory,
@@ -192,27 +232,7 @@ impl StagedInstall {
         }
         let image = verify_candidate(self.base(), &self.stage, &compiler, &progress, &verified)?;
         let home = self.owner.home();
-        let changed: Vec<_> = self
-            .before
-            .packages
-            .iter()
-            .filter(|(id, old)| {
-                after.packages.get(*id).is_none_or(|new| {
-                    old.on && !requested_off.contains(id) && (!new.on || new.digest != old.digest)
-                })
-            })
-            .map(|(id, old)| worlds::switch::Changed {
-                id,
-                title: &old.manifest.name,
-                namespaces: &old.manifest.namespaces,
-            })
-            .collect();
-        let (fence, question) = if changed.is_empty() {
-            (None, worlds::SwitchQuestion::default())
-        } else {
-            let (fence, question) = worlds::switch::Fence::hold(home, &changed, None)?;
-            (Some(fence), question)
-        };
+        let (fence, question) = self.world_risk(&after, requested_off)?;
         if after.browser != self.before.browser {
             // Keep raw unrelated rows and foreign metadata on records we didn't change.
             // The planner's typed view is for choosing packages, not rewriting those rows.
@@ -570,7 +590,7 @@ fn verify_candidate(
     chosen: &BTreeMap<&str, &switch::Package>,
 ) -> Result<String, native_mods::Failed> {
     if !switch::fits(chosen) {
-        return Err(tr("The proposed mod set has incompatible packages or missing dependencies. Nothing was installed.").to_owned().into());
+        return Err(native_mods::Failed::Fit(tr("The proposed mod set has incompatible packages or missing dependencies. Nothing was installed.").into()));
     }
     switch::build_candidate(base, home, compiler, progress, chosen)
 }

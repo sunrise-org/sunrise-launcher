@@ -292,13 +292,23 @@ impl Launcher {
     /// Asks for confirmation before removing the chosen mods.
     pub(super) fn ask_remove(&mut self) {
         let rows = self.rows();
-        let chosen: Vec<_> = rows
+        let chosen = rows
             .iter()
-            .filter(|r| r.local.is_none() && self.ui.mods.selection.contains(&r.id))
-            .filter_map(|r| Some((r.id.clone(), r.entry.clone()?, r.title.clone())))
-            .collect();
-        if !chosen.is_empty() {
-            self.confirm(Confirm::Remove(chosen));
+            .filter(|r| r.managed() && self.ui.mods.selection.contains(&r.id))
+            .map(|r| {
+                let receipt = match &r.entry {
+                    Some(entry) => ModRemoval::registry(entry)?,
+                    None => ModRemoval::github(r.origin().ok_or_else(|| {
+                        tr("Installed mods changed. Refresh the list and try again.").to_owned()
+                    })?),
+                };
+                Ok((r.id.clone(), receipt, r.title.clone()))
+            })
+            .collect::<Result<Vec<_>, String>>();
+        match chosen {
+            Ok(chosen) if !chosen.is_empty() => self.confirm(Confirm::Remove(chosen)),
+            Ok(_) => {}
+            Err(error) => self.ui.mods.notice = Some(Err(error)),
         }
     }
 
@@ -365,22 +375,15 @@ impl Launcher {
             return;
         }
         m.errors.clear();
-        let removals = items
-            .iter()
-            .map(|(_, entry, _)| ModRemoval::registry(entry))
-            .collect::<Result<Vec<_>, _>>();
-        match removals {
-            Ok(removals) => {
-                m.selection.clear();
-                self.request_mod_edit(
-                    ModEdit::Remove(removals),
-                    tr("Remove").into(),
-                    counted(items.len(), "Removed 1 mod.", "Removed {count} mods."),
-                    false,
-                );
-            }
-            Err(error) => m.notice = Some(Err(error)),
-        }
+        let count = items.len();
+        let removals = items.into_iter().map(|(_, receipt, _)| receipt).collect();
+        m.selection.clear();
+        self.request_mod_edit(
+            ModEdit::Remove(removals),
+            tr("Remove").into(),
+            counted(count, "Removed 1 mod.", "Removed {count} mods."),
+            false,
+        );
     }
 }
 

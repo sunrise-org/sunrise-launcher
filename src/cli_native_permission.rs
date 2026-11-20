@@ -8,36 +8,54 @@ pub(super) fn native_permission(trust: bool) -> Result<(), String> {
 }
 
 pub(super) fn github_native(
-    home: &Path,
-    found: &github_mods::Resolved,
+    instance: &instances::Instance,
+    found: github_mods::Resolved,
     only: Option<&str>,
     all: bool,
     trust: bool,
+    update: Option<&github_mods::Origin>,
 ) -> Result<(), String> {
     println!("{}", found.label());
-    println!("Source, to read: {}", found.source_url());
-    eprintln!("{}", github_mods::WARNING);
+    println!(
+        "{}",
+        trf("Source, to read: {url}", &[("url", &found.source_url())])
+    );
+    eprintln!("{}", tr(github_mods::WARNING));
     native_permission(trust)?;
-    let mods = github_mods::fetch(found)?;
-    let chosen = github_mods::choose(&mods, only, all);
-    let done = chosen.and_then(|chosen| {
-        chosen
-            .into_iter()
-            .map(|p| github_mods::install(home, found, p))
-            .collect::<Result<Vec<_>, _>>()
-    });
-    github_mods::discard(found);
-    let done = done?;
-    for o in done {
+    let mut ready = github_mods::fetch(found)?;
+    let selected = github_mods::choose(ready.mods(), only, all)?
+        .into_iter()
+        .map(|package| package.id.clone())
+        .collect();
+    ready.retain(&selected);
+    let owner = Arc::new(sunrise_launcher::browser::sunrise::txn::Lease::admit(
+        &instance.home,
+    )?);
+    let proposal = sunrise_launcher::browser::sunrise::txn::prepare_github_install(
+        owner,
+        instance,
+        &ready,
+        update,
+        &|label, fraction| progress(label.to_owned())(fraction),
+        &registry_consent,
+    )?;
+    if !switch::approve_world_change(proposal.question(), tr("Install anyway? [y/N]"))? {
+        return Err(tr("Install cancelled. Nothing was changed.").into());
+    }
+    for o in proposal.commit(true)? {
         println!(
-            "Installed {} {} from GitHub ({}), sha256 {}.",
-            o.id,
-            o.version,
-            o.label(),
-            o.sha256
+            "{}",
+            trf(
+                "Installed {mod} {version} from GitHub ({source}), SHA-256 {hash}.",
+                &[
+                    ("mod", &o.id),
+                    ("version", &o.version),
+                    ("source", &o.label()),
+                    ("hash", &o.sha256),
+                ]
+            )
         );
     }
-    println!("Build it next: sunrise-launcher native-build --trust-native-code");
     Ok(())
 }
 

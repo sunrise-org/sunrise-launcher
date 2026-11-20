@@ -69,8 +69,8 @@ enum Catalog {
 
 /// A batch the player asked for and has to confirm: named, counted, nothing started yet.
 enum Confirm {
-    /// (mod id, exact installed row, title)
-    Remove(Vec<(String, Entry, String)>),
+    /// (mod id, exact installed receipt, title)
+    Remove(Vec<(String, sunrise::txn::ModRemoval, String)>),
 }
 
 struct Open {
@@ -252,7 +252,7 @@ fn read_local(home: &Path) -> Vec<model::Local> {
             id: f.id,
             name: f.name,
             version: f.version,
-            github: f.origin.is_some(),
+            origin: f.origin,
             native,
             unreadable: f.icon.is_err(),
         }
@@ -751,6 +751,7 @@ impl Launcher {
         let packs = matches!(self.ui.page, Page::Packs | Page::PackFind);
         let placeholder: SharedString = match (packs, installed) {
             (false, false) => tr("Search mods"),
+            (false, true) if self.content_width() < 860. => tr("Search mods"),
             (false, true) => tr("Search your mods"),
             (true, false) => match self.ui.mods.packs.scope {
                 pack_discover::Scope::Resource => tr("Search resource packs"),
@@ -778,9 +779,9 @@ impl Launcher {
             .track_focus(focus)
             .seen()
             .flex_1()
-            .min_w(px(120.))
+            .min_w(px(if installed && !packs { 96. } else { 120. }))
             .h(px(tokens::ACTION))
-            .px(px(16.))
+            .px(px(if installed && !packs { 12. } else { 16. }))
             .rounded(crate::tokens::r(crate::tokens::R_CARD))
             .text_size(px(tokens::BODY))
             .cursor_text()
@@ -832,8 +833,9 @@ impl Launcher {
         };
         div()
             .flex()
+            .when(installed && !packs, |d| d.flex_wrap().gap_y(px(10.)))
             .items_center()
-            .gap(px(20.))
+            .gap_x(px(if installed && !packs { 12. } else { 20. }))
             .child(
                 div()
                     .flex_none()
@@ -864,7 +866,19 @@ impl Launcher {
                 Launcher::choose_view,
                 cx,
             ))
-            .child(field)
+            .child(if installed && !packs {
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w(px(233.))
+                    .items_center()
+                    .gap(px(8.))
+                    .child(field)
+                    .child(self.github_add_button(cx))
+                    .into_any_element()
+            } else {
+                field.into_any_element()
+            })
     }
 }
 
@@ -884,7 +898,7 @@ mod enabled_tests {
             id: id.into(),
             name: id.into(),
             version: String::new(),
-            github: false,
+            origin: None,
             native: false,
             unreadable: false,
         };

@@ -35,6 +35,8 @@ pub(crate) enum Sheet {
     /// Who plays, under the account chip (`account_chip`).
     AccountMenu,
     Search,
+    /// The link form or the package selection it yielded.
+    GithubAdd,
     /// The build window (`mods::build_modal`): closing it leaves the build running.
     ModBuild,
 }
@@ -260,6 +262,9 @@ impl Launcher {
 
     /// Opens `sheet`. Consent and Libraries open by themselves from their pending state.
     pub(crate) fn open_sheet(&mut self, sheet: Sheet) {
+        if self.ui.sheet == Some(Sheet::GithubAdd) && sheet != Sheet::GithubAdd {
+            self.github.close();
+        }
         self.ui.sheets.error = None;
         self.ui.sheet = Some(sheet);
     }
@@ -292,7 +297,9 @@ impl Launcher {
         } else if self.pending_consent.is_some() {
             self.cancel_native_consent();
         }
-        self.ui.sheet = None;
+        if self.ui.sheet.take() == Some(Sheet::GithubAdd) {
+            self.github.close();
+        }
         self.ui.sheets.ticked = (false, false);
         self.ui.sheets.error = None;
     }
@@ -453,7 +460,11 @@ impl Launcher {
 
     /// The sheet on screen, if any: a pending library question, a pending permission, then the
     /// sheet asked for.
-    pub(crate) fn live_sheet(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    pub(crate) fn live_sheet(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Stateful<Div>> {
         if self.ui.sheets.registry.is_some() {
             return Some(self.libraries_sheet(cx));
         }
@@ -467,6 +478,7 @@ impl Launcher {
             return Some(self.card_why_sheet(cx));
         }
         match self.ui.sheet {
+            Some(Sheet::GithubAdd) => Some(self.github_add_sheet(window, cx)),
             Some(Sheet::Build) => Some(self.build_sheet(cx)),
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
             Some(Sheet::Versions) => Some(self.versions_sheet(cx)),
@@ -755,11 +767,13 @@ impl Launcher {
             })),
             None => disabled(install),
         };
+        let github = matches!(self.pending_consent, Some(PendingConsent::Github(_)));
         let body = div()
             .flex()
             .flex_col()
             .gap(px(12.))
             .child(title(tr("Native mods run as part of the game").into()))
+            .children(github.then(|| muted(tr(sunrise_launcher::github_mods::WARNING))))
             .child(muted(format!(
                 "{}{tools}",
                 tr("They can do anything a program on your computer can.")
@@ -943,10 +957,9 @@ impl Launcher {
                         }
                     }
                     PendingConsent::Edit(request) => self.start_mod_edit(*request),
-                    PendingConsent::Install(_) => {
+                    PendingConsent::Install(_) | PendingConsent::Github(_) => {
                         self.resume_install();
                     }
-                    PendingConsent::Github(found, only) => self.github_install(found, only),
                 }
             }
         }

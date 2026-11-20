@@ -1182,7 +1182,7 @@ fn relative(kind: Kind, id: &str, file_name: &str) -> Result<String, String> {
     }
 }
 
-/// Removes registry mods in one transaction (`txn`), each only if it is still the file shown
+/// Removes managed mods in one transaction (`txn`), each only if it is still the file shown
 /// (id and checksum). Returns the ids that went.
 pub fn remove_checked(home: &Path, wanted: &[(String, String)]) -> Result<Vec<String>, String> {
     dependencies::remove_checked(home, wanted)

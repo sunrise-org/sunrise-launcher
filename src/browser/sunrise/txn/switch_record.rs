@@ -792,6 +792,93 @@ mod tests {
     }
 
     #[test]
+    fn github_publication_worker() {
+        use crate::github_mods::{origin_path, tests::prepared_update};
+        let Some(home) = std::env::var_os("SUNRISE_TEST_INSTALL_OWNER") else {
+            return;
+        };
+        let home = PathBuf::from(home);
+        let owner = Lease::admit(&home).unwrap();
+        let prior = Bootstrap::bind(&home, Target::legacy("nightly-original").unwrap())
+            .unwrap()
+            .test_active();
+        build::publish(&home, &prior).unwrap();
+        let stage = owner.reserve_install_set(&prior).unwrap();
+        let next = prior.test_switch("nightly-original");
+        let update = prepared_update("v2", "{\"changed\":true}", "");
+        let packed = &update.mods()[0];
+        let origin = packed.origin(update.source());
+        let sidecar = stage.join("github-origin");
+        fs::write(&sidecar, serde_json::to_vec(&origin).unwrap()).unwrap();
+        owner
+            .seal_staged_set(
+                &next,
+                &[
+                    (
+                        PathBuf::from("sunrise-native-mods/zoom.smod"),
+                        Some(packed.file.clone()),
+                    ),
+                    (origin_path(Path::new(""), "zoom"), Some(sidecar)),
+                ],
+            )
+            .unwrap();
+        drop(update);
+        let mut record = read(&home).unwrap().unwrap();
+        publish(
+            &home,
+            &mut record,
+            || Ok(()),
+            |phase| {
+                if phase == Phase::Publishing {
+                    wait_to_be_killed();
+                }
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_kill_between_github_package_and_origin_restores_both_preimages() {
+        use crate::github_mods::{origin_path, tests::prepared_update};
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path();
+        let release = prepared_update("v1", "{}", "");
+        let packed = &release.mods()[0];
+        let old = fs::read(&packed.file).unwrap();
+        let old_origin = serde_json::to_vec(&packed.origin(release.source())).unwrap();
+        let file = home.join("sunrise-native-mods/zoom.smod");
+        let origin = origin_path(home, "zoom");
+        fs::create_dir(file.parent().unwrap()).unwrap();
+        fs::write(&file, &old).unwrap();
+        fs::write(&origin, &old_origin).unwrap();
+        let new = prepared_update("v2", "{\"changed\":true}", "");
+        let expected = fs::read(&new.mods()[0].file).unwrap();
+        assert_ne!(old, expected);
+        crash_process(
+            "browser::sunrise::txn::switch_record::tests::github_publication_worker",
+            home,
+            None,
+            || {
+                assert_eq!(
+                    fs::read(&file).unwrap(),
+                    expected,
+                    "replacement already reached disk"
+                );
+                assert_eq!(
+                    fs::read(&origin).unwrap(),
+                    old_origin,
+                    "origin has not been replaced yet"
+                );
+            },
+        );
+        let next = Lease::admit(home).unwrap();
+        assert_eq!(next.active_build().unwrap().unwrap().generation(), 1);
+        assert_eq!(fs::read(file).unwrap(), old);
+        assert_eq!(fs::read(origin).unwrap(), old_origin);
+        assert!(!next.outstanding());
+    }
+
+    #[test]
     fn revocation_before_cutoff_refuses_and_after_cutoff_cannot_undo_publication() {
         use crate::{backend::Settings, local_json::LockedJson};
         for revoke_first in [true, false] {

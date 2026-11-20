@@ -3,12 +3,14 @@
 //! turned on and off, and what was installed updated or removed (`sunrise_launcher::browser`).
 
 use super::*;
+use crate::github_mods_page::GithubInput;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use sunrise_launcher::browser::sunrise::txn::{GithubInstall, GithubInstallError};
 use sunrise_launcher::browser::{self, installed, sunrise, Kind as PackKind, Project, SourceId};
 
-mod queue;
+pub(super) mod queue;
 /// An install that failed, as its card says it.
 pub(crate) struct CardError {
     pub(crate) id: String,
@@ -72,13 +74,20 @@ pub(crate) struct PreparedInstall {
 
 enum InstallProposal {
     Registry(sunrise::RegistryInstall, Finished),
+    Github(Box<GithubInstall>, GithubInput),
     Pack(sunrise::pack::PackInstall, Option<String>),
+}
+
+enum CommitFailure {
+    Install(String),
+    Github(Box<GithubInput>, GithubInstallError),
 }
 
 impl PreparedInstall {
     pub(crate) fn question(&self) -> Option<&sunrise_launcher::worlds::SwitchQuestion> {
         match &self.proposal {
             InstallProposal::Registry(plan, _) => Some(plan.question()),
+            InstallProposal::Github(plan, _) => Some(plan.question()),
             InstallProposal::Pack(plan, _) => plan.question(),
         }
     }
@@ -90,19 +99,46 @@ impl PreparedInstall {
         {
             return Err(Stop::ReadyInstall(Box::new(self)));
         }
-        self.proposal.commit(false).map_err(Into::into)
+        self.proposal.commit(false).map_err(|error| match error {
+            CommitFailure::Install(error) => error.into(),
+            CommitFailure::Github(_, error) => error.to_string().into(),
+        })
     }
 }
 
 impl InstallProposal {
-    fn commit(self, approved: bool) -> Result<Finished, installed::InstallError> {
+    fn publish(self, target: queue::Target, approved: bool) -> Event {
+        match self.commit(approved) {
+            Ok(finished) => Event::Done(Ok(finished)),
+            Err(CommitFailure::Install(error)) => Event::Done(Err(error.into())),
+            Err(CommitFailure::Github(input, error)) => Event::GithubFailed(target, input, error),
+        }
+    }
+
+    fn commit(self, approved: bool) -> Result<Finished, CommitFailure> {
         match self {
             Self::Registry(plan, finished) => {
-                plan.commit(approved)?;
+                plan.commit(approved).map_err(CommitFailure::Install)?;
                 Ok(finished)
             }
+            Self::Github(plan, input) => {
+                let origins = plan
+                    .commit(approved)
+                    .map_err(|error| CommitFailure::Github(Box::new(input), error))?;
+                Ok(Finished::said(trf(
+                    "Installed {mods} from GitHub.",
+                    &[(
+                        "mods",
+                        &origins
+                            .iter()
+                            .map(|o| o.id.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    )],
+                )))
+            }
             Self::Pack(plan, icon) => {
-                let pack = plan.commit(approved)?;
+                let pack = plan.commit(approved).map_err(CommitFailure::Install)?;
                 if let Some(url) = icon {
                     sunrise_launcher::instances::adopt_icon(&sunrise::pack::home(&pack.work), &url);
                 }
@@ -133,6 +169,7 @@ pub(super) enum Event {
     ReadyEdit(Box<PreparedEdit>),
     EditFinished(Result<Option<String>, String>),
     Done(Result<Finished, installed::InstallError>),
+    GithubFailed(queue::Target, Box<GithubInput>, GithubInstallError),
     /// The install found native code the plan didn't know of before the player had allowed
     /// it: the question to ask, whose answer starts the same install again.
     NeedsConsent(Box<PendingConsent>, Box<queue::Request>),
@@ -347,6 +384,13 @@ impl Launcher {
                         m.install_owners.remove(&target.instance);
                     }
                 }
+                Event::GithubFailed(target, input, error) => {
+                    m.busy = None;
+                    m.running = None;
+                    m.install_owners.remove(&target.instance);
+                    m.message = Some(Err(error.to_string()));
+                    self.github_install_error(target, *input, error);
+                }
                 Event::Done(result) => {
                     done = true;
                     let id = m.busy.take().map(|(id, ..)| id);
@@ -506,7 +550,7 @@ impl Launcher {
     }
 
     /// The profile an install asked for now is bound to.
-    fn queue_target(&self) -> queue::Target {
+    pub(super) fn queue_target(&self) -> queue::Target {
         queue::Target {
             instance: self
                 .selected_instance()
@@ -558,10 +602,94 @@ impl Launcher {
             } => {
                 self.start_install_one(target, (lease, fresh), source, id, known.map(|p| *p), shown)
             }
+            queue::Request::Github(target, input) => {
+                self.start_install_github(target, input, lease, fresh);
+            }
             queue::Request::Many(target, ids, shown) => {
                 self.start_install_many(target, (lease, fresh), ids, shown)
             }
         }
+    }
+
+    pub(super) fn mods_install_github(&mut self, target: queue::Target, input: GithubInput) {
+        self.submit_install(queue::Request::Github(target, input));
+    }
+
+    fn start_install_github(
+        &mut self,
+        target: queue::Target,
+        input: GithubInput,
+        lease: Arc<sunrise::txn::Lease>,
+        fresh: bool,
+    ) {
+        let Some(instance) = self
+            .instances
+            .list
+            .iter()
+            .find(|i| i.id == target.instance && i.home == target.home)
+            .cloned()
+        else {
+            self.mods.install_owners.remove(&target.instance);
+            self.mods.message = Some(Err(tr(
+                "The profile changed since you reviewed this. Nothing was changed; choose again.",
+            )
+            .into()));
+            return;
+        };
+        let label = input.prepared.source().label();
+        self.mods.busy = Some((label.clone(), tr("Installing…").into(), 0.));
+        self.mods.running = Some(target.clone());
+        self.mods.message = None;
+        self.mods.card_error = None;
+        let tx = self.mods.tx.clone();
+        let launcher = self.tx.clone();
+        std::thread::spawn(move || {
+            let recovered = if fresh {
+                lease.recover_abandoned()
+            } else {
+                Ok(())
+            };
+            let event = if let Err(error) = recovered {
+                Event::GithubFailed(
+                    target,
+                    Box::new(input),
+                    GithubInstallError::Admission(error),
+                )
+            } else if matches!(
+                native_mods::require_consent(),
+                Err(native_mods::Failed::NoConsent)
+            ) {
+                Event::NeedsConsent(
+                    Box::new(PendingConsent::Github(label)),
+                    Box::new(queue::Request::Github(target, input)),
+                )
+            } else {
+                match sunrise::txn::prepare_github_install(
+                    lease.clone(),
+                    &instance,
+                    &input.prepared,
+                    input.update.as_deref(),
+                    &|line, fraction| {
+                        let _ = tx.send(Event::Progress(line.into(), fraction));
+                    },
+                    &|inventory| crate::native_build::ask_registry(&launcher, inventory),
+                ) {
+                    Ok(plan) if plan.question().needed() => {
+                        Event::ReadyInstall(Box::new(PreparedInstall {
+                            target,
+                            label,
+                            proposal: InstallProposal::Github(Box::new(plan), input),
+                        }))
+                    }
+                    Ok(plan) => {
+                        InstallProposal::Github(Box::new(plan), input).publish(target, false)
+                    }
+                    Err(error) => Event::GithubFailed(target, Box::new(input), error),
+                }
+            };
+            drop(lease);
+            let _ = tx.send(event);
+        });
     }
 
     fn start_install_one(
@@ -743,13 +871,13 @@ impl Launcher {
                     proposal,
                 } = *prepared;
                 self.mods.busy = Some((label, tr("Installing…").into(), 0.99));
-                self.mods.running = Some(target);
+                self.mods.running = Some(target.clone());
                 std::thread::spawn(move || {
                     let event = if stay {
                         drop(proposal);
                         Event::InstallCancelled
                     } else {
-                        Event::Done(proposal.commit(true))
+                        proposal.publish(target, true)
                     };
                     let _ = tx.send(event);
                 });
