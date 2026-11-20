@@ -33,12 +33,12 @@ struct Session {
 /// The tools the session runs itself, under their CLI names: they keep a process (the game, a
 /// server) or a sign-in going between calls. Every other CLI command is generated (cli_tools.rs).
 fn session_tools() -> Value {
-    let version = json!({ "type": "string", "description": "An installed version tag such as v2026.10.13. Default: the selected version (play: the profile's own first)." });
+    let version = json!({ "type": "string", "description": "An installed version tag such as v2026.10.13. Default: the selected version." });
     let none = json!({ "type": "object", "properties": {} });
     let jar_downloads = json!({ "type": "boolean", "description": "Explicit consent to download missing original Java asset/data jars from Modrinth for this launch. Default: false; verified cached jars work offline." });
     json!([
         { "name": "play", "description": "Start the Sunrise client (a game window on the player's screen) under agent control: the game_* tools then play it. Returns once it has started; game_wait_ready waits for the world. CLI: sunrise-launcher play",
-          "inputSchema": { "type": "object", "properties": { "version": version,
+          "inputSchema": { "type": "object", "properties": {
             "allow_jar_downloads": jar_downloads,
             "instance": { "type": "string", "description": "The profile to play, by name or id (instance_list). Default: the selected one." },
             "world": { "type": "string", "description": "Open or create this world (a folder under saves) at once." },
@@ -87,8 +87,13 @@ impl Session {
                     Some(name) => instances::find(name)?,
                     None => instances::selection()?,
                 };
-                let tag = instance.resolve_version(arg_str(args, "version"))?;
-                let mut cmd = backend::client(&tag)?;
+                if arg_str(args, "version").is_some() {
+                    return Err(
+                        tr("Choose a game build in the profile before pressing Play.").into(),
+                    );
+                }
+                let (owner, tag) = crate::cli::play_image(&instance)?;
+                let mut cmd = backend::managed_client_as(&tag, None, &owner)?;
                 instances::apply(&mut cmd, &instance)?;
                 cmd.args(game_tools::control_args());
                 if let Some(world) = arg_str(args, "world") {
@@ -112,11 +117,12 @@ impl Session {
                     cmd.args(extra.iter().filter_map(Value::as_str));
                 }
                 let launch = Default::default();
-                let notices =
-                    sunrise_launcher::browser::sunrise::before_play(&mut cmd, &tag, &launch)?;
+                let notices = sunrise_launcher::browser::sunrise::before_play(
+                    &mut cmd, &tag, &launch, &owner,
+                )?;
                 jars::prepare_launch(&mut cmd, &launch, Permission::headless(allow_jar_downloads))
                     .map_err(|error| error.to_string())?;
-                let client = Logged::start(Job::Client, cmd)?;
+                let client = Logged::start(Job::Client, cmd, Some(&owner))?;
                 // Started once its control socket answers, as sunrise-ctl launch waits.
                 let deadline = std::time::Instant::now() + Duration::from_secs(120);
                 while !game_tools::listening() {
@@ -162,7 +168,8 @@ impl Session {
                     Permission::headless(allow_jar_downloads),
                 )
                 .map_err(|error| error.to_string())?;
-                let server = Logged::start(Job::Server, cmd)?;
+                backend::verify_server_command(&tag, &dir, &cmd)?;
+                let server = Logged::start(Job::Server, cmd, None)?;
                 std::thread::sleep(Duration::from_secs(3));
                 let tail = server.tail(15).join("\n");
                 if let Some(result) = server.finished() {

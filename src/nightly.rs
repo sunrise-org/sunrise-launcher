@@ -72,8 +72,9 @@ pub(crate) const INSTALLED_TIME: &str = ".nightly-time";
 
 /// Keeps the publication time that came with an installed Nightly.
 pub(crate) fn record_install_time(dir: &Path, release: &Release) -> std::io::Result<()> {
+    use std::io::Write as _;
     if release.nightly.is_some() && !release.time.is_empty() {
-        fs::write(dir.join(INSTALLED_TIME), &release.time)?;
+        fs::File::create_new(dir.join(INSTALLED_TIME))?.write_all(release.time.as_bytes())?;
     }
     Ok(())
 }
@@ -189,16 +190,8 @@ fn is_date(text: &str) -> bool {
         })
 }
 
-/// After `version`, a Nightly, installed as an update: the old Nightly instance follows it, and the
-/// older Nightlies go unless the selection or an instance still plays them. Worlds stay.
+/// Prune old auto-installed Nightlies after an update. The committed profiles do not move.
 pub fn after_update(version: &str) {
-    let list = instances::list();
-    if list
-        .iter()
-        .any(|i| i.id == INSTANCE && i.version.as_deref().is_some_and(|v| date_of(v).is_some()))
-    {
-        let _ = instances::edit(INSTANCE, |meta| meta.version = Some(version.to_owned()));
-    }
     let selected = backend::Settings::load().selected;
     let pinned: Vec<String> = instances::list()
         .into_iter()

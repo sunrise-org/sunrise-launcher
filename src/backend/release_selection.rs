@@ -1,5 +1,7 @@
 //! Resolve a published release's channel or exact installed version.
-use super::Release;
+use super::{Release, RELEASE_FILE};
+use chrono::NaiveDate;
+use std::{cmp::Ordering, collections::BTreeMap};
 use sunrise_launcher_release_verify::Channel;
 
 /// The snapshot tagged `tag` (`snapshot-<date>-<commit>`, docs/release-flow.md "Snapshot"), looked
@@ -67,10 +69,147 @@ pub(super) fn by_tag<'a>(releases: &'a [Release], tag: &str) -> Option<&'a Relea
         .find(|release| release.tag == tag || release.nightly.as_deref() == Some(tag))
 }
 
+/// The signed build name covers the UTC build day, not a mutable GitHub publication time.
+struct SignedIdentity {
+    commit: String,
+    day: NaiveDate,
+}
+
+impl SignedIdentity {
+    fn read(release: &Release) -> Option<Self> {
+        let source = release.nightly.as_deref()?;
+        let bytes = super::fetch_small(&crate::signed::asset_url(source, RELEASE_FILE)).ok()??;
+        let digest = super::release_file_digest(release, source).ok()?;
+        if sunrise_launcher_release_verify::sha256_hex(&bytes) != digest {
+            return None;
+        }
+        Self::decode(&release.tag, &bytes)
+    }
+
+    fn decode(tag: &str, verified: &[u8]) -> Option<Self> {
+        #[derive(serde::Deserialize)]
+        struct Facts {
+            contract: u32,
+            build: String,
+            commit: String,
+        }
+        let facts: Facts = serde_json::from_slice(verified).ok()?;
+        let channel = Channel::of(tag)?;
+        if facts.contract != 1
+            || facts.build != tag
+            || !sunrise_launcher_release_verify::is_build(channel, tag)
+            || !full_commit(&facts.commit)
+        {
+            return None;
+        }
+        let (_, suffix) = tag.split_once('-')?;
+        let (day, abbreviated) = suffix.rsplit_once('-')?;
+        if !facts.commit.starts_with(abbreviated) {
+            return None;
+        }
+        Some(Self {
+            commit: facts.commit,
+            day: NaiveDate::parse_from_str(day, "%Y-%m-%d").ok()?,
+        })
+    }
+
+    fn compare(&self, other: &Self) -> Option<Ordering> {
+        if self.commit == other.commit {
+            return Some(Ordering::Equal);
+        }
+        let order = self.day.cmp(&other.day);
+        // The signed release contract has no sequence within a UTC day.
+        (order != Ordering::Equal).then_some(order)
+    }
+}
+
+fn full_commit(commit: &str) -> bool {
+    commit.len() == 40
+        && commit
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+pub(crate) struct WorldBuildOrder {
+    target: Option<SignedIdentity>,
+    releases: Vec<Release>,
+    comparisons: BTreeMap<String, Option<Ordering>>,
+}
+
+impl WorldBuildOrder {
+    pub(crate) fn for_target(tag: &str) -> Self {
+        let mut releases = super::releases().unwrap_or_default();
+        if Channel::of(tag) == Some(Channel::Snapshot) {
+            releases.extend(snapshot(tag).unwrap_or_default());
+        }
+        let target = releases
+            .iter()
+            .find(|r| r.tag == tag)
+            .and_then(SignedIdentity::read);
+        Self {
+            target,
+            releases,
+            comparisons: BTreeMap::new(),
+        }
+    }
+
+    /// Abbreviated tags are only lookup hints, never the saved world's identity.
+    pub(crate) fn compare_saved(&mut self, commit: &str) -> Option<Ordering> {
+        let target = self.target.as_ref()?;
+        if commit == target.commit {
+            return Some(Ordering::Equal);
+        }
+        if !full_commit(commit) {
+            return None;
+        }
+        *self.comparisons.entry(commit.into()).or_insert_with(|| {
+            let mut signed = self
+                .releases
+                .iter()
+                .filter(|r| {
+                    r.nightly.is_some()
+                        && r.tag
+                            .rsplit_once('-')
+                            .is_some_and(|(_, hint)| commit.starts_with(hint))
+                })
+                .filter_map(SignedIdentity::read)
+                .filter(|identity| identity.commit == commit);
+            let saved = signed.next()?;
+            if signed.any(|identity| identity.day != saved.day) {
+                return None;
+            }
+            saved.compare(target)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::backend::game_releases_with;
+
+    #[test]
+    fn world_order_uses_full_signed_identity_and_has_no_order_within_one_day() {
+        let decode = |build: &str, commit: &str| {
+            SignedIdentity::decode(
+                build,
+                &serde_json::to_vec(&serde_json::json!({
+                    "contract": 1, "build": build, "commit": commit,
+                }))
+                .unwrap(),
+            )
+        };
+        let a = &"a".repeat(40);
+        let b = &"b".repeat(40);
+        let first = decode("nightly-2026-11-18-aaaaaaa", a).unwrap();
+        let same_day = decode("snapshot-2026-11-18-bbbbbbb", b).unwrap();
+        let newer = decode("nightly-2026-11-19-bbbbbbb", b).unwrap();
+        assert_eq!(first.compare(&same_day), None);
+        assert_eq!(first.compare(&newer), Some(Ordering::Less));
+        assert_eq!(newer.compare(&same_day), Some(Ordering::Equal));
+        assert!(decode("nightly-2026-11-18-aaaaaaa", "aaaaaaa").is_none());
+        assert!(decode("nightly-2026-11-18-aaaaaaa", b).is_none());
+    }
 
     fn published(channel: &str) -> Vec<Release> {
         game_releases_with(

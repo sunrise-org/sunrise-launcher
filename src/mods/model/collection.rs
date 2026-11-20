@@ -62,6 +62,7 @@ pub(in crate::mods) fn cards(index: &Index, mods: &[Card]) -> Vec<Card> {
                 }
             }
             Some(Card {
+                unsigned: false,
                 id: c.id.clone(),
                 name: c.name.clone(),
                 authors: c.owners.join(", "),
@@ -131,6 +132,9 @@ pub(in crate::mods) struct Line {
     pub(in crate::mods) installed: bool,
     /// Why this build can't install it.
     pub(in crate::mods) refused: Option<String>,
+    /// One of the collection's mods that the collection needs (ticked by default) and this
+    /// build can't install: the collection can't be installed while it stays so.
+    pub(in crate::mods) needed: bool,
     /// Why it can't be installed together with the other picks.
     pub(in crate::mods) conflict: Option<String>,
 }
@@ -198,7 +202,12 @@ impl Summary {
 pub(in crate::mods) struct View {
     /// The members in the collection's order, then the libraries they need.
     pub(in crate::mods) lines: Vec<Line>,
+    /// How many of the collection's mods can be picked on this build.
     pub(in crate::mods) members: usize,
+    /// How many mods the collection has, available or not: what "7 of 9 selected" counts.
+    pub(in crate::mods) total: usize,
+    /// The names of the needed mods this build can't install.
+    pub(in crate::mods) needed_missing: Vec<String>,
     pub(in crate::mods) ticked: usize,
     pub(in crate::mods) header: Ticks,
     pub(in crate::mods) summary: Summary,
@@ -391,6 +400,9 @@ pub(in crate::mods) fn view(
             needed_by,
             installed: have(id),
             refused: base.refused.get(id).cloned(),
+            needed: !library
+                && base.refused.contains_key(id)
+                && c.members.iter().any(|m| m.id == id && m.default),
             conflict: conflicts.get(id).map(|why| (*why).to_owned()),
         }
     };
@@ -413,8 +425,15 @@ pub(in crate::mods) fn view(
     let selectable = c.members.len() - base.refused.len();
     let ticked_members = lines.iter().filter(|l| !l.library && l.ticked).count();
     let conflict = lines.iter().find_map(|l| l.conflict.clone());
+    let needed_missing = lines
+        .iter()
+        .filter(|l| l.needed)
+        .map(|l| l.name.clone())
+        .collect();
     View {
         members: selectable,
+        total: c.members.len(),
+        needed_missing,
         ticked: ticked_members,
         header: ticks(ticked_members, selectable),
         lines,
@@ -453,7 +472,16 @@ impl View {
 
     /// What the Install card says it does: the plan, or why there is nothing to do.
     pub(in crate::mods) fn plan_line(&self) -> String {
-        if self.ticked == 0 {
+        if !self.needed_missing.is_empty() {
+            trf(
+                if self.needed_missing.len() == 1 {
+                    "{mods} is needed and isn't available for your version"
+                } else {
+                    "{mods} are needed and aren't available for your version"
+                },
+                &[("mods", &crate::mods::names(&self.needed_missing))],
+            )
+        } else if self.ticked == 0 {
             tr("Pick the mods you want.").to_string()
         } else if self.conflict.is_some() {
             tr("Some picks can't be installed together.").to_string()
@@ -462,9 +490,14 @@ impl View {
         }
     }
 
-    /// Whether Install does anything: something is picked, the plan has work, nothing conflicts.
+    /// Whether Install does anything: something is picked, the plan has work, nothing conflicts,
+    /// and every mod the collection needs can be installed on this build (one it marks
+    /// optional that can't doesn't stop the rest).
     pub(in crate::mods) fn can_install(&self) -> bool {
-        self.ticked > 0 && !self.summary.nothing() && self.conflict.is_none()
+        self.ticked > 0
+            && !self.summary.nothing()
+            && self.conflict.is_none()
+            && self.needed_missing.is_empty()
     }
 
     /// Whether everything picked is installed already.
@@ -495,26 +528,4 @@ pub(in crate::mods) fn installed(c: &Collection, cards: &[Card], have: &HashSet<
         .filter(|id| cards.iter().any(|card| card.id == *id && card.fit.fits()))
         .collect();
     !wanted.is_empty() && wanted.iter().all(|id| have.contains(*id))
-}
-
-/// Whether installing `ids` first asks for permission to run native code.
-pub(crate) fn needs_consent(
-    ids: &[String],
-    allowed: bool,
-    is_native: impl Fn(&str) -> bool,
-) -> bool {
-    !allowed && ids.iter().any(|id| is_native(id))
-}
-
-/// Runs `one` for each of `ids` in order, with its position, collecting what each says it
-/// installed. The first failure stops the rest and is returned; the ones before it stay done.
-pub(crate) fn run_in_order(
-    ids: &[String],
-    mut one: impl FnMut(usize, &str) -> Result<Vec<String>, String>,
-) -> Result<Vec<String>, String> {
-    let mut done = Vec::new();
-    for (i, id) in ids.iter().enumerate() {
-        done.extend(one(i, id)?);
-    }
-    Ok(done)
 }

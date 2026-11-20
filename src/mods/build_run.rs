@@ -197,25 +197,6 @@ impl Run {
         self.end = Some(End::Stopped(said));
     }
 
-    /// The build stopped before it left out `mods` (worlds use them): each line says what it
-    /// waits for, never "Waiting", since the build can't take them as they are.
-    pub(crate) fn at_stake(&mut self, mods: &[String], unbuilt: &[String]) {
-        let on = self.on.clone();
-        for line in &mut self.lines {
-            if unbuilt.contains(&line.id) {
-                line.state = State::Failed(did_not_build());
-            } else if mods.contains(&line.id) {
-                line.state = State::NeedsUpdate {
-                    why: trf(
-                        "Needs an update for {build}. It comes back when its author releases one.",
-                        &[("build", &on)],
-                    ),
-                    details: Vec::new(),
-                };
-            }
-        }
-    }
-
     /// No game was installed: what compiled so far is in no game.
     fn unbuild(&mut self) {
         for line in &mut self.lines {
@@ -280,18 +261,6 @@ impl Run {
 }
 
 impl Run {
-    /// The Installed row follows the build for this version of the mod. An incompatibility
-    /// or compile failure remains visible after the build ends, but progress does not.
-    pub(crate) fn state_of(&self, id: &str, version: &str) -> Option<&State> {
-        self.lines
-            .iter()
-            .find(|line| line.id == id && line.version == version)
-            .map(|line| &line.state)
-            .filter(|state| {
-                self.running() || matches!(state, State::NeedsUpdate { .. } | State::Failed(_))
-            })
-    }
-
     /// Which mod of those the build compiles it is at, and of how many: "2 of 3". The mods it
     /// left out are not counted.
     pub(crate) fn at(&self) -> Option<(usize, usize)> {
@@ -302,10 +271,25 @@ impl Run {
         (building > 0).then_some((built + 1, total))
     }
 
+    /// The compiler's size while this build is downloading it: before any mod is built.
+    pub(crate) fn getting_tools(&self) -> Option<u64> {
+        self.first_build.filter(|_| self.progress.is_none())
+    }
+
     /// The one line the strip, Home and the Build button say while it runs:
-    /// "Building your mods · 2 of 3 · 51%".
+    /// "Building your mods · 2 of 3 · 51%", or, while the compiler comes,
+    /// "Getting build tools · at least 207 MB · 4%".
     pub(crate) fn line(&self) -> String {
         let percent = format!("{:.0}", self.fraction() * 100.);
+        if let Some(bytes) = self.getting_tools() {
+            return trf(
+                "Getting build tools · at least {size} · {percent}%",
+                &[
+                    ("size", &super::install_state::whole_mb(bytes)),
+                    ("percent", &percent),
+                ],
+            );
+        }
         match self.at() {
             Some((at, total)) => trf(
                 "Building your mods · {at} of {total} · {percent}%",
@@ -361,20 +345,6 @@ pub(crate) fn stop_asked(run: Option<&mut Run>, wanted: &mut Option<PlayIntent>)
     }
 }
 
-/// Selects the Play handoff when a `Native` result completes. Resume only on the profile that
-/// asked, still playing the game just built. A skipped mod doesn't stop this: the build still
-/// gave a game. Keep the original account.
-pub(crate) fn play_on_finish(
-    wanted: Option<PlayIntent>,
-    result: &Result<String, native_mods::Failed>,
-    plays: Option<(&str, Option<&str>)>,
-) -> Option<PlayIntent> {
-    let play = wanted?;
-    let built = result.as_deref().ok()?;
-    let (selected, version) = plays?;
-    (play.instance == selected && version == Some(built)).then_some(play)
-}
-
 /// A mod the build left out, as its line says it.
 fn left_out(left: &native_mods::LeftOut, on: &str) -> State {
     match &left.why {
@@ -428,6 +398,7 @@ mod tests {
             version: "1.0.0".into(),
             why: Why::Unfit("the type Block changed".into()),
             detail: Some(Detail {
+                log: None,
                 made_for: Some("nightly-2026-11-16-abc1234".into()),
                 changes: vec!["src/sources/client.rs:219 builds it".into()],
             }),
@@ -464,6 +435,19 @@ mod tests {
         assert_eq!(run.fraction(), 0.);
         assert_eq!(run.headline(), "Building your mods");
         assert_eq!(run.at(), None);
+    }
+
+    #[test]
+    fn while_the_compiler_comes_the_strip_says_so_with_its_size() {
+        let mut run = run(false);
+        run.first_build = Some(207_000_000);
+        assert_eq!(
+            run.line(),
+            "Getting build tools · at least 207 MB · 0%",
+            "not \"Building your mods\" before any mod is built"
+        );
+        run.step(&Step::Checking(4));
+        assert!(run.line().starts_with("Building your mods"));
     }
 
     #[test]
@@ -578,21 +562,6 @@ mod tests {
         assert_eq!(states(&run), ["waiting", "waiting", "waiting", "failed"]);
         assert_eq!(run.counts().failed, 1);
         assert_eq!(run.headline(), "The build stopped");
-        // Its row on Mods says so after the window is closed, for the version that failed.
-        assert_eq!(
-            run.state_of("zoom", "1.0.0"),
-            Some(&State::Failed("Zoom couldn't be built.".into()))
-        );
-        assert_eq!(
-            run.state_of("zoom", "1.0.1"),
-            None,
-            "an updated mod starts over"
-        );
-        assert_eq!(
-            run.state_of("minimap", "1.0.0"),
-            None,
-            "progress is not live"
-        );
     }
 
     #[test]
@@ -619,56 +588,17 @@ mod tests {
     }
 
     #[test]
-    fn plays_build_says_so_and_the_game_starts_when_it_worked() {
-        let run = run(true);
+    fn stopping_a_play_build_clears_the_queued_launch() {
+        let mut run = run(true);
         assert_eq!(run.headline(), "Getting ready to play");
-        let press_play = || PlayIntent {
+        let mut wanted = Some(PlayIntent {
             instance: "autumn".into(),
             account: Some("original-account".into()),
-        };
-        let built = Ok("native-abc".to_owned());
-        let version = Some("native-abc");
-        let playing = Some(("autumn", version));
-        // Auto-launch on success: the same profile on the game just built, and the account
-        // that originally pressed Play, independent of who is selected when the build ends.
-        let ready = play_on_finish(Some(press_play()), &built, playing).unwrap();
-        assert_eq!(ready.account.as_deref(), Some("original-account"));
-        // A mod the build skipped doesn't block: the build still gave a game. Closing the
-        // window changes none of these: what starts the game is the build's result.
-        let mut skipped = self::run(true);
-        skipped.step(&unfit("jei"));
-        skipped.done();
-        assert_eq!(skipped.counts().needs_update, 1);
-        assert!(play_on_finish(Some(press_play()), &built, playing).is_some());
-        // Cancel, or a build that stopped: no game, so no launch.
-        assert!(play_on_finish(
-            Some(press_play()),
-            &Err(native_mods::Failed::Nothing),
-            playing
-        )
-        .is_none());
-        // Cancel pressed, and the build ended well all the same (the press came after its last
-        // check): the game it gave is kept and said, and nothing starts.
-        let mut late = self::run(true);
-        let mut wanted = Some(press_play());
-        stop_asked(Some(&mut late), &mut wanted);
-        assert!(!late.for_play);
-        assert!(play_on_finish(wanted, &built, playing).is_none());
-        late.done();
-        assert_eq!(late.headline(), "Your mods are ready");
-        // Another profile was picked meanwhile, or this one's game changed.
-        assert!(play_on_finish(Some(press_play()), &built, Some(("winter", version))).is_none());
-        assert!(play_on_finish(Some(press_play()), &built, Some(("autumn", Some("v1")))).is_none());
-    }
-
-    #[test]
-    fn mods_a_stop_for_worlds_names_wait_for_an_update_not_in_line() {
-        let mut run = run(false);
-        let ids: Vec<String> = run.lines.iter().map(|l| l.id.clone()).collect();
-        run.at_stake(&ids[..1], &[]);
-        run.stopped("stop".into(), &[]);
-        assert!(matches!(run.lines[0].state, State::NeedsUpdate { .. }));
-        assert_eq!(run.counts().needs_update, 1);
+            owner: None,
+        });
+        stop_asked(Some(&mut run), &mut wanted);
+        assert!(wanted.is_none());
+        assert!(!run.for_play);
     }
 
     #[test]
@@ -689,15 +619,6 @@ mod tests {
             "The build stopped.".into(),
             &["jei".into(), "minimap".into()],
         );
-        assert!(matches!(
-            run.state_of("jei", "1.0.0"),
-            Some(State::NeedsUpdate { .. })
-        ));
-        assert!(
-            matches!(run.state_of("minimap", "1.0.0"), Some(State::Failed(why)) if !why.is_empty())
-        );
-        assert_eq!(run.state_of("jei", "1.0.1"), None);
-        assert_eq!(run.state_of("zoom", "1.0.0"), None);
         assert_eq!(run.counts().needs_update, 1);
         assert_eq!(run.counts().failed, 1);
     }

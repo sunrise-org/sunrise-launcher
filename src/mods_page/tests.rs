@@ -1,5 +1,6 @@
 use super::*;
 use std::{fs, io::Write as _};
+use sunrise_launcher::{browser::mod_list, native_status};
 
 #[test]
 fn build_consent_binds_an_unopened_mods_page_to_the_selected_profile() {
@@ -52,11 +53,9 @@ fn build_consent_binds_an_unopened_mods_page_to_the_selected_profile() {
         assert_eq!(home.current(), default, "Mods has never opened");
         let read = home.begin_build_consent(selected.clone());
         let mut pending = Some(PendingConsent::ReadingBuild(read.clone()));
-        assert!(
-            native_consent::resolve(&mut pending, true, true, &mut settings, &home.current())
-                .unwrap()
-                .is_none()
-        );
+        assert!(native_consent::allow(&mut pending, true, &mut settings)
+            .unwrap()
+            .is_none());
         assert!(settings.native_mods_allowed_at.is_none());
         pending
             .as_mut()
@@ -67,19 +66,17 @@ fn build_consent_binds_an_unopened_mods_page_to_the_selected_profile() {
             "selected_mod (selected_mod.smod, not checked against the registry)"
         );
         assert_eq!(home.current(), selected);
-        let action =
-            native_consent::resolve(&mut pending, allow, true, &mut settings, &home.current())
-                .unwrap();
         if allow {
+            let action = native_consent::allow(&mut pending, true, &mut settings).unwrap();
             assert!(matches!(action, Some(PendingConsent::Build(inputs))
                 if matches!(inputs.as_slice(), [one] if one.id == "selected_mod")));
             assert!(settings.native_mods_allowed_at.is_some());
         } else {
-            assert!(action.is_none());
+            drop(pending.take());
             assert!(settings.native_mods_allowed_at.is_none());
         }
         assert!(pending.is_none());
-        assert_eq!(mod_list::is_enabled(&selected, "selected_mod"), allow);
+        assert!(mod_list::is_enabled(&selected, "selected_mod"));
         assert_eq!(
             fs::read(default.join("sunrise-mods.txt")).unwrap(),
             untouched

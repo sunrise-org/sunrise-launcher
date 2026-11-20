@@ -3,7 +3,7 @@
 //! One list, drawn only where it is on screen: what is installed first (the build kept or played
 //! leading), then every build that can be downloaded, by channel and month, newest first. The
 //! field narrows it by date, name or commit. A row is only chosen; "Keep this build" is what
-//! changes the setup (`pin_build`), and Play installs a build that isn't here yet.
+//! changes the setup (through the transaction), and download/prepare are cache-only.
 use super::*;
 use crate::line_edit::{self, LineEdit};
 use crate::paint::palette;
@@ -175,8 +175,16 @@ fn lines(
 impl Launcher {
     /// Opens the sheet on the build the setup keeps now.
     pub(super) fn open_versions(&mut self) {
+        if self.open_removal_receipt() {
+            return;
+        }
         self.open_sheet(Sheet::Versions);
         self.reset_versions();
+    }
+
+    pub(crate) fn open_update_picker(&mut self, tag: String) {
+        self.open_versions();
+        self.ui.sheets.versions.pick = Some(tag);
     }
 
     pub(crate) fn reset_versions(&mut self) {
@@ -214,15 +222,13 @@ impl Launcher {
         let Some(instance) = self.selected_instance() else {
             return div().child(tr("No profile selected."));
         };
-        let (pinned, channel) = (instance.version.clone(), instance.channel);
         let plays = self.version_of(instance).cloned();
-        // Another build under native mods isn't kept from here: they are checked first.
-        let has_native = !native_status::enabled(&instance.home).is_empty();
+        let is_pack = instance.is_pack_profile();
         let releases: &[Release] = match &self.releases {
             Load::Ready(rows) => rows,
             _ => &[],
         };
-        let current = pinned.as_deref().or(plays.as_deref());
+        let current = plays.as_deref();
         let query = self.ui.sheets.versions.find.text().to_owned();
         let list = Rc::new(lines(releases, &self.installed, current, &query));
         let pick = self.ui.sheets.versions.pick.clone();
@@ -267,8 +273,14 @@ impl Launcher {
             }));
         let field = line_edit::mouse(field, cx, |this| &mut this.ui.sheets.versions.find);
 
+        // The exact planner hasn't run yet. Do not turn cached fit hints into removal counts.
+        let note = pick
+            .as_deref()
+            .filter(|tag| Some(*tag) != current)
+            .map(|_| tr("Mod compatibility is checked when you keep this build.").to_owned());
         let shown = Rc::clone(&list);
         let (now, chosen) = (plays.clone(), pick.clone());
+        let said = note.clone();
         let scroll = self.ui.sheets.versions.scroll.clone();
         let rows = gpui::uniform_list(
             "alt-versions-list",
@@ -289,7 +301,6 @@ impl Launcher {
                         Line::Build(b) => {
                             let on = chosen.as_deref() == Some(b.tag.as_str());
                             let playing = now.as_deref() == Some(b.tag.as_str());
-                            let blocked = has_native && !playing;
                             let tag = b.tag.clone();
                             let handle = this
                                 .ui
@@ -329,11 +340,15 @@ impl Launcher {
                                         .child(b.name.clone()),
                                 )
                                 .child(
-                                    muted(b.about.clone())
-                                        .flex_1()
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_size(px(tokens::SMALL)),
+                                    muted(if on {
+                                        said.clone().unwrap_or_else(|| b.about.clone())
+                                    } else {
+                                        b.about.clone()
+                                    })
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(tokens::SMALL)),
                                 )
                                 .children(playing.then(|| {
                                     muted(tr("Playing now"))
@@ -345,19 +360,14 @@ impl Launcher {
                                         .flex_none()
                                         .text_size(px(tokens::SMALL))
                                 }))
-                                .when(blocked, |d| d.opacity(0.45))
-                                .when(!blocked, |d| {
-                                    d.track_focus(&handle)
-                                        .reach()
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(rgb(palette().hover)))
-                                        .on_click(cx.listener(
-                                            move |this, _: &ClickEvent, _, cx| {
-                                                this.ui.sheets.versions.pick = Some(tag.clone());
-                                                cx.notify();
-                                            },
-                                        ))
-                                })
+                                .track_focus(&handle)
+                                .reach()
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(palette().hover)))
+                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    this.ui.sheets.versions.pick = Some(tag.clone());
+                                    cx.notify();
+                                }))
                         }
                     })
                     .collect::<Vec<_>>()
@@ -383,37 +393,28 @@ impl Launcher {
                 cx.notify();
             },
         ));
-        let keep = crate::frame::button_base("alt-versions-keep", tr("Keep this build"))
+        let label = match pick.as_deref() {
+            Some(tag) if !self.installed.iter().any(|v| v == tag) => tr("Download"),
+            Some(tag) if !backend::is_prepared(tag) => tr("Prepare"),
+            _ => tr("Keep this build"),
+        };
+        let keep = crate::frame::button_base("alt-versions-keep", label)
             .bg(rgb(palette().text))
             .border_color(rgb(palette().text))
             .text_color(rgb(palette().background))
             .hover(|s| s.bg(rgb(palette().accent_on)));
-        let keep = match pick.filter(|p| Some(p) != pinned.as_ref()) {
-            Some(tag) if !self.launch_busy() && self.client.is_none() => {
+        let keep = match pick.filter(|p| Some(p.as_str()) != current) {
+            Some(tag) if !self.launch_busy() && self.client.is_none() && !is_pack => {
                 keep.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.pin_build(Some(tag.clone()), channel);
-                    if sheet && this.ui.sheets.error.is_none() {
-                        this.close_sheet();
-                    }
+                    this.choose_switch_build(tag.clone(), cx);
                     cx.notify();
                 }))
             }
             _ => keep.opacity(0.45).cursor_default().tab_stop(false),
         };
-        // Said once, and only when it stops a choice: with the check that lifts it.
-        let native = has_native.then(|| {
-            div()
-                .flex()
-                .flex_col()
-                .child(muted(tr(
-                    "Your native mods are made for the build you play. Another build needs them checked first.",
-                ))
-                .text_size(px(tokens::SMALL)))
-                .children(self.native_check_block(cx))
-        });
         // Up and Down move through the builds, from the field or from a row: the list scrolls to
         // the row and the row takes the keyboard.
-        let (all, playing, blocked_by_native) = (Rc::clone(&list), plays.clone(), has_native);
+        let all = Rc::clone(&list);
         let body = div()
             .flex()
             .flex_col()
@@ -429,9 +430,7 @@ impl Launcher {
                     .iter()
                     .find(|(_, h)| h.is_focused(window))
                     .map(|(n, _)| *n);
-                let usable =
-                    |b: &Build| !blocked_by_native || playing.as_deref() == Some(b.tag.as_str());
-                if let Some(to) = next_row(&all, from, down, usable) {
+                if let Some(to) = next_row(&all, from, down, |_: &Build| true) {
                     v.scroll.scroll_to_item(to, gpui::ScrollStrategy::Nearest);
                     let row = v
                         .rows
@@ -452,7 +451,6 @@ impl Launcher {
                 .into(),
             ))
             .child(field)
-            .children(native)
             .child(
                 div()
                     .rounded(crate::tokens::r(crate::tokens::R_CARD))

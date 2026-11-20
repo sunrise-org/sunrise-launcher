@@ -760,7 +760,7 @@ impl Package {
                 ));
             }
             #[cfg(target_arch = "wasm32")]
-            return Err("archive I/O is unavailable on wasm32".into());
+            return Err("archive I/O is unavailable on this target".into());
             #[cfg(not(target_arch = "wasm32"))]
             {
                 let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
@@ -961,7 +961,7 @@ impl Package {
                     .read_to_end(&mut bytes)
             } else {
                 #[cfg(target_arch = "wasm32")]
-                return Err("archive I/O is unavailable on wasm32".into());
+                return Err("archive I/O is unavailable on this target".into());
                 #[cfg(not(target_arch = "wasm32"))]
                 zip.as_mut()
                     .expect("an archive")
@@ -1455,8 +1455,8 @@ capabilities = ["registries"]
         let base = format!("{EXAMPLE}[native]\ngame='26.3'\nsunrise='{pin}'\nmixins='{pin}'\n");
         let mut accepted = Vec::new();
         for field in [
-            "injection=[]",
-            "[[native.injection]]\nid='tick'\ntarget='game::tick'\nkind='HEAD'\nraw='tick'",
+            "extra=[]",
+            "[[native.extra]]\nid='tick'\ntarget='game::tick'",
             "internals=[]",
             "[[native.internals]]\npath='Game'\nhash='h'",
             "unexpected=true",
@@ -1851,12 +1851,11 @@ issues = \"http://example.org/issues\"
         assert_eq!(Package::read(&archive).unwrap().manifest.id, "ruby");
         assert_eq!(Package::read(&dir).unwrap().manifest.id, "ruby");
         let cases: &[(&str, &[u8])] = &[
-            ("mod.wasm", b""),
-            ("./mod.wasm", b"\0asm"),
-            ("MOD.WASM", b""),
-            ("sub/mod.wasm", b""),
-            ("assets/ruby/CODE.WaSm", b""),
-            ("assets/ruby/model.bin", b"\0asm"),
+            ("mod.dll", b""),
+            ("./mod.dll", b"MZ"),
+            ("MOD.DLL", b""),
+            ("sub/mod.dll", b""),
+            ("assets/ruby/CODE.ClAsS", b""),
             ("assets/ruby/native.bin", b"\x7fELF"),
             ("assets/ruby/windows.bin", b"MZ"),
             ("assets/ruby/mac.bin", b"\xcf\xfa\xed\xfe"),
@@ -2011,7 +2010,7 @@ issues = \"http://example.org/issues\"
         let error = Package::read(&dir).err().unwrap();
         assert!(error.contains("unsupported executable"), "{error}");
         std::fs::remove_file(&file).unwrap();
-        for name in ["assets/ruby/mod.wasm", "assets/ruby/nested/link"] {
+        for name in ["assets/ruby/model.json", "assets/ruby/nested/link"] {
             let link = dir.join(name);
             std::fs::create_dir_all(link.parent().unwrap()).unwrap();
             symlink("missing", &link).unwrap();

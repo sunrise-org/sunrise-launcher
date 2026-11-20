@@ -19,23 +19,25 @@ pub fn client(
     tag: String,
     launch: Launch,
     run: Option<String>,
-    account: Option<String>,
+    (account, profile_owner): (Option<String>, std::sync::Arc<sunrise::txn::Lease>),
     session_file: Option<PathBuf>,
     tx: Sender<Msg>,
 ) {
     std::thread::spawn(move || {
         let mut registry_notices = Vec::new();
-        let prepared = sunrise::before_play(&mut command, &tag, &launch).and_then(|notices| {
-            registry_notices = notices;
-            with_consent(&tx, |permission| {
-                jars::prepare_launch(&mut command, &launch, permission)
-            })
-            .map_err(|error| error.to_string())?;
-            launch::wrap(command, &launch)
-        });
+        let prepared =
+            sunrise::before_play(&mut command, &tag, &launch, &profile_owner).and_then(|notices| {
+                registry_notices = notices;
+                with_consent(&tx, |permission| {
+                    jars::prepare_launch(&mut command, &launch, permission)
+                })
+                .map_err(|error| error.to_string())?;
+                launch::wrap(command, &launch)
+            });
         if let Err(mpsc::SendError(Msg::JarClient { session_file, .. })) = tx.send(Msg::JarClient {
             run,
             account,
+            profile_owner,
             session_file,
             registry_notices,
             prepared: Box::new(prepared),

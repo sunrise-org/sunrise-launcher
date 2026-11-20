@@ -4,21 +4,10 @@
 //! closed, the same places say how it went for a moment.
 use super::*;
 use crate::frame::Reach as _;
-use crate::mods::build_run::Run;
 use crate::paint::palette;
 use gpui::rgb;
 
 impl Launcher {
-    /// The build window's build, when it is the selected profile's.
-    pub(crate) fn build_here(&self) -> Option<&Run> {
-        let selected = self.selected_instance()?;
-        self.ui
-            .mods
-            .build
-            .as_ref()
-            .filter(|run| run.instance == selected.id)
-    }
-
     /// The line while a build runs: how far it is, over its bar (`bar`: a page that shows the
     /// bar itself draws the line without one, so one build never has two bars). A press opens
     /// the build window.

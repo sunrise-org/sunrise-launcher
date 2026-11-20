@@ -152,6 +152,28 @@ fn missing_optional_files_are_allowed_but_invalid_json_is_not_replaced() {
     assert_eq!(fs::read(path).unwrap(), b"{invalid settings");
 }
 
+#[test]
+fn relocation_admission_refuses_live_or_unreadable_profiles_and_preserves_a_binding() {
+    use crate::browser::sunrise::txn::{Lease, Target};
+    let fixture = Fixture::new();
+    let source = fixture.roots("source");
+    let home = source.game.join("instances/first");
+    fs::create_dir_all(&home).unwrap();
+    let owner = Lease::admit(&home).unwrap();
+    owner
+        .bind_bootstrap(|| Target::legacy("nightly-original"))
+        .unwrap();
+    let record = home.join("mod-browser/install-txn.json");
+    let before = fs::read(&record).unwrap();
+    assert!(admit_idle_profiles(&source).is_err());
+    drop(owner);
+    admit_idle_profiles(&source).unwrap();
+    assert_eq!(fs::read(&record).unwrap(), before);
+    fs::write(&record, b"unreadable transaction").unwrap();
+    assert!(admit_idle_profiles(&source).is_err());
+    assert_eq!(fs::read(&record).unwrap(), b"unreadable transaction");
+}
+
 #[cfg(windows)]
 #[test]
 fn windows_managed_paths_are_matched_without_case_sensitive_prefixes() {

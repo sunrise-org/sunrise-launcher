@@ -157,6 +157,112 @@ fn inherited_exclusion_exact_handles_arguments_and_failure_release() {
 }
 
 #[test]
+fn a_compiler_job_checks_its_tree_and_kills_it_when_the_owner_closes() {
+    use std::io::{BufRead, BufReader};
+    use std::os::windows::io::{FromRawHandle, OwnedHandle};
+    use windows_sys::Win32::{
+        Foundation::WAIT_OBJECT_0,
+        Storage::FileSystem::SYNCHRONIZE,
+        System::Threading::{OpenProcess, WaitForSingleObject},
+    };
+    let command = |role: &str| {
+        let mut command = crate::process::command(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "process::leases::tests::windows_tests::compiler_actor",
+                "--nocapture",
+            ])
+            .env("SUNRISE_COMPILER_TEST", role);
+        command
+    };
+    for (role, members) in [("clean", 1), ("joined", 2)] {
+        let mut clean = spawn_compiler(&command(role), None).unwrap();
+        let exit = clean
+            .wait()
+            .unwrap_or_else(|error| panic!("{role}: {error}"));
+        assert!(exit.success(), "{role}: {exit}");
+        // Wait has observed the leader's handle (and the joined child was waited by it).
+        // TotalProcesses covers even transient members, unlike the active snapshot.
+        let job = clean.compiler_job().unwrap();
+        assert_eq!(job.accounting().unwrap().TotalProcesses, members, "{role}");
+    }
+    for close in [false, true] {
+        let mut child = spawn_compiler(&command("leader"), None).unwrap();
+        let mut line = String::new();
+        let mut pipe = BufReader::new(child.stdout.take().unwrap());
+        let descendant: u32 = loop {
+            line.clear();
+            assert_ne!(
+                pipe.read_line(&mut line).unwrap(),
+                0,
+                "descendant never started"
+            );
+            if let Some(pid) = line.split_once("COMPILER-READY:") {
+                break pid.1.trim().parse().unwrap();
+            }
+        };
+        // SAFETY: hold the exact process object, avoiding a recycled PID after termination.
+        let raw = unsafe { OpenProcess(SYNCHRONIZE, 0, descendant) };
+        assert!(!raw.is_null());
+        let descendant = unsafe { OwnedHandle::from_raw_handle(raw) };
+        if !close {
+            child.stdin.take().unwrap().write_all(b"exit\n").unwrap();
+            let error = child.wait().unwrap_err();
+            assert!(
+                error.to_string().contains("left a running child"),
+                "{error}"
+            );
+        }
+        drop(child);
+        assert_eq!(
+            unsafe { WaitForSingleObject(descendant.as_raw_handle(), 10_000) },
+            WAIT_OBJECT_0
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::zombie_processes)] // The parent Job must reap the test compiler, not this actor.
+fn compiler_actor() {
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::System::Threading::DETACHED_PROCESS;
+    let subprocess = |role: &str| {
+        let mut cmd = Command::new(std::env::current_exe().unwrap());
+        cmd.creation_flags(DETACHED_PROCESS)
+            .args([
+                "--exact",
+                "process::leases::tests::windows_tests::compiler_actor",
+                "--nocapture",
+            ])
+            .env("SUNRISE_COMPILER_TEST", role);
+        cmd
+    };
+    match std::env::var("SUNRISE_COMPILER_TEST").as_deref() {
+        Ok("leader") => {
+            subprocess("descendant")
+                .stdin(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).unwrap();
+        }
+        Ok("joined") => {
+            let status = subprocess("clean").status().unwrap();
+            assert!(status.success());
+        }
+        Ok("descendant") => {
+            println!("COMPILER-READY:{}", std::process::id());
+            std::io::stdout().flush().unwrap();
+            loop {
+                std::thread::park();
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
 fn actor() {
     if std::env::var_os("SUNRISE_WINDOWS_LEASE_ACTOR").is_none() {
         return;

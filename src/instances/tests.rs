@@ -162,10 +162,13 @@ fn existing_worlds_stay_where_they_are_and_every_folder_becomes_an_instance() {
     }
     assert!(!data.join("settings.json").exists());
 
-    // The empty one has only the player's options and name; the copy has the worlds and
-    // packs, never the sessions, logs, data collection or other instances.
+    // The empty one has only the player's options and name, apart from its own creation record;
+    // the copy has the worlds and packs, never another home's launcher state or sessions.
     assert_eq!(empty.home, home.join("instances/survival"));
-    let empty_files: Vec<PathBuf> = files(&empty.home).into_keys().collect();
+    let empty_files: Vec<PathBuf> = files(&empty.home)
+        .into_keys()
+        .filter(|p| p != Path::new(CREATED_WITH))
+        .collect();
     assert_eq!(
         empty_files,
         [PathBuf::from("options.txt"), "sunrise-player.txt".into()]
@@ -180,8 +183,12 @@ fn existing_worlds_stay_where_they_are_and_every_folder_becomes_an_instance() {
     }
     assert!(copied.keys().all(|p| {
         let top = p.components().next().unwrap().as_os_str().to_str().unwrap();
-        !NOT_COPIED.contains(&top)
+        top == CREATED_WITH || !NOT_COPIED.contains(&top)
     }));
+    assert_ne!(
+        fs::read(empty.home.join(CREATED_WITH)).unwrap(),
+        copied[Path::new(CREATED_WITH)]
+    );
 
     let all = list_in(&home, &data);
     assert_eq!(all[0].name, "Main");
@@ -215,9 +222,11 @@ fn names_stay_unique_and_packs_are_not_copied() {
     let grouped = edit_in(&home, &data, "Survival", |m| m.group = Some(" ".into())).unwrap();
     assert_eq!(grouped.group, None);
     // An import named like an instance: both can still change everything but their names.
-    let mut store = Store::load(&data);
-    store.instances.entry(port.id.clone()).or_default().name = Some("Survival".into());
-    store.save(&data).unwrap();
+    Store::mutate(&data, |store| {
+        store.instances.entry(port.id.clone()).or_default().name = Some("Survival".into());
+        Ok(())
+    })
+    .unwrap();
     let launched = edit_in(&home, &data, "survival", |m| {
         m.launch.wrapper = "nice".into()
     })
@@ -336,6 +345,72 @@ fn play_time_reads_as_minutes_then_hours() {
     assert_eq!(t(140 * 3600 + 7 * 60), "140 h");
 }
 
+#[test]
+fn record_play_actor() {
+    let Some(data) = std::env::var_os("SUNRISE_TEST_INSTANCE_RECORD") else {
+        return;
+    };
+    for seconds in 1..=12 {
+        record_play_in(
+            Path::new(&data),
+            "shared",
+            Duration::from_secs(1),
+            UNIX_EPOCH + Duration::from_secs(seconds),
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn two_processes_accumulate_runs_without_losing_opaque_metadata() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join(FILE);
+    let initial = serde_json::json!({
+        "something_new": [1, 2], "instances": {
+            "shared": {"played_secs": 2, "last_played":100, "opaque": {"nested":true}}
+        }
+    });
+    fs::write(&path, initial.to_string()).unwrap();
+    let start = || {
+        Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "instances::tests::record_play_actor",
+                "--nocapture",
+            ])
+            .env("SUNRISE_TEST_INSTANCE_RECORD", root.path())
+            .spawn()
+            .unwrap()
+    };
+    let mut a = start();
+    let mut b = start();
+    assert!(a.wait().unwrap().success());
+    assert!(b.wait().unwrap().success());
+    let saved: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(saved["instances"]["shared"]["played_secs"], 26);
+    assert_eq!(saved["instances"]["shared"]["last_played"], 100);
+    assert_eq!(
+        saved["instances"]["shared"]["opaque"],
+        initial["instances"]["shared"]["opaque"]
+    );
+    assert_eq!(saved["something_new"], initial["something_new"]);
+}
+
+#[test]
+fn a_mutation_refuses_malformed_live_instance_records() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join(FILE);
+    for bad in [
+        "{",
+        "{\"instances\":null}",
+        "{\"instances\":{\"shared\":[]}}",
+    ] {
+        fs::write(&path, bad).unwrap();
+        assert!(record_play_in(root.path(), "shared", Duration::from_secs(1), UNIX_EPOCH).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), bad);
+    }
+}
+
 /// An instance an earlier launcher made for Minecraft: Java Edition is not listed, and it is not
 /// touched: its folder and its whole record in instances.json come through listing, creating and
 /// editing other instances, and through a save, exactly as they were.
@@ -414,6 +489,13 @@ fn deleted_instances_go_to_the_trash_and_are_forgotten() {
     let survival = create_in(&home, &data, "Survival", None).unwrap();
     put(&survival.home.join("saves/Base/level.dat"), "base");
     edit_in(&home, &data, "Survival", |m| m.group = Some("Mine".into())).unwrap();
+    let lease = crate::browser::sunrise::txn::Lease::admit(&survival.home).unwrap();
+    assert!(delete_in(&home, &data, "Survival", &|_| panic!(
+        "a live profile must not move"
+    ))
+    .is_err());
+    assert!(survival.home.is_dir());
+    drop(lease);
     let gone = delete_in(&home, &data, "Survival", &to_trash).unwrap();
     assert_eq!(gone.id, "survival");
     assert_eq!(
@@ -422,6 +504,11 @@ fn deleted_instances_go_to_the_trash_and_are_forgotten() {
     );
     assert!(find_in(&list_in(&home, &data), "Survival").is_err());
     assert!(!Store::load(&data).instances.contains_key("survival"));
+    assert!(crate::browser::sunrise::txn::Lease::admit(&survival.home).is_err());
+    assert!(
+        !survival.home.exists(),
+        "a stale Play cannot recreate a deleted profile"
+    );
     // The game's home stays.
     assert!(delete_in(&home, &data, DEFAULT, &to_trash)
         .unwrap_err()
@@ -436,6 +523,34 @@ fn deleted_instances_go_to_the_trash_and_are_forgotten() {
     let again = create_in(&home, &data, "Skyblock", None).unwrap();
     assert_eq!(again.group, None);
     fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn an_unavailable_system_trash_does_not_put_back_or_delete_a_profile() {
+    let root = scratch("system-trash-fails");
+    let (home, data) = (root.join("home"), root.join("data"));
+    let instance = create_in(&home, &data, "Survival", None).unwrap();
+    put(
+        &instance.home.join("saves/World/level.dat"),
+        "keep the world",
+    );
+    let retired = std::cell::RefCell::new(PathBuf::new());
+    assert!(delete_in(&home, &data, "Survival", &|path| {
+        assert!(!instance.home.exists());
+        retired.replace(path.to_path_buf());
+        Err("no OS Trash".into())
+    })
+    .is_err());
+    let retired = retired.into_inner();
+    assert_eq!(
+        fs::read(retired.join("saves/World/level.dat")).unwrap(),
+        b"keep the world"
+    );
+    let other = create_in(&home, &data, "Survival", None).unwrap();
+    assert_eq!(other.home, instance.home);
+    assert!(retired.starts_with(home.canonicalize().unwrap().join(RETIRED)));
+    assert!(retired.is_dir());
+    fs::remove_dir_all(root).unwrap();
 }
 
 /// A chosen picture is kept scaled to 128 pixels in the instance's folder; removing it moves it
@@ -575,6 +690,8 @@ fn a_creation_that_fails_leaves_no_instance_and_the_name_free() {
     let (home, data) = (root.join("home"), root.join("data"));
     player_home(&home);
     let all = list_in(&home, &data);
+    // Admission may register the source's persistent profile lock before a later error.
+    drop(crate::browser::sunrise::txn::Lease::admit(&home).unwrap());
     let before = files(&home);
     // The choices can't be saved: instances.json is a folder.
     fs::create_dir_all(data.join(FILE)).unwrap();
@@ -617,6 +734,44 @@ fn a_creation_that_fails_leaves_no_instance_and_the_name_free() {
 }
 
 #[test]
+fn a_visible_copy_survives_a_metadata_failure_and_repairs_its_choices_later() {
+    let root = scratch("creation-visible-before-metadata");
+    let (home, data) = (root.join("home"), root.join("data"));
+    player_home(&home);
+    let source = find_in(&list_in(&home, &data), DEFAULT).unwrap();
+    let made = create_whole_in(&home, &data, "My Copy", Some(&source), None, |meta| {
+        meta.group = Some("Mine".into());
+        // Preflight read already succeeded; the later metadata repair will fail.
+        fs::create_dir(data.join(FILE)).unwrap();
+    })
+    .unwrap();
+    assert_eq!(made.name, "My Copy");
+    assert_eq!(made.group.as_deref(), Some("Mine"));
+    assert_eq!(
+        fs::read(made.home.join("saves/World/level.dat")).unwrap(),
+        b"world"
+    );
+    assert!(made.home.join(CREATED_WITH).is_file());
+    assert!(!made.home.join(".install-txn.lock").exists());
+    fs::remove_dir(data.join(FILE)).unwrap();
+    let repaired = find_in(&list_in(&home, &data), &made.id).unwrap();
+    assert_eq!(repaired, made);
+    assert_eq!(
+        Store::load(&data).instances[&made.id].group.as_deref(),
+        Some("Mine")
+    );
+    edit_in(&home, &data, &made.id, |meta| {
+        meta.group = Some("Changed".into())
+    })
+    .unwrap();
+    assert_eq!(
+        Store::load(&data).instances[&made.id].group.as_deref(),
+        Some("Changed")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn creation_does_not_reuse_or_remove_another_attempts_temporary_paths() {
     let root = scratch("creation-owns-only-its-stage");
     let (home, data) = (root.join("home"), root.join("data"));
@@ -641,7 +796,12 @@ fn creation_does_not_reuse_or_remove_another_attempts_temporary_paths() {
         "somebody else's choices"
     );
     assert_eq!(fs::read_dir(home.join(STAGING)).unwrap().count(), 1);
-    assert_eq!(fs::read_dir(&data).unwrap().count(), 2);
+    assert!(data.join(format!(".{FILE}.lock")).is_file());
+    assert_eq!(
+        fs::read_dir(&data).unwrap().count(),
+        3,
+        "only the store, its permanent lock, and the earlier attempt"
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -780,4 +940,87 @@ fn artwork_reader_does_not_wait_for_a_pipe_writer() {
     assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
     assert_eq!(read_artwork(&path), None);
     fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn a_modpacks_profile_is_told_by_its_id() {
+    let root = scratch("pack-profile");
+    let mut instance = create_in(&root.join("home"), &root.join("data"), "Cozy", None).unwrap();
+    instance.id = "pack:cozy".into();
+    assert!(instance.is_pack_profile());
+    instance.id = "main".into();
+    assert!(!instance.is_pack_profile());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_modpacks_profile_keeps_its_build_whoever_asks() {
+    let root = scratch("pack-keeps-build");
+    let (game, data) = (root.join("home"), root.join("data"));
+    fs::create_dir_all(game.join("sunrise-packs/cozy/home")).unwrap();
+    fs::write(
+        game.join("sunrise-packs/cozy/pack.json"),
+        r#"{"id":"cozy","name":"Cozy","version":"1.0.0","sha256":"00","mods":[]}"#,
+    )
+    .unwrap();
+    Store::mutate(&data, |store| {
+        store.instances.insert(
+            "pack:cozy".into(),
+            Meta {
+                name: Some("Cozy".into()),
+                version: Some("1.0".into()),
+                ..Meta::default()
+            },
+        );
+        Ok(())
+    })
+    .unwrap();
+    let refused = edit_in(&game, &data, "pack:cozy", |m| m.version = None);
+    assert!(refused.unwrap_err().contains("keeps the build"));
+    let refused = edit_in(&game, &data, "pack:cozy", |m| {
+        m.channel = Some(Channel::Stable)
+    });
+    assert!(refused.is_err());
+    assert_eq!(
+        Store::load(&data).instances["pack:cozy"].version.as_deref(),
+        Some("1.0")
+    );
+    // Its native build is kept beside the recorded one, which stays; a build that isn't made
+    // from the recorded version (here, one with no record at all) is not played.
+    let kept = edit_in(&game, &data, "pack:cozy", |m| {
+        m.built = Some("1.0-native-abc".into())
+    })
+    .unwrap();
+    assert_eq!(kept.version.as_deref(), Some("1.0"));
+    let saved = &Store::load(&data).instances["pack:cozy"];
+    assert_eq!(
+        (saved.version.as_deref(), saved.built.as_deref()),
+        (Some("1.0"), Some("1.0-native-abc"))
+    );
+    // Everything else about it is still the player's to change.
+    edit_in(&game, &data, "pack:cozy", |m| m.name = Some("Warm".into())).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_modpacks_profile_without_a_pin_takes_the_build_in_use_once_and_keeps_it() {
+    let root = scratch("pack-pins-build");
+    let (home, data) = (root.join("sunrise"), root.join("launcher"));
+    player_home(&home);
+    let mut all = list_in(&home, &data);
+    let cozy = |all: &[Instance]| find_in(all, "pack:cozy").unwrap().version.clone();
+    assert_eq!(cozy(&all), None, "a fresh pack has no pin");
+    // Nothing installed to pin to: left as it is.
+    pin_packs_in(&data, &mut all, None);
+    assert_eq!(cozy(&all), None);
+    pin_packs_in(&data, &mut all, Some("v1.0.0"));
+    assert_eq!(cozy(&all), Some("v1.0.0".into()));
+    // Saved: the next listing has it, and a later build in use doesn't move it.
+    let mut again = list_in(&home, &data);
+    assert_eq!(cozy(&again), Some("v1.0.0".into()));
+    pin_packs_in(&data, &mut again, Some("v2.0.0"));
+    assert_eq!(cozy(&again), Some("v1.0.0".into()));
+    // The Sunrise profile and own ones are the player's to move.
+    assert_eq!(find_in(&again, DEFAULT).unwrap().version, None);
+    fs::remove_dir_all(root).unwrap();
 }

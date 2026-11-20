@@ -57,7 +57,7 @@ fn instance_status_and_runtime_keep_developer_provenance() {
         }
         for command in [
             backend::client_command(tag),
-            backend::server_command(tag, home.path()),
+            backend::server_command(tag, &home.path().join("server")).unwrap(),
         ] {
             assert!(command
                 .get_envs()

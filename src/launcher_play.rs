@@ -5,6 +5,7 @@ use super::*;
 pub(crate) struct PlayIntent {
     pub instance: String,
     pub account: Option<String>,
+    pub owner: Option<std::sync::Arc<sunrise_launcher::browser::sunrise::txn::Lease>>,
 }
 
 impl PlayIntent {
@@ -12,6 +13,7 @@ impl PlayIntent {
         Self {
             instance,
             account: selected.map(|a| a.uuid.clone()),
+            owner: None,
         }
     }
 }
@@ -73,8 +75,28 @@ impl Launcher {
         if release.asset.is_none() || self.removing.contains(&release.tag) {
             return;
         }
-        let (release, tx) = (release.clone(), self.tx.clone());
-        let tag = release.tag.clone();
+        let release = release.clone();
+        self.install_worker(release.tag.clone(), move |progress| {
+            backend::install(&release, progress)
+        });
+    }
+
+    pub(super) fn install_bootstrap(
+        &mut self,
+        owner: std::sync::Arc<sunrise_launcher::browser::sunrise::txn::Lease>,
+        target: sunrise_launcher::browser::sunrise::txn::Target,
+    ) {
+        self.install_worker(target.base().into(), move |progress| {
+            owner.install_bootstrap(&target, progress)
+        });
+    }
+
+    fn install_worker(
+        &mut self,
+        tag: String,
+        work: impl FnOnce(&dyn Fn(f32)) -> Result<(), String> + Send + 'static,
+    ) {
+        let tx = self.tx.clone();
         self.installing = Some((tag.clone(), 0.0));
         self.install_started = Some(Instant::now());
         self.bar = (0., 0.);
@@ -83,7 +105,7 @@ impl Launcher {
             let progress = |p| {
                 let _ = tx.send(Msg::Progress(tag.clone(), p));
             };
-            let result = backend::install(&release, progress);
+            let result = work(&progress);
             let _ = tx.send(Msg::Installed(tag, result));
         });
     }
@@ -94,6 +116,15 @@ impl Launcher {
         let Some(tag) = self.selected().cloned() else {
             return;
         };
+        self.prepare_tag(tag, from, None);
+    }
+
+    pub(super) fn prepare_tag(
+        &mut self,
+        tag: String,
+        from: backend::MinecraftFrom,
+        owner: Option<std::sync::Arc<sunrise_launcher::browser::sunrise::txn::Lease>>,
+    ) {
         sunrise_launcher::mojang::CANCEL.store(false, Ordering::Relaxed);
         let minecraft = self
             .settings
@@ -123,7 +154,15 @@ impl Launcher {
                     backend::set_prepare_step(backend::PrepareStep::Prepare);
                     p
                 })
-                .and_then(|cmd| backend::spawn_holding(Job::Prepare, cmd, tx.clone(), Some(lock)));
+                .and_then(|cmd| {
+                    backend::spawn_holding(
+                        Job::Prepare,
+                        cmd,
+                        tx.clone(),
+                        Some(lock),
+                        owner.as_deref(),
+                    )
+                });
             // A running preparer sends its own Exit when it ends.
             if let Err(e) = result {
                 let _ = tx.send(Msg::Exit(Job::Prepare, Err(e)));
@@ -134,14 +173,14 @@ impl Launcher {
         self.download_seen = None;
     }
 
-    pub(super) fn play(&mut self, intent: PlayIntent) {
-        // A press that starts nothing says why, where Play's errors show: the button can look
-        // ready when it is not (a version prepared elsewhere and since removed, a debug preview).
-        let Some(tag) = self.selected().cloned() else {
-            self.client_error = Some(tr("Install a Sunrise game build first.").into());
-            return;
-        };
-        if let Some(why) = self.why_not_now(&tag) {
+    pub(super) fn play(&mut self, intent: PlayIntent, tag: String) {
+        let bound = intent
+            .owner
+            .as_ref()
+            .is_some_and(|owner| owner.active_build().is_ok_and(|active| active.is_some()));
+        let check =
+            !bound || self.client.is_some() || self.starting_client.is_some() || self.preparing;
+        if let Some(why) = check.then(|| self.why_not_now(&tag)).flatten() {
             self.client_error = Some(why);
             return;
         }
@@ -198,32 +237,9 @@ impl Launcher {
         let accepted = intent.account.clone();
         self.play_pressed = Some(Instant::now());
         let tx = self.tx.clone();
-        let auto = self
-            .instances
-            .list
-            .iter()
-            .find(|i| i.id == intent.instance)
-            .filter(|_| self.starting_pack.is_none())
-            .map(|i| mods_page::AutoTarget {
-                instance: i.clone(),
-                game: backend::played_version_id_by(Some(&tag)),
-            });
-        let mods_tx = self.mods.tx.clone();
-        let auto_enabled = self.settings.auto_updates_mods();
         self.starting_play = Some(intent);
         std::thread::spawn(move || {
             // One line per step: a terminal run shows where Play stops (#12179).
-            backend::play_step("checking the game's assets");
-            let _ = tx.send(Msg::PlayStep(backend::PlayStep::Assets));
-            backend::complete_assets(&tag);
-            if let Some(auto) = auto {
-                backend::play_step("updating registry mods");
-                let _ = tx.send(Msg::PlayStep(backend::PlayStep::Mods));
-                let lines = mods_page::auto_update(&[auto], auto_enabled);
-                if !lines.is_empty() {
-                    let _ = mods_tx.send(mods_page::Event::AutoUpdated(lines));
-                }
-            }
             backend::play_step("reading the sign-in");
             let _ = tx.send(Msg::PlayStep(backend::PlayStep::SignIn));
             let session = if sunrise_launcher::developer_offline::enabled(&tag) {

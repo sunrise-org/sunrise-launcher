@@ -95,9 +95,7 @@ impl Launcher {
             storage_pending: false,
             storage_confirm: None,
             storage_error: None,
-            storage_revoke: None,
-            storage_counting: None,
-            storage_visit: 0,
+            storage_revoke: false,
             storage_revoke_error: None,
             native_consent_build: None,
             install_error: None,
@@ -110,12 +108,10 @@ impl Launcher {
             play_after_build: None,
             native_error: None,
             native_failed_mods: Vec::new(),
-            native_worlds: None,
             pending_consent: None,
             consent_error: None,
             native_for: None,
             native_built_mods: Vec::new(),
-            native_builds: Default::default(),
             native_log: Default::default(),
             // The first draw takes the launcher theme from Settings.
             location_error,
@@ -319,7 +315,7 @@ impl Launcher {
         }
         self.load_profile_heads();
         // A Turn off question left open isn't still asked the next time Settings opens.
-        self.storage_revoke = None;
+        self.storage_revoke = false;
         // A Turn off error is read on the visit it shows in: leaving Settings settles it.
         if self.page == Page::Settings && page != Page::Settings {
             self.storage_revoke_error = None;
@@ -330,8 +326,6 @@ impl Launcher {
             self.settings_pane.scroll_to_item(0);
             self.settings_query.set(String::new());
         }
-        self.storage_counting = None;
-        self.storage_visit += 1;
         // The glass look's Settings is a dialog over the page: opening or closing it keeps the
         // page under it as it was (its scroll, no fade).
         let dialog = self.theme.glass
@@ -453,28 +447,6 @@ impl Launcher {
         }
         self.update_install = Some(release.tag.clone());
         self.install(&release);
-    }
-
-    /// The native mods turned on in the instance Play starts, unpacked and checked, with their
-    /// bundles: what the warning names and the build compiles.
-    pub(crate) fn native_mods_to_build(
-        &self,
-    ) -> Result<(std::path::PathBuf, Vec<native_mods::Bundle>), String> {
-        let folder = native_mods::installed_mods(&instances::selected().home)?;
-        let found = native_mods::bundles(&folder)?;
-        Ok((folder, found))
-    }
-
-    /// What installed native build `version` was made from (`native_status::Build`), read once.
-    pub(crate) fn native_build_of(&self, version: &str) -> Option<native_status::Build> {
-        if !native_mods::is_native(version) {
-            return None;
-        }
-        self.native_builds
-            .borrow_mut()
-            .entry(version.to_owned())
-            .or_insert_with(|| native_status::Build::read(version))
-            .clone()
     }
 
     pub(crate) fn fetch_links(&self) {

@@ -8,7 +8,6 @@ use crate::frame::button;
 use crate::paint::palette;
 use gpui::{Animation, AnimationExt as _};
 use sunrise_launcher::browser::images;
-use sunrise_launcher::browser::sunrise;
 
 impl Launcher {
     /// The build window, while one is open.
@@ -407,56 +406,6 @@ impl Launcher {
 }
 
 impl Launcher {
-    /// The one Build of Mods › Installed: every mod that waits, in one build. While a build
-    /// runs it says how far that is, over a thin fill, and opens the build window again.
-    pub(super) fn build_button(
-        &mut self,
-        waiting: usize,
-        busy: bool,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let running = self.build_here().filter(|run| run.running());
-        let label = match (running.map(Run::at), waiting) {
-            (Some(Some((at, total))), _) => trf(
-                "Building · {at} of {total}",
-                &[("at", &at.to_string()), ("total", &total.to_string())],
-            ),
-            (Some(None), _) => tr("Building…").into(),
-            (None, 1) => tr("Build 1 mod").into(),
-            (None, n) => trf("Build {count} mods", &[("count", &n.to_string())]),
-        };
-        let fill = running.map(|run| {
-            div()
-                .absolute()
-                .left_0()
-                .right_0()
-                .bottom_0()
-                .h(px(3.))
-                .bg(c(palette().line))
-                .child(
-                    div()
-                        .h(px(3.))
-                        .bg(c(palette().accent))
-                        .w(relative(run.fraction().clamp(0.02, 1.))),
-                )
-        });
-        let b = match fill {
-            Some(fill) => crate::frame::button("alt-build-all", label)
-                .relative()
-                .overflow_hidden()
-                .child(fill),
-            None => primary("alt-build-all", label),
-        };
-        // Another change holds the folder, or another profile's build runs: one at a time.
-        if running.is_none() && (busy || self.native_step.is_some()) {
-            return dim(b);
-        }
-        b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-            this.build_all();
-            cx.notify();
-        }))
-    }
-
     /// Build: starts the selected profile's build and opens its window. While a build runs it
     /// only opens the window again, wherever it is pressed (Mods, the strip, Home).
     pub(crate) fn build_all(&mut self) {
@@ -478,36 +427,5 @@ impl Launcher {
         if let Some(cancellation) = &self.native_cancellation {
             cancellation.stop();
         }
-    }
-
-    /// Asks the registry again whether a newer version of mod `id` is out, and says what it
-    /// found. A newer version then shows on the mod's row, with Update.
-    pub(crate) fn check_mod_update(&mut self, id: &str) {
-        let Some(row) = self.rows().into_iter().find(|r| r.id == id) else {
-            return;
-        };
-        let (tx, game) = (self.ui.mods.tx.clone(), self.mods_game());
-        let project = row.entry.as_ref().map(|e| e.project.clone());
-        std::thread::spawn(move || {
-            let found = sunrise::refreshed_index().map(|index| {
-                project
-                    .as_deref()
-                    .and_then(|id| index.project(id))
-                    .and_then(|p| model::newer(&index, p, &row.version, &game))
-            });
-            let _ = tx.send(Event::Checked(row.title, found));
-        });
-    }
-
-    /// What [`Self::check_mod_update`] found, said once.
-    pub(super) fn checked(&mut self, title: String, found: Result<Option<String>, String>) {
-        crate::glass_toast::say(match found {
-            Ok(Some(version)) => trf(
-                "{mod} {version} is out. Update it under Mods.",
-                &[("mod", &title), ("version", &version)],
-            ),
-            Ok(None) => trf("No newer version of {mod} yet.", &[("mod", &title)]),
-            Err(error) => error,
-        });
     }
 }

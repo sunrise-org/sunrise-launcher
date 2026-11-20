@@ -266,6 +266,7 @@ pub fn detail(verdict: &Verdict) -> super::isolate::Detail {
         }
     };
     super::isolate::Detail {
+        log: None,
         made_for: sdk_cache::nightly_of(made_for),
         changes,
     }

@@ -60,7 +60,7 @@ impl Section {
             Section::Account => "Who plays, and the Microsoft accounts signed in here.",
             Section::Game => "How the game starts. Its build is chosen beside Play on Home.",
             Section::Appearance => "The theme, its accent and what is behind Home.",
-            Section::Mods => "What mods with native code may do on this computer.",
+            Section::Mods => "Updates, and what native mods may do on this computer.",
             Section::Storage => "Where your files are, and the space downloads take.",
             Section::Privacy => "What Sunrise sends, and what it never does.",
             Section::Launcher => "Language, network and this version.",
@@ -420,7 +420,7 @@ impl Launcher {
         view.languages = false;
         view.setup = false;
         view.note = None;
-        self.storage_revoke = None;
+        self.storage_revoke = false;
         self.storage_confirm = None;
         self.collection.confirm_delete = false;
         if section == Section::Storage {
@@ -701,38 +701,29 @@ impl Launcher {
                 tr("Not allowed. Sunrise asks the first time a mod needs it, and builds or runs nothing before you answer.").to_string(),
                 div(),
             ),
-            (true, None) => (
+            (true, false) => (
                 tr("Allowed. Mods with native code run inside the game with the same access to your computer as the game has.").to_string(),
-                div().child(match self.storage_counting {
-                    Some(_) => off(button("alt-native-revoke", tr("Counting your mods…"))),
-                    None => button("alt-native-revoke", tr("Take back…"))
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.storage_count_native(cx))),
-                }),
+                div().child(button("alt-native-revoke", tr("Take back…")).on_click(cx.listener(
+                    |this, _: &ClickEvent, _, cx| {
+                        this.storage_revoke = true;
+                        this.storage_revoke_error = None;
+                        cx.notify();
+                    },
+                ))),
             ),
-            (true, Some((mods, setups))) => (
-                match (mods, setups) {
-                    (0, _) => tr("No mod with native code is turned on. Sunrise will ask again before the next one.").to_string(),
-                    (1, _) => tr("This also turns off your one mod with native code. Turn it back on in Mods; Sunrise asks again then.").to_string(),
-                    (_, 1) => trf(
-                        "This also turns off {mods} mods with native code. Turn them back on in Mods; Sunrise asks again then.",
-                        &[("mods", &mods.to_string())],
-                    ),
-                    _ => trf(
-                        "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.",
-                        &[("mods", &mods.to_string()), ("profiles", &setups.to_string())],
-                    ),
-                },
+            (true, true) => (
+                tr("Sunrise asks again before building or starting native mods. Installed files and on/off choices stay as they are.").to_string(),
                 div()
                     .child(
                         button("alt-native-keep", tr("Keep it")).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
-                                this.storage_revoke = None;
+                                this.storage_revoke = false;
                                 cx.notify();
                             },
                         )),
                     )
                     .child(danger(button("alt-native-revoke-yes", tr("Take it back"))).on_click(
-                        cx.listener(|this, _: &ClickEvent, _, cx| this.turn_off_native_mods(cx)),
+                        cx.listener(|this, _: &ClickEvent, _, cx| this.revoke_native_mods(cx)),
                     )),
             ),
         };

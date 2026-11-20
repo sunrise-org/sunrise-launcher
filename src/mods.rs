@@ -5,8 +5,8 @@
 //! authors, source, mirrored screenshots, what it may do); Add and single Update through the
 //! existing install path (native code asks for permission first, `native_consent`); Installed
 //! from `mod-browser.json` and `sunrise-mods.txt` with on/off, selection, filters, bulk Turn on,
-//! Turn off, Remove and Update N mods (a reviewed plan, applied by a worker); Build… and Allow…
-//! hand over to the one native build path.
+//! Turn off, Remove and Update N mods (a reviewed plan, applied by a worker); Build…
+//! hands over to the one native build path.
 //!
 //! **Not here, said on screen or in the handoff:** Featured (the registry carries no editorial
 //! list), a version picker (the registry installs the newest that fits), dependency lists for
@@ -25,7 +25,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use sunrise_launcher::browser::{
     installed::{self, Entry},
-    mod_list, sunrise, Source, SourceId,
+    mod_list, sunrise, SourceId,
 };
 
 mod actions;
@@ -34,6 +34,7 @@ pub(crate) mod build_run;
 mod collection;
 mod data_packs;
 mod discover;
+pub(crate) mod install_state;
 mod installed_view;
 mod model;
 mod pack_discover;
@@ -42,8 +43,8 @@ mod packs;
 mod project;
 mod search;
 mod ui;
+pub(crate) use actions::Lock;
 pub(crate) use data_packs::names;
-pub(crate) use model::collection::{needs_consent, run_in_order};
 pub(crate) use search::Installed;
 mod viewer;
 use std::rc::Rc;
@@ -68,9 +69,8 @@ enum Catalog {
 
 /// A batch the player asked for and has to confirm: named, counted, nothing started yet.
 enum Confirm {
-    /// (mod id, project id, title)
-    Remove(Vec<(String, String, String)>),
-    Update(model::UpdatePlan),
+    /// (mod id, exact installed row, title)
+    Remove(Vec<(String, Entry, String)>),
 }
 
 struct Open {
@@ -107,6 +107,7 @@ struct Snapshot {
     entries: Vec<Entry>,
     enabled: HashSet<String>,
     chosen: std::collections::BTreeMap<String, String>,
+    waiting: std::collections::BTreeMap<String, sunrise::txn::WaitingMod>,
     /// Mod files the registry didn't install: on/off is editable, the files are not.
     local: Vec<model::Local>,
     /// The hand-placed packages are being read off the window thread (`Event::Local`): `local`
@@ -116,7 +117,11 @@ struct Snapshot {
 
 enum Event {
     /// The hand-placed mods read for the folder and fingerprint the snapshot was made for.
-    Local(String, Vec<model::Local>),
+    Local(
+        String,
+        Vec<model::Local>,
+        std::collections::BTreeMap<String, sunrise::txn::WaitingMod>,
+    ),
     Catalog(Result<(Vec<Card>, Vec<String>), String>),
     Page(String, Result<Box<model::Page>, String>),
     Progress(String, f32),
@@ -126,12 +131,6 @@ enum Event {
     PackPage((SourceId, String), pack_project::PackPage),
     /// A resource or data pack install ended: what it said.
     PackDone(Result<String, String>),
-    /// The batch was refused before changing anything.
-    Refused(String),
-    /// A batch ended: what it said, and which mods failed and why.
-    Done(String, Vec<(String, String)>),
-    /// "Check for update" asked the registry again: the mod's name, and the newer version found.
-    Checked(String, Result<Option<String>, String>),
 }
 
 /// The kinds of pack Packs › Installed lists, one at a time.
@@ -190,15 +189,10 @@ pub(crate) struct ModsState {
     limit: usize,
     /// The Installed row whose "?" is open (a mod not on this build), and whether its
     /// technical details show.
-    unfit_open: Option<String>,
-    unfit_details: bool,
     /// The build the build window shows: running, or ended and not yet closed.
     pub(crate) build: Option<build_run::Run>,
     /// Build was pressed and the build has not started yet (it asks for permission first).
     pub(crate) build_wanted: bool,
-    /// Whether Installed drew its Build button in the frame being drawn (the page is drawn
-    /// before the status strip).
-    pub(crate) build_button_drawn: bool,
     /// Whether a mod page's Details (who made it, how it is checked) is open.
     facts_open: bool,
     /// Discover or Installed, as the player last chose on Mods and on Packs this session.
@@ -239,11 +233,8 @@ impl Default for ModsState {
             notice: None,
             errors: HashMap::new(),
             limit: 0,
-            unfit_open: None,
-            unfit_details: false,
             build: None,
             build_wanted: false,
-            build_button_drawn: false,
             facts_open: false,
             last_mods: None,
             last_packs: None,
@@ -333,18 +324,6 @@ impl Launcher {
     fn is_collection(&self, id: &str) -> bool {
         matches!(&self.ui.mods.catalog, Catalog::Ready(cards, _)
             if cards.iter().any(|c| c.id == id && c.members.is_some()))
-    }
-
-    /// The installed mods `ids` as people read them: each one's name, and the newer version the
-    /// registry has for it when there is one. Reads what is already in memory.
-    pub(crate) fn mods_named(&self, ids: &[String]) -> Vec<(String, Option<String>)> {
-        let rows = self.rows();
-        ids.iter()
-            .map(|id| match rows.iter().find(|r| &r.id == id) {
-                Some(row) => (row.title.clone(), row.update.clone()),
-                None => (id.clone(), None),
-            })
-            .collect()
     }
 
     /// The native mods turned on for the selected setup, as a build's lines name them: id,
@@ -489,10 +468,11 @@ impl Launcher {
                     m.catalog = Catalog::Ready(cards, categories)
                 }
                 Event::Catalog(Err(e)) => m.catalog = Catalog::Failed(e),
-                Event::Local(key, local) => {
+                Event::Local(key, local, waiting) => {
                     if let Some(snap) = m.snapshot.as_mut().filter(|s| s.key == key) {
                         snap.enabled = enabled_ids(&snap.home, &snap.entries, &local);
                         snap.local = local;
+                        snap.waiting = waiting;
                         snap.reading = false;
                     }
                     let rows: HashSet<String> = self.rows().into_iter().map(|r| r.id).collect();
@@ -507,34 +487,6 @@ impl Launcher {
                 Event::Packs(seq, result) => self.pack_answer(seq, result),
                 Event::PackPage(key, page) => self.pack_page_answer(key, page),
                 Event::PackDone(result) => self.pack_installed(result),
-                Event::Checked(title, found) => self.checked(title, found),
-                Event::Refused(why) => {
-                    m.busy = None;
-                    m.notice = Some(Err(why));
-                }
-                Event::Done(said, failed) => {
-                    m.busy = None;
-                    m.errors.clear();
-                    m.errors.extend(failed.iter().cloned());
-                    m.notice = Some(match failed.is_empty() {
-                        true => Ok(said),
-                        false => Err(format!(
-                            "{said} {}",
-                            trf(
-                                "Not done: {list}",
-                                &[(
-                                    "list",
-                                    &failed
-                                        .iter()
-                                        .map(|(id, why)| format!("{id}: {why}"))
-                                        .collect::<Vec<_>>()
-                                        .join("; ")
-                                )]
-                            )
-                        )),
-                    });
-                    // The list is read again by the next refresh (the files' times moved).
-                }
             }
         }
         changed
@@ -546,7 +498,11 @@ impl Launcher {
         let home = self.mods_home();
         self.mods
             .follow_home(self.selected_instance().map(|i| i.home.clone()));
-        let key = native_status::fingerprint(&home, None);
+        let key = format!(
+            "{}\n{:?}",
+            native_status::fingerprint(&home, None),
+            sunrise::txn::active_stamp(&home)
+        );
         let moved = self
             .ui
             .mods
@@ -568,18 +524,22 @@ impl Launcher {
             let entries = installed::Installed::load(&home).entries;
             // Reading every hand-placed package takes long with many of them: it is done on a
             // worker, and the rows of the same folder known before stay until it answers.
-            let local: Vec<model::Local> = self
+            let (local, waiting) = self
                 .ui
                 .mods
                 .snapshot
                 .take()
                 .filter(|s| s.home == home)
-                .map(|s| s.local)
+                .map(|s| (s.local, s.waiting))
                 .unwrap_or_default();
             let (tx, worker_home, worker_key) =
                 (self.ui.mods.tx.clone(), home.clone(), key.clone());
             std::thread::spawn(move || {
-                let _ = tx.send(Event::Local(worker_key, read_local(&worker_home)));
+                let _ = tx.send(Event::Local(
+                    worker_key,
+                    read_local(&worker_home),
+                    sunrise::txn::waiting_for_update(&worker_home),
+                ));
             });
             let enabled = enabled_ids(&home, &entries, &local);
             let chosen = sunrise::chosen(&home);
@@ -589,6 +549,7 @@ impl Launcher {
                 entries,
                 enabled,
                 chosen,
+                waiting,
                 local,
                 reading: true,
             });
@@ -660,50 +621,19 @@ impl Launcher {
         let Some(snap) = &self.ui.mods.snapshot else {
             return Vec::new();
         };
-        let unbuilt: HashSet<String> = match !snap.local.is_empty()
-            || snap
-                .entries
-                .iter()
-                .any(|e| native_status::is_native_file(&e.file))
-        {
-            true => {
-                self.native_mod_unbuilt("");
-                self.mods
-                    .native_state
-                    .borrow()
-                    .as_ref()
-                    .map(|(_, _, ids)| ids.iter().cloned().collect())
-                    .unwrap_or_default()
-            }
-            false => HashSet::new(),
-        };
         let index = sunrise::fetched_index();
         let game = self.mods_game();
-        let mut rows = model::rows(
+        model::rows(
             &snap.entries,
             &model::World {
                 index: index.as_deref(),
                 game: &game,
                 enabled: &snap.enabled,
-                unbuilt: &unbuilt,
-                native_allowed: self.settings.native_mods_allowed_at.is_some(),
                 chosen: &snap.chosen,
+                waiting: &snap.waiting,
                 local: &snap.local,
             },
-        );
-        // A mod the game was made without isn't waiting for a build: it waits for its author.
-        let left = self.native_left_out();
-        if !left.is_empty() {
-            let on = self
-                .selected_instance()
-                .and_then(|i| self.version_of(i))
-                .map(|tag| crate::sheets::build_name(tag))
-                .unwrap_or_default();
-            model::mark_left_out(&mut rows, &left, &on, crate::sheets::build_name);
-            // A row that no longer needs the player moves out of that group.
-            model::sort(&mut rows);
-        }
-        rows
+        )
     }
 
     /// Whether another install or update holds the folder right now.
@@ -714,18 +644,13 @@ impl Launcher {
     /// Whether a mod change is in progress (mine or the shared install's), for the shared Play
     /// and setup gates. Reads only the Mods busy flags, never the launch state.
     pub(super) fn mutating(&self) -> bool {
-        self.ui.mods.busy.is_some() || self.mods.busy.is_some()
+        self.ui.mods.busy.is_some() || self.mods.busy.is_some() || self.mods.world_ask.is_some()
     }
 
     /// Build… on a row: the one native build path, which asks for permission first. The player
     /// stays where they are: the play bar shows how far it is.
     fn build(&mut self) {
         self.build_native();
-    }
-
-    /// Allow… on a row: the native-code question, with what it builds.
-    fn allow(&mut self) {
-        self.request_native_build_consent();
     }
 
     pub(super) fn open_url(url: &str, cx: &mut Context<Self>) {

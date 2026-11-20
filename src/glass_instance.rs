@@ -5,7 +5,7 @@
 //! appearance only: the light look keeps `instance_dialog`.
 use super::*;
 
-use sunrise_launcher::instances::Channel;
+use sunrise_launcher::instances::{profile_target, Channel};
 
 impl Launcher {
     /// The Sunrise version an instance plays: the one it keeps, else the one it follows.
@@ -69,32 +69,6 @@ impl Launcher {
             .flatten()
             .cloned()
     }
-}
-
-/// Pick one tag for both the Home picker and Play. A pin is never replaced by another
-/// build just because it isn't installed yet. Channel release lists are newest first.
-fn profile_target<'a>(
-    pin: Option<&'a String>,
-    channel: Channel,
-    releases: &'a [Release],
-    installed: &'a [String],
-    launcher_version: Option<&'a String>,
-) -> Option<&'a String> {
-    pin.or_else(|| match channel.following(releases) {
-        Channel::Stable => {
-            // Keep the existing policy: prefer an installed Stable build.
-            Channel::Stable
-                .builds(releases)
-                .find(|r| installed.contains(&r.tag))
-                .or_else(|| Channel::Stable.builds(releases).next())
-                .map(|r| &r.tag)
-        }
-        Channel::Nightly => Channel::Nightly
-            .builds(releases)
-            .next()
-            .map(|r| &r.tag)
-            .or(launcher_version),
-    })
 }
 
 /// Every Nightly published with a build for this platform, newest first, then the installed

@@ -1,4 +1,4 @@
-//! Publish native installations before exposing their completion marker.
+//! Publish complete native installations in one no-replace move.
 use super::*;
 
 #[allow(clippy::too_many_arguments)]
@@ -14,9 +14,15 @@ pub(super) fn install(
 ) -> Result<(), String> {
     let _publication = crate::run_leases::installation().map_err(cache_error)?;
     let from = backend::version_dir(base);
-    let partial = target.directory(&format!(".{version}.partial"));
-    let _ = fs::remove_dir_all(&partial);
-    fs::create_dir_all(&partial).map_err(|e| e.to_string())?;
+    let dir = target.directory(version);
+    let root = dir.parent().expect("build collection");
+    fs::create_dir_all(root).map_err(|e| e.to_string())?;
+    let stage = tempfile::Builder::new()
+        .prefix(".native-stage-")
+        .tempdir_in(root)
+        .map_err(|e| e.to_string())?;
+    let partial = stage.path().join("image");
+    fs::create_dir(&partial).map_err(|e| e.to_string())?;
     copy_base(&from, &partial, target, target == Target::Client)?;
     let installed = partial.join(target.binary());
     fs::copy(binary, &installed).map_err(|e| format!("The built game: {e}"))?;
@@ -34,13 +40,6 @@ pub(super) fn install(
                 .join(&bundle.manifest.id),
         )?;
     }
-    if let Err(cancelled) = cancellation.check() {
-        let _ = fs::remove_dir_all(&partial);
-        return Err(cancelled);
-    }
-    let dir = target.directory(version);
-    let _ = fs::remove_dir_all(&dir);
-    fs::rename(&partial, &dir).map_err(|e| e.to_string())?;
-    crate::run_leases::publish(&dir).map_err(cache_error)?;
-    fs::write(dir.join(".installed"), "").map_err(|e| e.to_string())
+    cancellation.check()?;
+    crate::run_leases::publish_build(&partial, &dir).map_err(cache_error)
 }

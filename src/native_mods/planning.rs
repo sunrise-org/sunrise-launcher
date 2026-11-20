@@ -3,12 +3,23 @@ use super::*;
 
 /// Plan enabled native mods for an instance. Worker-only filesystem and release reads.
 pub fn routes(home: &Path, base: Option<&str>) -> Result<Routes, Failed> {
-    require_consent()?;
+    let cancellation = Cancellation::default();
+    cancellation.admit_native_work()?;
     let lease = crate::native_cache::Cache::acquire(&backend::build_dir()).map_err(cache_error)?;
-    let Some(folder) = stage_installed(home, root().join("installed.routes"))? else {
+    let scratch = route_scratch()?;
+    let Some(folder) = stage_installed(home, scratch.path().join("mods"))? else {
         return Ok(Routes::default());
     };
-    classify(&folder, base, &lease, &Cancellation::default())
+    classify(&folder, base, &lease, &cancellation)
+}
+
+fn route_scratch() -> Result<tempfile::TempDir, String> {
+    let root = root();
+    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    tempfile::Builder::new()
+        .prefix(".native-routes-")
+        .tempdir_in(root)
+        .map_err(|e| e.to_string())
 }
 
 /// Share classification with an actual build under its existing cache lease.
@@ -184,9 +195,11 @@ pub struct UpdateCheck {
 /// [`UpdateCheck`] for the native mods turned on in game folder `home`, on the installed release
 /// or Nightly `to`. Worker-only: it reads releases.
 pub fn update_check(home: &Path, to: &str) -> Result<UpdateCheck, Failed> {
-    require_consent()?;
+    let cancellation = Cancellation::default();
+    cancellation.admit_native_work()?;
     let _lease = crate::native_cache::Cache::acquire(&backend::build_dir()).map_err(cache_error)?;
-    let folder = stage_installed(home, root().join("installed.routes"))?;
+    let scratch = route_scratch()?;
+    let folder = stage_installed(home, scratch.path().join("mods"))?;
     let found = match &folder {
         Some(folder) => scan_bundles(folder)?,
         None => Vec::new(),
@@ -200,7 +213,7 @@ pub fn update_check(home: &Path, to: &str) -> Result<UpdateCheck, Failed> {
     let keys = sunrise_launcher_release_verify::sdk_keys_for(backend::GAME_REPO);
     let sdk = sdk_cache::index(&sdk_base, &revision, &keys).map_err(|r| r.to_string())?;
     let checks = match &folder {
-        Some(folder) => check_projects(folder, &found, &sdk, &sdk_base, &Cancellation::default())
+        Some(folder) => check_projects(folder, &found, &sdk, &sdk_base, &cancellation)
             .map_err(|r| r.to_string())?,
         None => Checks::default(),
     };

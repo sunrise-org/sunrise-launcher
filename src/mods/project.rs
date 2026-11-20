@@ -175,7 +175,9 @@ impl Launcher {
             )
             .children(self.strip(cx));
         let page = div()
-            .size_full()
+            .w_full()
+            .flex_1()
+            .min_h_0()
             .flex()
             .flex_col()
             .gap(px(14.))
@@ -339,9 +341,7 @@ impl Launcher {
         }));
 
         // The right column: the action and what it changes, then the facts.
-        let native_allowed = self.settings.native_mods_allowed_at.is_some();
         let busy = self.mods_busy();
-        let native = p.make == Make::Native;
         let requires = p.requires.clone();
         // An update is offered here too: the version Add would install, over the one installed.
         let update = match (&installed_here, &p.will_install) {
@@ -384,9 +384,12 @@ impl Launcher {
                 .child(tr("Installed"))
                 .into_any_element(),
             (None, fit, Some(_)) if fit.fits() => {
-                let label = match (native, native_allowed) {
-                    (true, false) => tr("Install…"),
-                    _ => tr("Install"),
+                let profile = (self.instances.list.len() > 1)
+                    .then(|| self.selected_instance().map(|i| i.name.clone()))
+                    .flatten();
+                let label = match profile {
+                    Some(name) => trf("Install to {profile}", &[("profile", &name)]),
+                    None => tr("Install").to_string(),
                 };
                 let b = primary("alt-project-add", label)
                     .w_full()
@@ -458,7 +461,7 @@ impl Launcher {
                 "alt-fact-code",
                 "shield",
                 tr("Native code").into(),
-                tr("Native code: it is built into the game on this computer and runs with full access to your computer. Its source was reviewed before it was listed.").into(),
+                tr("Native code: it is built into the game on this computer and runs with full access to your computer. Listed after a person reviewed its entry and file.").into(),
                 palette().accent_ink,
             ),
             Make::Content => fact(

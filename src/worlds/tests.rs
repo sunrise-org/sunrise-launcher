@@ -227,6 +227,44 @@ fn the_mods_a_world_was_saved_with_are_read_and_matched() {
 }
 
 #[test]
+fn removing_mods_a_world_uses_asks_first_and_stay_is_the_default() {
+    let home = scratch("question");
+    let dir = home.join("saves").join("Home");
+    fs::create_dir_all(&dir).unwrap();
+    let record = Tag::compound([("ModId", name("greeter")), ("ModVersion", name("1.0.0"))]);
+    let root = Tag::compound([
+        ("Data", Tag::compound([("LevelName", name("Home"))])),
+        (
+            "fml",
+            Tag::compound([("LoadingModList", Tag::List(vec![record]))]),
+        ),
+    ]);
+    let bytes = nbt::write_named(
+        &nbt::NamedTag {
+            name: "".into(),
+            tag: root,
+        },
+        Limits::default(),
+    )
+    .unwrap();
+    fs::write(dir.join("level.dat"), bytes).unwrap();
+    world(&home, "Plain", vec![("LevelName", name("Plain"))]);
+    let ask = question(&home, &["greeter".into(), "other".into()])
+        .unwrap()
+        .expect("a world uses greeter");
+    assert_eq!(
+        (ask.mods, ask.worlds),
+        (vec!["greeter".to_string()], vec!["Home".to_string()])
+    );
+    assert!(
+        question(&home, &["other".into()]).unwrap().is_none(),
+        "no world uses it: no question"
+    );
+    assert_eq!(Answer::default(), Answer::Stay);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn a_level_dat_the_game_loads_is_read_past_the_default_tag_cap() {
     let home = scratch("saved-limits");
     // More tags than `Limits::default` allows: the game reads a world's `.dat` files without

@@ -90,7 +90,6 @@ impl Launcher {
                 .child(muted(tr("This collection can't be shown.")))
                 .into_any_element();
         };
-        let native_allowed = self.settings.native_mods_allowed_at.is_some();
         let busy = self.mods_busy();
         let owners = collection.owners.join(", ");
         let icon = self.mods_image(&collection.icon, images::ICON);
@@ -144,7 +143,7 @@ impl Launcher {
                     "{picked} of {all} selected",
                     &[
                         ("picked", &view.ticked.to_string()),
-                        ("all", &view.members.to_string()),
+                        ("all", &view.total.to_string()),
                     ],
                 ))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -161,11 +160,6 @@ impl Launcher {
         let summary = &view.summary;
         let done = view.done();
         let ready = view.can_install() && !busy;
-        let wants_ok = !native_allowed
-            && view
-                .lines
-                .iter()
-                .any(|l| l.ticked && sunrise::is_native_mod(&l.id));
         let action: AnyElement = if done {
             div()
                 .h(px(tokens::ACTION))
@@ -181,12 +175,7 @@ impl Launcher {
                 .child(tr("Installed"))
                 .into_any_element()
         } else {
-            let label = if wants_ok {
-                tr("Install…")
-            } else {
-                tr("Install")
-            };
-            let b = primary("alt-collection-install", label)
+            let b = primary("alt-collection-install", tr("Install"))
                 .w_full()
                 .h(px(tokens::ACTION));
             if ready {
@@ -404,6 +393,9 @@ impl Launcher {
         });
         if line.labelled {
             name = name.child(badge(tr("Library")));
+        }
+        if line.needed {
+            name = name.child(badge(tr("Needed")));
         }
         let mut text = div()
             .flex_1()

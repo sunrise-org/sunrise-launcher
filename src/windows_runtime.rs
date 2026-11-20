@@ -10,6 +10,13 @@ const SLOT: &str = "SUNRISE_WINDOWS_RUNTIME_SLOT";
 pub(crate) struct Guard {
     _slot: fs::File,
     _source: fs::File,
+    game: std::path::PathBuf,
+}
+
+impl Guard {
+    pub(crate) fn game(&self) -> &Path {
+        &self.game
+    }
 }
 
 fn value<'a>(cmd: &'a Command, key: &str) -> Option<&'a std::ffi::OsStr> {
@@ -136,6 +143,7 @@ fn stage(source: &Path, slot: &Path) -> io::Result<Guard> {
     Ok(Guard {
         _slot: lock,
         _source: source_file,
+        game,
     })
 }
 

@@ -76,12 +76,8 @@ impl Launcher {
             StripAct::Home => "alt-strip-home",
         };
         // A build draws its own line: the stage it is at over the three stages' bar.
-        // Mods › Installed shows the bar in its Build button: the line is drawn without one,
-        // unless a search or filter hides that button.
-        let bar_here =
-            !(self.ui.page == crate::frame::Page::Installed && self.ui.mods.build_button_drawn);
         let line = match self
-            .build_line(bar_here, cx)
+            .build_line(true, cx)
             .filter(|_| view.main == Main::Building)
         {
             Some(build) => build.into_any_element(),

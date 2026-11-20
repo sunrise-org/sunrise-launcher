@@ -11,65 +11,50 @@ impl Launcher {
         }
     }
 
-    /// Builds the selected instance's native mods, once the player accepted the warning. The
-    /// build stays on the Sunrise the instance plays (`native_mods::base_for`), unless the
-    /// warning was Update's: then it moves to that newer Sunrise.
+    /// Build on the profile's committed base without changing its selection or mod files.
     pub(super) fn build_native(&mut self) {
-        self.build_native_on(None, false)
-    }
-
-    /// [`Self::build_native`] on `base` when given (an update's newer release or Nightly) instead
-    /// of the Sunrise the instance plays; with `leave_out`, the player chose to build without the mods
-    /// that worlds were saved with.
-    pub(super) fn build_native_on(&mut self, base: Option<String>, leave_out: bool) {
-        if self.native_step.is_some() {
+        if self.native_step.is_some()
+            || self.mods.busy.is_some()
+            || self.mods.world_ask.is_some()
+            || self.pending_consent.is_some()
+        {
             return;
         }
-        // Every way to a build asks first while native mods aren't allowed (permission taken
-        // back in Storage, say, with a card still open): the question, never a refusal.
-        // The card stays under the question: Cancel goes back to it.
-        if self.settings.native_mods_allowed_at.is_none() {
-            self.request_native_build_consent();
-            self.native_consent_build = Some((base, leave_out));
-            return;
-        }
-        self.pending_consent = None;
         self.native_error = None;
         self.native_failed_mods.clear();
-        self.native_worlds = None;
-        self.mods.unbuilt = None;
-        // This attempt's own log, starting empty: an open panel shows it rather than the last
-        // attempt's (`native_log_page`).
         self.native_log_reset();
         let instance = instances::selected();
         self.native_for = Some(instance.id.clone());
-        let plays = self.version_of(&instance).cloned();
-        let base = base.or_else(|| native_mods::base_for(plays.as_deref(), &self.installed, false));
-        let Some(base) = base else {
-            let error = tr("Install Sunrise first.").to_string();
-            self.native_log_preflight(&error);
-            self.native_error = Some(error);
-            self.play_after_build = None;
-            return;
-        };
-        // The mods this build is given: its failure is read against them, even if another
-        // instance is selected by the time it ends.
-        self.native_built_mods = native_status::enabled(&self.mods.home())
+        let build =
+            match sunrise_launcher::browser::sunrise::txn::ManualBuild::admit(&instance.home, None)
+            {
+                Ok(build) => build,
+                Err(error) => {
+                    self.native_log_preflight(&error);
+                    self.native_error = Some(error);
+                    return;
+                }
+            };
+        if self.settings.native_mods_allowed_at.is_none() {
+            self.request_native_build_consent(build.home().to_owned());
+            self.native_consent_build = Some((instance, build));
+        } else {
+            self.run_native_build(instance, build);
+        }
+    }
+
+    pub(super) fn run_native_build(
+        &mut self,
+        instance: instances::Instance,
+        build: sunrise_launcher::browser::sunrise::txn::ManualBuild,
+    ) {
+        self.native_built_mods = native_status::enabled(build.home())
             .into_iter()
             .map(|(id, ..)| id)
             .collect();
-        let folder = match self.native_mods_to_build() {
-            Ok((folder, _)) => folder,
-            Err(e) => {
-                self.native_log_preflight(&e);
-                self.native_error = Some(e);
-                self.play_after_build = None;
-                return;
-            }
-        };
         // The attempt belongs to both the controls and the worker from the start. A stop
         // before the worker is scheduled is already visible when the worker first checks it.
-        let cancellation = native_mods::Cancellation::default();
+        let cancellation = build.cancellation();
         self.native_cancellation = Some(cancellation.clone());
         self.native_step = Some(tr("Starting the build").into());
         self.native_progress = None;
@@ -78,54 +63,38 @@ impl Launcher {
             .is_none()
             .then(|| sunrise_launcher::rust_toolchain::host().map(|h| h.download_bytes()))
             .flatten();
-        // The build window's build: a line per mod the build is given. Play's own build opens
-        // the window; Build opens it itself.
-        let for_play = self
-            .play_after_build
-            .as_ref()
-            .is_some_and(|play| play.instance == instance.id);
         let mut run = crate::mods::build_run::Run::start(
             instance.id.clone(),
             instance.name.clone(),
-            crate::sheets::build_name(&base),
+            crate::sheets::build_name(build.base()),
             self.mods_lines(),
-            for_play,
+            false,
         );
         run.first_build = self.first_build;
         self.ui.mods.build = Some(run);
-        if for_play || std::mem::take(&mut self.ui.mods.build_wanted) {
+        if std::mem::take(&mut self.ui.mods.build_wanted) {
             self.open_sheet(crate::sheets::Sheet::ModBuild);
         }
         let tx = self.tx.clone();
-        // The release list the window already has: the build reads it and asks GitHub for none.
-        let catalogue = match &self.releases {
-            Load::Ready(releases) => Some(releases.clone()),
-            _ => None,
-        };
         std::thread::spawn(move || {
-            let result = native_mods::build(
-                &base,
-                &folder,
-                &instance,
-                None,
-                leave_out,
-                &cancellation,
+            let result = build.run(
+                instance.native_profile,
                 |step| {
                     let _ = tx.send(Msg::NativeProgress(step));
                 },
-                |inventory| {
-                    let (reply, answer) = std::sync::mpsc::channel();
-                    tx.send(Msg::NativeRegistryConsent(inventory.clone(), reply))
-                        .is_ok()
-                        && answer.recv().unwrap_or(false)
-                },
-                move || catalogue,
+                &|inventory| ask_registry(&tx, inventory),
             );
-            let _ = tx.send(Msg::Native(
-                result.map(native_mods::ClientBuild::into_version),
-            ));
+            let _ = tx.send(Msg::Native(result));
         });
     }
+}
+
+/// The SDK may ask before compiling added registry code. Losing the waiting window refuses it.
+pub(super) fn ask_registry(tx: &Sender<Msg>, inventory: &native_mods::Consent) -> bool {
+    let (reply, answer) = std::sync::mpsc::channel();
+    tx.send(Msg::NativeRegistryConsent(inventory.clone(), reply))
+        .is_ok()
+        && answer.recv().unwrap_or(false)
 }
 
 /// What a failed build says, and the mods that stopped it: a mod's own compile failure, or its
@@ -145,6 +114,33 @@ fn failure_message(error: String, built: &[String]) -> (String, Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_sdk_dependency_request_gets_only_its_own_answer() {
+        let (tx, requests) = std::sync::mpsc::channel();
+        let inventory = native_mods::Consent {
+            added_crates: 2,
+            build_scripts: vec!["builder".into()],
+            proc_macros: vec!["macro".into()],
+        };
+        std::thread::scope(|scope| {
+            for allowed in [false, true] {
+                let worker = scope.spawn(|| ask_registry(&tx, &inventory));
+                let Msg::NativeRegistryConsent(asked, reply) = requests.recv().unwrap() else {
+                    panic!("expected a dependency-consent request");
+                };
+                assert_eq!(asked, inventory);
+                if allowed {
+                    reply.send(true).unwrap();
+                } else {
+                    drop(reply);
+                }
+                assert_eq!(worker.join().unwrap(), allowed);
+            }
+        });
+        drop(requests);
+        assert!(!ask_registry(&tx, &inventory));
+    }
 
     #[test]
     fn a_failure_after_switching_instances_is_read_against_the_mods_built() {

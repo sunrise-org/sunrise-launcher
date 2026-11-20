@@ -294,7 +294,8 @@ fn routing_actor() {
         game.env(super::GAME, serde_json::to_string(&words).unwrap());
         if std::env::var("ROUTING_STOP").as_deref() == Ok("1") {
             let (tx, rx) = std::sync::mpsc::channel();
-            let running = crate::backend::spawn(crate::backend::Job::Client, game, tx).unwrap();
+            let running =
+                crate::backend::spawn(crate::backend::Job::Client, game, tx, None).unwrap();
             let mut line = String::new();
             std::io::stdin().read_line(&mut line).unwrap();
             running.kill();
@@ -308,7 +309,7 @@ fn routing_actor() {
             }
         } else {
             let (mut game, _runtime) = crate::backend::prepare_command(game).unwrap();
-            let mut child = super::spawn(&mut game, false).unwrap();
+            let mut child = super::spawn(&mut game, false, None).unwrap();
             let _ = child.wait();
         }
     } else {

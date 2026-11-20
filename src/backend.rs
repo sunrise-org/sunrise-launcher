@@ -1,11 +1,12 @@
 //! Everything that is not UI: GitHub, installs, resource preparation, the game's processes and
 //! updates. The GUI, the CLI and the MCP server all go through this module. Functions here
 //! block; the GUI runs them on threads and reads their messages.
+use crate::process::child::Child;
 use crate::{account, mojang, sources};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
@@ -54,8 +55,11 @@ mod look_settings;
 mod play_log;
 mod release_assets;
 mod release_notes;
+mod settings_io;
 pub use release_assets::PLATFORMS;
 pub use release_notes::{markdown_to_text, notes_summary};
+pub(crate) use settings_io::NativeGrant;
+pub use settings_io::SettingsBaseline;
 
 /// `a == b`, in a const context.
 const fn same(a: &str, b: &str) -> bool {
@@ -137,7 +141,7 @@ impl GameArchitecture {
     }
 }
 
-const GAME_BUILD_ARCHITECTURE: &str = ".sunrise-game-architecture.json";
+pub(crate) const GAME_BUILD_ARCHITECTURE: &str = ".sunrise-game-architecture.json";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct InstalledGameArchitecture {
@@ -1218,63 +1222,9 @@ fn unpack(archive: &Path, url: &str, to: &Path) -> Result<(), String> {
 /// Downloads one release, checks it against its signed checksums and unpacks it; `progress` gets
 /// the fraction done.
 pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<(), String> {
-    let tag = release.tag.as_str();
-    let settings = Settings::load();
-    let assets = game_assets_for(
-        std::env::consts::OS,
-        native_windows_architecture(),
-        std::env::consts::ARCH,
-        settings.game_architecture,
-    );
-    let (asset, fallback) = assets.map_or((ASSET, GAME_FALLBACK), |(asset, fallback)| {
-        (Some(asset), fallback)
-    });
-    let asset = asset_installed(release, asset, fallback).ok_or_else(|| {
-        crate::i18n::trf(
-            "{tag} has no build for the selected game architecture.",
-            &[("tag", tag)],
-        )
-        .to_string()
-    })?;
-    let sha256 = match &release.nightly {
-        // Signed for its own version (SHA256SUMS.v2.sig), which its title names and it installs as;
-        // served under its own GitHub tag. A title that doesn't parse strictly is refused: nothing
-        // signs GitHub's publication time.
-        Some(github_tag) => {
-            let version = crate::signed::title_version(github_tag, &release.name)
-                .filter(|v| *v == release.tag)
-                .ok_or_else(|| {
-                    crate::i18n::trf(
-                        "This Nightly's title ({title}) doesn't name its date and commit as Sunrise \
-                         signs them, so it can't be checked: it was not installed.",
-                        &[("title", &format!("{:?}", release.name))],
-                    )
-                })?;
-            crate::signed::build_digest(
-                github_tag,
-                &version,
-                asset,
-                &sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO),
-                fetch_small,
-            )?
-        }
-        None if is_game_tag(tag) => signed_digest(tag, asset)?,
-        None => return Err(format!("{tag} is not a Sunrise release.")),
-    };
-    install_as(
-        release,
-        tag,
-        &sha256,
-        selected_game_architecture(&settings),
-        progress,
-    )?;
-    // An older build publishes no release file; `played` then reads its research-lock.json.
-    let source = release.nightly.as_deref().unwrap_or(tag);
-    let bytes = fetch_small(&crate::signed::asset_url(source, RELEASE_FILE));
-    if let (Ok(Some(bytes)), Ok(sha256)) = (bytes, release_file_digest(release, source)) {
-        let _ = keep_release_file(&version_dir(tag), &bytes, &sha256);
-    }
-    Ok(())
+    let download = GameDownload::select(release)?;
+    let proof = download.prove(&release.tag)?;
+    download.install(&release.tag, &proof, progress)
 }
 
 /// The build's facts a launcher reads first (docs/api/release-file.md), signed beside its archives.
@@ -1299,7 +1249,21 @@ fn keep_release_file(dir: &Path, bytes: &[u8], sha256: &str) -> Result<(), Strin
     if sunrise_launcher_release_verify::sha256_hex(bytes) != sha256 {
         return Err(format!("{RELEASE_FILE}: not the signed file"));
     }
-    fs::write(dir.join(RELEASE_FILE), bytes).map_err(|e| format!("{RELEASE_FILE}: {e}"))
+    let file = dir.join(RELEASE_FILE);
+    let write = match fs::File::create_new(&file) {
+        Ok(mut file) => file.write_all(bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            if crate::native_cache::checked(&file, false).is_ok_and(|meta| meta.is_some())
+                && fs::read(&file).is_ok_and(|archived| archived == bytes)
+            {
+                Ok(())
+            } else {
+                Err(e)
+            }
+        }
+        Err(e) => Err(e),
+    };
+    write.map_err(|e| format!("{RELEASE_FILE}: {e}"))
 }
 
 /// The asset `release` installs from: the fallback when [`game_releases_with`] took it (its file
@@ -1323,12 +1287,12 @@ fn asset_installed<'a>(
 }
 
 mod developer_play;
-pub use developer_play::client_as;
+pub use developer_play::{client_as, managed_client_as};
 
 /// Downloads `release`'s archive for this platform, checks it against `sha256` (its signed
 /// checksum), and unpacks it as the installed version `tag`.
 mod installation;
-pub(crate) use installation::install_as;
+pub(crate) use installation::{GameDownload, GameProof, ARCHIVE_ID as BUILD_ARCHIVE_ID};
 
 pub fn remove(tag: &str) -> Result<(), String> {
     // A native build's base keeps its prepared data, so it stays while one is installed.
@@ -1413,6 +1377,24 @@ pub fn played_version_id_by(tag: Option<&str>) -> String {
     played_by(tag, "version_id")
 }
 
+/// The Minecraft version id the build `tag` plays, from that build's own files; None when it
+/// isn't installed (a build that isn't here says nothing about itself, and no other build
+/// stands in for it).
+pub fn game_of_build(tag: &str) -> Option<String> {
+    game_in(&versions_dir(), tag)
+}
+
+fn game_in(versions: &Path, tag: &str) -> Option<String> {
+    installed_in(versions)
+        .iter()
+        .any(|t| t == tag)
+        .then_some(())?;
+    let dir = versions.join(tag);
+    read_json(&dir.join(RELEASE_FILE))
+        .and_then(|release| release["version_id"].as_str().map(String::from))
+        .or_else(|| locked_game(&dir))
+}
+
 fn played_by(tag: Option<&str>, field: &str) -> String {
     // Tests share one scratch launcher folder whose installed builds other tests change.
     if cfg!(test) {
@@ -1450,6 +1432,12 @@ fn resources_at(dir: &Path) -> PathBuf {
 }
 
 const RESOURCES_MANIFEST: &str = "sunrise-resources.json";
+
+/// The target preparation records the world format of the verified client JAR it used.
+pub(crate) fn prepared_world_version(resources: &Path) -> Option<i32> {
+    let manifest = read_json(&resources.join(RESOURCES_MANIFEST))?;
+    i32::try_from(manifest.get("data_version")?.as_i64()?).ok()
+}
 
 /// How long a drawn page believes an answer of [`is_prepared`] without looking at the disk again.
 /// What the launcher itself changes (a preparation, an install, a removal) drops it at once
@@ -2846,6 +2834,26 @@ fn strip_launcher_render_env(cmd: &mut Command) {
 }
 
 pub fn client_command(tag: &str) -> Command {
+    client_command_at(tag, &resources(tag))
+}
+
+pub fn managed_client_command(
+    tag: &str,
+    owner: &crate::browser::sunrise::txn::Lease,
+) -> Result<Command, String> {
+    let active = owner.active_build()?.ok_or_else(|| {
+        crate::i18n::tr("This profile has no committed build to start.").to_string()
+    })?;
+    if active.executable() != tag {
+        return Err(crate::i18n::tr(
+            "The launch command does not match this profile's saved build and folders.",
+        )
+        .into());
+    }
+    Ok(client_command_at(tag, &active.resources()))
+}
+
+fn client_command_at(tag: &str, resources: &Path) -> Command {
     let home = game_home();
     let _ = fs::create_dir_all(&home);
     let mut cmd = Command::new(client_program(tag));
@@ -2858,7 +2866,7 @@ pub fn client_command(tag: &str) -> Command {
     cmd.current_dir(&home)
         .env("SUNRISE_HOME", &home)
         .arg("--resources")
-        .arg(resources(tag));
+        .arg(resources);
     // How the game asks for a renewed session (`account session`) while it runs.
     if let Ok(exe) = std::env::current_exe() {
         cmd.env("SUNRISE_LAUNCHER_EXE", exe);
@@ -2887,17 +2895,16 @@ pub(crate) fn client_program(tag: &str) -> PathBuf {
     dir.join(CLIENT)
 }
 
-pub fn server_command(tag: &str, folder: &Path) -> Command {
-    let mut cmd = Command::new(version_dir(tag).join(CLIENT));
-    if crate::developer_install::uses_developer(tag) {
-        cmd.env("SUNRISE_TELEMETRY_URL", "off");
-    }
-    crate::run_leases::mark(&mut cmd, &version_dir(tag));
-    cmd.current_dir(folder)
-        .arg("--resources")
-        .arg(resources(tag))
-        .args(["--dedicated", "--nogui"]);
-    cmd
+mod dedicated;
+
+pub(crate) use dedicated::root as server_root;
+
+pub fn server_command(tag: &str, folder: &Path) -> Result<Command, String> {
+    dedicated::command(tag, folder)
+}
+
+pub fn verify_server_command(tag: &str, folder: &Path, command: &Command) -> Result<(), String> {
+    dedicated::verify(tag, folder, command)
 }
 
 /// Whether `eula.txt` says `eula` is true, read as a Java properties file as the server reads it:
@@ -3159,7 +3166,6 @@ pub fn need_prepared(tag: &str) -> Result<(), String> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlayStep {
     Assets,
-    Mods,
     SignIn,
 }
 
@@ -3192,6 +3198,16 @@ pub fn join_friend(cmd: &mut Command, code: &str) -> Result<(), String> {
 
 /// The dedicated server's command in `folder`, once prepared and the EULA is agreed to.
 pub fn server(tag: &str, folder: &Path, accept_eula: bool) -> Result<Command, String> {
+    let command = server_command(tag, folder)?;
+    let folder = command
+        .get_current_dir()
+        .expect("dedicated command owns its directory");
+    if crate::native_mods::is_native(tag) {
+        return Err(crate::i18n::tr(
+            "A dedicated server cannot use a profile’s native client build.",
+        )
+        .into());
+    }
     if let Some(error) = game_architecture_launch_error(tag) {
         return Err(error);
     }
@@ -3203,10 +3219,11 @@ pub fn server(tag: &str, folder: &Path, accept_eula: bool) -> Result<Command, St
         return Err("Running a server needs your agreement to the Minecraft EULA (https://aka.ms/MinecraftEULA). Accept it to continue.".into());
     }
     fs::create_dir_all(folder).map_err(|e| e.to_string())?;
-    Ok(server_command(tag, folder))
+    Ok(command)
 }
 
 mod release_selection;
+pub(crate) use release_selection::WorldBuildOrder;
 
 /// One release's notes: the tag given, or the newest.
 pub fn release_notes(tag: Option<&str>) -> Result<Release, String> {
@@ -3232,9 +3249,13 @@ pub struct Logged {
 pub const LOG_KEEP: usize = 2000;
 
 impl Logged {
-    pub fn start(job: Job, cmd: Command) -> Result<Self, String> {
+    pub fn start(
+        job: Job,
+        cmd: Command,
+        profile: Option<&crate::browser::sunrise::txn::Lease>,
+    ) -> Result<Self, String> {
         let (tx, rx) = std::sync::mpsc::channel();
-        let running = spawn(job, cmd, tx)?;
+        let running = spawn(job, cmd, tx, profile)?;
         let log = Arc::new(Mutex::new(std::collections::VecDeque::new()));
         let exit = Arc::new(Mutex::new(None));
         let (l, e) = (log.clone(), exit.clone());
@@ -4101,7 +4122,7 @@ pub enum Job {
 /// A running process; its output arrives as `Msg::Line`, its end as `Msg::Exit`.
 pub struct Running {
     pub child: Arc<Mutex<Child>>,
-    pub stdin: Option<ChildStdin>,
+    pub stdin: Option<Box<dyn std::io::Write + Send>>,
 }
 
 /// Launcher-owned tree-lock primitives and optional Windows runtime state.
@@ -4139,12 +4160,48 @@ pub fn prepare_command(cmd: Command) -> Result<(Command, RuntimeGuard), String> 
 }
 
 /// Spawn a terminal-attached game through the same lifetime protocol as GUI launches.
-pub fn spawn_attached(cmd: &mut Command) -> std::io::Result<std::process::Child> {
-    crate::run_leases::spawn(cmd, false)
+pub fn spawn_attached(
+    cmd: &mut Command,
+    profile: Option<&crate::browser::sunrise::txn::Lease>,
+    runtime: &RuntimeGuard,
+) -> std::io::Result<Child> {
+    let _permission =
+        native_client_handoff(cmd, profile, runtime).map_err(std::io::Error::other)?;
+    crate::run_leases::spawn(cmd, false, profile)
 }
 
-pub fn spawn(job: Job, cmd: Command, tx: Sender<Msg>) -> Result<Running, String> {
-    spawn_holding(job, cmd, tx, None)
+fn native_client_handoff(
+    cmd: &mut Command,
+    profile: Option<&crate::browser::sunrise::txn::Lease>,
+    _runtime: &RuntimeGuard,
+) -> Result<Option<crate::local_json::LockedJson>, String> {
+    let Some(owner) = profile else {
+        return Ok(None);
+    };
+    let active = owner.verify_launch()?;
+    #[cfg(windows)]
+    {
+        let copy = _runtime
+            ._windows
+            .as_ref()
+            .ok_or_else(|| "The profile's runtime copy was not prepared.".to_string())?;
+        active.verify_runtime_copy(copy.game())?;
+    }
+    if !active.allow_accelerator() {
+        // The game can generate a cache on a later run, but an unbound or changed cache
+        // must never supply bytes in place of the primary prepared files.
+        cmd.env("SUNRISE_NO_DATA_FILE", "1");
+    }
+    crate::native_status::publication_guard(active.executable(), None)
+}
+
+pub fn spawn(
+    job: Job,
+    cmd: Command,
+    tx: Sender<Msg>,
+    profile: Option<&crate::browser::sunrise::txn::Lease>,
+) -> Result<Running, String> {
+    spawn_holding(job, cmd, tx, None, profile)
 }
 
 /// Holds the preparation lock of the version that owns `version`'s resources (its base, for a
@@ -4182,6 +4239,7 @@ pub fn spawn_holding(
     cmd: Command,
     tx: Sender<Msg>,
     hold: Option<sunrise_launcher_smod::locks::Locked>,
+    profile: Option<&crate::browser::sunrise::txn::Lease>,
 ) -> Result<Running, String> {
     let (mut cmd, runtime) = prepare_command(cmd)?;
     #[cfg(unix)]
@@ -4193,7 +4251,14 @@ pub fn spawn_holding(
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = play_log::spawn(&mut cmd)?;
+    let mut child = {
+        let _permission = if job == Job::Client {
+            native_client_handoff(&mut cmd, profile, &runtime)?
+        } else {
+            None
+        };
+        play_log::spawn(&mut cmd, profile)?
+    };
     let pid = child.id();
     let group = matches!(job, Job::Prepare);
     if group {
@@ -4201,14 +4266,8 @@ pub fn spawn_holding(
     }
     let stdin = child.stdin.take();
     let mut readers = Vec::new();
-    let out = child
-        .stdout
-        .take()
-        .map(|o| Box::new(o) as Box<dyn Read + Send>);
-    let err = child
-        .stderr
-        .take()
-        .map(|o| Box::new(o) as Box<dyn Read + Send>);
+    let out = child.stdout.take();
+    let err = child.stderr.take();
     for stream in [out, err].into_iter().flatten() {
         let tx = tx.clone();
         readers.push(std::thread::spawn(move || {
@@ -4443,10 +4502,6 @@ pub struct Settings {
     /// The window's language. Unset follows the system's (`i18n::Language::system`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<crate::i18n::Language>,
-    /// Whether what the browser installed from Sunrise's registry updates by itself, at start
-    /// and before Play (`browser::sunrise::auto`). Unset is on.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mods_auto_update: Option<bool>,
     /// First-use native code permission for this launcher install, Unix seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_mods_allowed_at: Option<u64>,
@@ -4482,6 +4537,9 @@ pub struct Settings {
     /// Show names alongside game profiles in the sidebar. Starts collapsed.
     #[serde(default)]
     pub sidebar_expanded: bool,
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub settings_baseline: SettingsBaseline,
 }
 
 impl Settings {
@@ -4520,17 +4578,6 @@ impl Settings {
 }
 
 impl Settings {
-    /// Remember an explicit approval; merely finding an installed toolchain never grants it.
-    pub fn allow_native_mods(&mut self) -> Result<(), String> {
-        self.native_mods_allowed_at = Some(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|error| error.to_string())?
-                .as_secs(),
-        );
-        self.save()
-    }
-
     pub fn load() -> Self {
         Self::load_from(&data_dir())
     }
@@ -4603,6 +4650,7 @@ impl Settings {
                 crate::themes::starting_accent(settings.theme.as_deref(), &settings.theme_accents);
         }
         look_settings::settle(&mut settings);
+        settings.record_baseline();
         settings
     }
     /// Whether the corner cat shows.
@@ -4646,50 +4694,14 @@ impl Settings {
     pub fn reduced_graphics(&self) -> bool {
         self.reduced_graphics.unwrap_or(false)
     }
-    /// Registry mods update by themselves ([`Settings::mods_auto_update`]): on unless turned off.
-    pub fn auto_updates_mods(&self) -> bool {
-        self.mods_auto_update.unwrap_or(true)
-    }
     /// How many of the newest release versions pruning keeps: at least the newest.
     pub fn keep_newest(&self) -> usize {
         self.keep_versions.unwrap_or(KEEP_NEWEST).max(1)
     }
-    pub fn save(&self) -> Result<(), String> {
-        // The window and background jobs share the process's temporary file.
-        static SAVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // A write that stops halfway leaves settings.json unreadable, and `load` answers
-        // defaults for it: the file is replaced only once it is whole.
-        let dir = data_dir();
-        let path = dir.join("settings.json");
-        let tmp = dir.join(format!("settings.{}.tmp", std::process::id()));
-        let json =
-            serde_json::to_vec_pretty(self).map_err(|e| format!("{}: {e}", path.display()))?;
-        let written = fs::create_dir_all(&dir)
-            .and_then(|()| write_private(&tmp, &json))
-            .and_then(|()| fs::rename(&tmp, &path));
-        if let Err(e) = written {
-            let _ = fs::remove_file(&tmp);
-            return Err(format!("{}: {e}", path.display()));
-        }
-        Ok(())
-    }
 }
 
-/// Writes `bytes` to `path` readable by its owner alone (the file may hold proxy credentials);
-/// the mode applies where the file is created, and a file already there is emptied first.
-fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    let mut file = options.open(path)?;
-    // A file left by a crashed run keeps its old mode when opened: tighten it too.
-    #[cfg(unix)]
-    file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
-    file.write_all(bytes)
-}
+#[cfg(test)]
+pub(crate) use installation::install_as;
 
 #[cfg(test)]
 #[path = "backend/eula_tests.rs"]
@@ -4708,46 +4720,6 @@ mod tests {
     use super::*;
     use std::cmp::Ordering::*;
     use std::ffi::OsStr;
-
-    #[cfg(unix)]
-    #[test]
-    fn private_files_are_readable_by_their_owner_alone() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("settings.tmp");
-        write_private(&file, b"{\"proxy\":\"http://u:p@h:1\"}").unwrap();
-        let mode = fs::metadata(&file).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600);
-        assert_eq!(fs::read(&file).unwrap(), b"{\"proxy\":\"http://u:p@h:1\"}");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_leftover_looser_file_is_made_private_too() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("settings.1.tmp");
-        fs::write(&file, b"old old old").unwrap();
-        fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
-        write_private(&file, b"new").unwrap();
-        assert_eq!(
-            fs::metadata(&file).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
-        assert_eq!(fs::read(&file).unwrap(), b"new");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn saving_settings_leaves_settings_json_private() {
-        use std::os::unix::fs::PermissionsExt;
-        Settings::default().save().unwrap();
-        let mode = fs::metadata(data_dir().join("settings.json"))
-            .unwrap()
-            .permissions()
-            .mode();
-        assert_eq!(mode & 0o777, 0o600);
-    }
 
     #[test]
     fn with_every_name_taken_the_fallback_is_never_a_claimed_folder() {
@@ -4895,6 +4867,11 @@ mod tests {
         assert_eq!(played(Some("v0.3.2"), "vanilla"), "26.2");
         assert_eq!(played(Some("v0.3.1"), "version_id"), PINNED_GAME);
         assert_eq!(played(Some("v9.9.9"), "version_id"), "26.4-pre1");
+        // A build's own game, and nothing for one that isn't installed: no other build's.
+        assert_eq!(game_in(v, "v0.3.3").as_deref(), Some("26.4-pre1"));
+        assert_eq!(game_in(v, "v0.3.2").as_deref(), Some("26.2"));
+        assert_eq!(game_in(v, "v9.9.9"), None);
+        assert_eq!(game_in(v, "v0.3.4"), None, "not complete: not installed");
     }
 
     fn pe_architecture(bytes: &[u8]) -> Option<GameArchitecture> {
@@ -4968,6 +4945,30 @@ mod tests {
     /// running from it, removing it must still work.
     #[test]
     fn a_version_without_the_lease_marker_can_be_removed_when_idle() {
+        const ACTOR: &str = "SUNRISE_TEST_PRELEASE_REMOVAL";
+        if std::env::var_os(ACTOR).is_none() {
+            // Deletion scans every managed profile before proceeding. Do not let unrelated
+            // tests' deliberately invalid or changing profiles share this fixture's roots.
+            let temp = tempfile::tempdir().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "backend::tests::a_version_without_the_lease_marker_can_be_removed_when_idle",
+                    "--nocapture",
+                ])
+                .env(ACTOR, "1")
+                .env("SUNRISE_LAUNCHER_HOME", temp.path().join("data"))
+                .env("SUNRISE_HOME", temp.path().join("game"))
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
         let dir = version_dir("v0.0.1-preleases");
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(COMPLETE), b"").unwrap();

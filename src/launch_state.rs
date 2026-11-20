@@ -6,7 +6,7 @@
 //! nothing read, so every row of it is tested. The launch itself is `play_game`'s, which owns
 //! the sign-in, install, prepare, build and trust gates.
 use super::*;
-use crate::sheets::{Sheet, WayOut};
+use crate::sheets::WayOut;
 
 /// What the launcher knows that Play depends on.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -37,8 +37,6 @@ pub(crate) struct Facts {
     pub crash: Option<String>,
     /// The build the profile stays on can't be built for any more (`build_gone`).
     pub build_gone: Option<instances::Channel>,
-    /// The name of the build a held update would move to.
-    pub held: Option<String>,
     /// The name of a newer build, for a profile that follows the newest Nightly.
     pub update: Option<String>,
     /// How many mods the game was made without.
@@ -73,8 +71,6 @@ pub(crate) enum Act {
         text: String,
         way_out: Option<WayOut>,
     },
-    /// "Fix…" for a held update: choose what to do with it.
-    Resolve,
     /// "Update game".
     Update,
 }
@@ -227,12 +223,10 @@ impl Facts {
         } else {
             Main::Play
         };
-        // A held update says so itself and its sheet carries the build's words: only then is
-        // the build's error left to it.
         let step = |step: Step, error: &Option<String>| error.clone().map(|e| (step, e));
         let problem = step(Step::Start, &self.client_error)
             .or_else(|| step(Step::Prepare, &self.prepare_error))
-            .or_else(|| step(Step::Build, &self.native_error).filter(|_| self.held.is_none()))
+            .or_else(|| step(Step::Build, &self.native_error))
             .or_else(|| step(Step::Install, &self.install_error))
             .or_else(|| step(Step::Crash, &self.crash));
         // A problem is said in one plain sentence; whatever else there is opens as a sheet,
@@ -244,10 +238,6 @@ impl Facts {
         let more = brief
             .as_deref()
             .is_some_and(|b| b != problem.as_deref().unwrap_or_default().trim());
-        let hold = self
-            .held
-            .as_ref()
-            .map(|to| trf("The update to {build} is on hold", &[("build", to)]));
         let update = self
             .update
             .as_ref()
@@ -255,7 +245,6 @@ impl Facts {
         let failed = brief.is_some() && !self.building;
         let said = brief
             .filter(|_| !self.building)
-            .or_else(|| hold.clone())
             .or_else(|| update.map(|build| trf("{build} is available", &[("build", build)])));
         let way_out = match failed_at {
             Some(Step::Prepare) => Some(WayOut::MinecraftFolder),
@@ -266,8 +255,6 @@ impl Facts {
             Some(Act::StopBuild)
         } else if let Some(text) = problem.filter(|_| way_out.is_some() || more) {
             Some(Act::Notice { text, way_out })
-        } else if hold.is_some() && !busy {
-            Some(Act::Resolve)
         } else {
             update.map(|_| Act::Update)
         };
@@ -297,7 +284,6 @@ impl Main {
             Main::Building => tr("Building mods…").into(),
             Main::Starting => tr("Starting…").into(),
             Main::Step(backend::PlayStep::Assets) => tr("Checking game files…").into(),
-            Main::Step(backend::PlayStep::Mods) => tr("Updating mods…").into(),
             Main::Step(backend::PlayStep::SignIn) => tr("Signing in…").into(),
             Main::ChangingMods => tr("Changing mods…").into(),
             Main::Stop => tr("Stop game").into(),
@@ -334,8 +320,7 @@ impl Act {
             Act::StopBuild => tr("Stop"),
             Act::Notice {
                 way_out: Some(_), ..
-            }
-            | Act::Resolve => tr("Fix…"),
+            } => tr("Fix…"),
             Act::Notice { way_out: None, .. } => tr("Details…"),
             Act::Update => tr("Update game"),
         }
@@ -369,9 +354,6 @@ impl View {
                 Some((said.clone().into(), StripAct::Act(act.clone())))
             }
             (Some(said), _) if self.failed => Some((said.clone().into(), StripAct::Home)),
-            (Some(said), Some(Act::Resolve)) => {
-                Some((said.clone().into(), StripAct::Act(Act::Resolve)))
-            }
             _ if self.main == Main::Stop => {
                 Some((tr("The game is running").into(), StripAct::StopGame))
             }
@@ -416,7 +398,6 @@ impl Launcher {
     pub(crate) fn launch_facts(&self) -> Facts {
         let active = self.selected_instance();
         let launch = self.ui.home.mods.launch();
-        let held = self.held_for_launch(launch.and_then(|summary| summary.update_check.as_deref()));
         let follows_nightly =
             active.is_some_and(|i| i.version.is_none() && i.channel == instances::Channel::Nightly);
         Facts {
@@ -430,7 +411,6 @@ impl Launcher {
             install_error: self.install_error.as_ref().map(|(_, e)| e.clone()),
             crash: self.crash.as_ref().map(|c| c.summary.clone()),
             build_gone: self.build_gone(),
-            held: held.map(|h| h.to),
             update: self
                 .updates
                 .sunrise
@@ -457,19 +437,9 @@ impl Launcher {
         match act {
             Act::StopBuild => self.stop_build(),
             Act::Notice { text, way_out } => self.open_notice(text.clone(), *way_out),
-            Act::Resolve => self.open_sheet(Sheet::Resolve),
             Act::Update => {
-                let (Some(release), Some(instance)) =
-                    (self.updates.sunrise.clone(), self.selected_instance())
-                else {
-                    return;
-                };
-                if self.native_state_of(instance) != native_status::State::NoMods {
-                    // Never overwrite a working native build while staging its candidate.
-                    self.instance_install = Some(release.tag.clone());
-                    self.install(&release);
-                } else {
-                    self.install_update();
+                if let Some(release) = &self.updates.sunrise {
+                    self.open_update_picker(release.tag.clone());
                 }
             }
         }

@@ -1,6 +1,6 @@
 //! Whether an instance plays its native mods (docs/modding/src/how-to/native-mods.md): the mods turned on in its
 //! folder against the ones its version was built with (`native-mods.json`, written by
-//! `native_mods::build`). The Mods page shows the answer beside its Build button.
+//! `native_mods::build_exact_client`). The Mods page shows the answer beside its Build button.
 use crate::{backend, browser::mod_list, native_mods};
 use std::fs;
 use std::path::Path;
@@ -64,18 +64,29 @@ pub fn check_permission(version: &str) -> Result<(), String> {
     check_permission_in(version, &backend::data_dir())
 }
 
-fn check_permission_in(version: &str, data: &Path) -> Result<(), String> {
-    if native_mods::is_native(version)
-        && backend::Settings::load_from(data)
-            .native_mods_allowed_at
-            .is_none()
-    {
-        return Err(crate::i18n::tr(
-            "This profile plays a build made with native mods, and native mods are turned off. Choose another game build for it in Versions.",
-        )
-        .into());
+pub(crate) fn publication_guard(
+    version: &str,
+    grant: Option<backend::NativeGrant>,
+) -> Result<Option<crate::local_json::LockedJson>, String> {
+    match grant {
+        Some(grant) => Ok(Some(grant.hold()?)),
+        None => game_grant(version, &backend::data_dir())?
+            .map(backend::NativeGrant::hold)
+            .transpose(),
     }
-    Ok(())
+}
+
+fn check_permission_in(version: &str, data: &Path) -> Result<(), String> {
+    game_grant(version, data).map(drop)
+}
+
+fn game_grant(version: &str, data: &Path) -> Result<Option<backend::NativeGrant>, String> {
+    if !native_mods::is_native(version) {
+        return Ok(None);
+    }
+    backend::Settings::native_grant_from(data)?.map(Some).ok_or_else(|| crate::i18n::tr(
+        "Native mods need permission before this profile can play. Allow native code in Settings or choose a different game build.",
+    ).into())
 }
 
 /// A `.smod`'s digest as a build records it: its files without the uses table, which the
@@ -408,14 +419,28 @@ fn parse_included(record: serde_json::Value) -> Option<Vec<Included>> {
     Some(mods)
 }
 
-/// Only linked mods need to match; skipped entries do not run. Compare the exact enabled
-/// version and source digest, not just the package id. A plain build has nothing to check.
+/// Verify the actual enabled native archives, including the bytes omitted by a damaged source.
+pub(crate) fn exact_enabled(home: &Path) -> Result<Vec<Mod>, String> {
+    let mut mods = Vec::new();
+    native_mods::native_inputs(home, |bundle| {
+        let digest = archive_digest(
+            bundle
+                .files
+                .iter()
+                .map(|(name, bytes)| (name.as_str(), bytes.as_slice())),
+        );
+        mods.push((bundle.manifest.id, bundle.manifest.version, Some(digest)));
+        Ok(())
+    })?;
+    Ok(mods)
+}
+
 pub(crate) fn check_compiled_profile(included: &[Included], home: &Path) -> Result<(), String> {
-    if !included.is_empty() && !compiled_match(included, &enabled(home)) {
+    let enabled = exact_enabled(home)?;
+    if included.len() != enabled.len() || !compiled_match(included, &enabled) {
         return Err(crate::i18n::tr(
             "This build includes native mods that don't match this profile. Rebuild the mods or choose another game build.",
-        )
-        .into());
+        ).into());
     }
     Ok(())
 }
@@ -1017,5 +1042,12 @@ mod tests {
         assert!(s.native_mods_allowed_at.is_none());
         let saved = serde_json::to_string(&s).unwrap();
         assert!(!saved.contains("native_mods"), "{saved}");
+    }
+
+    #[test]
+    fn settings_saved_with_the_removed_update_switch_still_read_and_drop_it() {
+        let s: backend::Settings = serde_json::from_str(r#"{"mods_auto_update": false}"#).unwrap();
+        let saved = serde_json::to_string(&s).unwrap();
+        assert!(!saved.contains("mods_auto_update"), "{saved}");
     }
 }

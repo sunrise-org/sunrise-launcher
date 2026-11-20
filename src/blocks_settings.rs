@@ -6,15 +6,7 @@ impl Launcher {
     pub(crate) fn cancel_native_consent(&mut self) {
         self.play_after_build = None;
         self.native_consent_build = None;
-        if let Err(error) = native_consent::resolve(
-            &mut self.pending_consent,
-            false,
-            true,
-            &mut self.settings,
-            &self.mods.home(),
-        ) {
-            self.mods.message = Some(Err(error));
-        }
+        self.pending_consent = None;
         self.consent_error = None;
         self.instance_mods_changed();
     }

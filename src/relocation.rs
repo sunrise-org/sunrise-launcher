@@ -156,6 +156,23 @@ fn ensure_idle(source: &Roots) -> Result<(), String> {
     Ok(())
 }
 
+/// With the exclusive location lock held, settle dead profile transactions before copying any
+/// bytes. Live inherited claims still refuse admission even if no launcher window remains.
+pub(crate) fn admit_idle_profiles(source: &Roots) -> Result<(), String> {
+    let homes = crate::instances::profile_homes_strict(&source.game)?;
+    for home in std::iter::once(source.game.clone()).chain(homes) {
+        match fs::symlink_metadata(&home) {
+            Ok(meta) if meta.is_dir() && !sunrise_launcher_smod::runtime_leases::linked(&meta) => {
+                drop(crate::browser::sunrise::txn::Lease::admit(&home)?);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Ok(_) => return Err(format!("{}: not a profile directory", home.display())),
+            Err(e) => return Err(format!("{}: {e}", home.display())),
+        }
+    }
+    Ok(())
+}
+
 /// Handled before normal startup, so this process owns no shared data-location lease.
 pub fn run_worker() -> Option<i32> {
     let mut args = std::env::args_os().skip(1);

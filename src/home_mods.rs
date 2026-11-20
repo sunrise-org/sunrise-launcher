@@ -201,6 +201,8 @@ pub(crate) fn column(items: Vec<Item>) -> Option<Column> {
 /// never called while drawing.
 pub(crate) fn read(home: &Path) -> Vec<Item> {
     let image = |png: Vec<u8>| Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, png));
+    let waiting = sunrise::txn::waiting_for_update(home);
+    let enabled = |id: &str| !waiting.contains_key(id) && mod_list::is_enabled(home, id);
     let mut mods: Vec<Item> = installed::Installed::load(home)
         .entries
         .iter()
@@ -216,7 +218,7 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
                 kind: Kind::Mod,
                 picture: Picture::Project(e.project.clone()),
                 open: Open::Project(e.project.clone()),
-                on: mod_list::is_enabled(home, id),
+                on: enabled(id),
                 mod_version: Some(e.number.clone()),
             })
         })
@@ -227,7 +229,7 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
         .chain(native_status::untracked_content(home));
     mods.extend(by_hand.map(|file| {
         Item {
-            on: mod_list::is_enabled(home, &file.id),
+            on: enabled(&file.id),
             mod_version: Some(file.version),
             name: file.name,
             kind: Kind::Mod,
@@ -285,7 +287,6 @@ struct Query {
 #[derive(Default)]
 pub(crate) struct LaunchSummary {
     pub(crate) mods_off: usize,
-    pub(crate) update_check: Option<String>,
 }
 
 #[derive(Default)]
@@ -300,11 +301,12 @@ fn stamp(query: &Query) -> String {
         std::fs::metadata(backend::version_dir(version).join("native-mods.json")).ok()
     });
     format!(
-        "{}\n{}\n{}\n{:?}",
+        "{}\n{}\n{}\n{:?}\n{:?}",
         native_status::fingerprint(home, query.version.as_deref()),
         packs::stamp(home),
         native_mods::kept_stamp(home),
         build.map(|m| (m.len(), m.modified().ok())),
+        sunrise::txn::active_stamp(home),
     )
 }
 
@@ -318,12 +320,6 @@ fn read_changed(query: &Query, known: &str) -> Option<(String, Snapshot)> {
         .version
         .as_deref()
         .and_then(native_status::Build::read);
-    let update_check = build
-        .as_ref()
-        .zip(query.newest.as_deref())
-        .filter(|(build, next)| backend::compare_versions(next, &build.base).is_gt())
-        .filter(|_| !native_status::enabled(&query.home).is_empty())
-        .map(|(_, next)| crate::sheets::check_key(&query.home, next));
     let left_out = match build {
         Some(build) => build.left_out,
         None => query.version.as_deref().map_or_else(Vec::new, |version| {
@@ -348,10 +344,7 @@ fn read_changed(query: &Query, known: &str) -> Option<(String, Snapshot)> {
         stamp,
         Snapshot {
             column: column(items),
-            launch: LaunchSummary {
-                mods_off,
-                update_check,
-            },
+            launch: LaunchSummary { mods_off },
         },
     ))
 }
@@ -952,6 +945,43 @@ mod tests {
         assert_eq!(column.off, [1, 1, 0]);
         assert_eq!(snapshot.launch.mods_off, 0);
         std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn a_mod_waiting_for_its_author_is_only_in_the_turned_off_count() {
+        let home = profile("switch-waiting");
+        let file = home.join("sunrise-native-mods/lanternlight.smod");
+        let mut query = query(&home);
+        query.version = Some("test-waiting-base".into());
+        // Switch keeps the package and writes the off bit in the same commit. Even an old
+        // omission for these exact bytes must not count as an active mod left out.
+        std::fs::write(home.join("native-left-out.json"), r#"{"base":"test-waiting-base","left_out":[{"id":"lanternlight","version":"1.0.0","why":"no fit"}]}"#).unwrap();
+        let artifact = serde_json::json!({"tag":"test-waiting-base", "executable":vec![1;32], "runtime":vec![0;32]});
+        let digest: [u8; 32] = <sha2::Sha256 as sha2::Digest>::digest(b"placeholder").into();
+        let pointer = serde_json::json!({"version":1,"profile":vec![1;16],"generation":2,"base":artifact,"executable":artifact,"resources":{"primary":vec![0;32],"accelerator":null},"inputs":vec![1;32],"receipts":[],"waiting":{
+            "lanternlight":{"file":"sunrise-native-mods/lanternlight.smod","digest":digest,"reason":"no fit","was_on":true}
+        }});
+        std::fs::create_dir_all(home.join("mod-browser")).unwrap();
+        std::fs::write(
+            home.join("mod-browser/active-build.json"),
+            pointer.to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            sunrise::txn::waiting_for_update(&home)["lanternlight"].reason,
+            "no fit"
+        );
+        for selection in ["mod.lanternlight:false\n", "mod.lanternlight:true\n"] {
+            // Even a stale game-written on flag must not show a waiting mod as active.
+            std::fs::write(home.join("sunrise-mods.txt"), selection).unwrap();
+            let (_, snapshot) = read_changed(&query, "").unwrap();
+            let column = snapshot.column.unwrap();
+            assert_eq!(names(&column), ["Soft Edges.zip"]);
+            assert_eq!(column.off, [1, 0, 0]);
+            assert_eq!(snapshot.launch.mods_off, 0);
+        }
+        assert_eq!(std::fs::read(file).unwrap(), b"placeholder");
+        std::fs::remove_dir_all(home).unwrap();
     }
 
     #[test]

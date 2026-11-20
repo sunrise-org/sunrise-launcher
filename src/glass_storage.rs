@@ -2,7 +2,6 @@
 use super::*;
 
 use storage::Category;
-use sunrise_launcher::browser;
 
 impl Launcher {
     pub(super) fn refresh_storage(&mut self, clear: Option<Category>, all: bool) {
@@ -32,78 +31,17 @@ impl Launcher {
         }
     }
 
-    /// Counts the switched-on native mods and the instances holding them, on a worker, then
-    /// asks before Turn off.
-    pub(crate) fn storage_count_native(&mut self, cx: &mut Context<Self>) {
-        let visit = self.storage_visit;
-        self.storage_counting = Some(visit);
-        self.storage_revoke_error = None;
-        let task = cx.background_executor().spawn(async move {
-            let counts: Vec<usize> = instances::list()
-                .iter()
-                .map(|i| native_status::enabled(&i.home).len())
-                .filter(|n| *n > 0)
-                .collect();
-            (counts.iter().sum::<usize>(), counts.len())
-        });
-        cx.spawn(async move |this, cx| {
-            let counted = task.await;
-            let _ = this.update(cx, |this, cx| {
-                // A count from a visit the player has left asks nothing.
-                if this.storage_counting == Some(visit) {
-                    this.storage_counting = None;
-                    this.storage_revoke = Some(counted);
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
-        cx.notify();
-    }
-
-    /// Takes the permission back (saved first: nothing changes if it can't be), then switches
-    /// every native mod off, on a worker; a build card still open is cleared, so its buttons ask
-    /// again rather than fail.
-    pub(crate) fn turn_off_native_mods(&mut self, cx: &mut Context<Self>) {
-        self.storage_revoke = None;
-        if let Err(error) = self.settings.revoke_native_mods() {
-            self.storage_revoke_error = Some(error);
-            cx.notify();
-            return;
-        }
-        self.native_error = None;
-        self.native_worlds = None;
-        self.native_failed_mods.clear();
-        let task = cx.background_executor().spawn(async move {
-            let mut failure = None;
-            for instance in instances::list() {
-                for (id, _, _) in native_status::enabled(&instance.home) {
-                    if let Err(error) = browser::mod_list::set_enabled(&instance.home, &id, false) {
-                        failure.get_or_insert((id, instance.name.clone(), error));
-                    }
-                }
+    /// Take back permission without changing any profile's installed files or enable bits.
+    pub(crate) fn revoke_native_mods(&mut self, cx: &mut Context<Self>) {
+        self.storage_revoke = false;
+        match self.settings.revoke_native_mods() {
+            Ok(()) => {
+                self.storage_revoke_error = None;
+                self.native_error = None;
+                self.native_failed_mods.clear();
             }
-            failure
-        });
-        cx.spawn(async move |this, cx| {
-            let failure = task.await;
-            let _ = this.update(cx, |this, cx| {
-                this.storage_revoke_error = failure.map(|(id, instance, error)| {
-                    trf(
-                        "The permission is off, but {mod} in {instance} couldn't be switched off \
-                         ({error}). Switch it off in {instance}'s Installed mods.",
-                        &[
-                            ("mod", &id),
-                            ("instance", &instance),
-                            ("error", error.trim_end_matches('.')),
-                        ],
-                    )
-                });
-                this.instance_mods_changed();
-                cx.notify();
-            });
-        })
-        .detach();
+            Err(error) => self.storage_revoke_error = Some(error),
+        }
         cx.notify();
     }
 }

@@ -385,6 +385,21 @@ fn delete_unit(path: &Path, idle: bool, after_classification: impl FnOnce()) -> 
             access => access.check()?,
         }
         after_classification();
+        // Selection can be older than an admission, copy or switch. Recheck under the
+        // same publication lock, at the point of invalidation, for both eviction and Remove.
+        let versions = crate::backend::version_dir("");
+        let referenced = path
+            .strip_prefix(&versions)
+            .ok()
+            .and_then(|rel| rel.components().next())
+            .is_some_and(|part| {
+                part.as_os_str()
+                    .to_str()
+                    .is_none_or(|tag| crate::browser::sunrise::txn::references(tag).unwrap_or(true))
+            });
+        if referenced {
+            return Err(Error::IncompleteUnit);
+        }
         if is_directory && contains_operational_locks(directory)? {
             return Err(Error::IncompleteUnit);
         }

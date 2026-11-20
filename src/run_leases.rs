@@ -190,10 +190,14 @@ pub(crate) fn snapshot(command: &mut Command) {
 }
 
 /// Unix holder owns the wrapped program; Windows retains its existing launch path.
-pub(crate) fn spawn(command: &mut Command, piped: bool) -> std::io::Result<std::process::Child> {
+pub(crate) fn spawn(
+    command: &mut Command,
+    piped: bool,
+    profile: Option<&crate::browser::sunrise::txn::Lease>,
+) -> std::io::Result<crate::process::child::Child> {
     // Older game versions still read this credential handoff; never let it reach them.
     command.env_remove("SUNRISE_ACCOUNT_SESSIONS");
-    spawn_inner(command, piped).map_err(|error| {
+    spawn_inner(command, piped, profile).map_err(|error| {
         match write_launch_failure(&crate::backend::data_dir().join("logs"), command, &error) {
             Ok(path) => std::io::Error::new(
                 error.kind(),
@@ -303,9 +307,11 @@ fn record_launch_path(file: &mut fs::File, role: &str, path: &Path) -> std::io::
     }
 }
 
-fn spawn_inner(command: &mut Command, piped: bool) -> std::io::Result<std::process::Child> {
-    #[cfg(not(unix))]
-    let _ = piped;
+fn spawn_inner(
+    command: &mut Command,
+    piped: bool,
+    profile: Option<&crate::browser::sunrise::txn::Lease>,
+) -> std::io::Result<crate::process::child::Child> {
     #[cfg(unix)]
     {
         use sunrise_launcher_smod::{holder, selection::LaunchArguments};
@@ -375,13 +381,16 @@ fn spawn_inner(command: &mut Command, piped: bool) -> std::io::Result<std::proce
                     use std::os::unix::process::CommandExt;
                     holder_command.process_group(0);
                 }
+                if let Some(lease) = profile {
+                    lease.inherit(&mut holder_command)?;
+                }
                 return match holder::launch(
                     holder_command,
                     &marker,
                     &prepared,
                     std::time::Instant::now() + std::time::Duration::from_secs(10),
                 )? {
-                    holder::Started::Holder { child } => Ok(child),
+                    holder::Started::Holder { child } => Ok(child.into()),
                     holder::Started::Legacy(mut legacy) => {
                         if piped {
                             legacy
@@ -391,14 +400,23 @@ fn spawn_inner(command: &mut Command, piped: bool) -> std::io::Result<std::proce
                             use std::os::unix::process::CommandExt;
                             legacy.process_group(0);
                         }
-                        spawn_program(&mut legacy)
+                        if let Some(lease) = profile {
+                            lease.inherit(&mut legacy)?;
+                        }
+                        spawn_program(&mut legacy).map(Into::into)
                     }
                 };
             }
         }
     }
     command.env_remove(GAME);
-    spawn_program(command)
+    if let Some(lease) = profile {
+        #[cfg(windows)]
+        return crate::process::leases::spawn_profile(command, lease, piped);
+        #[cfg(unix)]
+        lease.inherit(command)?;
+    }
+    spawn_program(command).map(Into::into)
 }
 
 fn spawn_program(command: &mut Command) -> std::io::Result<std::process::Child> {
@@ -456,6 +474,17 @@ pub(crate) fn publish(path: &Path) -> Result<(), Error> {
         let directory = Dir::open_ambient_dir(&unit, cap_std::ambient_authority())?;
         drop(registry.lock(&directory, LockMode::Shared)?);
     }
+    Ok(())
+}
+
+/// Under the installation publication fence, expose a complete private tree without replacing
+/// anything. Lock keys use the directory identity, which the same-volume rename retains.
+pub(crate) fn publish_build(from: &Path, to: &Path) -> Result<(), Error> {
+    use crate::browser::sunrise::txn::durable;
+    publish(from)?;
+    fs::File::create_new(from.join(".installed"))?;
+    durable::flush_tree(from)?;
+    durable::move_new_directory(from, to)?;
     Ok(())
 }
 

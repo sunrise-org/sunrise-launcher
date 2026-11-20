@@ -302,7 +302,7 @@ impl Launcher {
     }
 
     /// Continue the same accepted Play after a launch step; never recapture the account.
-    pub(super) fn resume_play(&mut self, intent: launcher_play::PlayIntent) {
+    pub(super) fn resume_play(&mut self, mut intent: launcher_play::PlayIntent) {
         if self.client.is_some() || self.launch_busy() {
             return;
         }
@@ -313,44 +313,81 @@ impl Launcher {
         else {
             return;
         };
-        let target = self.profile_target(&instance);
-        let Some(tag) = target.filter(|tag| self.installed.contains(tag)).cloned() else {
-            let release = target.and_then(|tag| self.release_to_install(tag));
-            if let Some(release) = release {
-                self.ui.after_install = Some((intent, release.tag.clone()));
-                self.install(&release);
-            } else {
-                self.client_error = Some(match &self.releases {
+        use sunrise_launcher::browser::sunrise::txn::{Lease, Target};
+        let owner = match intent
+            .owner
+            .take()
+            .map(Ok)
+            .unwrap_or_else(|| Lease::admit(&instance.home).map(std::sync::Arc::new))
+        {
+            Ok(owner) if owner.home() == instance.home => owner,
+            Ok(_) => return,
+            Err(error) => {
+                self.client_error = Some(error);
+                return;
+            }
+        };
+        let target = match owner.play_target(|| {
+            let tag = self
+                .target_version(instance.version.as_ref(), instance.channel)
+                .ok_or_else(|| match &self.releases {
                     Load::Loading => {
                         tr("Checking available builds. Press Play when the list is ready.").into()
                     }
-                    Load::Failed(e) => e.clone(),
+                    Load::Failed(error) => error.clone(),
                     Load::Ready(_) => {
                         tr("No downloadable build matches this profile. Choose a game build.")
                             .into()
                     }
-                });
-                if matches!(self.releases, Load::Failed(_)) {
-                    self.check_updates(UpdateCheck::Startup);
-                }
+                })?;
+            Target::first_play(tag, |base| Ok(self.release_to_install(base)))
+        }) {
+            Ok(target) => target,
+            Err(error) => {
+                self.client_error = Some(error);
+                return;
             }
-            return;
         };
-        if !backend::check_prepared(&tag) {
-            self.play_when_prepared = Some((tag, intent));
-            self.prepare(backend::MinecraftFrom::Install);
+        intent.owner = Some(owner.clone());
+        let base = target.base().to_owned();
+        match owner.needs_bootstrap_download(&target) {
+            Ok(true) => {
+                self.ui.after_install = Some((intent, base));
+                self.install_bootstrap(owner, target);
+                return;
+            }
+            Err(error) => {
+                self.client_error = Some(error);
+                return;
+            }
+            Ok(false) => {}
+        }
+        let fresh = match owner.active_build() {
+            Ok(active) => active.is_none(),
+            Err(error) => {
+                self.client_error = Some(error);
+                return;
+            }
+        };
+        if fresh && !backend::check_prepared(&base) {
+            self.play_when_prepared = Some((base.clone(), intent));
+            self.prepare_tag(base, backend::MinecraftFrom::Install, Some(owner));
             return;
         }
+        let cancellation = native_mods::Cancellation::for_profile(owner.clone());
+        self.native_cancellation = Some(cancellation.clone());
+        self.native_for = Some(instance.id);
         self.native_error = None;
-        if matches!(
-            self.native_state_of(&instance),
-            native_status::State::NotBuilt | native_status::State::Outdated
-        ) {
-            self.play_after_build = Some(intent);
-            self.build_native();
-        } else {
-            self.play(intent);
-        }
+        self.native_step = Some(tr("Starting the build").into());
+        self.play_after_build = Some(intent);
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let result =
+                owner.play_image(&target, instance.native_profile, &cancellation, |step| {
+                    let _ = tx.send(Msg::NativeProgress(step));
+                });
+            let _ = tx.send(Msg::PlayImage(result));
+        });
     }
 
     pub(super) fn launch_busy(&self) -> bool {

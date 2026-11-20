@@ -96,7 +96,6 @@ impl ModsState {
         self.confirm = None;
         self.reviewed_home = None;
         self.menu = None;
-        self.unfit_open = None;
         self.have.set(String::new());
         self.row_filter = model::RowFilter::default();
         self.reveal = None;
@@ -151,9 +150,8 @@ mod tests {
                 index: None,
                 game: "26.3",
                 enabled: &on,
-                unbuilt: &HashSet::new(),
-                native_allowed: true,
                 chosen: &Default::default(),
+                waiting: &Default::default(),
                 local: &local,
             },
         )
@@ -167,8 +165,21 @@ mod tests {
             anchor: Some(1),
             confirm: Some(Confirm::Remove(vec![(
                 "lantern".into(),
-                "lantern".into(),
-                "lantern".into(),
+                Entry {
+                    source: SourceId::Sunrise,
+                    project: "lantern".into(),
+                    slug: "lantern".into(),
+                    title: "Lantern".into(),
+                    kind: sunrise_launcher::browser::Kind::Mod,
+                    version: "1.0.0".into(),
+                    number: "1.0.0".into(),
+                    file: "sunrise-mods/lantern.smod".into(),
+                    checksum: format!("SHA-256:{}", "e".repeat(64)),
+                    page: String::new(),
+                    dependency: false,
+                    verdict: None,
+                },
+                "Lantern".into(),
             )])),
             reviewed_home: Some("/profiles/a".into()),
             row_filter: RowFilter {

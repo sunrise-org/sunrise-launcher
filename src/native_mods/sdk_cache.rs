@@ -634,21 +634,19 @@ pub(super) fn developer_tool(developer_base: bool) -> Option<PathBuf> {
 pub(super) const DEVELOPER_SDK: &str = "SUNRISE_LAUNCHER_DEVELOPER_SDK";
 
 /// A developer install's own prebuilt game, the folder `local` ([`DEVELOPER_SDK`]): checked to be
-/// `revision`'s for this computer and `target`, then laid out afresh as its slices by links, so
-/// the developer's folder is never changed. A release's game comes from its SDK instead
+/// `revision`'s for this computer and `target`, then laid out as linked slices in the attempt.
+/// The compiler receives copies of those slices, never the developer's original files.
+/// A release's game comes from its SDK instead
 /// ([`slices`]).
 pub(super) fn developer(
     program: &Path,
     revision: &str,
     target: Target,
     local: &Path,
+    out: &Path,
     cancellation: &super::Cancellation,
 ) -> Result<Package, String> {
     let host = rust_toolchain::host().ok_or_else(|| Refusal::Host.to_string())?;
-    let unit = unit(revision, host.target, side(target));
-    let out = super::root()
-        .join("prebuilt")
-        .join(format!("{unit}.developer"));
     let reply = super::tool::ask(
         crate::process::command(program),
         "native-layout",
@@ -658,17 +656,15 @@ pub(super) fn developer(
         }),
         cancellation,
     )?;
-    let folder = |slice: &str| {
-        reply["package"][slice]
-            .as_str()
-            .map(PathBuf::from)
-            .ok_or_else(|| tr("The native build tool laid out no package.").to_owned())
-    };
-    Ok(Package {
-        runtime: folder("runtime")?,
-        api: folder("api")?,
-        engine: folder("engine")?,
-    })
+    let package = Package::at(out);
+    if reply["package"]
+        != serde_json::json!({
+            "runtime": package.runtime, "api": package.api, "engine": package.engine,
+        })
+    {
+        return Err(tr("The native build tool laid out no package.").into());
+    }
+    Ok(package)
 }
 
 fn side(target: Target) -> Side {

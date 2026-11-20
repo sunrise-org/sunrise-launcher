@@ -39,9 +39,9 @@ impl Launcher {
                     }
                     self.releases = r.map_or_else(Load::Failed, Load::Ready);
                     // Once the list is in (or failed), each instance resolves to the build it plays.
-                    if !self.mods.auto_updated {
-                        self.mods.auto_updated = true;
-                        self.mods_auto_update();
+                    if !self.mods.recovered {
+                        self.mods.recovered = true;
+                        self.mods_recover();
                     }
                 }
                 Msg::Links(links) => self.links = links,
@@ -102,6 +102,7 @@ impl Launcher {
                 Msg::JarClient {
                     run,
                     account: accepted,
+                    profile_owner,
                     session_file,
                     registry_notices,
                     prepared,
@@ -126,7 +127,7 @@ impl Launcher {
                         }
                         native_status::check_permission(&tag)?;
                         self.client_home = cmd.get_current_dir().map(|d| d.to_path_buf());
-                        backend::spawn(Job::Client, cmd, self.tx.clone())
+                        backend::spawn(Job::Client, cmd, self.tx.clone(), Some(&profile_owner))
                     });
                     match started {
                         Ok(r) => {
@@ -155,6 +156,7 @@ impl Launcher {
                     self.installed = backend::installed();
                     let as_update = self.update_install.take().filter(|t| *t == tag);
                     let for_instance = self.instance_install.take_if(|t| *t == tag).is_some();
+                    let cache_only = self.switch_cache_download_finished(&tag);
                     if let (Ok(()), Some(started)) = (&result, self.install_started.take()) {
                         let name = if as_update.is_some() {
                             "launcher.update_ms"
@@ -166,8 +168,8 @@ impl Launcher {
                     let resume = self
                         .ui
                         .after_install
-                        .take()
-                        .filter(|(_, wanted)| result.is_ok() && *wanted == tag);
+                        .take_if(|(_, wanted)| *wanted == tag)
+                        .filter(|_| result.is_ok());
                     match result {
                         Ok(()) => {
                             if as_update.is_some()
@@ -195,23 +197,23 @@ impl Launcher {
                                     &before,
                                 )
                             }) && (!for_instance || self.launcher_version().is_none());
-                            if select {
-                                self.settings.selected = Some(tag.clone());
-                            }
-                            // Pruning reads settings from disk: protect the selection only once
-                            // it has been saved there. A failed save leaves all versions in place.
-                            if self.save_settings() {
-                                let tx = self.tx.clone();
-                                std::thread::spawn(move || {
-                                    let _ = tx.send(Msg::Pruned(backend::prune_old_versions()));
-                                });
+                            if resume.is_none() && !cache_only {
+                                if select {
+                                    self.settings.selected = Some(tag.clone());
+                                }
+                                // Pruning reads settings from disk: protect the selection only once
+                                // it has been saved there. A failed save leaves all versions in place.
+                                if self.save_settings() {
+                                    let tx = self.tx.clone();
+                                    std::thread::spawn(move || {
+                                        let _ = tx.send(Msg::Pruned(backend::prune_old_versions()));
+                                    });
+                                }
                             }
                         }
                         Err(e) => self.install_error = Some((tag, e)),
                     }
-                    if let Some((intent, _)) =
-                        resume.filter(|(_, wanted)| self.selected() == Some(wanted))
-                    {
+                    if let Some((intent, _)) = resume {
                         self.resume_play(intent);
                     }
                     if let Some(next) = self.install_next.take() {
@@ -292,53 +294,50 @@ impl Launcher {
                         run.step(&step);
                     }
                 }
+                Msg::PlayImage(result) => {
+                    self.native_cancellation = None;
+                    self.native_step = None;
+                    self.native_progress = None;
+                    let wanted = self.play_after_build.take();
+                    match result {
+                        Ok(tag) => {
+                            self.installed = backend::installed();
+                            self.reload_instances();
+                            if let Some(intent) = wanted.filter(|intent| {
+                                self.selected_instance()
+                                    .is_some_and(|instance| instance.id == intent.instance)
+                            }) {
+                                self.play(intent, tag);
+                            }
+                        }
+                        Err(error) => self.client_error = Some(error),
+                    }
+                }
                 Msg::Native(result) => {
                     self.native_cancellation = None;
                     self.native_step = None;
                     self.native_progress = None;
                     self.first_build = None;
-                    // Build and play: the game starts once the build worked, and only for the
-                    // instance it was pressed for, still on the build just made (another may
-                    // have been picked, or its version changed, meanwhile).
-                    let wanted = self.play_after_build.take();
                     let cancelled = matches!(&result, Err(native_mods::Failed::Other(error)) if error == native_mods::CANCELLED);
                     self.installed = backend::installed();
                     self.reload_instances();
-                    // No permission: the question is the answer, not the refusal's words.
-                    let no_consent = matches!(result, Err(native_mods::Failed::NoConsent));
-                    if no_consent {
-                        self.request_native_build_consent();
-                    }
-                    if let (Err(e), false) = (&result, cancelled || no_consent) {
-                        if let native_mods::Failed::Worlds(stake) = e {
-                            if let Some(run) = &mut self.ui.mods.build {
-                                run.at_stake(&stake.mods, &stake.unbuilt);
-                            }
-                            self.keep_stop(stake);
+                    let built = std::mem::take(&mut self.native_built_mods);
+                    if let (Err(error), false) = (&result, cancelled) {
+                        self.native_failed(error.to_string(), &built);
+                        if let native_mods::Failed::Mods { left, .. } = error {
+                            self.native_failed_mods =
+                                left.iter().map(|left| left.id.clone()).collect();
                         }
-                        // Read against the mods this build was given, not the instance now
-                        // selected.
-                        let built = std::mem::take(&mut self.native_built_mods);
-                        self.native_failed(e.to_string(), &built);
                     }
-                    // The build window's build ends as the build did. With its window closed,
-                    // the strip says how it went for a moment.
                     let shown = self.ui.sheet == Some(crate::sheets::Sheet::ModBuild);
-                    if no_consent {
-                        self.ui.mods.build = None;
-                    } else if let Some(run) = &mut self.ui.mods.build {
-                        match (result.is_ok(), cancelled, &self.native_error) {
-                            (true, ..) => run.done(),
-                            (false, true, _) => run.cancelled(),
-                            (false, false, error) => run.stopped(
-                                error.clone().unwrap_or_default(),
+                    if let Some(run) = &mut self.ui.mods.build {
+                        match (&result, cancelled) {
+                            (Ok(_), _) => run.done(),
+                            (Err(_), true) => run.cancelled(),
+                            (Err(_), false) => run.stopped(
+                                self.native_error.clone().unwrap_or_default(),
                                 &self.native_failed_mods,
                             ),
-                        }
-                        if let Err(native_mods::Failed::Mods { left, .. }) = &result {
-                            for reason in left {
-                                run.mark_left_out(reason);
-                            }
                         }
                         if !shown {
                             run.said_at = Some(Instant::now());
@@ -347,20 +346,6 @@ impl Launcher {
                                 crate::wake::wake();
                             });
                         }
-                    }
-                    // The build the instance plays now: its own, or its channel's when every mod
-                    // was left out and it follows one.
-                    let plays = self
-                        .selected_instance()
-                        .map(|i| (i.id.as_str(), self.version_of(i).map(String::as_str)));
-                    if let Some(play) =
-                        crate::mods::build_run::play_on_finish(wanted, &result, plays)
-                    {
-                        // The game is what the player asked for: its window gets out of the way.
-                        if shown {
-                            self.close_sheet();
-                        }
-                        self.play(play);
                     }
                 }
                 Msg::LauncherProgress(p) => {
@@ -409,10 +394,7 @@ impl Launcher {
                             self.preparing = false;
                             // Play pressed before the version was prepared plays now.
                             if let Some((tag, intent)) = self.play_when_prepared.take() {
-                                if error.is_none()
-                                    && self.selected() == Some(&tag)
-                                    && backend::check_prepared(&tag)
-                                {
+                                if error.is_none() && backend::check_prepared(&tag) {
                                     self.resume_play(intent);
                                 }
                             }

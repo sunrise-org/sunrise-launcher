@@ -3,6 +3,22 @@ use super::*;
 
 /// [`client`], playing as `who` for this launch only (`play --account`).
 pub fn client_as(tag: &str, who: Option<&str>) -> Result<Command, String> {
+    client_with(tag, who, None)
+}
+
+pub fn managed_client_as(
+    tag: &str,
+    who: Option<&str>,
+    owner: &crate::browser::sunrise::txn::Lease,
+) -> Result<Command, String> {
+    client_with(tag, who, Some(owner))
+}
+
+fn client_with(
+    tag: &str,
+    who: Option<&str>,
+    owner: Option<&crate::browser::sunrise::txn::Lease>,
+) -> Result<Command, String> {
     if let Some(error) = game_architecture_launch_error(tag) {
         return Err(error);
     }
@@ -23,13 +39,16 @@ pub fn client_as(tag: &str, who: Option<&str>) -> Result<Command, String> {
             Some(who) => account::session_for_game_as(&game_home(), who).map_err(hint),
         }?)
     };
-    if let Err(e) = need_prepared(tag) {
-        account::discard_unread_sessions();
-        return Err(e);
+    let mut cmd = if let Some(owner) = owner {
+        managed_client_command(tag, owner)
+    } else {
+        need_prepared(tag).map(|()| {
+            play_step("checking the game's assets");
+            complete_assets(tag);
+            client_command(tag)
+        })
     }
-    play_step("checking the game's assets");
-    complete_assets(tag);
-    let mut cmd = client_command(tag);
+    .inspect_err(|_| account::discard_unread_sessions())?;
     if let Some(session) = session {
         if let Some(e) = session.apply(&mut cmd) {
             eprintln!(

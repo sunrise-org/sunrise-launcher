@@ -26,6 +26,12 @@ pub fn is_enabled(home: &Path, id: &str) -> bool {
         .any(|(k, v)| k.trim() == key && v.trim() == "true")
 }
 
+/// Whether the saved list, which can be read, says mod `id` is off: a list that can't be read
+/// says nothing, and a change to it is left to fail where it is made.
+pub fn is_off(home: &Path, id: &str) -> bool {
+    home.join(MODS_LIST).is_file() && !is_enabled(home, id)
+}
+
 /// Turns mod `id` on (or off) in `sunrise-mods.txt`, keeping the other lines.
 pub fn set_enabled(home: &Path, id: &str, on: bool) -> Result<(), String> {
     set_all_enabled(home, &[id], on)
@@ -35,23 +41,31 @@ pub fn set_enabled(home: &Path, id: &str, on: bool) -> Result<(), String> {
 /// of them change or, when the write fails, none do.
 pub fn set_all_enabled(home: &Path, ids: &[&str], on: bool) -> Result<(), String> {
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
+    if on {
+        super::sunrise::txn::require_current_update(home, ids)?;
+    }
     let path = home.join(MODS_LIST);
-    let text = fs::read_to_string(&path).unwrap_or_default();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(format!("{}: {error}", path.display())),
+    };
     let keys: Vec<String> = ids.iter().map(|id| format!("mod.{id}")).collect();
-    let mut lines: Vec<String> = text
-        .lines()
+    let mut out: String = text
+        .split_inclusive('\n')
         .filter(|l| {
             l.split_once(':')
                 .is_none_or(|(k, _)| !keys.iter().any(|key| k.trim() == key))
         })
-        .map(str::to_owned)
         .collect();
-    if on {
-        lines.extend(keys.iter().map(|key| format!("{key}:true")));
-    }
-    let mut out = lines.join("\n");
-    if !out.is_empty() {
-        out.push('\n');
+    if on && !keys.is_empty() {
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        for key in keys {
+            out.push_str(&key);
+            out.push_str(":true\n");
+        }
     }
     fs::write(&path, out).map_err(|e| format!("{}: {e}", path.display()))
 }

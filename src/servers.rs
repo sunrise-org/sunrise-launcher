@@ -361,14 +361,24 @@ fn supervisor_command(
     args: &[&str],
     resources: Option<&Path>,
 ) -> Result<Command, String> {
+    let dir = backend::server_root(dir)?;
+    if args
+        .iter()
+        .any(|arg| *arg == "--dir" || arg.starts_with("--dir="))
+    {
+        return Err(tr("The server command cannot change its server folder.").into());
+    }
     let program = program().ok_or(
         "The server programs aren't set up yet: create a server, or press Prepare on its page.",
     )?;
     if matches!(args.first(), Some(&"start" | &"restart" | &"run")) {
-        publish_host_runtime(dir, resources)?;
+        publish_host_runtime(&dir, resources)?;
     }
     let mut cmd = crate::process::command(program);
-    cmd.arg("--dir").arg(dir).args(args);
+    cmd.arg("--dir")
+        .arg(&dir)
+        .args(args)
+        .env("SUNRISE_HOME", &dir);
     Ok(cmd)
 }
 

@@ -2,7 +2,7 @@
 
 <!-- Generated from launcher/src/cli.rs by cli_tools::markdown(); a test fails when this file is out of date. Update it with: SUNRISE_WRITE_DOCS=1 cargo test --manifest-path launcher/Cargo.toml the_launcher_reference -->
 
-Every command of `sunrise-launcher`, and the tool `sunrise-launcher mcp` offers for it. A tool's arguments are the command's, in snake_case. A tool runs the command with `--json` and returns what it printed. The tools that change the player's things for good need `confirm: true`. The tools that send something or reach other people say "only when the player asks". The game's own tools, `game_*`, are in [sunrise-ctl-commands.md](https://github.com/sunrise-org/sunrise/blob/main/docs/sunrise-ctl-commands.md). For unsigned developer installations only, `SUNRISE_LAUNCHER_DEVELOPER_OFFLINE=1` enables account-free Play. Only the exact value `1` enables it. The installed base must have persisted developer provenance, and the selected game must advertise `--developer-single-player` through `--launch-api`; older games must be rebuilt and reinstalled. Signed releases, Nightlies and their native descendants keep the account check. This mode supplies no session, blocks normal external connections and LAN hosting, and preserves managed launch leases, instance settings and unsigned labels. It is not a sandbox for native mods. If direct execution reports unregistered cache directories, use Sunrise Launcher Play from the same launcher data directory with the intended instance and installed version (`sunrise-launcher play --instance <instance> --version <tag>`).
+Every command of `sunrise-launcher`, and the tool `sunrise-launcher mcp` offers for it. A tool's arguments are the command's, in snake_case. A tool runs the command with `--json` and returns what it printed. The tools that change the player's things for good need `confirm: true`. The tools that send something or reach other people say "only when the player asks". The game's own tools, `game_*`, are in [sunrise-ctl-commands.md](https://github.com/sunrise-org/sunrise/blob/main/docs/sunrise-ctl-commands.md). For unsigned developer installations only, `SUNRISE_LAUNCHER_DEVELOPER_OFFLINE=1` enables account-free Play. Only the exact value `1` enables it. The installed base must have persisted developer provenance, and the selected game must advertise `--developer-single-player` through `--launch-api`; older games must be rebuilt and reinstalled. Signed releases, Nightlies and their native descendants keep the account check. This mode supplies no session, blocks normal external connections and LAN hosting, and preserves managed launch leases, instance settings and unsigned labels. It is not a sandbox for native mods. If direct execution reports unregistered cache directories, use Sunrise Launcher Play from the same launcher data directory with the intended profile (`sunrise-launcher play --instance <instance>`). For a different installed and prepared build, use `sunrise-launcher switch <tag> --profile <instance>` first.
 
 With No AI on, `mcp` is hidden and refuses; every other command stays. See [agent-control.md](https://github.com/sunrise-org/sunrise/blob/main/docs/agent-control.md#no-ai).
 
@@ -96,7 +96,6 @@ Start the client (needs a signed-in Microsoft account that owns Minecraft: Java 
     sunrise-launcher play
 
 - `--allow-jar-downloads`: Allow missing original Java asset/data jars to be downloaded from Modrinth
-- `--version`: Installed version to play (default: profile version)
 - `--instance`: The profile to play (its name or id; default: the selected one)
 - `--world`: Open or create this world (a folder under saves) at once
 - `--creative`: Creative mode for a new world
@@ -106,6 +105,17 @@ Start the client (needs a signed-in Microsoft account that owns Minecraft: Java 
 - `--account`: Play this launch as this signed-in account (its name or UUID), without changing the one `account select` picked: several games can play as several accounts at once
 
 MCP: `play`, then the `game_*` tools.
+
+## `sunrise-launcher switch`
+
+Switch a profile to an exact installed and prepared game build.
+
+    sunrise-launcher switch <TAG>
+
+- `TAG`: The target build tag
+- `--profile`: The profile to switch (name or id; defaults to the selected profile)
+
+MCP: none: the player's switch.
 
 ## `sunrise-launcher server`
 
@@ -150,15 +160,13 @@ Native mods (docs/modding/src/how-to/native-mods.md): compile flat Rust mod proj
 - `--sync-internals`: Discover internal uses through compiler diagnostics. Prints resolved declarations as JSON for cargo sunrise-mod internals sync; never installs or selects a game
 - `--catalog`
 - `--catalog-output`: Copy discovery catalogs into this caller-owned empty directory
-- `FOLDER`: A mod folder (sunrise-mod.toml with [native], Cargo.toml and src/), or a folder of them (default: the native mods installed and turned on in the profile)
+- `FOLDER`: A source mod folder or a folder of them, for server export or SDK discovery only
 - `--server-output`: Export mode: build a standalone dedicated-server engine into this folder instead of a profile's build. Needs a mod FOLDER; no profile is read or changed, and no launcher config is written
 - `--allow-jar-downloads`: Allow exact-hash jar downloads into the local cache for the server export; jar bytes are never included in the exported folder
 - `--instance`: The profile whose installed native mods to build, and which then plays the build (default: the selected one)
-- `--version`: The installed version whose game files the build reuses, and whose commit it builds on when no mod pins one (default: the one the profile plays, so a rebuild stays on its Sunrise)
-- `--update`: Move to the newest installed release or Nightly instead of the Sunrise the profile plays (rebuilds the mods for that pinned SDK)
+- `--version`: Exact installed base to use for server export or assert for a managed profile. Use Switch to change a profile's base
 - `--trust-native-code`: Allow native code for this install (remembered; revoke in Settings, Storage)
-- `--profile` (optimized): Native mods use the pinned SDK's optimized compilation settings. The game is never rebuilt by a mod build
-- `--leave-out-mods`: When a mod this build can't use was saved into the profile's worlds, build without it anyway: what the mod added to those worlds is lost when they are next opened (back them up in the game first). Without this the build stops and names the worlds, leaving the profile as it is
+- `--profile` (optimized): Override the native build profile for this run. The game is not rebuilt
 
 MCP: none: the player's switch.
 
@@ -406,6 +414,16 @@ The profiles, each with its game folder (* = the one Play starts).
 
 MCP: `instance_list`.
 
+## `sunrise-launcher instance show`
+
+Show a profile's committed game build (defaults to the selected profile).
+
+    sunrise-launcher instance show [PROFILE]
+
+- `PROFILE`
+
+MCP: `instance_show`.
+
 ## `sunrise-launcher instance create`
 
 Make a profile: empty but for your options and name, or a copy of another one's worlds, options and packs.
@@ -469,17 +487,6 @@ Make Play start this profile.
 - `INSTANCE`
 
 MCP: `instance_select`.
-
-## `sunrise-launcher instance version`
-
-Keep a profile on one installed Sunrise version, or "latest" to follow updates again.
-
-    sunrise-launcher instance version <INSTANCE> <VERSION>
-
-- `INSTANCE`
-- `VERSION`
-
-MCP: `instance_version`.
 
 ## `sunrise-launcher instance export`
 
@@ -756,7 +763,6 @@ Play a Sunrise modpack as its own profile.
 
 - `PACK`
 - `--allow-jar-downloads`: Allow missing original Java asset/data jars to be downloaded from Modrinth
-- `--version`
 
 MCP: `modpack_play`.
 

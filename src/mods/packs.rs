@@ -37,7 +37,8 @@ impl Launcher {
         };
         div()
             .id("alt-packs-page")
-            .size_full()
+            .w_full()
+            .flex_1()
             .min_h_0()
             .flex()
             .flex_col()

@@ -59,7 +59,6 @@ fn play_names_the_step_it_is_at_while_the_game_starts() {
     for (step, label) in [
         (None, "Starting…"),
         (Some(backend::PlayStep::Assets), "Checking game files…"),
-        (Some(backend::PlayStep::Mods), "Updating mods…"),
         (Some(backend::PlayStep::SignIn), "Signing in…"),
     ] {
         let view = starting(step).view();
@@ -68,7 +67,7 @@ fn play_names_the_step_it_is_at_while_the_game_starts() {
     }
     // A step left over once the start is over says nothing.
     let done = Facts {
-        step: Some(backend::PlayStep::Mods),
+        step: Some(backend::PlayStep::Assets),
         ..idle()
     };
     assert_eq!(done.view().main, Main::Play);
@@ -145,7 +144,6 @@ fn a_build_under_way_has_stop_and_keeps_its_old_error_quiet() {
     let view = Facts {
         building: true,
         native_error: Some(LONG.into()),
-        held: Some("Nov 17".into()),
         update: Some("Nov 17".into()),
         mods_off: 2,
         ..idle()
@@ -263,46 +261,6 @@ fn problems_win_in_the_order_the_launch_meets_them() {
         next(&mut facts);
     }
     assert_eq!(facts.view().said, None);
-}
-
-#[test]
-fn a_held_update_speaks_for_the_build_and_is_fixed_in_its_sheet() {
-    let held = Facts {
-        native_error: Some(LONG.into()),
-        held: Some("Nov 17".into()),
-        update: Some("Nov 17".into()),
-        ..idle()
-    };
-    let view = held.view();
-    assert_eq!(
-        view.said.as_deref(),
-        Some("The update to Nov 17 is on hold")
-    );
-    assert!(!view.failed);
-    assert_eq!(view.act, Some(Act::Resolve));
-    assert_eq!(Act::Resolve.label(), "Fix…");
-    assert_eq!(
-        view.strip(),
-        Some((
-            "The update to Nov 17 is on hold".into(),
-            StripAct::Act(Act::Resolve)
-        ))
-    );
-    // Nothing is resolved while something runs; another problem is still said first.
-    let busy = Facts {
-        mutating: true,
-        ..held.clone()
-    };
-    assert_eq!(busy.view().act, None);
-    let other = Facts {
-        crash: Some("The game stopped early.".into()),
-        ..held
-    };
-    assert_eq!(
-        other.view().said.as_deref(),
-        Some("The game stopped early.")
-    );
-    assert_eq!(other.view().act, Some(Act::Resolve));
 }
 
 #[test]
@@ -652,4 +610,15 @@ fn the_way_out_is_the_said_problems_own() {
     }
     .view();
     assert_eq!(quiet.act, None);
+}
+
+#[test]
+fn play_is_taken_while_the_mods_change() {
+    let updating = Facts {
+        mutating: true,
+        ..idle()
+    };
+    assert!(updating.busy(), "a second Play waits");
+    assert_eq!(updating.view().main, Main::ChangingMods);
+    assert!(!idle().busy());
 }

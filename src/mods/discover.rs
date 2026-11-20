@@ -1,5 +1,6 @@
 //! Mods › Discover (mock 03): the registry's mods, filtered, sorted, one click to Add.
-use super::model::{self, Make, Sort};
+use super::install_state::{self, InstallState};
+use super::model::{self, Fit, Make, Sort};
 use super::ui::*;
 use super::*;
 use crate::paint::palette;
@@ -22,7 +23,9 @@ impl Launcher {
     ) -> AnyElement {
         let header = self.mods_header(false, focus, window, cx);
         let mut page = div()
-            .size_full()
+            .w_full()
+            .flex_1()
+            .min_h_0()
             .flex()
             .flex_col()
             .gap(px(14.))
@@ -77,8 +80,21 @@ impl Launcher {
             .map(|s| s.entries.iter().map(|e| e.project.clone()).collect())
             .unwrap_or_default();
         let index = sunrise::known_index();
-        let adding = self.mods.busy.as_ref().map(|b| b.0.clone());
-        let native_allowed = self.settings.native_mods_allowed_at.is_some();
+        let game_running = self.game_running();
+        let busy = self.mods.busy.as_ref().map(|b| (b.0.clone(), b.2));
+        let enabled = self
+            .ui
+            .mods
+            .snapshot
+            .as_ref()
+            .map(|s| s.enabled.clone())
+            .unwrap_or_default();
+        let profile = (self.instances.list.len() > 1)
+            .then(|| self.selected_instance().map(|i| i.name.clone()))
+            .flatten();
+        let run = self.ui.mods.build.as_ref().filter(|run| run.running());
+        let build_fraction = run.map_or(0., |run| run.fraction());
+        let tools = run.and_then(|run| run.getting_tools());
 
         // The filters: category and kind as dropdowns, fits my game, and the order.
         let fits = div()
@@ -272,37 +288,97 @@ impl Launcher {
                     .is_some_and(|c| model::collection::installed(c, &cards, &added)),
                 None => added.contains(&id),
             };
-            let working = adding.as_deref() == Some(id.as_str());
-            let note = card_data.fit.reason().filter(|_| !is_added);
-            let control = if is_added {
+            let state = install_state::of(&id, self.mods.waiting(&id), &[], game_running);
+            let stage = install_state::stage(
+                &id,
+                busy.as_ref().map(|(for_id, f)| (for_id.as_str(), *f)),
+                self.native_step.is_some()
+                    && self.native_for.as_deref()
+                        == self.selected_instance().map(|i| i.id.as_str())
+                    && self.native_built_mods.contains(&id),
+                tools,
+                build_fraction,
+            );
+            // An unknown fit says so in the place of Install, not as a note under the card.
+            let note = card_data
+                .fit
+                .reason()
+                .filter(|_| !is_added && card_data.fit != Fit::Unknown);
+            let install_label = match &profile {
+                Some(name) => trf("Install to {profile}", &[("profile", name)]),
+                None => tr("Install").to_string(),
+            };
+            // A control too long for the right of the facts (the build tools' size, the game
+            // running) takes a full-width row under them.
+            let wide = matches!(&stage, Some(install_state::Stage::BuildTools(_)))
+                || state == Some(InstallState::CloseGame);
+            let control = if card_data.members.is_some() && !is_added {
+                let b = crate::frame::button(("alt-add", n), tr("Choose mods"));
+                let id = id.clone();
+                Some(
+                    b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.mods_show_project(id.clone());
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+                )
+            } else if let Some(stage) = &stage {
+                // The install in place: the step in words over a thin bar, nothing else opens.
+                let b = crate::frame::button(("alt-add", n), stage.label())
+                    .relative()
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .bottom_0()
+                            .child(crate::build::progress_bar(stage.fraction())),
+                    );
+                Some(dim(if wide { b.w_full() } else { b }).into_any_element())
+            } else if is_added && !enabled.contains(&id) {
+                let id = id.clone();
+                Some(
+                    crate::frame::button(("alt-turn-on", n), tr("Turn on"))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.turn_on_registry_mod(&id);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                )
+            } else if is_added {
                 Some(added_mark())
+            } else if card_data.fit == Fit::Unknown {
+                Some(muted(tr("Checking…")).into_any_element())
+            } else if state == Some(InstallState::BuildFailed) {
+                Some(muted(tr("Couldn't build on your computer")).into_any_element())
+            } else if card_data.fit == Fit::NeedsNewerSunrise && self.updates.sunrise.is_some() {
+                Some(
+                    crate::frame::button(("alt-card-update", n), tr("Update"))
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.launch_act(&crate::launch_state::Act::Update);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                )
             } else if note.is_some() {
                 None
             } else {
-                let needs_ok = card_data.make == Make::Native && !native_allowed;
-                let label = match (
-                    working,
-                    needs_ok || card_data.builds_locally && card_data.make == Make::Native,
-                ) {
-                    _ if card_data.members.is_some() => tr("Choose mods"),
-                    (true, _) => tr("Installing…"),
-                    (_, true) => tr("Install…"),
-                    _ => tr("Install"),
+                let label = match state {
+                    Some(InstallState::Waiting) => tr("Waiting").to_string(),
+                    Some(InstallState::CloseGame) => tr("Close the game to install").to_string(),
+                    _ => install_label.clone(),
                 };
                 let b = crate::frame::button(("alt-add", n), label);
-                Some(match working {
-                    true => dim(b).into_any_element(),
-                    // A collection's button only opens its page, where the mods are picked.
-                    false if card_data.members.is_some() => {
-                        let id = id.clone();
-                        b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            cx.stop_propagation();
-                            this.mods_show_project(id.clone());
-                            cx.notify();
-                        }))
-                        .into_any_element()
+                let b = if wide { b.w_full() } else { b };
+                Some(match state {
+                    Some(InstallState::Waiting | InstallState::CloseGame) => {
+                        dim(b).into_any_element()
                     }
-                    false => {
+                    _ => {
                         let id = id.clone();
                         let name = card_data.name.clone();
                         b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -314,26 +390,145 @@ impl Launcher {
                     }
                 })
             };
-            let mut facts = match card_data.members {
+            let failed_here = self
+                .mods
+                .card_error
+                .as_ref()
+                .filter(|e| e.id == id && stage.is_none());
+            // What a build that stopped or a mod that didn't compile says, when no install error
+            // is already on the card: its Details opens the same panel.
+            let build_failure = self
+                .native_error
+                .as_ref()
+                .filter(|_| {
+                    failed_here.is_none()
+                        && self.native_for.as_deref()
+                            == self.selected_instance().map(|i| i.id.as_str())
+                        && self.native_failed_mods.contains(&id)
+                })
+                .cloned();
+            // A failed install keeps Install to try again, and a Details beside it.
+            let control = match (failed_here, &build_failure) {
+                (None, Some(line)) => {
+                    let open_id = id.clone();
+                    let line = line.clone();
+                    let title = card_data.name.clone();
+                    Some(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(
+                                crate::frame::button(("alt-card-details", n), tr("Details"))
+                                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                        cx.stop_propagation();
+                                        this.mods.card_error = Some(crate::mods_page::CardError {
+                                            id: open_id.clone(),
+                                            title: title.clone(),
+                                            line: line.clone(),
+                                            details: std::fs::read_to_string(
+                                                sunrise_launcher::native_mods::log_path(),
+                                            )
+                                            .unwrap_or_else(|_| line.clone()),
+                                            built: true,
+                                            open: true,
+                                        });
+                                        cx.notify();
+                                    })),
+                            )
+                            .children(control)
+                            .into_any_element(),
+                    )
+                }
+                (Some(_), _) => Some(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(
+                            crate::frame::button(("alt-card-details", n), tr("Details")).on_click(
+                                cx.listener(|this, _: &ClickEvent, _, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(error) = &mut this.mods.card_error {
+                                        error.open = !error.open;
+                                    }
+                                    cx.notify();
+                                }),
+                            ),
+                        )
+                        .children(control)
+                        .into_any_element(),
+                ),
+                (None, None) => control,
+            };
+            let mut chips = match card_data.members {
                 Some(count) => vec![
                     badge(tr("Collection")),
                     muted(trf("{count} mods", &[("count", &count.to_string())])),
                     muted(model::downloads(card_data.downloads)),
                 ],
-                None => vec![
-                    tag(card_data.make.label()),
-                    muted(model::downloads(card_data.downloads)),
-                ],
+                None => {
+                    let mut chips = vec![tag(card_data.make.label())];
+                    if card_data.unsigned {
+                        chips.push(tag(tr("Unsigned")));
+                    }
+                    chips.push(
+                        muted(model::downloads(card_data.downloads))
+                            .min_w_0()
+                            .truncate(),
+                    );
+                    chips
+                }
             };
+            // The kind, whether it is signed and the downloads sit on one line; everything
+            // else the card says is a line of its own under them.
+            let mut lines: Vec<Div> = Vec::new();
+            if let Some(line) = is_added
+                .then(|| self.mods.also.get(&id))
+                .flatten()
+                .and_then(|names| install_state::also_line(names))
+            {
+                lines.push(muted(line).truncate());
+            }
+            if let Some(line) = is_added
+                .then(|| self.mods.updated.get(&id))
+                .flatten()
+                .and_then(|moves| install_state::updated_line(moves))
+            {
+                lines.push(muted(line).truncate());
+            }
+            if let Some(error) = failed_here {
+                lines.push(
+                    div()
+                        .text_size(px(tokens::SMALL))
+                        .text_color(c(palette().danger))
+                        .child(error.line.clone()),
+                );
+            }
             if card_data.library {
-                facts.insert(1, badge(tr("Library")));
+                chips.insert(1, badge(tr("Library")));
             }
             if let Some(name) = &card_data.part_of {
-                facts.push(muted(trf("Part of {collection}", &[("collection", name)])));
+                lines.push(muted(trf("Part of {collection}", &[("collection", name)])));
             }
             if card_data.builds_locally && card_data.fit.fits() {
-                facts.push(muted(tr("Builds on this computer")));
+                lines.push(muted(tr("Builds on this computer")));
             }
+            let facts = vec![div()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .min_w_0()
+                        .children(chips),
+                )
+                .children(lines)];
             let open = id.clone();
             grid = grid.child(
                 browse_card(
@@ -345,6 +540,7 @@ impl Launcher {
                     &card_data.summary,
                     facts,
                     control,
+                    wide,
                     note,
                 )
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {

@@ -320,7 +320,15 @@ pub fn migrate_current_with_prepare(
             Err(e) => return Err(e),
         }
     };
-    migrate_locked(source, target, &bootstrap, progress, prepare, &lease)
+    migrate_locked(
+        source,
+        target,
+        &bootstrap,
+        progress,
+        crate::relocation::admit_idle_profiles,
+        prepare,
+        &lease,
+    )
 }
 
 pub fn migrate(
@@ -343,7 +351,15 @@ pub fn migrate_with_prepare(
     prepare: impl FnOnce(&Roots, &Roots) -> Result<()>,
 ) -> Result<Roots> {
     let lease = lock_at(bootstrap, true)?;
-    migrate_locked(source, target, bootstrap, progress, prepare, &lease)
+    migrate_locked(
+        source,
+        target,
+        bootstrap,
+        progress,
+        |_| Ok(()),
+        prepare,
+        &lease,
+    )
 }
 
 fn migrate_locked(
@@ -351,6 +367,7 @@ fn migrate_locked(
     target: &Path,
     bootstrap: &Path,
     mut progress: impl FnMut(&str),
+    admit: impl FnOnce(&Roots) -> Result<()>,
     prepare: impl FnOnce(&Roots, &Roots) -> Result<()>,
     _lease: &MigrationLease,
 ) -> Result<Roots> {
@@ -392,6 +409,7 @@ fn migrate_locked(
     }
     let destination = layout(&source, &target);
     tool_safe(&destination.build)?;
+    admit(&source)?;
     fs::create_dir_all(&target).map_err(|e| problem(&target, e))?;
     let stage = target.join(".relocation-staging");
     let staged = layout(&source, &stage);

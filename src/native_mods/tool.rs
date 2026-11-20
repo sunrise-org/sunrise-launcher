@@ -1,5 +1,7 @@
 //! The SDK's native build tool, `cargo sunrise-mod native-build`, run as a process with the launcher's toolchain (docs/modding/src/reference/sdk/08-native-build.md).
+use crate::backend::{NativeGrant, Settings};
 use crate::i18n::{tr, trf};
+use crate::local_json::LockedJson;
 use crate::rust_toolchain::Toolchain;
 use serde::Deserialize;
 use serde_json::Value;
@@ -10,7 +12,7 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 /// The contract this launcher's plans speak.
-const CONTRACT: u32 = 2;
+pub(super) const CONTRACT: u32 = 2;
 
 /// The tool's program in its unpacked SDK slice.
 pub(super) const PROGRAM: &str = if cfg!(windows) {
@@ -21,12 +23,18 @@ pub(super) const PROGRAM: &str = if cfg!(windows) {
 
 /// Cancellation shared by the owner and worker of one build attempt. It is never reset.
 #[derive(Clone, Default)]
-pub struct Cancellation(Arc<Mutex<Attempt>>);
+pub struct Cancellation(
+    Arc<Mutex<Attempt>>,
+    Option<Arc<crate::browser::sunrise::txn::Lease>>,
+);
 
 #[derive(Default)]
 struct Attempt {
     stopped: bool,
     tool: Option<u32>,
+    #[cfg(windows)]
+    job: Option<Arc<crate::process::leases::CompilerJob>>,
+    grant: Option<NativeGrant>,
 }
 
 impl Attempt {
@@ -39,20 +47,55 @@ impl Attempt {
 }
 
 impl Cancellation {
+    pub fn for_profile(lease: Arc<crate::browser::sunrise::txn::Lease>) -> Self {
+        Self(Arc::default(), Some(lease))
+    }
+
     fn state(&self) -> MutexGuard<'_, Attempt> {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    pub(crate) fn admit_native_work(&self) -> Result<(), super::Failed> {
+        let mut state = self.state();
+        state.check()?;
+        if let Some(grant) = state.grant {
+            drop(grant.hold()?);
+        } else {
+            state.grant = Some(Settings::native_grant()?.ok_or(super::Failed::NoConsent)?);
+        }
+        Ok(())
+    }
+
     pub(super) fn check(&self) -> Result<(), String> {
-        self.state().check()
+        let state = self.state();
+        state.check()?;
+        if let Some(grant) = state.grant {
+            drop(grant.hold()?);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn grant(&self) -> Result<Option<NativeGrant>, String> {
+        let state = self.state();
+        state.check()?;
+        Ok(state.grant)
+    }
+
+    pub(crate) fn publication_guard(&self, image: &str) -> Result<Option<LockedJson>, String> {
+        crate::native_status::publication_guard(image, self.grant()?)
     }
 
     /// Stops this attempt and the SDK tool it started, if any.
     pub fn stop(&self) {
         let mut state = self.state();
         state.stopped = true;
+        #[cfg(windows)]
+        if let Some(job) = &state.job {
+            let _ = job.terminate();
+            return;
+        }
         if let Some(pid) = state.tool {
             // SAFETY: this process group was created for this attempt by `start`.
             #[cfg(unix)]
@@ -79,6 +122,7 @@ pub(super) struct Package<'a> {
 /// What a build is for.
 pub(super) struct Plan<'a> {
     pub work: &'a Path,
+    pub workspace: &'a super::workspace::Workspace,
     pub package: Package<'a>,
     /// A folder of exactly the mods to compile.
     pub mods: &'a Path,
@@ -133,9 +177,10 @@ pub enum BlameKind {
 /// What a build made.
 #[derive(Debug, Deserialize)]
 pub(super) struct Built {
-    pub route: String,
+    pub route: CheckRoute,
     pub binary: PathBuf,
     pub libraries: Vec<PathBuf>,
+    pub mods: Vec<String>,
     pub records: Value,
     pub internals: BTreeMap<String, Value>,
 }
@@ -156,12 +201,10 @@ enum Event {
     Built {
         #[serde(flatten)]
         built: Built,
-        used: Vec<PathBuf>,
     },
     Failed {
         error: String,
         blame: Option<Blame>,
-        used: Vec<PathBuf>,
     },
 }
 
@@ -191,10 +234,12 @@ pub(super) fn toolchain(rust: &Toolchain) -> Value {
 
 /// The plan's JSON line.
 fn plan_line(rust: &Toolchain, plan: &Plan<'_>) -> String {
+    let mut tools = toolchain(rust);
+    tools["cargo_home"] = serde_json::json!(plan.workspace.path().join("cargo"));
     serde_json::json!({
         "contract": CONTRACT,
         "work": plan.work,
-        "toolchain": toolchain(rust),
+        "toolchain": tools,
         "package": {"runtime": plan.package.runtime, "api": plan.package.api, "engine": plan.package.engine},
         "mods": plan.mods,
         "target": if plan.server { "server" } else { "client" },
@@ -212,8 +257,10 @@ pub(super) fn build(
     on_mod: &dyn Fn(&str, usize, usize),
     cancellation: &Cancellation,
 ) -> Result<Built, Failure> {
+    let mut command = command(rust, program);
+    plan.workspace.isolate(&mut command).map_err(unrun)?;
     run(
-        command(rust, program),
+        command,
         &plan_line(rust, plan),
         consent,
         on_mod,
@@ -233,15 +280,16 @@ fn run(
         .arg("native-build")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
-    let (mut child, errors) = start(command, cancellation)?;
+    let (mut child, errors) = start(command, cancellation, true)?;
     let result = talk(&mut child, plan, consent, on_mod);
     let status = child.wait();
     let errors = finish(cancellation, errors);
     cancellation.check()?;
     let outcome = match (result, status) {
-        (Ok(Some(done)), _) => done,
-        (Ok(None), Ok(status)) => Err(ended(status.code()).into()),
-        (Err(error), _) | (Ok(None), Err(error)) => Err(unrun(error).into()),
+        (Ok(Some(Ok(built))), Ok(status)) if status.success() => Ok(built),
+        (Ok(Some(Err(failure))), Ok(status)) if status.code() == Some(1) => Err(failure),
+        (Ok(_), Ok(status)) => Err(ended(status.code()).into()),
+        (Err(error), _) | (Ok(_), Err(error)) => Err(unrun(error).into()),
     };
     if outcome.is_err() {
         log_errors(&errors);
@@ -337,29 +385,18 @@ fn talk(
                 let yes = consent.is_some_and(|ask| ask(&question));
                 writeln!(input, "{yes}")?;
             }
-            Event::Built { built, used } => {
-                mark_used(&used);
-                return Ok(Some(Ok(built)));
-            }
-            Event::Failed { error, blame, used } => {
-                mark_used(&used);
-                return Ok(Some(Err(Failure { error, blame })));
-            }
+            Event::Built { built } => return Ok(Some(Ok(built))),
+            Event::Failed { error, blame } => return Ok(Some(Err(Failure { error, blame }))),
         }
     }
     Ok(None)
-}
-
-fn mark_used(paths: &[PathBuf]) {
-    for path in paths {
-        let _ = crate::storage::mark_used(path);
-    }
 }
 
 /// Starts the tool in its own process group, tracked until it exits, with its stderr read into a capped tail.
 fn start(
     mut command: std::process::Command,
     cancellation: &Cancellation,
+    _compiler: bool,
 ) -> Result<
     (
         crate::process::owned::Owned,
@@ -373,8 +410,27 @@ fn start(
     // Stop either prevents the spawn or sees the PID. It cannot fall between them.
     let mut state = cancellation.state();
     state.check()?;
-    let mut child = crate::process::owned::Owned::spawn(&mut command).map_err(unrun)?;
+    // The settings lock is held through the OS handoff, not while the SDK runs or asks.
+    let permission = state.grant.map(NativeGrant::hold).transpose()?;
+    let spawn = |command: &mut std::process::Command| match &cancellation.1 {
+        Some(lease) => crate::process::owned::Owned::spawn_profile(command, lease),
+        None => crate::process::owned::Owned::spawn(command),
+    };
+    #[cfg(unix)]
+    let mut child = spawn(&mut command).map_err(unrun)?;
+    #[cfg(windows)]
+    let mut child = if _compiler {
+        crate::process::owned::Owned::spawn_compiler(&command, cancellation.1.as_deref())
+    } else {
+        spawn(&mut command)
+    }
+    .map_err(unrun)?;
     state.tool = Some(child.child().id());
+    #[cfg(windows)]
+    {
+        state.job = child.child().compiler_job();
+    }
+    drop(permission);
     drop(state);
     let stderr = child.child().stderr.take().expect("piped");
     Ok((child, std::thread::spawn(move || tail(stderr))))
@@ -382,22 +438,55 @@ fn start(
 
 /// Forgets a tool that ended and returns the tail of its stderr.
 fn finish(cancellation: &Cancellation, errors: std::thread::JoinHandle<String>) -> String {
-    cancellation.state().tool = None;
+    {
+        let mut state = cancellation.state();
+        state.tool = None;
+        #[cfg(windows)]
+        {
+            state.job = None;
+        }
+    }
     errors.join().unwrap_or_default()
 }
 
 /// `native-check`'s reply: each mod's refusal, verdict or the file it needs.
 #[derive(Debug, Deserialize)]
 pub(super) struct Checked {
+    pub contract: Option<u32>,
     /// Absent from a tool older than this launcher; `null` when no mod is usable.
     #[serde(default, deserialize_with = "present")]
-    pub route: Option<Option<String>>,
+    pub route: Option<Option<CheckRoute>>,
     pub mods: Vec<CheckedMod>,
 }
 
 /// A field that is there, `null` or not: [`Checked::route`]'s absence is told apart from its `null`.
-fn present<'de, D: serde::Deserializer<'de>>(field: D) -> Result<Option<Option<String>>, D::Error> {
-    Option::<String>::deserialize(field).map(Some)
+fn present<'de, D: serde::Deserializer<'de>>(
+    field: D,
+) -> Result<Option<Option<CheckRoute>>, D::Error> {
+    Option::<CheckRoute>::deserialize(field).map(Some)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum CheckRoute {
+    PrebuiltApi,
+    Prebuilt,
+}
+
+impl CheckRoute {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::PrebuiltApi => "prebuilt-api",
+            Self::Prebuilt => "prebuilt",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum Need {
+    Surface,
+    BuildData,
 }
 
 #[derive(Debug, Deserialize)]
@@ -408,7 +497,7 @@ pub(super) struct CheckedMod {
     #[serde(default)]
     pub verdict: Option<super::fit::Verdict>,
     #[serde(default)]
-    pub needs: Option<String>,
+    pub needs: Option<Need>,
 }
 
 /// Asks the tool at `program` how the mods `plan` names stand against its build (`native-check`).
@@ -444,28 +533,48 @@ pub(super) fn ask(
         .arg(name)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
-    let (mut child, errors) = start(command, cancellation)?;
+    let (mut child, errors) = start(command, cancellation, false)?;
     let mut input = child.child().stdin.take().expect("piped");
     let sent = writeln!(input, "{plan}").map_err(unrun);
     drop(input);
     let output = child.child().stdout.take().expect("piped");
-    let last = BufReader::new(output)
-        .lines()
-        .map_while(Result::ok)
-        .filter(|line| !line.trim().is_empty())
-        .last();
+    let mut answer = Ok(None);
+    for line in BufReader::new(output).lines() {
+        match line {
+            Ok(line) if line.trim().is_empty() => {}
+            Ok(line) if matches!(answer, Ok(None)) => answer = Ok(Some(line)),
+            Ok(_) if answer.is_ok() => answer = Err(invalid_check_reply()),
+            Ok(_) => {}
+            Err(error) => {
+                answer = Err(unrun(error));
+                break;
+            }
+        }
+    }
     let status = child.wait().map_err(unrun);
     let errors = finish(cancellation, errors);
     cancellation.check()?;
     sent?;
-    let result = match (last, status?.code()) {
-        (None, code @ Some(2 | 3)) => Err(ended(code)),
-        (last, _) => reply(last.as_deref()),
-    };
+    let status = status?;
+    let result = answer.and_then(|line| match status.code() {
+        code @ Some(2 | 3) => Err(ended(code)),
+        _ => reply(line.as_deref()).and_then(|value| {
+            if status.success() {
+                Ok(value)
+            } else {
+                Err(ended(status.code()))
+            }
+        }),
+    });
     if result.is_err() {
         log_errors(&errors);
     }
     result
+}
+
+pub(super) fn invalid_check_reply() -> String {
+    tr("The native build tool gave an incomplete or inconsistent answer. Update the launcher.")
+        .into()
 }
 
 /// What a tool from before a command or reply field this launcher needs is told.

@@ -362,6 +362,7 @@ pub(super) fn browse_card(
     summary: &str,
     facts: Vec<Div>,
     control: Option<AnyElement>,
+    wide_control: bool,
     note: Option<String>,
 ) -> Stateful<Div> {
     div()
@@ -421,25 +422,36 @@ pub(super) fn browse_card(
                 )
                 // Cards in a row are as tall as the tallest: the last line sits at the bottom.
                 .child(div().flex_1())
-                .child(
+                .child({
+                    // The facts and the control never share space: the control sits beside
+                    // them while both fit, and drops to a row of its own under them when the
+                    // facts are too full (or the control too long) for that.
+                    let facts = div()
+                        .flex_auto()
+                        .min_w_0()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_x(px(8.))
+                        .gap_y(px(4.))
+                        .children(facts);
                     div()
                         .flex()
+                        .flex_wrap()
                         .items_end()
-                        .gap(px(8.))
                         .min_w_0()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_wrap()
-                                .items_center()
-                                .gap_x(px(8.))
-                                .gap_y(px(4.))
-                                .children(facts),
-                        )
-                        .children(control.map(|c| div().flex_none().child(c))),
-                )
+                        .gap_x(px(8.))
+                        .gap_y(px(8.))
+                        .child(facts)
+                        .children(control.map(|c| {
+                            let held = div().child(c);
+                            if wide_control {
+                                held.w_full()
+                            } else {
+                                held.flex_none().ml_auto()
+                            }
+                        }))
+                })
                 // Two lines at most: the whole sentence is the tooltip.
                 .children(note.map(|note| {
                     muted(note.clone())

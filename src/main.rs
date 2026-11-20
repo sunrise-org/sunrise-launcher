@@ -16,7 +16,6 @@ pub(crate) use widgets::*;
 mod backdrop;
 mod blocks;
 mod build;
-mod build_mode;
 mod cat;
 mod cli;
 mod cli_tools;
@@ -239,16 +238,14 @@ struct Launcher {
     storage_error: Option<String>,
     /// Turn off for native mods was pressed once: how many switched-on native mods it would
     /// switch off, and in how many instances, counted then (`glass_storage.rs`).
-    storage_revoke: Option<(usize, usize)>,
-    /// Storage is counting native mods for Turn off: the count of this Settings visit.
-    storage_counting: Option<u64>,
-    /// Each page switch: a count from an earlier visit is dropped when it arrives.
-    storage_visit: u64,
-    /// Why Turn off didn't finish, shown at the Native mods row.
+    storage_revoke: bool,
+    /// A permission write that failed; no profile was changed.
     storage_revoke_error: Option<String>,
-    /// The build asked for (its base and back-up choice) while the permission question is open:
-    /// Allow resumes it, not a plain build.
-    native_consent_build: Option<(Option<String>, bool)>,
+    /// The admitted build and exact inputs held while the native permission question is open.
+    native_consent_build: Option<(
+        instances::Instance,
+        sunrise_launcher::browser::sunrise::txn::ManualBuild,
+    )>,
     install_error: Option<(String, String)>,
     /// Import a game build (`build_import`, on the Versions page): whether one is being copied in,
     /// and why the last one failed.
@@ -268,9 +265,6 @@ struct Launcher {
     /// The mods that stopped the last build (`native_mods::Failed::Mods`): their rows say Failed,
     /// the others keep their own state.
     native_failed_mods: Vec<String>,
-    /// Mods the last build would have switched off that worlds were saved with: the choice
-    /// between staying and backing those worlds up first, shown with `native_error`.
-    native_worlds: Option<native_mods::AtStake>,
     pending_consent: Option<PendingConsent>,
     /// Why the last Allow or Cancel failed, shown inside the dialog that the page is behind.
     consent_error: Option<String>,
@@ -278,10 +272,6 @@ struct Launcher {
     native_for: Option<String>,
     /// The native mods the build under way (or the last one) was given (`native_build.rs`).
     native_built_mods: Vec<String>,
-    /// What each installed native build was made from, by version. A build's version names its
-    /// contents, so an entry never goes stale.
-    native_builds:
-        std::cell::RefCell<std::collections::HashMap<String, Option<native_status::Build>>>,
     /// This attempt's build log (`native_log_page.rs`).
     native_log: native_log_page::NativeLog,
     /// What the Settings › Storage row says about the last move or choice.
@@ -352,6 +342,7 @@ struct Launcher {
     starting_play: Option<launcher_play::PlayIntent>,
     /// Play was pressed on a version not prepared yet: it starts once this preparation ends well.
     play_when_prepared: Option<(String, launcher_play::PlayIntent)>,
+    /// The Play waiting for the mods to be brought up to date (`Msg::ModsUpdated`).
     /// Join a friend: the code typed on the Play page, and the one the game
     /// starting now joins.
     friend_code: line_edit::LineEdit,

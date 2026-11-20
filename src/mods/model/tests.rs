@@ -1,5 +1,5 @@
 use super::*;
-use sunrise_launcher::browser::{installed::Entry, mod_list};
+use sunrise_launcher::browser::installed::Entry;
 
 const GAME: &str = "26.3";
 
@@ -50,19 +50,17 @@ const B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 static NO_PINS: std::sync::LazyLock<std::collections::BTreeMap<String, String>> =
     std::sync::LazyLock::new(Default::default);
 
-fn world<'a>(
-    index: &'a Index,
-    enabled: &'a HashSet<String>,
-    unbuilt: &'a HashSet<String>,
-    allowed: bool,
-) -> World<'a> {
+static NO_WAITING: std::sync::LazyLock<
+    std::collections::BTreeMap<String, sunrise_launcher::browser::sunrise::txn::WaitingMod>,
+> = std::sync::LazyLock::new(Default::default);
+
+fn world<'a>(index: &'a Index, enabled: &'a HashSet<String>) -> World<'a> {
     World {
         index: Some(index),
         game: GAME,
         enabled,
-        unbuilt,
-        native_allowed: allowed,
         chosen: &NO_PINS,
+        waiting: &NO_WAITING,
         local: &[],
     }
 }
@@ -222,30 +220,25 @@ fn pack() -> (Index, Vec<Entry>) {
 }
 
 #[test]
-fn rows_put_what_needs_the_player_first_then_updates_then_the_rest() {
+fn rows_are_listed_by_name_and_a_native_mod_is_just_a_row() {
     let (idx, entries) = pack();
     let enabled: HashSet<String> = ["quiet", "zoom", "deep", "bad"].map(String::from).into();
-    let unbuilt: HashSet<String> = ["deep".to_string()].into();
-    let r = rows(&entries, &world(&idx, &enabled, &unbuilt, true));
-    let order: Vec<(&str, Group)> = r.iter().map(|r| (r.id.as_str(), r.group())).collect();
+    let r = rows(&entries, &world(&idx, &enabled));
+    let order: Vec<&str> = r.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(order, ["bad", "deep", "quiet", "zoom"]);
+    let row = |id: &str| r.iter().find(|r| r.id == id).unwrap();
+    assert_eq!(row("bad").need, Some(Need::TakenDown("unsafe".into())));
     assert_eq!(
-        order,
-        [
-            ("bad", Group::NeedsYou),
-            ("deep", Group::NeedsYou),
-            ("zoom", Group::Updates),
-            ("quiet", Group::Rest)
-        ]
-    );
-    assert_eq!(r[0].need, Some(Need::TakenDown("unsafe".into())));
-    assert_eq!(
-        r[0].update.as_deref(),
+        row("bad").update.as_deref(),
         Some("2.0.0"),
         "the way out of a takedown is shown too"
     );
-    assert_eq!(r[1].need, Some(Need::Build));
-    assert_eq!(r[1].make, Some(Make::Native));
-    assert_eq!(r[2].update.as_deref(), Some("2.0.0"));
+    assert_eq!(row("deep").make, Some(Make::Native));
+    assert!(
+        row("deep").need.is_none(),
+        "no row says it needs a build or permission"
+    );
+    assert_eq!(row("zoom").update.as_deref(), Some("2.0.0"));
 }
 
 #[test]
@@ -254,7 +247,7 @@ fn registry_installed_rows_use_live_names_and_statuses_or_ids_and_not_checked() 
     let bad = entries.iter_mut().find(|e| e.project == "bad").unwrap();
     bad.title = "Unverified saved name".into();
     let none = HashSet::new();
-    let live = world(&idx, &none, &none, true);
+    let live = world(&idx, &none);
     let row = rows(std::slice::from_ref(bad), &live).pop().unwrap();
     assert_eq!(row.title, "BAD");
     assert_eq!(row.authors, "Someone");
@@ -276,23 +269,12 @@ fn registry_installed_rows_use_live_names_and_statuses_or_ids_and_not_checked() 
 }
 
 #[test]
-fn native_code_that_is_on_without_permission_says_so_instead_of_asking_to_build() {
-    let (idx, entries) = pack();
-    let enabled: HashSet<String> = ["deep".to_string()].into();
-    let unbuilt: HashSet<String> = ["deep".to_string()].into();
-    let r = rows(&entries, &world(&idx, &enabled, &unbuilt, false));
-    let deep = r.iter().find(|r| r.id == "deep").unwrap();
-    assert_eq!(deep.need, Some(Need::Permission));
-}
-
-#[test]
 fn only_registry_mods_are_rows_packs_are_left_alone() {
     let (idx, mut entries) = pack();
     let mut other = entry("shaderish", "1", false, A);
     other.kind = sunrise_launcher::browser::Kind::Shader;
     entries.push(other);
-    let none = HashSet::new();
-    let r = rows(&entries, &world(&idx, &none, &none, true));
+    let r = rows(&entries, &world(&idx, &HashSet::new()));
     assert_eq!(r.len(), 4);
     assert!(r.iter().all(|r| r.id != "shaderish"));
 }
@@ -301,21 +283,20 @@ fn only_registry_mods_are_rows_packs_are_left_alone() {
 fn filters_narrow_the_shown_rows_and_never_reorder_them() {
     let (idx, entries) = pack();
     let on: HashSet<String> = ["quiet", "zoom"].map(String::from).into();
-    let none = HashSet::new();
-    let r = rows(&entries, &world(&idx, &on, &none, true));
+    let r = rows(&entries, &world(&idx, &on));
     let ids = |f: &RowFilter| {
         visible(&r, f)
             .into_iter()
             .map(|i| r[i].id.clone())
             .collect::<Vec<_>>()
     };
-    assert_eq!(ids(&RowFilter::default()), ["bad", "deep", "zoom", "quiet"]);
+    assert_eq!(ids(&RowFilter::default()), ["bad", "deep", "quiet", "zoom"]);
     assert_eq!(
         ids(&RowFilter {
             show: Show::On,
             ..Default::default()
         }),
-        ["zoom", "quiet"]
+        ["quiet", "zoom"]
     );
     assert_eq!(
         ids(&RowFilter {
@@ -341,100 +322,62 @@ fn filters_narrow_the_shown_rows_and_never_reorder_them() {
 }
 
 #[test]
-fn update_all_covers_the_whole_pack_and_names_what_it_leaves_out() {
+fn update_all_covers_the_whole_pack_but_a_version_the_player_chose() {
     let (idx, entries) = pack();
-    let none = HashSet::new();
     let on: HashSet<String> = ["zoom", "bad", "deep"].map(String::from).into();
-    let r = rows(&entries, &world(&idx, &on, &none, false));
-    let plan = plan_updates(&r, false);
-    let ids: Vec<&str> = plan.included.iter().map(|i| i.id.as_str()).collect();
-    assert_eq!(
-        ids,
-        ["bad", "zoom"],
-        "a taken-down mod is updated to a file that wasn't"
-    );
-    assert_eq!(plan.skipped.len(), 1, "{:?}", plan.skipped);
-    assert!(plan
-        .skipped
+    let r = rows(&entries, &world(&idx, &on));
+    let ids = |rows: &[Row]| -> Vec<String> {
+        let mut ids: Vec<String> = updatable(rows).iter().map(|r| r.id.clone()).collect();
+        ids.sort();
+        ids
+    };
+    // A native mod is in it: the install asks for permission itself. A taken-down mod is updated
+    // to a file that wasn't.
+    assert_eq!(ids(&r), ["bad", "deep", "zoom"]);
+    // A mod that is off is in it too.
+    let only_zoom: HashSet<String> = ["zoom".to_string()].into();
+    let off = rows(&entries, &world(&idx, &only_zoom));
+    assert!(off
         .iter()
-        .any(|(t, why)| t == "DEEP" && why.contains("native")));
-    let with = plan_updates(&r, true);
-    assert!(with.included.iter().any(|i| i.id == "deep" && i.native));
-    assert!(with.skipped.is_empty());
-
-    // A version the player chose is never moved by a batch.
+        .any(|r| r.id == "bad" && !r.on && r.update.is_some()));
+    assert_eq!(ids(&off), ["bad", "deep", "zoom"]);
+    // A version the player chose is never moved by it.
     let pins = std::collections::BTreeMap::from([("zoom".to_string(), "1.0.0".to_string())]);
     let w = World {
         chosen: &pins,
-        ..world(&idx, &on, &none, true)
+        ..world(&idx, &on)
     };
-    let pinned = plan_updates(&rows(&entries, &w), true);
-    assert!(pinned.included.iter().all(|i| i.id != "zoom"));
-    assert!(pinned.skipped.iter().any(|(t, _)| t == "ZOOM"));
+    assert_eq!(ids(&rows(&entries, &w)), ["bad", "deep"]);
+    // Nothing waiting: no button.
+    assert!(updatable(&[]).is_empty());
 }
 
 #[test]
-fn a_mod_that_is_off_is_in_the_plan() {
+fn a_row_with_a_newer_version_says_update_available() {
     let (idx, entries) = pack();
-    let on: HashSet<String> = ["zoom".to_string()].into();
-    let none = HashSet::new();
-    let r = rows(&entries, &world(&idx, &on, &none, true));
-    assert!(r
-        .iter()
-        .any(|r| r.id == "bad" && !r.on && r.update.is_some()));
-    let plan = plan_updates(&r, true);
-    let mut ids: Vec<&str> = plan.included.iter().map(|i| i.id.as_str()).collect();
-    ids.sort();
-    assert_eq!(ids, ["bad", "deep", "zoom"]);
-    assert!(plan.skipped.is_empty(), "{:?}", plan.skipped);
-}
-
-#[test]
-fn the_update_button_counts_only_what_the_plan_includes() {
-    let (idx, entries) = pack();
-    let on: HashSet<String> = ["zoom", "bad", "deep"].map(String::from).into();
-    let none = HashSet::new();
-    let r = rows(&entries, &world(&idx, &on, &none, false));
-    // "deep" is native and not allowed: it is left out, so the button counts two, not three.
-    assert_eq!(r.iter().filter(|r| r.update.is_some()).count(), 3);
-    assert_eq!(update_all_button(&r, false), Some(2));
-    assert_eq!(update_all_button(&r, true), Some(3));
-    // Nothing the plan can update: no button at all, not "Update 0 mods".
-    let only_deep: Vec<Row> = r.into_iter().filter(|r| r.id == "deep").collect();
-    assert_eq!(update_all_button(&only_deep, false), None);
-    assert_eq!(update_all_button(&[], true), None);
-}
-
-#[test]
-fn a_skipped_native_row_says_why() {
-    let (idx, entries) = pack();
-    let on: HashSet<String> = ["deep"].map(String::from).into();
-    let none = HashSet::new();
-    let r = rows(&entries, &world(&idx, &on, &none, false));
-    let deep = r.iter().find(|r| r.id == "deep").unwrap();
-    let tip = cells(deep, None, None, false).status.unwrap().tip;
-    assert!(tip.contains("native code: allow it first"), "{tip}");
-    let tip = cells(deep, None, None, true).status.unwrap().tip;
-    assert!(!tip.contains("allow it first"), "{tip}");
+    let on: HashSet<String> = ["zoom"].map(String::from).into();
+    let r = rows(&entries, &world(&idx, &on));
+    let zoom = r.iter().find(|r| r.id == "zoom").unwrap();
+    let cells = cells(zoom, None);
+    assert_eq!(cells.status.unwrap().label, "Update available");
+    assert!(cells.action.is_some());
+    let quiet = r.iter().find(|r| r.id == "quiet").unwrap();
+    assert!(self::cells(quiet, None).action.is_none());
 }
 
 #[test]
 fn a_row_the_plan_cannot_update_says_why() {
     let (idx, entries) = pack();
     let on: HashSet<String> = ["zoom"].map(String::from).into();
-    let none = HashSet::new();
     let pins = std::collections::BTreeMap::from([("zoom".to_string(), "1.0.0".to_string())]);
     let w = World {
         chosen: &pins,
-        ..world(&idx, &on, &none, true)
+        ..world(&idx, &on)
     };
     let r = rows(&entries, &w);
     let zoom = r.iter().find(|r| r.id == "zoom").unwrap();
-    assert!(update_refusal(zoom, true).is_some_and(|w| w.contains("you chose")));
-    let tip = cells(zoom, None, None, true)
-        .status
-        .expect("says something")
-        .tip;
+    assert!(update_refusal(zoom).is_some_and(|w| w.contains("you chose")));
+    let tip = cells(zoom, None).status.expect("says something").tip;
     assert!(tip.contains("you chose its version"), "{tip}");
 }
 
@@ -442,7 +385,6 @@ fn a_row_the_plan_cannot_update_says_why() {
 fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
     let (idx, entries) = pack();
     let on: HashSet<String> = ["mine", "zoom", "by_hand"].map(String::from).into();
-    let none = HashSet::new();
     let local = [
         Local {
             id: "mine".into(),
@@ -463,82 +405,29 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
     ];
     let w = World {
         local: &local,
-        ..world(&idx, &on, &none, false)
+        ..world(&idx, &on)
     };
     let r = rows(&entries, &w);
     let mine = r.iter().find(|r| r.id == "mine").expect("listed");
     assert!(mine.local.is_some() && mine.entry.is_none() && mine.update.is_none());
-    assert_eq!(
-        mine.need,
-        Some(Need::Permission),
-        "it can't run without permission, like any native mod"
-    );
     // A package of `sunrise-mods/` put there by hand is listed by its name and needs neither
     // permission nor a build.
     let content = r.iter().find(|r| r.id == "by_hand").expect("listed");
     assert_eq!((content.title.as_str(), content.on), ("By Hand", true));
     assert_eq!((content.make, &content.need), (None, &None));
     assert!(content.local.is_some() && content.entry.is_none());
-    assert!(plan_updates(&r, true)
-        .included
-        .iter()
-        .all(|i| i.id != "mine"));
-}
-
-#[test]
-fn turning_on_a_local_native_file_exposes_permission_then_build() {
-    let home = tempfile::tempdir().unwrap();
-    let on_list = home.path();
-    let id = "example";
-    let local = [Local {
-        id: id.into(),
-        name: "Example".into(),
-        version: "1.0".into(),
-        github: false,
-        native: true,
-        unreadable: false,
-    }];
-    let unbuilt = HashSet::from([id.into()]);
-    let row = |allowed| {
-        let enabled = if mod_list::is_enabled(on_list, id) {
-            HashSet::from([id.into()])
-        } else {
-            HashSet::new()
-        };
-        rows(
-            &[],
-            &World {
-                index: None,
-                game: GAME,
-                enabled: &enabled,
-                unbuilt: &unbuilt,
-                native_allowed: allowed,
-                chosen: &NO_PINS,
-                local: &local,
-            },
-        )
-        .remove(0)
-    };
-    let off = row(false);
-    assert!(!off.on);
-    assert!(cells(&off, None, None, true).switch);
-    mod_list::set_enabled(on_list, id, true).unwrap();
-    let needs_permission = row(false);
-    assert!(needs_permission.on);
-    assert_eq!(needs_permission.need, Some(Need::Permission));
-    assert_eq!(row(true).need, Some(Need::Build));
+    assert!(updatable(&r).iter().all(|r| r.id != "mine"));
 }
 
 #[test]
 fn turning_on_skips_what_is_taken_down_or_needs_permission() {
     let (idx, entries) = pack();
-    let none = HashSet::new();
-    let r = rows(&entries, &world(&idx, &none, &none, false));
+    let r = rows(&entries, &world(&idx, &HashSet::new()));
     let all: Vec<&Row> = r.iter().collect();
     let (ok, held) = turn_on_plan(&all, false);
     assert_eq!(
         ok.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
-        ["zoom", "quiet"]
+        ["quiet", "zoom"]
     );
     assert_eq!(held.len(), 2);
     let (ok, held) = turn_on_plan(&all, true);
@@ -569,8 +458,7 @@ fn removing_a_mod_names_what_still_needs_it() {
         entry("lib", "1.0.0", false, A),
         entry("uses_lib", "1.0.0", false, B),
     ];
-    let none = HashSet::new();
-    let r = rows(&entries, &world(&idx, &none, &none, true));
+    let r = rows(&entries, &world(&idx, &HashSet::new()));
     let removing: HashSet<String> = ["lib".to_string()].into();
     assert_eq!(
         dependents(&r, &removing, Some(&idx)),
@@ -587,252 +475,6 @@ fn counts_read_short() {
     assert_eq!(size(3 << 20), "3.0 MiB");
     assert!(downloads(12_400).starts_with("12.4k"));
     assert!(downloads(7).starts_with("7 "));
-}
-
-#[test]
-fn every_reason_a_build_left_a_mod_out_is_shown_and_counted() {
-    use native_mods::{Detail, LeftOut, Why};
-    let (idx, entries) = pack();
-    let on: HashSet<String> = ["lib", "addon", "old", "fine"].map(String::from).into();
-    let none = HashSet::new();
-    let local = ["lib", "addon", "old", "fine"].map(|id| Local {
-        id: id.into(),
-        name: id.into(),
-        version: "1.0".into(),
-        github: false,
-        native: true,
-        unreadable: false,
-    });
-    let w = World {
-        local: &local,
-        native_allowed: true,
-        ..world(&idx, &on, &none, false)
-    };
-    let mut r = rows(&entries, &w);
-    let left = |id: &str, why| LeftOut {
-        id: id.into(),
-        version: "1.0".into(),
-        why,
-        detail: None,
-    };
-    let list = [
-        left("lib", Why::DidNotBuild),
-        left("addon", Why::Needs("lib".into())),
-        LeftOut {
-            detail: Some(Detail {
-                made_for: Some("nightly-2026-11-16-abc".into()),
-                changes: vec!["a hook moved".into()],
-            }),
-            ..left("old", Why::Unfit("made for Nov 16".into()))
-        },
-    ];
-    mark_left_out(&mut r, &list, "Nov 17", |tag| format!("name of {tag}"));
-    let row = |id: &str| r.iter().find(|r| r.id == id).unwrap();
-    let failed = cells(row("lib"), None, None, true);
-    let status = failed.status.unwrap();
-    assert_eq!(status.label, "Failed");
-    assert!(status.tip.contains("lib"));
-    assert!(failed.unavailable);
-    assert!(
-        matches!(&row("addon").left_out, Some(Omission::Skipped(why)) if why.contains("needs lib"))
-    );
-    assert!(row("lib").unfit.is_none() && row("lib").need.is_none());
-    let old = row("old").unfit.as_ref().unwrap();
-    assert_eq!(
-        old.made_for,
-        Some((
-            "nightly-2026-11-16-abc".into(),
-            "name of nightly-2026-11-16-abc".into()
-        ))
-    );
-    assert!(row("old").left_out.is_none());
-    assert!(row("fine").unfit.is_none() && row("fine").left_out.is_none());
-}
-
-#[test]
-fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
-    use native_mods::{Detail, LeftOut, Why};
-    let (idx, entries) = pack();
-    let on: HashSet<String> = ["lib", "addon", "old", "fine"].map(String::from).into();
-    let unbuilt: HashSet<String> = ["addon".to_string()].into();
-    let local = ["lib", "addon", "old", "fine"].map(|id| Local {
-        id: id.into(),
-        name: id.into(),
-        version: "1.0".into(),
-        github: id == "lib",
-        native: true,
-        unreadable: false,
-    });
-    let w = World {
-        local: &local,
-        native_allowed: true,
-        ..world(&idx, &on, &unbuilt, false)
-    };
-    let mut r = rows(&entries, &w);
-    mark_left_out(
-        &mut r,
-        &[LeftOut {
-            id: "old".into(),
-            version: "1.0".into(),
-            why: Why::Unfit("made for Nov 16".into()),
-            detail: Some(Detail {
-                made_for: None,
-                changes: vec!["src/lib.rs:3 builds it".into()],
-            }),
-        }],
-        "Nov 17",
-        |tag| tag.to_owned(),
-    );
-    let row = |id: &str| r.iter().find(|r| r.id == id && r.local.is_some()).unwrap();
-    // Every row has a kind and a version for the same two columns.
-    for row in &r {
-        let cells = cells(row, None, None, true);
-        assert_eq!(cells.version, row.version);
-        assert_eq!(cells.kind, row.make.map_or("", Make::label));
-    }
-    // A mod that needs an update keeps the switch's place, and its status opens the popover:
-    // no file or type name in the label or the tooltip.
-    let old = cells(row("old"), None, None, true);
-    let status = old.status.unwrap();
-    assert_eq!(status.label, "Needs an update");
-    assert_eq!(status.tone, Tone::Warning);
-    assert!(old.popover);
-    assert!(!status.tip.contains("src/lib.rs"), "{}", status.tip);
-    assert_eq!(old.action, None);
-    // A mod that waits for a build says so, and says Building while its setup's build runs.
-    let addon = row("addon");
-    assert_eq!(addon.need, Some(Need::Build));
-    assert_eq!(
-        cells(addon, None, None, true).status.unwrap().label,
-        "Needs a build"
-    );
-    for (at, label, tone) in [
-        (BuildState::Waiting, "Waiting", Tone::Muted),
-        (BuildState::Building, "Building", Tone::Accent),
-        (BuildState::Built, "Built", Tone::Success),
-        (
-            BuildState::Failed("Missing hook".into()),
-            "Failed",
-            Tone::Warning,
-        ),
-        (
-            BuildState::NeedsUpdate {
-                why: "No build for this game".into(),
-                details: Vec::new(),
-            },
-            "Needs an update",
-            Tone::Warning,
-        ),
-    ] {
-        let cells = cells(addon, None, Some(&at), true);
-        let status = cells.status.unwrap();
-        assert_eq!((status.label.as_str(), status.tone), (label, tone));
-        match at {
-            BuildState::Failed(why) | BuildState::NeedsUpdate { why, .. } => {
-                assert!(status.tip.contains(&why));
-                assert!(
-                    cells.unavailable && cells.switch,
-                    "can still turn the mod off"
-                );
-            }
-            _ => assert!(!cells.unavailable),
-        }
-    }
-    // A row with nothing pressing says where it is from, quietly; its cells are still there.
-    let fine = cells(row("fine"), None, None, true);
-    assert_eq!(fine.status.as_ref().unwrap().tone, Tone::Muted);
-    assert_eq!(fine.action, None);
-    assert!(fine.switch, "local files can be switched on and off");
-    // A registry row with nothing to say: empty status and action cells, a live switch.
-    let plain = r
-        .iter()
-        .find(|r| r.local.is_none() && r.need.is_none() && r.update.is_none());
-    if let Some(plain) = plain {
-        let cells = cells(plain, None, None, true);
-        assert_eq!(
-            (cells.status, cells.action, cells.switch),
-            (None, None, true)
-        );
-    }
-    // The most pressing thing is the status; the rest is in its tooltip. The one button is
-    // Update whenever a newer version is out.
-    let mut both = row("addon").clone();
-    both.update = Some("1.1".into());
-    let cells_both = cells(&both, Some("the download stopped"), None, true);
-    let status = cells_both.status.unwrap();
-    assert_eq!(status.label, "Update failed");
-    assert!(status.tip.contains("the download stopped"));
-    assert!(status.tip.contains("Not built for this computer yet"));
-    assert!(status.tip.contains("Version 1.1 is out"));
-    assert_eq!(cells_both.action, Some(RowAction::Update));
-    // Permission comes before a newer version: its button is Allow.
-    both.need = Some(Need::Permission);
-    assert_eq!(
-        cells(&both, None, None, true).action,
-        Some(RowAction::Allow)
-    );
-}
-
-#[test]
-fn the_build_button_is_only_counted_as_drawn_when_its_group_is_shown() {
-    let (idx, entries) = pack();
-    let on: HashSet<String> = ["lib", "addon", "fine"].map(String::from).into();
-    let unbuilt: HashSet<String> = ["addon".to_string()].into();
-    let local = ["lib", "addon", "fine"].map(|id| Local {
-        id: id.into(),
-        name: id.into(),
-        version: "1.0".into(),
-        github: false,
-        native: true,
-        unreadable: false,
-    });
-    let w = World {
-        local: &local,
-        native_allowed: true,
-        ..world(&idx, &on, &unbuilt, false)
-    };
-    let r = rows(&entries, &w);
-    let addon = r.iter().find(|r| r.id == "addon").unwrap();
-    assert_eq!((addon.need.clone(), addon.on), (Some(Need::Build), true));
-    // Unfiltered: Build stands in the NEEDS YOU head, for the one mod that waits.
-    let all = visible(&r, &RowFilter::default());
-    assert_eq!(build_in_head(&r, &all), Some(1));
-    // A filter that still shows a row of the group keeps its head, and the button with it.
-    let off = visible(
-        &r,
-        &RowFilter {
-            show: Show::Off,
-            ..RowFilter::default()
-        },
-    );
-    assert!(off.iter().any(|&i| r[i].id == "bad"));
-    assert_eq!(build_in_head(&r, &off), Some(1));
-    // A search that leaves the whole group out: no button is drawn, so the status strip keeps
-    // the running build's bar.
-    let shown = visible(
-        &r,
-        &RowFilter {
-            text: "fine".into(),
-            ..RowFilter::default()
-        },
-    );
-    assert!(!shown.is_empty());
-    assert!(shown.iter().all(|&i| r[i].group() != Group::NeedsYou));
-    assert_eq!(build_in_head(&r, &shown), None);
-    // Nothing waits for a build: no button either way.
-    let none: HashSet<String> = HashSet::new();
-    let built = rows(
-        &entries,
-        &World {
-            local: &local,
-            native_allowed: true,
-            ..world(&idx, &on, &none, false)
-        },
-    );
-    assert_eq!(
-        build_in_head(&built, &visible(&built, &RowFilter::default())),
-        None
-    );
 }
 
 // ---------------------------------------------------------------- collections
@@ -1177,34 +819,6 @@ fn install_is_given_only_the_ticked_mods_not_yet_installed_and_stops_at_the_firs
         ["pig"],
         "not cow (installed), owl (unticked) or lib (a library)"
     );
-
-    let ids: Vec<String> = ["a", "b", "c"].map(str::to_owned).to_vec();
-    let mut seen = Vec::new();
-    let said = collection::run_in_order(&ids, |i, id| {
-        seen.push((i, id.to_owned()));
-        match id {
-            "b" => Err("b didn't install".into()),
-            _ => Ok(vec![id.to_uppercase()]),
-        }
-    });
-    assert_eq!(said, Err("b didn't install".into()));
-    assert_eq!(
-        seen,
-        [(0, "a".to_owned()), (1, "b".to_owned())],
-        "c is never tried"
-    );
-    assert_eq!(
-        collection::run_in_order(&ids, |_, id| Ok(vec![id.into()])).unwrap(),
-        ["a", "b", "c"]
-    );
-
-    let native = |id: &str| id == "b";
-    assert!(collection::needs_consent(&ids, false, native));
-    assert!(
-        !collection::needs_consent(&ids, true, native),
-        "once allowed, never asked"
-    );
-    assert!(!collection::needs_consent(&ids[..1], false, native));
 }
 
 #[test]
@@ -1307,7 +921,6 @@ fn install_is_off_when_everything_picked_is_installed() {
 #[test]
 fn an_unreadable_file_is_never_on_and_cannot_switch_a_working_mod_of_its_name() {
     let on: HashSet<String> = HashSet::from(["ruby".to_owned()]);
-    let none = HashSet::new();
     let (idx, _) = pack();
     let file = |unreadable| Local {
         id: "ruby".into(),
@@ -1320,7 +933,7 @@ fn an_unreadable_file_is_never_on_and_cannot_switch_a_working_mod_of_its_name() 
     let local = [file(true), file(false)];
     let w = World {
         local: &local,
-        ..world(&idx, &on, &none, false)
+        ..world(&idx, &on)
     };
     let r = rows(&[], &w);
     let broken = r
@@ -1329,12 +942,112 @@ fn an_unreadable_file_is_never_on_and_cannot_switch_a_working_mod_of_its_name() 
         .expect("listed");
     assert!(!broken.on);
     assert_eq!(broken.need, None);
-    assert!(!cells(broken, None, None, true).switch);
+    assert!(!cells(broken, None).switch);
     let good = r
         .iter()
         .find(|r| r.local.as_ref().is_some_and(|l| !l.unreadable))
         .expect("listed");
     assert!(good.on);
-    assert_eq!(good.need, Some(Need::Permission));
-    assert!(cells(good, None, None, true).switch);
+    assert_eq!(good.need, None);
+    assert!(cells(good, None).switch);
+}
+
+#[test]
+fn a_card_that_cannot_install_says_why_in_the_words_of_the_table() {
+    let mut future = project(
+        "future",
+        "mod",
+        &[("1.0.0", GAME, A)],
+        serde_json::json!({}),
+    );
+    future["versions"][0]["capabilities"] = serde_json::json!(["from-a-newer-sunrise"]);
+    let idx = index(
+        vec![
+            project("fine", "mod", &[("1.0.0", GAME, A)], serde_json::json!({})),
+            project("old", "mod", &[("1.0.0", "26.2", B)], serde_json::json!({})),
+            future,
+        ],
+        vec![],
+    );
+    let all = cards(&idx, GAME);
+    let card = |id: &str| all.iter().find(|c| c.id == id).unwrap();
+    assert_eq!(card("fine").fit.reason(), None);
+    assert_eq!(
+        card("old").fit.reason().as_deref(),
+        Some("Not available for your version (made for 26.2)")
+    );
+    assert_eq!(
+        Fit::OtherBuild("nightly-2026-11-17-abcdef0".into())
+            .reason()
+            .as_deref(),
+        Some("Not available for your version (made for the Nov 17 Nightly)"),
+        "a Nightly is named by its day, as the build sheets name it"
+    );
+    assert_eq!(card("future").fit, Fit::NeedsNewerSunrise);
+    assert_eq!(
+        card("future").fit.reason().as_deref(),
+        Some("Needs a newer Sunrise")
+    );
+    // No registry key for the author: the card carries the Unsigned chip.
+    assert!(card("fine").unsigned);
+}
+
+#[test]
+fn a_collection_cannot_be_installed_while_a_mod_it_needs_does_not_fit_but_an_optional_one_may_be_missing(
+) {
+    // cow is ticked by default (the collection needs it) and is made for another build.
+    let mut idx = zoo();
+    idx_version(&mut idx, "cow").game = "25.1".into();
+    let v = farm(&idx, &["pig"]);
+    assert_eq!(
+        v.total, 3,
+        "\"1 of 3 selected\" counts every mod, available or not"
+    );
+    assert_eq!(
+        v.members, 1,
+        "what can be picked on this build: owl needs the missing cow too"
+    );
+    assert!(v.lines.iter().find(|l| l.id == "cow").unwrap().needed);
+    assert!(!v.can_install());
+    assert_eq!(
+        v.plan_line(),
+        "COW is needed and isn't available for your version"
+    );
+    // A mod the collection doesn't tick by default may be the missing one: the rest installs.
+    let mut idx = zoo();
+    idx_version(&mut idx, "owl").game = "25.1".into();
+    let v = farm(&idx, &["cow", "pig"]);
+    assert!(!v.lines.iter().find(|l| l.id == "owl").unwrap().needed);
+    assert!(v.needed_missing.is_empty());
+    assert!(v.can_install());
+    assert_eq!(v.to_install(), ["cow", "pig"]);
+    // Two needed and missing are named together.
+    let mut idx = zoo();
+    idx_version(&mut idx, "cow").game = "25.1".into();
+    idx_version(&mut idx, "pig").game = "25.1".into();
+    let v = farm(&idx, &[]);
+    assert_eq!(
+        v.plan_line(),
+        "COW and PIG are needed and aren't available for your version"
+    );
+}
+
+#[test]
+fn a_mod_is_unknown_not_unfit_until_there_is_a_game_to_judge_by() {
+    let idx = zoo();
+    let all = cards(&idx, "");
+    assert!(all.iter().all(|c| c.fit == Fit::Unknown));
+    // "Fits my game" is main's rule: only what fits shows under it, unknown included as not
+    // fitting; "Checking…" can only be seen where the switch is off.
+    let on = Filters {
+        fits_only: true,
+        ..Filters::default()
+    };
+    assert!(discover(&all, &on).is_empty());
+    let off = Filters {
+        fits_only: false,
+        ..Filters::default()
+    };
+    assert_eq!(discover(&all, &off).len(), 2);
+    assert!(cards(&idx, GAME).iter().all(|c| c.fit == Fit::Fits));
 }

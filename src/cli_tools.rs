@@ -14,6 +14,7 @@ const NOT_TOOLS: &[&str] = &[
     "completions",
     "no-ai",
     "native-build",
+    "switch",
     // It installs a program nothing signed: the player's decision.
     "import-build",
     "developer-install",
@@ -276,7 +277,7 @@ arguments are the command's, in snake_case. A tool runs the command with `--json
 The tools that change the player's things for good need `confirm: true`. \
 The tools that send something or reach other people say \"only when the player asks\". \
 The game's own tools, `game_*`, are in [sunrise-ctl-commands.md](https://github.com/sunrise-org/sunrise/blob/main/docs/sunrise-ctl-commands.md). \
-For unsigned developer installations only, `SUNRISE_LAUNCHER_DEVELOPER_OFFLINE=1` enables account-free Play. Only the exact value `1` enables it. The installed base must have persisted developer provenance, and the selected game must advertise `--developer-single-player` through `--launch-api`; older games must be rebuilt and reinstalled. Signed releases, Nightlies and their native descendants keep the account check. This mode supplies no session, blocks normal external connections and LAN hosting, and preserves managed launch leases, instance settings and unsigned labels. It is not a sandbox for native mods. If direct execution reports unregistered cache directories, use Sunrise Launcher Play from the same launcher data directory with the intended instance and installed version (`sunrise-launcher play --instance <instance> --version <tag>`).\n\n\
+For unsigned developer installations only, `SUNRISE_LAUNCHER_DEVELOPER_OFFLINE=1` enables account-free Play. Only the exact value `1` enables it. The installed base must have persisted developer provenance, and the selected game must advertise `--developer-single-player` through `--launch-api`; older games must be rebuilt and reinstalled. Signed releases, Nightlies and their native descendants keep the account check. This mode supplies no session, blocks normal external connections and LAN hosting, and preserves managed launch leases, instance settings and unsigned labels. It is not a sandbox for native mods. If direct execution reports unregistered cache directories, use Sunrise Launcher Play from the same launcher data directory with the intended profile (`sunrise-launcher play --instance <instance>`). For a different installed and prepared build, use `sunrise-launcher switch <tag> --profile <instance>` first.\n\n\
 With No AI on, `mcp` is hidden and refuses; every other command stays. See [agent-control.md](https://github.com/sunrise-org/sunrise/blob/main/docs/agent-control.md#no-ai).\n\n",
     );
     let mut rows = Vec::new();

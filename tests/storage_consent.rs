@@ -1,4 +1,4 @@
-//! Consent revocation persists even when native package cleanup cannot complete.
+//! Native permission is a separate, explicit settings change.
 use sunrise_launcher::backend::Settings;
 
 #[test]
@@ -7,11 +7,12 @@ fn revocation_survives_reloading_settings_and_preserves_limit() {
     // This integration test has its own process and a single test; no shared player home.
     std::env::set_var("SUNRISE_LAUNCHER_HOME", scratch.path());
     let mut settings = Settings {
-        native_mods_allowed_at: Some(12345),
         cache_limit_gib: Some(50),
         ..Settings::default()
     };
     settings.save().unwrap();
+    settings.allow_native_mods().unwrap();
+    assert!(Settings::load().native_mods_allowed_at.is_some());
     settings.revoke_native_mods().unwrap();
     assert!(settings.native_mods_allowed_at.is_none());
     let reloaded = Settings::load();

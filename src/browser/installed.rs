@@ -217,8 +217,115 @@ fn add(
     Ok(())
 }
 
-/// Installs `project` (and what it needs) into the game folder `home`. A project already
-/// installed is updated to the version chosen. `progress` gets a line per file and the fraction.
+/// An installed registry mod an install removes with it, as the player approved it: this exact
+/// file (its checksum), and whether they also agreed to what saved worlds that use it lose.
+/// Checked again under the install's lock, since the approval may have waited in a queue.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Replace {
+    pub id: String,
+    pub checksum: String,
+    pub worlds_ok: bool,
+}
+
+/// What the player approved for an install, checked again under the install's lock.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Approval {
+    /// Removing this installed mod, as shown.
+    Remove(Replace),
+    /// Losing what saved worlds use from this mod: its new version's package no longer has
+    /// content its old one had.
+    DropContent { id: String },
+}
+
+/// Why an install didn't happen: native code the player hasn't allowed yet (the plan may not
+/// have known it was there), which the launcher answers by asking and trying again, or any
+/// other reason, in words.
+#[derive(Clone, Debug, PartialEq)]
+pub enum InstallError {
+    /// Installing needs `native`, which runs native code, before the player has allowed it.
+    NeedsNativeConsent {
+        native: String,
+    },
+    /// A mod the install needs has no version for the game played (or none in the range
+    /// asked): `dependency` by its name, with the planner's `reason` for the details.
+    Unavailable {
+        dependency: String,
+        reason: String,
+    },
+    /// Installed mods pin what the install needs: they are named, with the planner's `reason`.
+    Conflict {
+        mods: Vec<String>,
+        reason: String,
+    },
+    /// A saved world uses what the new version of these mods no longer has: the world question
+    /// comes before anything is published.
+    NeedsWorlds {
+        mods: Vec<String>,
+    },
+    /// The planner refused for another reason, in its words.
+    Refused(String),
+    Message(String),
+}
+
+impl InstallError {
+    pub(super) fn for_build(error: crate::native_mods::Failed, native: &str) -> Self {
+        match error {
+            crate::native_mods::Failed::NoConsent => Self::NeedsNativeConsent {
+                native: native.into(),
+            },
+            other => Self::Message(other.to_string()),
+        }
+    }
+}
+
+#[cfg(test)]
+impl InstallError {
+    /// For tests that read the words of a refusal.
+    pub(crate) fn contains(&self, text: &str) -> bool {
+        self.to_string().contains(text)
+    }
+}
+
+impl From<String> for InstallError {
+    fn from(message: String) -> Self {
+        Self::Message(message)
+    }
+}
+
+impl From<&str> for InstallError {
+    fn from(message: &str) -> Self {
+        Self::Message(message.to_owned())
+    }
+}
+
+impl std::fmt::Display for InstallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NeedsNativeConsent { native } => f.write_str(&crate::i18n::trf(
+                "{native} runs native code: allow native mods first.",
+                &[("native", native)],
+            )),
+            Self::Unavailable { reason, .. }
+            | Self::Conflict { reason, .. }
+            | Self::Refused(reason) => f.write_str(reason),
+            Self::NeedsWorlds { mods } => f.write_str(&crate::i18n::trf(
+                "A saved world uses {mods}: install again to be asked about it.",
+                &[("mods", &mods.join(", "))],
+            )),
+            Self::Message(message) => f.write_str(message),
+        }
+    }
+}
+
+impl From<InstallError> for String {
+    fn from(error: InstallError) -> Self {
+        error.to_string()
+    }
+}
+
+/// Installs a browser pack and any dependencies. Registry mods use the exact-profile
+/// install plan instead. `progress` receives a line per file and its fraction.
 pub fn install(
     source: &dyn Source,
     project: &Project,
@@ -226,19 +333,38 @@ pub fn install(
     home: &Path,
     game: &str,
     progress: &dyn Fn(&str, f32),
-) -> Result<Vec<Entry>, String> {
-    let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
-    if project.source == SourceId::Sunrise {
-        return super::sunrise::install(project, home, game, progress);
+) -> Result<Vec<Entry>, InstallError> {
+    let lease = super::sunrise::txn::Lease::admit(home)?;
+    lease.install(source, project, everything, game, progress)
+}
+
+impl super::sunrise::txn::Lease {
+    /// Installs a browser pack into the leased profile.
+    pub fn install(
+        &self,
+        source: &dyn Source,
+        project: &Project,
+        everything: bool,
+        game: &str,
+        progress: &dyn Fn(&str, f32),
+    ) -> Result<Vec<Entry>, InstallError> {
+        let home = self.home();
+        let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
+        if super::sunrise::txn::has_build(home)? {
+            return Err(super::sunrise::txn::unsettled().into());
+        }
+        if project.source == SourceId::Sunrise {
+            return super::sunrise::install(project, home, game, progress);
+        }
+        let steps = plan(source, project, everything, game)?;
+        Ok(put(
+            source,
+            steps,
+            home,
+            &|kind| kind.folder().expect("plan keeps folder kinds"),
+            progress,
+        )?)
     }
-    let steps = plan(source, project, everything, game)?;
-    put(
-        source,
-        steps,
-        home,
-        &|kind| kind.folder().expect("plan keeps folder kinds"),
-        progress,
-    )
 }
 
 /// Downloads each step's file into `home`, in the folder `folder` names for its kind, and lists

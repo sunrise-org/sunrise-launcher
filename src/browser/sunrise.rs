@@ -96,6 +96,98 @@ pub fn fits_game(version: &index::Version, game: &str) -> bool {
     version.game == game && version.capabilities.unknown().is_empty()
 }
 
+/// The dependencies `ids` need, by the version the index would choose of each for `game`,
+/// all the way down.
+fn needed<'a>(index: &'a Index, ids: &[String], game: &str) -> Vec<&'a index::Dependency> {
+    let mut found: Vec<&index::Dependency> = Vec::new();
+    let mut seen: Vec<&str> = Vec::new();
+    let mut todo: Vec<&str> = ids.iter().map(String::as_str).collect();
+    while let Some(id) = todo.pop() {
+        if seen.contains(&id) {
+            continue;
+        }
+        seen.push(id);
+        let Some(version) = index
+            .project(id)
+            .and_then(|project| index.installable(project, game))
+        else {
+            continue;
+        };
+        for dep in version
+            .dependencies
+            .iter()
+            .flatten()
+            .filter(|d| !d.optional)
+        {
+            found.push(dep);
+            todo.push(&dep.id);
+        }
+    }
+    found
+}
+
+/// Whether the index has a version of what `dep` asks for that runs on `game`.
+fn available(index: &Index, dep: &index::Dependency, game: &str) -> bool {
+    let Ok(range) = semver::VersionReq::parse(&dep.version) else {
+        return true;
+    };
+    index.project(&dep.id).is_some_and(|project| {
+        project.versions.iter().any(|v| {
+            fits_game(v, game)
+                && index.revoked(&project.id, &v.file.sha256).is_none()
+                && semver::Version::parse(&v.version).is_ok_and(|n| range.matches(&n))
+        })
+    })
+}
+
+/// The installed mod `m`'s own requirement among `deps`, when it pins one of them.
+fn pins<'a>(
+    index: &'a Index,
+    m: &index::resolve::InstalledMod,
+    deps: &[&index::Dependency],
+) -> Option<&'a index::Dependency> {
+    index
+        .project(&m.id)?
+        .versions
+        .iter()
+        .find(|v| v.version == m.version)?
+        .dependencies
+        .iter()
+        .flatten()
+        .find(|d| !d.optional && deps.iter().any(|needed| needed.id == d.id))
+}
+
+/// Why the planner refused `ids` (its words are `reason`), by what the index says: a mod they
+/// need that has no version for `game`, or installed mods that pin what they need. Anything
+/// else keeps the planner's words.
+pub fn explain(
+    index: &Index,
+    ids: &[String],
+    held: &[index::resolve::InstalledMod],
+    game: &str,
+    reason: String,
+) -> installed::InstallError {
+    let deps = needed(index, ids, game);
+    let name = |id: &str| index.project(id).map_or(id, |p| p.name.as_str()).to_owned();
+    if let Some(dep) = deps.iter().find(|d| !available(index, d, game)) {
+        return installed::InstallError::Unavailable {
+            dependency: name(&dep.id),
+            reason,
+        };
+    }
+    let mods: Vec<String> = held
+        .iter()
+        .filter(|m| !ids.contains(&m.id))
+        .filter(|m| pins(index, m, &deps).is_some())
+        .map(|m| name(&m.id))
+        .collect();
+    if mods.is_empty() {
+        installed::InstallError::Refused(reason)
+    } else {
+        installed::InstallError::Conflict { mods, reason }
+    }
+}
+
 /// Plans every one of `ids` together, once, and refuses the whole set with the planner's reason
 /// if any of them can't be installed with the others: nothing is downloaded before that.
 pub fn check_set(
@@ -103,7 +195,7 @@ pub fn check_set(
     ids: &[String],
     held: &[index::resolve::InstalledMod],
     game: &str,
-) -> Result<index::resolve::InstallPlan, String> {
+) -> Result<index::resolve::InstallPlan, installed::InstallError> {
     let requests: Vec<_> = ids
         .iter()
         .map(|id| index::resolve::Request {
@@ -122,12 +214,99 @@ pub fn check_set(
     for id in ids {
         if let Some(index::resolve::RequestResult::Refused { reason }) = plan.requested.get(id) {
             let name = index.project(id).map_or(id.as_str(), |p| p.name.as_str());
-            return Err(format!(
-                "{name} can't be installed with the others: {reason}"
+            return Err(explain(
+                index,
+                ids,
+                held,
+                game,
+                format!("{name} can't be installed with the others: {reason}"),
             ));
         }
     }
     Ok(plan)
+}
+
+/// Whether installing `ids` would put native code in, by the plan the install itself follows:
+/// one of them, or one of what they need, that the plan installs or updates is a native mod.
+/// A native mod already installed that the plan keeps puts nothing in. False when the plan
+/// can't be made: the install says why.
+pub fn brings_native(
+    index: &Index,
+    ids: &[String],
+    held: &[index::resolve::InstalledMod],
+    game: &str,
+) -> bool {
+    check_set(index, ids, held, game).is_ok_and(|plan| {
+        let installs = plan.install.iter().map(|m| &m.id);
+        let updates = plan.update.iter().map(|u| &u.id);
+        installs.chain(updates).any(|id| {
+            index
+                .project(id)
+                .is_some_and(|p| p.kind == index::Kind::NativeMod)
+        })
+    })
+}
+
+/// An installed mod that installing would break: one the plan updates a dependency out from
+/// under.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Broken {
+    pub id: String,
+    /// What it needs that the plan would replace, as the registry names it ("flywheel ^0.3").
+    pub needs: String,
+}
+
+/// The installed mods that installing `ids` would break: the plan refuses because of what they
+/// need, and installing works without them. By the index; one installed file the index doesn't
+/// know is not judged. Empty when the plan works, or fails for another reason.
+pub fn would_break(
+    index: &Index,
+    ids: &[String],
+    held: &[index::resolve::InstalledMod],
+    game: &str,
+) -> Vec<Broken> {
+    if check_set(index, ids, held, game).is_ok() {
+        return Vec::new();
+    }
+    let deps = needed(index, ids, game);
+    let works_without = |gone: &[&index::resolve::InstalledMod]| {
+        let rest: Vec<_> = held
+            .iter()
+            .filter(|h| !gone.iter().any(|g| g.id == h.id))
+            .cloned()
+            .collect();
+        check_set(index, ids, &rest, game).is_ok()
+    };
+    // Every installed mod that needs what the install needs is a suspect; two may pin the
+    // same dependency, so removing one alone doesn't make the plan work.
+    let mut gone: Vec<&index::resolve::InstalledMod> = held
+        .iter()
+        .filter(|m| !ids.contains(&m.id))
+        .filter(|m| pins(index, m, &deps).is_some())
+        .collect();
+    if !works_without(&gone) {
+        return Vec::new();
+    }
+    // Then only those the plan needs gone: one that can stay is put back.
+    let mut i = 0;
+    while i < gone.len() {
+        let mut fewer = gone.clone();
+        fewer.remove(i);
+        if works_without(&fewer) {
+            gone = fewer;
+        } else {
+            i += 1;
+        }
+    }
+    gone.into_iter()
+        .filter_map(|m| {
+            let dep = pins(index, m, &deps)?;
+            Some(Broken {
+                id: m.id.clone(),
+                needs: format!("{} {}", dep.id, dep.version),
+            })
+        })
+        .collect()
 }
 
 /// The index read last in this run, without asking the network: for what must not wait.
@@ -236,11 +415,16 @@ fn load(
 }
 
 fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
-    use std::io::Read;
     if local {
         let text = fs::read_to_string(at).map_err(|e| format!("{at}: {e}"))?;
         return Ok((Index::parse_local(&text)?, text));
     }
+    let text = fetch_live_text(at)?;
+    Ok((parse_live(&text)?, text))
+}
+
+fn fetch_live_text(at: &str) -> Result<String, String> {
+    use std::io::Read;
     let spec = crate::proxy::spec_for(at);
     let agent = crate::net::keep("sunrise-index", spec.as_deref(), |proxy| {
         let builder = ureq::AgentBuilder::new()
@@ -255,6 +439,9 @@ fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
         ureq::Error::Status(code, _) => format!("The mod registry answered {code}."),
         ureq::Error::Transport(t) => format!("The mod registry can't be reached: {t}"),
     })?;
+    if response.status() != 200 || response.header("Content-Range").is_some() {
+        return Err(tr("The mod registry didn't send the full index.").to_string());
+    }
     let mut text = String::new();
     response
         .into_reader()
@@ -264,7 +451,53 @@ fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
     if text.len() as u64 > MAX_INDEX {
         return Err("The mod registry index is too large.".into());
     }
-    Ok((Index::parse(&text)?, text))
+    Ok(text)
+}
+
+/// The authoritative wire response must distinguish a missing list from an empty list.
+/// Keep the tolerant reader for display, but never mark a projection as fetched.
+fn parse_live(text: &str) -> Result<Index, String> {
+    #[derive(serde::Deserialize)]
+    struct Complete {
+        #[serde(rename = "projects")]
+        _projects: Vec<serde::de::IgnoredAny>,
+        #[serde(rename = "revoked")]
+        _revoked: Vec<serde::de::IgnoredAny>,
+    }
+    serde_json::from_str::<Complete>(text).map_err(|error| {
+        trf(
+            "The mod registry didn't send a complete index: {error}",
+            &[("error", &error.to_string())],
+        )
+    })?;
+    Index::parse(text)
+}
+
+/// No cached catalogue, display filtering, or locally configured substitute can authorize a
+/// switch. The complete response seals negative evidence too (a missing version/takedown).
+fn authoritative_index() -> Result<(Index, String), String> {
+    let text = fetch_live_text(INDEX_URL)?;
+    let index = parse_authoritative(&text)?;
+    Ok((index, index::sha256(text.as_bytes())))
+}
+
+fn parse_authoritative(text: &str) -> Result<Index, String> {
+    #[derive(serde::Deserialize)]
+    struct Complete {
+        schema: u32,
+        #[serde(rename = "projects")]
+        _projects: Vec<serde::de::IgnoredAny>,
+        #[serde(rename = "revoked")]
+        _revoked: Vec<serde::de::IgnoredAny>,
+    }
+    let complete: Complete = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    if complete.schema != index::SCHEMA {
+        return Err(tr("The mod registry didn't send the full index.").into());
+    }
+    let index: Index = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    // Do not silently discard any row: it can name a dependency or a revocation.
+    index.check()?;
+    Ok(index)
 }
 
 /// A project's ratings: 1 to 5 stars, their mean and how many.
@@ -475,7 +708,7 @@ pub fn trust_and_capabilities(
     });
     if p.kind == index::Kind::NativeMod {
         lines.push(
-            tr("Native code: it is built into the game and runs with full access to your computer. Its source was reviewed before it was listed").to_string(),
+            tr("Native code: it is built into the game and runs with full access to your computer. Listed after a person reviewed its entry and file").to_string(),
         );
         if let Some(v) = p.versions.iter().find(|v| v.game == game) {
             let pin = v.api.split('/').nth(1).unwrap_or_default();
@@ -944,75 +1177,108 @@ fn relative(kind: Kind, id: &str, file_name: &str) -> Result<String, String> {
         Kind::Mod => Ok(format!("{}/{id}.smod", mod_list::MODS_DIR)),
         Kind::ResourcePack => Ok(format!("resourcepacks/{file_name}")),
         Kind::Shader => Ok(format!("shaderpacks/{file_name}")),
-        Kind::Modpack => Err("A modpack installs as its own profile (pack::install).".into()),
+        Kind::Modpack => Err("A modpack installs as its own profile.".into()),
         Kind::DataPack => Err("A data pack goes into a world (fetch_datapack).".into()),
     }
 }
 
-/// Installs a registry project into the game folder `home`: its newest version for this game that
-/// the game the player runs can load, downloaded into `mod-browser/downloads/`, checked against
-/// the index, then moved into place. A mod is `sunrise-mods/<id>.smod`, turned on in
-/// `sunrise-mods.txt`.
-pub fn install(
+/// Removes registry mods in one transaction (`txn`), each only if it is still the file shown
+/// (id and checksum). Returns the ids that went.
+pub fn remove_checked(home: &Path, wanted: &[(String, String)]) -> Result<Vec<String>, String> {
+    dependencies::remove_checked(home, wanted)
+}
+
+/// Installs a resource or shader pack into the game folder. Registry mods instead go
+/// through the exact-profile candidate and cannot reach this direct writer.
+pub(super) fn install(
     project: &Project,
     home: &Path,
     game: &str,
     progress: &dyn Fn(&str, f32),
-) -> Result<Vec<installed::Entry>, String> {
+) -> Result<Vec<installed::Entry>, installed::InstallError> {
     let index = index()?;
-    let index = if index
+    let p = index
         .project(&project.id)
-        .is_some_and(|p| matches!(p.kind, index::Kind::Mod | index::Kind::NativeMod))
-    {
-        fetched_index().ok_or_else(|| {
-            tr("Connect to the Sunrise registry before installing a mod and its dependencies.")
-                .to_string()
-        })?
-    } else {
-        index
-    };
-    install_from(
+        .filter(|p| matches!(p.kind, index::Kind::ResourcePack | index::Kind::ShaderPack))
+        .ok_or_else(txn::unsettled)?;
+    let version = newest(&index, p, game)?;
+    Ok(vec![install_version(
         &index,
         local(),
-        project,
+        p,
+        version,
         home,
-        game,
-        crate::backend::Settings::load()
-            .native_mods_allowed_at
-            .is_some(),
-        true,
         progress,
+    )?])
+}
+
+/// Exercise the dependency planner and legacy record directly in local fixtures.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+fn install_set_from(
+    index: &Index,
+    local: bool,
+    projects: &[Project],
+    home: &Path,
+    game: &str,
+    native_allowed: bool,
+    turn_on: bool,
+    approvals: &[installed::Approval],
+    progress: &dyn Fn(&str, f32),
+) -> Result<Vec<installed::Entry>, installed::InstallError> {
+    let waiting = txn::waiting_packages(home)?;
+    let asked = registry_candidates(
+        index,
+        projects.iter().map(|p| p.id.as_str()),
+        game,
+        &waiting,
+    )?;
+    dependencies::install(
+        &Install {
+            index,
+            local,
+            home,
+            approvals,
+            progress,
+        },
+        &asked,
+        native_allowed,
+        turn_on,
+        &waiting,
     )
 }
 
-/// Updates an installed native mod to its newest file. A mod that is off (`turn_on` false) stays
-/// off, and its dependencies being off doesn't refuse the update.
-pub fn update_native(
-    project: &Project,
-    home: &Path,
+fn registry_candidates<'a, 'b>(
+    index: &'a Index,
+    ids: impl IntoIterator<Item = &'b str>,
     game: &str,
-    turn_on: bool,
-    progress: &dyn Fn(&str, f32),
-) -> Result<Vec<installed::Entry>, String> {
-    let index = fetched_index().ok_or_else(|| {
-        tr("Connect to the Sunrise registry before installing a mod and its dependencies.")
-            .to_string()
-    })?;
-    install_from(
-        &index,
-        local(),
-        project,
-        home,
-        game,
-        crate::backend::Settings::load()
-            .native_mods_allowed_at
-            .is_some(),
-        turn_on,
-        progress,
-    )
+    waiting: &std::collections::BTreeMap<String, txn::WaitingMod>,
+) -> Result<Vec<(&'a index::Project, &'a index::Version)>, String> {
+    ids.into_iter()
+        .map(|id| {
+            let p = index
+                .project(id)
+                .filter(|p| matches!(p.kind, index::Kind::Mod | index::Kind::NativeMod))
+                .ok_or_else(|| format!("{id} isn't a mod in Sunrise's registry."))?;
+            let version = match waiting.get(&p.id) {
+                Some(waiting) => waiting.replacement(index, p, game).ok_or_else(|| {
+                    trf(
+                        "{mod} needs an update from its author before it can be turned on.",
+                        &[("mod", &p.name)],
+                    )
+                })?,
+                None => newest(index, p, game)?,
+            };
+            Ok((p, version))
+        })
+        .collect()
 }
+
+mod registry_install;
+pub use registry_install::{prepare_registry_install, RegistryInstall};
 
 /// [`install`] from a trusted `index`.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn install_from(
     index: &Index,
@@ -1022,27 +1288,27 @@ fn install_from(
     game: &str,
     native_allowed: bool,
     turn_on: bool,
+    approvals: &[installed::Approval],
     progress: &dyn Fn(&str, f32),
-) -> Result<Vec<installed::Entry>, String> {
+) -> Result<Vec<installed::Entry>, installed::InstallError> {
     let p = index
         .project(&project.id)
         .ok_or_else(|| format!("{} isn't in Sunrise's registry.", project.title))?;
-    let v = newest(index, p, game)?;
     if matches!(p.kind, index::Kind::Mod | index::Kind::NativeMod) {
-        return dependencies::install(
-            &Install {
-                index,
-                local,
-                home,
-                progress,
-            },
-            p,
-            v,
+        return install_set_from(
+            index,
+            local,
+            std::slice::from_ref(project),
+            home,
+            game,
             native_allowed,
             turn_on,
+            approvals,
+            progress,
         );
     }
-    install_version(index, local, p, v, home, progress).map(|e| vec![e])
+    let v = newest(index, p, game)?;
+    Ok(vec![install_version(index, local, p, v, home, progress)?])
 }
 
 /// Downloads the newest version of the registry's data pack `project` into `folder`, checked
@@ -1137,10 +1403,11 @@ fn install_version_guarded(
         index,
         local,
         home,
+        approvals: &[],
         progress,
     };
     let (entry, file, unreadable) =
-        install.prepare(p, v, &list, &home.join("mod-browser/downloads"))?;
+        install.prepare(p, v, &list, &home.join("mod-browser/downloads"), None)?;
     let Some((path, _)) = file else {
         return Ok(entry);
     };
@@ -1154,6 +1421,9 @@ fn install_version_guarded(
     let aside = unreadable
         .map(|broken| {
             let to = unreadable_slot(home, &broken)?;
+            if let Some(dir) = to.parent() {
+                fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            }
             fs::rename(&broken, &to).map_err(|e| format!("{}: {e}", broken.display()))?;
             Ok::<_, String>((broken, to))
         })
@@ -1184,7 +1454,6 @@ fn install_version_guarded(
 /// Where an installed file that no longer parses is kept when its update replaces it.
 fn unreadable_slot(home: &Path, broken: &Path) -> Result<PathBuf, String> {
     let dir = home.join("mod-browser/unreadable");
-    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let name = broken.file_name().unwrap_or_default().to_string_lossy();
     Ok((0..)
         .map(|n| dir.join(format!("{name}.{n}")))
@@ -1196,6 +1465,8 @@ struct Install<'a> {
     index: &'a Index,
     local: bool,
     home: &'a Path,
+    /// Installed registry mods removed by this install, in the same transaction.
+    approvals: &'a [installed::Approval],
     progress: &'a dyn Fn(&str, f32),
 }
 
@@ -1214,6 +1485,7 @@ impl Install<'_> {
         v: &index::Version,
         list: &installed::Installed,
         staging: &Path,
+        waiting: Option<&txn::WaitingMod>,
     ) -> Result<Prepared, String> {
         let index = self.index;
         let project = project_of(index, p, &v.game)
@@ -1269,7 +1541,9 @@ impl Install<'_> {
                 ));
             }
         }
-        if old.as_ref().is_some_and(|o| o.version == v.version) {
+        if old.as_ref().is_some_and(|o| o.version == v.version)
+            && waiting.is_none_or(|item| item.same_package(v))
+        {
             return Ok((old.expect("checked"), None, None));
         }
         let target = self.home.join(&relative);
@@ -1367,22 +1641,84 @@ pub fn before_play(
     cmd: &mut std::process::Command,
     tag: &str,
     launch: &crate::launch::Launch,
+    owner: &txn::Lease,
 ) -> Result<Vec<String>, String> {
-    use sunrise_launcher_smod::selection::LaunchArguments;
-
     crate::launch::apply_environment(cmd, launch);
-    let args = LaunchArguments::for_command(cmd).map_err(|e| e.to_string())?;
-    if args.is_information_request() {
-        return Ok(Vec::new());
+    let Some(active) = owner.active_build()? else {
+        return Err(tr("This profile has no committed build to start.").into());
+    };
+    if active.executable() != tag {
+        return Err(tr(
+            "The launch command does not match this profile's saved build and folders.",
+        )
+        .into());
     }
+    verify_launch_arguments(cmd, owner.home(), &active.resources())?;
+    let source = cmd
+        .get_envs()
+        .find(|(key, _)| *key == crate::run_leases::SOURCE)
+        .and_then(|(_, value)| value);
+    if source.map(Path::new) != Some(crate::backend::version_dir(tag).as_path())
+        || cmd.get_envs().any(|(key, value)| {
+            key.eq_ignore_ascii_case("SUNRISE_WINDOWS_RUNTIME_SLOT") && value.is_some()
+        })
+    {
+        return Err(tr(
+            "The launch command does not match this profile's saved build and folders.",
+        )
+        .into());
+    }
+    active.verify_program(Path::new(cmd.get_program()))?;
     let included = crate::native_status::included(tag)?;
-    // The mod list lives with the game’s packages, not the separate cache/data home.
-    let notices = check_before_play(&args.context.game_dir, &included, || {
+    check_before_play(owner.home(), &included, || {
         index().ok()?;
         fetched_index()
-    })?;
-    crate::native_status::check_compiled_profile(&included, &args.context.game_dir)?;
-    Ok(notices)
+    })
+}
+
+fn verify_launch_arguments(
+    cmd: &std::process::Command,
+    home: &Path,
+    resources: &Path,
+) -> Result<(), String> {
+    use sunrise_launcher_smod::{
+        manifest::Side,
+        selection::{Argument, LaunchArguments},
+    };
+    let args = LaunchArguments::for_command(cmd).map_err(|e| e.to_string())?;
+    let cwd = cmd.get_current_dir().unwrap_or(Path::new("."));
+    let mut resource_args = args.rest.iter().filter_map(|arg| match arg {
+        Argument::Value(name, value) if name == "--resources" => Some(cwd.join(value)),
+        _ => None,
+    });
+    let actual = resource_args
+        .next()
+        .and_then(|path| path.canonicalize().ok());
+    let expected = resources.canonicalize().ok();
+    let home_matches = home.canonicalize().is_ok_and(|expected| {
+        args.context
+            .home
+            .canonicalize()
+            .is_ok_and(|path| path == expected)
+            && args
+                .context
+                .game_dir
+                .canonicalize()
+                .is_ok_and(|path| path == expected)
+    });
+    if args.installation_side() != Side::Client
+        || !args.context.dev_mods.is_empty()
+        || !home_matches
+        || actual.is_none()
+        || actual != expected
+        || resource_args.next().is_some()
+    {
+        return Err(tr(
+            "The launch command does not match this profile's saved build and folders.",
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn check_before_play(
@@ -1391,7 +1727,11 @@ fn check_before_play(
     load: impl FnOnce() -> Option<Arc<Index>>,
 ) -> Result<Vec<String>, String> {
     let entries = installed::Installed::load(home).entries;
-    if included.is_empty() && !entries.iter().any(|e| e.source == SourceId::Sunrise) {
+    let packages = txn::scan_packages(home)?;
+    if included.is_empty()
+        && packages.is_empty()
+        && !entries.iter().any(|e| e.source == SourceId::Sunrise)
+    {
         return Ok(Vec::new());
     }
     let Some(index) = load() else {
@@ -1399,9 +1739,33 @@ fn check_before_play(
             tr("Mods were not checked for registry takedowns.").into()
         ]);
     };
-    let lines = turn_off_revoked(&index, home)?;
-    // Switching the mod off in this profile cannot remove code from the selected binary.
-    for crate::native_status::Included { id, version, .. } in included {
+    // Reading revocations must never turn off a package in the committed profile.
+    // Identifying a file by its actual bytes also covers a game-owned update of that file.
+    for (manifest, path) in packages {
+        if !mod_list::is_enabled(home, &manifest.id) {
+            continue;
+        }
+        let hash = index::sha256_file(&path)?;
+        let project = entries
+            .iter()
+            .find(|entry| {
+                entry.source == SourceId::Sunrise && entry.path(home).as_ref() == Some(&path)
+            })
+            .map_or(manifest.id.as_str(), |entry| entry.project.as_str());
+        if let Some(revoked) = index.revoked(project, &hash) {
+            return Err(trf(
+                "{mod} was taken down: {reason} Turn it off in Mods before playing.",
+                &[("mod", &manifest.name), ("reason", &revoked.reason)],
+            ));
+        }
+    }
+    // A revocation can reach code embedded in the selected binary as well as package files.
+    for crate::native_status::Included {
+        id,
+        version,
+        sha256,
+    } in included
+    {
         let published = index
             .project(id)
             .and_then(|p| p.versions.iter().find(|v| &v.version == version));
@@ -1411,7 +1775,7 @@ fn check_before_play(
                 .flatten()
         });
         let revoked = index
-            .revoked(id, "")
+            .revoked(id, sha256)
             .or_else(|| published.and_then(|v| index.revoked(id, &v.file.sha256)))
             .or_else(|| installed_hash.and_then(|hash| index.revoked(id, hash)));
         if let Some(revoked) = revoked {
@@ -1429,11 +1793,27 @@ fn check_before_play(
             ));
         }
     }
-    Ok(lines)
+    Ok(entries
+        .iter()
+        .filter_map(|entry| {
+            if entry.source != SourceId::Sunrise
+                || !matches!(entry.kind, Kind::ResourcePack | Kind::Shader)
+            {
+                return None;
+            }
+            let hash = entry.checksum.strip_prefix("SHA-256:")?;
+            let revoked = index.revoked(&entry.project, hash)?;
+            Some(format!(
+                "{} was taken down: {} Remove it.",
+                entry.title, revoked.reason
+            ))
+        })
+        .collect())
 }
 
-pub mod auto;
+mod content_loss;
 mod dependencies;
 pub mod pack;
 #[cfg(test)]
 mod tests;
+pub mod txn;

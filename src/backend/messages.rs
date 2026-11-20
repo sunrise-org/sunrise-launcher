@@ -44,6 +44,7 @@ pub enum Msg {
     JarClient {
         run: Option<String>,
         account: Option<String>,
+        profile_owner: Arc<crate::browser::sunrise::txn::Lease>,
         session_file: Option<PathBuf>,
         registry_notices: Vec<String>,
         prepared: Box<Result<Command, String>>,
@@ -55,6 +56,7 @@ pub enum Msg {
     NativeRegistryConsent(crate::native_mods::Consent, std::sync::mpsc::Sender<bool>),
     /// The native-mods build ended: the version built, or why not.
     Native(Result<String, crate::native_mods::Failed>),
+    PlayImage(Result<String, String>),
     /// An imported game build is installed (`build_import::import`): its version, or why not.
     Imported(Result<String, String>),
 }

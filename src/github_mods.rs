@@ -567,7 +567,7 @@ fn ids(found: &[Packed]) -> String {
         .join(", ")
 }
 
-fn origin_path(home: &Path, id: &str) -> PathBuf {
+pub(crate) fn origin_path(home: &Path, id: &str) -> PathBuf {
     home.join(INSTALLED).join(format!("{id}.origin.json"))
 }
 
@@ -622,8 +622,9 @@ pub fn install(home: &Path, found: &Resolved, packed: &Packed) -> Result<Origin,
     Ok(record)
 }
 
-/// Removes mod `id` installed from GitHub; false when it wasn't.
-pub fn remove(home: &Path, id: &str) -> Result<bool, String> {
+/// Used by the import-format tests. Managed removal stages the origin and package together.
+#[cfg(test)]
+fn remove(home: &Path, id: &str) -> Result<bool, String> {
     let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
     if origin(home, id).is_none() {
         return Ok(false);

@@ -1056,8 +1056,7 @@ pub fn write_network(tag: &Tag, limits: Limits) -> Result<Vec<u8>, Error> {
     Ok(writer.bytes)
 }
 
-/// A tag as its network NBT bytes (`write_network`), the form it crosses to a wasm mod in; a
-/// tag past the default limits is refused, with the reason.
+/// A tag as its network NBT bytes (`write_network`), using the default limits.
 impl TryFrom<&Tag> for Vec<u8> {
     type Error = Error;
     fn try_from(tag: &Tag) -> Result<Self, Error> {

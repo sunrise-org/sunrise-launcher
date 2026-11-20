@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sunrise_launcher_nbt::{self as nbt, Limits, Tag};
 
+pub(crate) mod switch;
+pub use switch::Question as SwitchQuestion;
+
 /// The lock a running game holds on a world; vanilla's backups leave it out.
 const LOCK: &str = "session.lock";
 /// The latest `LastPlayed` kept: the end of year 9999, in milliseconds. A later time does not fit a
@@ -279,6 +282,50 @@ pub fn at_risk(home: &Path, ids: &[String]) -> Result<Vec<(World, Vec<String>, b
             (!used.is_empty()).then_some((s.world, used, s.known))
         })
         .collect())
+}
+
+/// What a change that removes or drops mods asks first: which of them saved worlds use, and
+/// which worlds. The answer is [`Answer::Stay`] unless the player says otherwise.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Question {
+    pub mods: Vec<String>,
+    /// The worlds' names; one whose list of mods can't be read says so.
+    pub worlds: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Answer {
+    /// Leave the version, and the mods, as they are.
+    #[default]
+    Stay,
+    /// Go on: what the mods added to those worlds is lost.
+    Switch,
+}
+
+/// The question for removing the mods `ids` from `home`'s profile; None when no saved world uses
+/// them, and the change goes ahead. Worlds that can't be read count as using every mod.
+pub fn question(home: &Path, ids: &[String]) -> Result<Option<Question>, String> {
+    let at_risk = at_risk(home, ids)?;
+    if at_risk.is_empty() {
+        return Ok(None);
+    }
+    let mut mods: Vec<String> = at_risk
+        .iter()
+        .flat_map(|(_, used, _)| used.clone())
+        .collect();
+    mods.sort();
+    mods.dedup();
+    let worlds = at_risk
+        .iter()
+        .map(|(world, _, known)| match known {
+            true => world.name.clone(),
+            false => crate::i18n::trf(
+                "{name} (its list of mods can't be read)",
+                &[("name", &world.name)],
+            ),
+        })
+        .collect();
+    Ok(Some(Question { mods, worlds }))
 }
 
 fn size(dir: &Path) -> u64 {

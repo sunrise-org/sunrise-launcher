@@ -29,6 +29,7 @@ pub mod instances;
 pub mod java;
 pub mod jdk;
 pub mod launch;
+mod local_json;
 #[cfg(target_os = "macos")]
 mod mac_update;
 pub mod mojang;
