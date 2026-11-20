@@ -164,6 +164,7 @@ impl Launcher {
             auth_status: HashMap::new(),
             auth_progress: HashMap::new(),
             profile_heads: profile_heads::Heads::default(),
+            skins: skins_page::Skins::default(),
             account_menu: account_chip::Menu::default(),
             search: command_search::Search::default(),
             auth_checked: None,

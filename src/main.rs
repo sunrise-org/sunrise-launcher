@@ -78,6 +78,7 @@ mod settings;
 mod setup_page;
 mod sheets;
 mod shell;
+mod skins_page;
 mod slider;
 mod status_strip;
 mod sticky;
@@ -326,6 +327,8 @@ struct Launcher {
     auth_status: HashMap<String, account::session::Status>,
     auth_progress: HashMap<String, account::session::Phase>,
     profile_heads: profile_heads::Heads,
+    /// The Skins tab (`skins_page`).
+    skins: skins_page::Skins,
     /// The account chip's menu (`account_chip`).
     account_menu: account_chip::Menu,
     /// The launcher's search (`command_search`).

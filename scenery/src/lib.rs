@@ -5,5 +5,6 @@ pub mod art;
 pub mod clock;
 pub mod coast;
 pub mod glass;
+pub mod model;
 pub mod rain;
 pub mod sky;

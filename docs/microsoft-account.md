@@ -315,6 +315,46 @@ worker thread, cached on disk by texture hash (`assets/skins/xx/hash`, like vani
 `SkinManager`), converted from legacy 64×32 the way `SkinTextureDownloader` does and given to the
 player renderer. Until a skin arrives the default skin for the UUID shows (as today).
 
+## Skins and capes in the launcher (Skins tab)
+
+The Skins tab (`src/skins_page.rs`; requests in `src/account/capes.rs` and `src/account/skins.rs`,
+the 3D preview drawn by `scenery/src/model.rs` from the pictures `src/player_model.rs` decodes,
+saved skins in `src/skin_library.rs`) shows the account
+that plays, the selected one or else the first, as the game picks it. Choices show on the preview
+at once and are sent only on Save: the skin first when it or its arms changed, then the cape when
+it changed.
+
+- **Preview**: the player model drawn in software (each part a box on the skin's standard
+  layout, its outer layer grown a little, the cape swung back from the shoulders), turned by
+  dragging (anywhere on the page once the drag began on it). It is drawn in the scenery crate,
+  which is optimised in debug builds too: unoptimised, one 560×840 frame took 65 ms, about 10 ms
+  optimised. Old 64×32 skins get their left arm and leg, an opaque base layer and the hat cleared
+  when it has no clear texel, as the game's `processLegacySkin` does.
+- **Skin**: `POST /minecraft/profile/skins`, a multipart form with `variant` (`classic` or `slim`)
+  and `file` (the PNG, at most 256 KiB, 64×64 or 64×32). The choices are the skin worn now, saved
+  skins, and the game's nine default skins from the prepared game files
+  (`assets/minecraft/textures/entity/player/{wide,slim}`). A PNG added from a file or dropped on
+  the page is saved in `saved-skins/<account uuid>/`, each account's apart (with `index.json` for names and arm models), its arms
+  guessed from its clear arm column. A skin's id is the first 16 hex digits of the SHA-1 of its
+  texels (clear ones alike), not of its file, since the texture server sends a worn skin back in
+  another PNG. The skin worn is kept there too (without a name, with the arms it is worn
+  with), so every skin replaced by a Save stays in the list, worn one first, then newest first.
+- **Owned capes**: `GET /minecraft/profile` lists them, each `ACTIVE` or `INACTIVE`, with its id,
+  name (`alias`) and picture. Only pictures under `textures.minecraft.net/texture/` are fetched, as
+  the game does. Wearing one is `PUT /minecraft/profile/capes/active` with `{"capeId": …}`, and no
+  cape is `DELETE` on the same path. These calls take `account::token_for`'s token: the keychain's
+  Minecraft token when it has an hour left, else one renewed through the refresh token and kept.
+- **OptiFine cape**: `http://s.optifine.net/capes/<name>.png`, by name and over plain HTTP (the
+  server has no HTTPS). Only valid Minecraft names (1 to 16 letters, digits and underscores) are
+  ever put in the URL, and only a PNG of at most 256 KiB is accepted; a 404 (or no answer) means no
+  tile. Its picture is laid on the smallest 64·2ⁿ by 32·2ⁿ canvas it fits, as OptiFine does.
+  Choosing it takes the Minecraft cape off (`DELETE`), so the OptiFine cape is what players with
+  OptiFine see and nothing shows for the others; OptiFine itself is never asked to change anything.
+
+After a Save the new skin and cape are kept in accounts.json and the account's head is drawn
+again. Every request runs on a worker; one numbered for another account, or replaced by a later
+one, is dropped.
+
 ## Chat signing (part d)
 
 26.3's dedicated servers default to `enforce-secure-profile=true`. A client without a chat session

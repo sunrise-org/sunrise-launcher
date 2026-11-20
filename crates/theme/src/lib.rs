@@ -47,7 +47,8 @@ pub mod fonts {
 /// ones the mockup uses, 24 unit outlines stroked 1.6 in `currentColor`, by Hugeicons' name
 /// (`"folder-01"`, `"more-vertical"`…). `github` is GitHub's mark, drawn for Sunrise (filled,
 /// its cat cut out by a mask), for Settings' credit link. `sparkles` (Home's What's
-/// new) and `chat` (the sidebar's Discord link) are drawn for Sunrise in the same 1.6 stroke.
+/// new), `chat` (the sidebar's Discord link) and `t-shirt` (the Skins tab) are drawn for Sunrise in
+/// the same 1.6 stroke.
 pub mod glass_icons {
     macro_rules! icons {
         ($($name:literal),* $(,)?) => {
@@ -98,6 +99,7 @@ pub mod glass_icons {
         "sliders-horizontal",
         "sparkles",
         "stop",
+        "t-shirt",
         "tick-02",
         "upload-04",
         "user",

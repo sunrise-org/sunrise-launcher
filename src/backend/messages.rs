@@ -1,5 +1,12 @@
 use super::*;
 
+/// What the Skins tab's Save left the account wearing.
+pub struct SavedLook {
+    /// The skin's URL and model ("classic" or "slim"), when the services said.
+    pub skin: Option<(String, String)>,
+    pub capes: Vec<crate::account::capes::Cape>,
+}
+
 pub enum Msg {
     Playing(Option<u64>),
     Storage(Result<Box<crate::storage::Report>, String>),
@@ -32,6 +39,20 @@ pub enum Msg {
     AccountProgress(String, u64, crate::account::session::Phase),
     AccountHead(String, Option<String>, Option<Vec<[u8; 4]>>, bool),
     AccountRemoved(String, u64, Result<bool, String>),
+    /// The capes account `.0` owns, from the request numbered `.1` (a listing or a change).
+    Capes(
+        String,
+        u64,
+        Result<Vec<crate::account::capes::Cape>, String>,
+    ),
+    /// A skin's or cape's picture from Mojang's texture server, by its URL (none: it couldn't be
+    /// had).
+    Picture(String, Option<Vec<u8>>),
+    /// The OptiFine cape of a name: its picture, or none (no cape, or the server couldn't say).
+    OptifineCape(String, Option<Vec<u8>>),
+    /// A Save on the Skins tab for account `.0`, numbered `.1`, ended: what the account wears
+    /// after it, or why it stopped.
+    LookSaved(String, u64, Box<Result<SavedLook, String>>),
     /// The owner gate's answer for the game about to start: the selected account's session
     /// file (none = offline) and why it plays offline, if it does.
     Session(Result<Option<crate::account::GameSession>, crate::account::NoOwner>),

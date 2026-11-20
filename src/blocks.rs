@@ -56,6 +56,7 @@ pub fn icon(name: &'static str, size: f32, color: Hsla) -> Svg {
         "search" => "search-01",
         "check" => "tick-02",
         "user" => "user",
+        "shirt" => "t-shirt",
         "map" => "map",
         "plus" => "plus-sign",
         "globe" => "earth",
