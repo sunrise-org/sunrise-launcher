@@ -400,7 +400,7 @@ and don't set `%ERRORLEVEL%` / `$LASTEXITCODE`. Scripts that need the exit code 
     sunrise-launcher import-build <path> [--version <tag>] --trust-unsigned   a game program you have, as its own version
     sunrise-launcher prepare [--minecraft <dir>] [--version <tag>]
     sunrise-launcher play [--version <tag>] [--instance <name>] [--arg <ARG>]...   start the client; --arg passes an extra argument through (repeatable)
-    sunrise-launcher server [--dir <dir>] [--version <tag>] [--accept-eula]
+    sunrise-launcher server [--dir <dir>] [--version <tag>] [--accept-eula]   uses its own folder, never a launcher profile
     sunrise-launcher notes [<tag>]                  patch notes as plain text
     sunrise-launcher links                          the Discord and website links
     sunrise-launcher game-args [<line>]             show or set the extra arguments the game starts with

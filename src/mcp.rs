@@ -162,7 +162,7 @@ impl Session {
                     Permission::headless(allow_jar_downloads),
                 )
                 .map_err(|error| error.to_string())?;
-                let server = Logged::start(Job::Server, cmd)?;
+                let server = Logged::start_server(&tag, &dir, cmd)?;
                 std::thread::sleep(Duration::from_secs(3));
                 let tail = server.tail(15).join("\n");
                 if let Some(result) = server.finished() {

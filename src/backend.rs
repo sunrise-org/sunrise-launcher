@@ -2889,17 +2889,30 @@ pub(crate) fn client_program(tag: &str) -> PathBuf {
     dir.join(CLIENT)
 }
 
-pub fn server_command(tag: &str, folder: &Path) -> Command {
-    let mut cmd = Command::new(version_dir(tag).join(CLIENT));
-    if crate::developer_install::uses_developer(tag) {
-        cmd.env("SUNRISE_TELEMETRY_URL", "off");
-    }
-    crate::run_leases::mark(&mut cmd, &version_dir(tag));
-    cmd.current_dir(folder)
-        .arg("--resources")
-        .arg(resources(tag))
-        .args(["--dedicated", "--nogui"]);
-    cmd
+mod dedicated;
+
+pub(crate) use dedicated::root as server_root;
+
+pub fn server_command(tag: &str, folder: &Path) -> Result<Command, String> {
+    dedicated::command(tag, folder)
+}
+
+/// Check the command returned by `prepare_server_command`, while its runtime guard is held.
+pub fn verify_server_command(tag: &str, folder: &Path, command: &Command) -> Result<(), String> {
+    dedicated::verify(tag, folder, command, true)
+}
+
+/// Keep the isolated directory and the installed source fenced before Windows stages its slot,
+/// then check the exact staged command before either dedicated spawn route can use it.
+pub fn prepare_server_command(
+    tag: &str,
+    folder: &Path,
+    cmd: Command,
+) -> Result<(Command, RuntimeGuard), String> {
+    dedicated::verify(tag, folder, &cmd, false)?;
+    let (cmd, runtime) = prepare_command(cmd)?;
+    verify_server_command(tag, folder, &cmd)?;
+    Ok((cmd, runtime))
 }
 
 /// Whether `eula.txt` says `eula` is true, read as a Java properties file as the server reads it:
@@ -2954,9 +2967,15 @@ pub fn eula_agreed(folder: &Path) -> bool {
 
 /// Writes eula.txt as vanilla's server expects it, once the player agreed in the launcher.
 pub fn agree_eula(folder: &Path) -> Result<(), String> {
-    fs::create_dir_all(folder).map_err(|e| e.to_string())?;
+    let folder = server_root(folder)?;
+    fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
     let text = "#By changing the setting below to TRUE you are indicating your agreement to our EULA (https://aka.ms/MinecraftEULA).\neula=true\n";
-    fs::write(folder.join("eula.txt"), text).map_err(|e| e.to_string())
+    // Replace a directory entry rather than writing through an existing link to player data.
+    let mut eula = tempfile::NamedTempFile::new_in(&folder).map_err(|e| e.to_string())?;
+    eula.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+    eula.persist(folder.join("eula.txt"))
+        .map(|_| ())
+        .map_err(|e| e.error.to_string())
 }
 
 // ----- Shared steps for the front ends -----------------------------------------------------------
@@ -3194,18 +3213,22 @@ pub fn join_friend(cmd: &mut Command, code: &str) -> Result<(), String> {
 
 /// The dedicated server's command in `folder`, once prepared and the EULA is agreed to.
 pub fn server(tag: &str, folder: &Path, accept_eula: bool) -> Result<Command, String> {
+    let command = server_command(tag, folder)?;
+    let folder = command
+        .get_current_dir()
+        .expect("dedicated command owns its directory");
     if let Some(error) = game_architecture_launch_error(tag) {
         return Err(error);
     }
     need_prepared(tag)?;
+    dedicated::verify_paths(tag, &command)?;
     if accept_eula {
         agree_eula(folder)?;
     }
     if !eula_agreed(folder) {
-        return Err("Running a server needs your agreement to the Minecraft EULA (https://aka.ms/MinecraftEULA). Accept it to continue.".into());
+        return Err(crate::i18n::tr("Running a server needs your agreement to the Minecraft EULA (https://aka.ms/MinecraftEULA). Accept it to continue.").into());
     }
-    fs::create_dir_all(folder).map_err(|e| e.to_string())?;
-    Ok(server_command(tag, folder))
+    Ok(command)
 }
 
 mod release_selection;
@@ -3235,8 +3258,19 @@ pub const LOG_KEEP: usize = 2000;
 
 impl Logged {
     pub fn start(job: Job, cmd: Command) -> Result<Self, String> {
+        Self::start_with(|tx| spawn(job, cmd, tx))
+    }
+
+    pub fn start_server(tag: &str, folder: &Path, cmd: Command) -> Result<Self, String> {
+        let (cmd, runtime) = prepare_server_command(tag, folder, cmd)?;
+        Self::start_with(|tx| spawn_prepared(Job::Server, cmd, runtime, tx, None))
+    }
+
+    fn start_with(
+        start: impl FnOnce(Sender<Msg>) -> Result<Running, String>,
+    ) -> Result<Self, String> {
         let (tx, rx) = std::sync::mpsc::channel();
-        let running = spawn(job, cmd, tx)?;
+        let running = start(tx)?;
         let log = Arc::new(Mutex::new(std::collections::VecDeque::new()));
         let exit = Arc::new(Mutex::new(None));
         let (l, e) = (log.clone(), exit.clone());
@@ -4185,7 +4219,17 @@ pub fn spawn_holding(
     tx: Sender<Msg>,
     hold: Option<sunrise_launcher_smod::locks::Locked>,
 ) -> Result<Running, String> {
-    let (mut cmd, runtime) = prepare_command(cmd)?;
+    let (cmd, runtime) = prepare_command(cmd)?;
+    spawn_prepared(job, cmd, runtime, tx, hold)
+}
+
+fn spawn_prepared(
+    job: Job,
+    mut cmd: Command,
+    runtime: RuntimeGuard,
+    tx: Sender<Msg>,
+    hold: Option<sunrise_launcher_smod::locks::Locked>,
+) -> Result<Running, String> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

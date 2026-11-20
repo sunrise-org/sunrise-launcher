@@ -1098,7 +1098,11 @@ fn json(value: serde_json::Value) {
 
 /// Runs a game process in this terminal and reports how it ended.
 fn attached(cmd: Command) -> Result<i32, String> {
-    let (mut cmd, _runtime) = backend::prepare_command(cmd)?;
+    let (cmd, _runtime) = backend::prepare_command(cmd)?;
+    attached_prepared(cmd)
+}
+
+fn attached_prepared(mut cmd: Command) -> Result<i32, String> {
     let status = backend::spawn_attached(&mut cmd)
         .and_then(|mut child| child.wait())
         .map_err(|e| format!("Could not start {:?}: {e}", cmd.get_program()))?;
@@ -1452,7 +1456,8 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 sunrise_launcher::jars::Permission::headless(allow_jar_downloads),
             )
             .map_err(|error| error.to_string())?;
-            return attached(cmd);
+            let (cmd, _runtime) = backend::prepare_server_command(&tag, &dir, cmd)?;
+            return attached_prepared(cmd);
         }
         Cmd::Notes { tag } => {
             let r = backend::release_notes(tag.as_deref())?;
@@ -3048,6 +3053,8 @@ fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
     Ok(0)
 }
 
+#[cfg(test)]
+mod server_tests;
 #[cfg(test)]
 mod storage_tests;
 #[cfg(test)]

@@ -588,7 +588,7 @@ fn junction_command(target: &Path, link: &Path) -> JunctionCommand {
 /// Makes `link` a junction to the folder `target` (no admin rights needed, unlike a symlink). The
 /// error carries cmd's own message ("Access is denied", "The system cannot find the path…").
 #[cfg(windows)]
-pub(crate) fn junction(target: &Path, link: &Path) -> std::io::Result<()> {
+pub fn junction(target: &Path, link: &Path) -> std::io::Result<()> {
     use std::os::windows::process::CommandExt;
     let line = junction_command(target, link);
     let mut cmd = crate::process::command("cmd");

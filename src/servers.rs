@@ -361,14 +361,24 @@ fn supervisor_command(
     args: &[&str],
     resources: Option<&Path>,
 ) -> Result<Command, String> {
+    let dir = backend::server_root(dir)?;
+    if args
+        .iter()
+        .any(|arg| *arg == "--dir" || arg.starts_with("--dir="))
+    {
+        return Err(tr("The server command cannot change its server folder.").into());
+    }
     let program = program().ok_or(
         "The server programs aren't set up yet: create a server, or press Prepare on its page.",
     )?;
     if matches!(args.first(), Some(&"start" | &"restart" | &"run")) {
-        publish_host_runtime(dir, resources)?;
+        publish_host_runtime(&dir, resources)?;
     }
     let mut cmd = crate::process::command(program);
-    cmd.arg("--dir").arg(dir).args(args);
+    cmd.arg("--dir")
+        .arg(&dir)
+        .args(args)
+        .env("SUNRISE_HOME", &dir);
     Ok(cmd)
 }
 
@@ -881,7 +891,8 @@ pub fn create(spec: &NewServer, tag: Option<&str>, log: &dyn Fn(String)) -> Resu
     } else {
         spec.name.trim().to_string()
     };
-    let dir = new_folder(&name);
+    let folder = new_folder(&name);
+    let dir = backend::server_root(&folder).map_err(Problem::plain)?;
     fs::create_dir_all(&dir).map_err(|e| Problem::plain(e.to_string()))?;
     let world = match &spec.world {
         World::New { .. } => "world".to_string(),
@@ -916,7 +927,7 @@ pub fn create(spec: &NewServer, tag: Option<&str>, log: &dyn Fn(String)) -> Resu
     .map_err(undo)?;
     let entry = Entry {
         name,
-        dir,
+        dir: folder,
         host: None,
     };
     add(entry.clone()).map_err(Problem::plain)?;

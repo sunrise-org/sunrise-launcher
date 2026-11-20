@@ -55,10 +55,15 @@ fn instance_status_and_runtime_keep_developer_provenance() {
                 "{status}"
             );
         }
-        for command in [
-            backend::client_command(tag),
-            backend::server_command(tag, home.path()),
-        ] {
+        let server = backend::server_command(tag, &home.path().join("server"));
+        let client = backend::client_command(tag);
+        let mut commands = vec![client];
+        if tag == native {
+            assert!(server.is_err());
+        } else {
+            commands.push(server.unwrap());
+        }
+        for command in commands {
             assert!(command
                 .get_envs()
                 .any(|(key, value)| key == "SUNRISE_TELEMETRY_URL"
