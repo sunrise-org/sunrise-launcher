@@ -472,7 +472,7 @@ pub fn run_managed(
     stream(dir, supervisor, line)
 }
 
-/// The `format` of `sunrise-server engine-command --json` this launcher reads (docs/api/engine-command.md).
+/// The `format` of `sunrise-server engine-command --json` this launcher reads (sunrise-org/sunrise's docs/api/engine-command.md).
 const ENGINE_COMMAND_FORMAT: u64 = 1;
 
 /// The engine and resources the supervisor would use, or `None` for a pre-protocol supervisor.

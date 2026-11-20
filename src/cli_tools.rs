@@ -265,12 +265,12 @@ fn session_tool(words: &str) -> &'static str {
     }
 }
 
-/// launcher/docs/launcher-commands.md: every CLI command, its arguments and its MCP tool, from the CLI's
+/// docs/launcher-commands.md: every CLI command, its arguments and its MCP tool, from the CLI's
 /// definition. A test keeps the file equal to this.
 #[cfg(test)]
 fn markdown() -> String {
     let mut out = String::from(
-        "# Launcher commands\n\n<!-- Generated from launcher/src/cli.rs by cli_tools::markdown(); a test fails when this file is out of date. Update it with: SUNRISE_WRITE_DOCS=1 cargo test --manifest-path launcher/Cargo.toml the_launcher_reference -->\n\n\
+        "# Launcher commands\n\n<!-- Generated from src/cli.rs by cli_tools::markdown(); a test fails when this file is out of date. Update it with: SUNRISE_WRITE_DOCS=1 cargo test the_launcher_reference -->\n\n\
 Every command of `sunrise-launcher`, and the tool `sunrise-launcher mcp` offers for it. A tool's \
 arguments are the command's, in snake_case. A tool runs the command with `--json` and returns what it printed. \
 The tools that change the player's things for good need `confirm: true`. \
@@ -477,7 +477,7 @@ mod tests {
         let have = std::fs::read_to_string(&path).unwrap_or_default();
         assert!(
             up_to_date(&have, &want),
-            "launcher/docs/launcher-commands.md is out of date: SUNRISE_WRITE_DOCS=1 cargo test --manifest-path launcher/Cargo.toml the_launcher_reference"
+            "docs/launcher-commands.md is out of date: SUNRISE_WRITE_DOCS=1 cargo test the_launcher_reference"
         );
         for tool in all() {
             assert!(

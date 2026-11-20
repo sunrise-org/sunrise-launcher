@@ -32,8 +32,8 @@ except ImportError:
     import lab
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULE = ROOT / 'launcher/src/mac_update.rs'
-LOCK = ROOT / 'launcher/Cargo.lock'
+MODULE = ROOT / 'src/mac_update.rs'
+LOCK = ROOT / 'Cargo.lock'
 PROBE = r'''
 #[allow(dead_code)]
 mod mac_update;
@@ -273,7 +273,7 @@ keyring = { version = "=3.6.3", features = ["apple-native"] }
                         '--manifest-path', str(manifest)], env=env, check=True,
                        stdout=subprocess.DEVNULL, timeout=60)
         resolved = pins((work / 'Cargo.lock').read_text())
-        assert resolved and resolved <= pins(lock), 'probe dependency drift from launcher/Cargo.lock'
+        assert resolved and resolved <= pins(lock), 'probe dependency drift from Cargo.lock'
         run('cargo', 'test', '--offline', '--locked', '-j1', '--manifest-path', manifest, env=env)
         result = {'module_tests': 'see cargo counts above', 'keychain': 'not requested'}
         if args.keychain:

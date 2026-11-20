@@ -3,7 +3,7 @@
 Java Edition tab. An original drawing, not made from Mojang's textures: a 12-cell pixel pattern
 per face, drawn at random (fixed seed) from our own palette, projected onto an isometric cube.
 
-    python3 tools/launcher_grass_block.py   # needs Pillow; writes launcher/assets/logos/grass-block.png
+    python3 tools/launcher_grass_block.py   # needs Pillow; writes assets/logos/grass-block.png
 """
 
 import random
@@ -66,7 +66,7 @@ def main():
                     k = SHADE[face]
                     px[x, y] = (round(c[0] * k), round(c[1] * k), round(c[2] * k), 255)
     out = img.resize((SIZE, SIZE), Image.Resampling.BOX)
-    path = Path(__file__).resolve().parent.parent / "launcher/assets/logos/grass-block.png"
+    path = Path(__file__).resolve().parent.parent / "assets/logos/grass-block.png"
     out.save(path, optimize=True)
     print(path)
 

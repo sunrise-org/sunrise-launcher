@@ -1,4 +1,4 @@
-//! What the launcher reads or runs of a version's own preparer (`sunrise-prepare`, docs/api/prepare-extras.md), without linking it.
+//! What the launcher reads or runs of a version's own preparer (`sunrise-prepare`, sunrise-org/sunrise's docs/api/prepare-extras.md), without linking it.
 
 use serde_json::Value;
 use std::fs;

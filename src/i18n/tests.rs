@@ -161,7 +161,7 @@ fn translations_are_valid_and_coverage_is_reported() {
         asked.extend(table.keys().filter(|key| all.contains(*key)).cloned());
     }
     // Show the detailed lists with SUNRISE_LAUNCHER_I18N_DETAILS=1 cargo test
-    // --manifest-path launcher/Cargo.toml --lib i18n::tests::translations_are_valid_and_coverage_is_reported
+    // --lib i18n::tests::translations_are_valid_and_coverage_is_reported
     use std::fmt::Write as _;
     use std::io::Write as _;
     let show_details = std::env::var("SUNRISE_LAUNCHER_I18N_DETAILS").as_deref() == Ok("1");
