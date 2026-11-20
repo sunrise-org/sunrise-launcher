@@ -84,14 +84,12 @@ fn month(year_month: &str) -> String {
 }
 
 fn build(tag: &str, day: &str, installed: bool) -> Build {
-    let nightly = sunrise_launcher::nightly::date_of(tag).is_some();
     Build {
         tag: tag.to_owned(),
         name: build_name(tag),
-        about: match sunrise_launcher::nightly::label(tag) {
-            Some(label) if nightly => label,
-            _ => day.to_owned(),
-        },
+        about: sunrise_launcher::nightly::date_of(tag)
+            .and_then(|_| tag.splitn(5, '-').nth(4))
+            .map_or_else(|| day.to_owned(), sunrise_launcher::nightly::short_commit),
         installed,
     }
 }
@@ -129,7 +127,7 @@ fn lines(
     have.sort_by(|a, b| {
         (Some(b.as_str()) == current)
             .cmp(&(Some(a.as_str()) == current))
-            .then_with(|| sunrise_launcher::backend::compare_versions(b, a))
+            .then_with(|| sunrise_launcher::backend::compare_game_versions(b, a))
     });
     let have: Vec<Line> = have
         .into_iter()
@@ -141,27 +139,28 @@ fn lines(
         out.push(Line::Head(tr("Installed").to_string()));
         out.extend(have);
     }
-    // A Nightly can be listed under two names that install as one version: it is one build.
-    let mut seen = std::collections::HashSet::new();
     for (channel, title) in [
-        (Some(Channel::Nightly), tr("Nightly")),
-        (Some(Channel::Stable), tr("Stable")),
-        (None, tr("Pre-release")),
+        (Channel::Nightly, tr("Nightly")),
+        (Channel::Stable, tr("Stable")),
     ] {
         let mut heading = String::new();
         for r in releases.iter().filter(|r| {
             r.asset.is_some()
-                && Channel::of_release(r) == channel
-                && (channel.is_some() || backend::is_game_tag(&r.tag))
+                && Channel::of_release(r) == Some(channel)
                 && !installed.contains(&r.tag)
-                && seen.insert(r.tag.as_str())
         }) {
             let day = day_of(&r.tag);
             let b = build(&r.tag, &day, false);
             if !wanted(&b, &day) {
                 continue;
             }
-            let under = format!("{title} · {}", month(day.get(..7).unwrap_or(&day)));
+            let under = trf(
+                "{channel} · {month}",
+                &[
+                    ("channel", title),
+                    ("month", &month(day.get(..7).unwrap_or(&day))),
+                ],
+            );
             if under != heading {
                 out.push(Line::Head(under.clone()));
                 heading = under;
@@ -208,6 +207,17 @@ impl Launcher {
             .gap(px(12.))
             .overflow_y_scroll()
             .track_scroll(&crate::frame::scrolls("versions-page"))
+    }
+
+    fn architecture_repair(&self, tag: &str) -> Option<&Release> {
+        let Load::Ready(releases) = &self.releases else {
+            return None;
+        };
+        backend::architecture_reinstall(releases, tag, self.settings.game_architecture)
+    }
+
+    fn can_repair_now(&self, tag: &str) -> bool {
+        !self.launch_busy() && self.client.is_none() && !self.removing.iter().any(|t| t == tag)
     }
 
     fn versions_content(&mut self, sheet: bool, cx: &mut Context<Self>) -> Div {
@@ -383,6 +393,32 @@ impl Launcher {
                 cx.notify();
             },
         ));
+        let reinstall = pick.as_ref().and_then(|tag| {
+            self.architecture_repair(tag)?;
+            let tag = tag.clone();
+            let label = match &self.installing {
+                Some((started, progress)) if started == &tag => trf(
+                    "Installing · {percent}%",
+                    &[("percent", &format!("{:.0}", progress * 100.))],
+                ),
+                _ => tr("Reinstall for this architecture").to_owned(),
+            };
+            let button = button("alt-versions-reinstall", label);
+            Some(if self.can_repair_now(&tag) {
+                button.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    // Recheck the exact offer and the active jobs at click.
+                    if this.can_repair_now(&tag) {
+                        if let Some(release) = this.architecture_repair(&tag).cloned() {
+                            this.architecture_reinstall = Some(tag.clone());
+                            this.install(&release);
+                        }
+                    }
+                    cx.notify();
+                }))
+            } else {
+                button.opacity(0.45).cursor_default().tab_stop(false)
+            })
+        });
         let keep = crate::frame::button_base("alt-versions-keep", tr("Keep this build"))
             .bg(rgb(palette().text))
             .border_color(rgb(palette().text))
@@ -459,17 +495,29 @@ impl Launcher {
                     .child(rows)
                     .children(nothing),
             )
-            .children(self.ui.sheets.error.clone().map(|e| {
-                div()
-                    .text_color(rgb(palette().danger))
-                    .text_size(px(tokens::SMALL))
-                    .child(e)
-            }))
+            .children(
+                self.ui
+                    .sheets
+                    .error
+                    .clone()
+                    .or_else(|| {
+                        let (tag, error) = self.install_error.as_ref()?;
+                        (self.ui.sheets.versions.pick.as_ref() == Some(tag)).then(|| error.clone())
+                    })
+                    .map(|e| {
+                        div()
+                            .text_color(rgb(palette().danger))
+                            .text_size(px(tokens::SMALL))
+                            .child(e)
+                    }),
+            )
             .child(
                 div()
                     .flex()
                     .justify_end()
                     .gap(px(8.))
+                    .flex_wrap()
+                    .children(reinstall)
                     .when(sheet, |d| d.child(cancel))
                     .child(keep),
             );
@@ -536,39 +584,31 @@ mod tests {
     }
 
     #[test]
-    fn a_rolling_nightly_and_an_old_prerelease_never_have_a_stable_heading() {
+    fn only_current_nightly_and_stable_builds_have_published_rows() {
         let mut releases = vec![
             release("nightly-2026-11-17-aaaaaaa", "2026-11-17", true),
             Release {
                 prerelease: true,
-                ..release("v1.1.0", "2026-11-16", false)
+                ..release("26.3-0.1.1", "2026-11-16", false)
             },
         ];
         assert_eq!(
             shape(&lines(&releases, &[], None, "")),
-            [
-                "# Nightly · November 2026",
-                "nightly-2026-11-17-aaaaaaa",
-                "# Pre-release · November 2026",
-                "v1.1.0",
-            ]
+            ["# Nightly · November 2026", "nightly-2026-11-17-aaaaaaa",]
         );
-        releases.push(release("v1.0.0", "2026-10-01", false));
+        releases.push(release("26.3-0.1.0", "2026-10-01", false));
         assert_eq!(
-            shape(&lines(&releases, &[], None, "v1.0.0")),
-            ["# Stable · October 2026", "v1.0.0"]
+            shape(&lines(&releases, &[], None, "26.3-0.1.0")),
+            ["# Stable · October 2026", "26.3-0.1.0"]
         );
     }
 
     #[test]
     fn installed_builds_lead_then_the_rest_by_channel_and_month() {
         let releases = [
-            release("nightly-2026-11-17-aaaaaaa", "2026-11-17", true),
-            release("nightly-2026-11-16-bbbbbbb", "2026-11-16", true),
             release("nightly-2026-10-30-ccccccc", "2026-10-30", true),
-            // Listed a second time under its dated name.
-            release("nightly-2026-10-30-ccccccc", "2026-10-30", true),
-            release("v1.0.0", "2026-10-01", false),
+            release("v2026.10.13", "2026-10-13", false),
+            release("26.3-0.1.0", "2026-10-01", false),
         ];
         let installed = [
             "nightly-2026-11-17-aaaaaaa".to_owned(),
@@ -590,7 +630,7 @@ mod tests {
                 "# Nightly · October 2026",
                 "nightly-2026-10-30-ccccccc",
                 "# Stable · October 2026",
-                "v1.0.0",
+                "26.3-0.1.0",
             ]
         );
         // A commit or a day finds its build; a heading with nothing under it is gone.

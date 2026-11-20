@@ -16,7 +16,11 @@ impl Launcher {
         self.servers.text(Field::InstanceGroup).set(String::new());
         self.focus_handle(Field::InstanceName, cx);
         self.servers.focus_soon = Some(Field::InstanceName);
-        let channel = self.followed_channel(Channel::Stable);
+        let channel = if self.stable_available() {
+            Channel::Stable
+        } else {
+            Channel::Nightly
+        };
         self.instances.dialog = Some(InstanceDialog {
             editing: None,
             copy: false,
@@ -55,18 +59,16 @@ impl Launcher {
             .map(|c| c.preview.clone());
         let p = palette();
         let name = self.servers.value(Field::InstanceName).trim().to_owned();
-        let (stable_available, tags) = {
-            let mut stable = self.stable_builds().peekable();
-            let available = stable.peek().is_some();
-            let tags: Vec<String> = match channel {
-                Channel::Stable => stable.map(|r| r.tag.clone()).collect(),
-                Channel::Nightly => self.sunrise_choices(),
-            };
-            (available, tags)
+        let stable_available = self.stable_available();
+        let tags = match channel {
+            Channel::Stable => self.stable_choices(),
+            Channel::Nightly => self.sunrise_choices(),
         };
-        let channel_available = channel != Channel::Stable || stable_available;
+        let channel_available =
+            channel != Channel::Stable || stable_available || d.editing.is_some();
         let ready = !name.is_empty() && !busy && channel_available;
-        let current = pin
+        let preview_build = self.draft_sunrise();
+        let current = preview_build
             .as_deref()
             .map(|tag| self.version_label(tag))
             .unwrap_or_else(|| {

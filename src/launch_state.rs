@@ -429,8 +429,6 @@ impl Launcher {
         let active = self.selected_instance();
         let launch = self.ui.home.mods.launch();
         let held = self.held_for_launch(launch.and_then(|summary| summary.update_check.as_deref()));
-        let follows_nightly =
-            active.is_some_and(|i| i.version.is_none() && i.channel == instances::Channel::Nightly);
         Facts {
             signed_in: self.accounts.selected().is_some()
                 || sunrise_launcher::developer_offline::selected(),
@@ -449,10 +447,7 @@ impl Launcher {
             build_gone: self.build_gone(),
             held: held.map(|h| h.to),
             update: self
-                .updates
-                .sunrise
-                .as_ref()
-                .filter(|_| follows_nightly)
+                .game_update()
                 .map(|r| crate::sheets::build_name(&r.tag)),
             mods_off: launch.map_or(0, |summary| summary.mods_off),
             ..self.launch_activity()
@@ -477,7 +472,7 @@ impl Launcher {
             Act::Resolve => self.open_sheet(Sheet::Resolve),
             Act::Update => {
                 let (Some(release), Some(instance)) =
-                    (self.updates.sunrise.clone(), self.selected_instance())
+                    (self.game_update().cloned(), self.selected_instance())
                 else {
                     return;
                 };
@@ -486,7 +481,7 @@ impl Launcher {
                     self.instance_install = Some(release.tag.clone());
                     self.install(&release);
                 } else {
-                    self.install_update();
+                    self.install_update(release);
                 }
             }
         }

@@ -781,3 +781,236 @@ fn artwork_reader_does_not_wait_for_a_pipe_writer() {
     assert_eq!(read_artwork(&path), None);
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn first_profile_is_stable_without_migrating_old_players() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fresh = tmp.path().join("fresh");
+    let home = tmp.path().join("game");
+    initialize_default_in(&home, &fresh).unwrap();
+    assert_eq!(list_in(&home, &fresh)[0].channel, Channel::Stable);
+    fs::write(fresh.join("settings.json"), "{}").unwrap();
+    initialize_default_in(&home, &fresh).unwrap();
+    assert_eq!(list_in(&home, &fresh)[0].channel, Channel::Stable);
+
+    let existing = tmp.path().join("existing");
+    fs::create_dir_all(&existing).unwrap();
+    let old = br#"{"instances":{"sunrise":{"version":"v2026.10.13"}}}"#;
+    fs::write(existing.join(FILE), old).unwrap();
+    initialize_default_in(&home, &existing).unwrap();
+    assert_eq!(fs::read(existing.join(FILE)).unwrap(), old);
+    let profile = &list_in(&home, &existing)[0];
+    assert_eq!(profile.channel, Channel::Nightly);
+    assert_eq!(profile.version.as_deref(), Some("v2026.10.13"));
+
+    fs::remove_file(existing.join(FILE)).unwrap();
+    fs::write(existing.join("settings.json"), "{}").unwrap();
+    initialize_default_in(&home, &existing).unwrap();
+    assert_eq!(list_in(&home, &existing)[0].channel, Channel::Nightly);
+    assert!(!existing.join(FILE).exists());
+
+    // Playing on the implicit profile could leave only the game files.
+    fs::remove_file(existing.join("settings.json")).unwrap();
+    fs::create_dir_all(home.join("saves")).unwrap();
+    initialize_default_in(&home, &existing).unwrap();
+    assert_eq!(list_in(&home, &existing)[0].channel, Channel::Nightly);
+    assert!(!existing.join(FILE).exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn an_installed_legacy_pin_still_starts_its_client() {
+    use std::os::unix::fs::PermissionsExt;
+    const ACTOR: &str = "SUNRISE_STABLE_LEGACY_PLAY_TEST";
+    const OLD: &str = "v2026.10.13";
+    const UUID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    if std::env::var_os(ACTOR).is_none() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "instances::tests::an_installed_legacy_pin_still_starts_its_client"
+            ])
+            .env(ACTOR, "1")
+            .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+            .env("SUNRISE_HOME", root.path().join("game"))
+            .env("SUNRISE_TELEMETRY_URL", "off")
+            .env("SUNRISE_NO_KEYCHAIN", "1")
+            .status()
+            .unwrap()
+            .success());
+        return;
+    }
+    let data = backend::data_dir();
+    fs::create_dir_all(backend::version_dir("26.3-0.1.0")).unwrap();
+    fs::write(backend::version_dir("26.3-0.1.0").join(".installed"), "").unwrap();
+    fs::create_dir_all(backend::resources(OLD)).unwrap();
+    fs::write(backend::version_dir(OLD).join(".installed"), "").unwrap();
+    fs::write(backend::resources(OLD).join("sunrise-resources.json"), "{}").unwrap();
+    fs::write(
+        data.join(FILE),
+        format!(r#"{{"instances":{{"sunrise":{{"version":"{OLD}"}}}}}}"#),
+    )
+    .unwrap();
+    let client = backend::client_program(OLD);
+    fs::write(&client, "#!/bin/sh\nprintf 'legacy client reached\\n'\n").unwrap();
+    fs::set_permissions(&client, fs::Permissions::from_mode(0o700)).unwrap();
+
+    // Local stand-in for an already authenticated session; no service is contacted.
+    let accounts =
+        serde_json::json!({"selected": UUID, "accounts": [{"uuid": UUID, "name": "Player"}]});
+    fs::write(data.join("accounts.json"), accounts.to_string()).unwrap();
+    let secrets = serde_json::json!({"refresh_token":"fixture", "minecraft_token":"fixture",
+        "minecraft_expires_at":SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 3600});
+    crate::account::store()
+        .set(UUID, &secrets.to_string())
+        .unwrap();
+
+    assert!(!backend::is_game_tag(OLD));
+    let instance = selection().unwrap();
+    let tag = instance.resolve_version(None).unwrap();
+    assert_eq!(tag, OLD);
+    let mut cmd = backend::client_as(&tag, None).unwrap();
+    apply(&mut cmd, &instance).unwrap();
+    let result = cmd.output().unwrap();
+    assert!(result.status.success(), "{result:?}");
+    assert_eq!(result.stdout, b"legacy client reached\n");
+    crate::account::discard_unread_sessions();
+}
+
+#[cfg(unix)]
+#[test]
+fn same_day_rolling_nightly_remains_the_play_target_offline() {
+    use std::os::unix::fs::PermissionsExt;
+    const ACTOR: &str = "SUNRISE_TEST_OFFLINE_NIGHTLY";
+    const CURRENT: &str = "nightly-2026-11-20-aaaaaaa";
+    const OLD: &str = "nightly-2026-11-20-bbbbbbb";
+    if std::env::var_os(ACTOR).is_none() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "instances::tests::same_day_rolling_nightly_remains_the_play_target_offline"
+            ])
+            .env(ACTOR, "1")
+            .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+            .env("SUNRISE_HOME", root.path().join("game"))
+            .env("SUNRISE_TELEMETRY_URL", "off")
+            .env("SUNRISE_NO_KEYCHAIN", "1")
+            .status()
+            .unwrap()
+            .success());
+        return;
+    }
+    let data = backend::data_dir();
+    let stable = "26.3-0.1.0";
+    for tag in [OLD, CURRENT, stable] {
+        let version = backend::version_dir(tag);
+        fs::create_dir_all(&version).unwrap();
+        fs::write(version.join(".installed"), "").unwrap();
+    }
+    fs::write(
+        data.join("settings.json"),
+        format!(r#"{{"selected":"{stable}"}}"#),
+    )
+    .unwrap();
+    // Game installation records the verified rolling build before placing its completion marker.
+    // Both builds were published in the same minute, and the rolling hash sorts BEFORE the old one.
+    for tag in [OLD, CURRENT] {
+        fs::write(
+            backend::version_dir(tag).join(crate::nightly::INSTALLED_TIME),
+            "11:05",
+        )
+        .unwrap();
+    }
+    let (installed, unknown) = backend::play_installations(None);
+    assert!(unknown.is_none(), "must not guess from {installed:?}");
+    crate::nightly::record_current(&data.join("versions"), CURRENT).unwrap();
+    let (installed, known) = backend::play_installations(Some(stable));
+    let profile = selection().unwrap();
+    let would_play = profile
+        .channel
+        .play_target(&[], &installed, known.as_ref(), None)
+        .unwrap();
+    assert_eq!(would_play, CURRENT, "offline GUI target");
+    let tag = profile.resolve_version(None).unwrap();
+    assert_eq!(tag, CURRENT, "offline CLI Play target");
+    for name in [OLD, CURRENT] {
+        fs::create_dir_all(backend::resources(name)).unwrap();
+        fs::write(
+            backend::resources(name).join("sunrise-resources.json"),
+            "{}",
+        )
+        .unwrap();
+        let client = backend::client_program(name);
+        fs::write(&client, format!("#!/bin/sh\nprintf '%s' '{name}'\n")).unwrap();
+        fs::set_permissions(client, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    const UUID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let accounts =
+        serde_json::json!({"selected": UUID, "accounts": [{"uuid": UUID, "name": "Player"}]});
+    fs::write(data.join("accounts.json"), accounts.to_string()).unwrap();
+    let secrets = serde_json::json!({"refresh_token":"fixture", "minecraft_token":"fixture",
+        "minecraft_expires_at":SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 3600});
+    crate::account::store()
+        .set(UUID, &secrets.to_string())
+        .unwrap();
+    let mut cmd = backend::client_as(&tag, None).unwrap();
+    apply(&mut cmd, &profile).unwrap();
+    let result = cmd.output().unwrap();
+    assert!(result.status.success(), "{result:?}");
+    assert_eq!(result.stdout, CURRENT.as_bytes());
+    crate::account::discard_unread_sessions();
+}
+
+#[test]
+fn channel_less_cli_play_refuses_to_fall_through_to_installed_stable() {
+    const ACTOR: &str = "SUNRISE_TEST_NIGHTLY_WITH_ONLY_STABLE";
+    const STABLE: &str = "26.3-0.1.0";
+    if std::env::var_os(ACTOR).is_none() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "instances::tests::channel_less_cli_play_refuses_to_fall_through_to_installed_stable"])
+            .env(ACTOR, "1")
+            .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+            .env("SUNRISE_HOME", root.path().join("game"))
+            .status().unwrap().success());
+        return;
+    }
+    put(&backend::version_dir(STABLE).join(".installed"), "");
+    put(
+        &backend::data_dir().join("settings.json"),
+        &format!(r#"{{"selected":"{STABLE}"}}"#),
+    );
+    put(
+        &backend::data_dir().join(FILE),
+        r#"{"instances":{"sunrise":{}}}"#,
+    );
+    let profile = selection().unwrap();
+    assert_eq!(profile.channel, Channel::Nightly);
+    assert!(profile.version.is_none());
+    assert!(profile.resolve_version(None).is_err());
+    assert_eq!(profile.resolve_version(Some(STABLE)).unwrap(), STABLE);
+    assert_eq!(
+        edit(DEFAULT, |meta| meta.version = Some(STABLE.into()))
+            .unwrap()
+            .resolve_version(None)
+            .unwrap(),
+        STABLE
+    );
+
+    // A historical profile named "nightly" has the same exact-pin contract as any other.
+    const OLD: &str = "nightly-2026-11-15-aaaaaaa";
+    const NEW: &str = "nightly-2026-11-16-bbbbbbb";
+    fs::create_dir_all(backend::game_home().join(OWN).join("nightly")).unwrap();
+    put(&backend::version_dir(OLD).join(".installed"), "");
+    edit("nightly", |meta| meta.version = Some(OLD.into())).unwrap();
+    crate::nightly::after_update(NEW);
+    assert_eq!(
+        edit("nightly", |_| {})
+            .unwrap()
+            .resolve_version(None)
+            .unwrap(),
+        OLD
+    );
+}

@@ -175,6 +175,32 @@ mod tests {
         assert!(digest("v2099.01.01", "sunrise.zip", &keys, offline).is_err());
     }
 
+    #[test]
+    fn stable_release_uses_sums_signed_for_its_exact_tag() {
+        const TAG: &str = "26.3-0.1.0";
+        const ASSET: &str = "sunrise-linux-x86_64.tar.gz";
+        let (key, _) = SigningKey::generate().unwrap();
+        let expected = sha256_hex(b"fixture archive");
+        let sums = sums_file(&[
+            (ASSET.into(), expected.clone()),
+            ("sunrise-macos-arm64.zip".into(), sha256_hex(b"mac fixture")),
+        ]);
+        let signature = key.sign(TAG, sums.as_bytes());
+        let fetch = |url: &str| {
+            // Stable publishes both signature files, but signed_digest uses SHA256SUMS.sig.
+            let file = url.rsplit('/').next().unwrap();
+            assert!(url.starts_with("https://github.com/sunrise-org/sunrise/releases/download/"));
+            Ok(Some(match file {
+                SUMS => sums.as_bytes().to_vec(),
+                SIGNATURE => signature.as_bytes().to_vec(),
+                other => panic!("requested {other}"),
+            }))
+        };
+        assert!(crate::backend::is_game_tag(TAG));
+        assert_eq!(digest(TAG, ASSET, &[key.public()], fetch), Ok(expected));
+        assert!(digest("26.3-0.1.1", ASSET, &[key.public()], fetch).is_err());
+    }
+
     /// The release channel never installs what was signed for a Nightly, whatever tag it is served
     /// under; a Nightly installs only with its own version's signature (SHA256SUMS.v2.sig), never the
     /// channel's, another Nightly's or a release's.

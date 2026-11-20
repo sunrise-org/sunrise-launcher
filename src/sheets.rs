@@ -120,7 +120,7 @@ pub(crate) struct Held {
     stopped: bool,
 }
 
-/// `Nov 17` for a dated build, else the tag.
+/// A channel and version for game builds; the local tag otherwise.
 pub(crate) fn build_name(tag: &str) -> String {
     // A game built with mods is named by the build it was made from.
     if native_mods::is_native(tag) {
@@ -128,9 +128,22 @@ pub(crate) fn build_name(tag: &str) -> String {
             return build_name(&base);
         }
     }
-    sunrise_launcher::nightly::date_of(tag)
-        .map(sunrise_launcher::nightly::day)
-        .unwrap_or_else(|| tag.to_owned())
+    if let Some(version) = backend::stable_version(tag) {
+        trf(
+            "{channel} · {version}",
+            &[("channel", tr("Stable")), ("version", version)],
+        )
+    } else if let Some(date) = sunrise_launcher::nightly::date_of(tag) {
+        trf(
+            "{channel} · {version}",
+            &[
+                ("channel", tr("Nightly")),
+                ("version", &sunrise_launcher::nightly::day(date)),
+            ],
+        )
+    } else {
+        tag.to_owned()
+    }
 }
 
 impl Held {
@@ -1294,7 +1307,7 @@ impl Launcher {
         } else {
             None
         };
-        let stable = self.stable_builds().next().is_some();
+        let stable = self.stable_available();
         // A different build under native mods is never activated from here: those mods have to be
         // checked against it first (the check button), and the build that follows protects worlds.
         let has_native = !native_status::enabled(&instance.home).is_empty();
@@ -1351,7 +1364,10 @@ impl Launcher {
                 "alt-build-nightly",
                 follow_nightly,
                 tr("Latest Nightly").into(),
-                tr("The newest build each day.").into(),
+                nightly_target
+                    .as_deref()
+                    .map(build_name)
+                    .unwrap_or_else(|| tr("The newest build each day.").into()),
             )
             .when(nightly_gated, |d| {
                 d.opacity(0.5).cursor_default().tab_stop(false)
@@ -1370,7 +1386,10 @@ impl Launcher {
                 follow_stable,
                 tr("Latest Stable").into(),
                 if stable {
-                    tr("Only builds marked stable.").into()
+                    stable_target
+                        .as_deref()
+                        .map(build_name)
+                        .unwrap_or_else(|| tr("Only builds marked stable.").into())
                 } else if follow_stable {
                     tr("No stable release yet. Plays Nightly for now.").into()
                 } else {
@@ -1393,9 +1412,7 @@ impl Launcher {
                 pinned.is_some(),
                 tr("A specific version…").into(),
                 match &pinned {
-                    Some(tag) => sunrise_launcher::nightly::label(tag)
-                        .map(|l| format!("{} · {l}", build_name(tag)))
-                        .unwrap_or_else(|| build_name(tag)),
+                    Some(tag) => build_name(tag),
                     None => tr("Pick one build and keep it until you change this.").into(),
                 },
             )
@@ -1582,7 +1599,7 @@ mod tests {
             .expect("a mod that does not fit holds the update");
         assert_eq!(
             (held.to.as_str(), held.plays.as_str()),
-            ("Nov 17", "Nov 14")
+            ("Nightly · Nov 17", "Nightly · Nov 14")
         );
         assert_eq!(held.mods, ["jei"]);
         assert!(held.details[1].starts_with("jei does not"));
@@ -1597,8 +1614,9 @@ mod tests {
     }
 
     #[test]
-    fn dated_builds_read_as_a_day() {
-        assert_eq!(build_name("nightly-2026-11-17-abcdef0"), "Nov 17");
+    fn build_labels_name_the_channel_and_date_or_version() {
+        assert_eq!(build_name("nightly-2026-11-17-abcdef0"), "Nightly · Nov 17");
+        assert_eq!(build_name("26.3-0.1.0"), "Stable · 0.1.0");
         assert_eq!(build_name("v1.0.0"), "v1.0.0");
     }
 }

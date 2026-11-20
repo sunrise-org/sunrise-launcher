@@ -277,7 +277,7 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
 struct Query {
     home: PathBuf,
     version: Option<String>,
-    newest: Option<String>,
+    installed: Vec<String>,
 }
 
 /// Just the facts about installed mods needed to draw Play and its strip. The launch and
@@ -320,10 +320,9 @@ fn read_changed(query: &Query, known: &str) -> Option<(String, Snapshot)> {
         .and_then(native_status::Build::read);
     let update_check = build
         .as_ref()
-        .zip(query.newest.as_deref())
-        .filter(|(build, next)| backend::compare_versions(next, &build.base).is_gt())
+        .and_then(|build| native_mods::newer_than(&build.base, &query.installed))
         .filter(|_| !native_status::enabled(&query.home).is_empty())
-        .map(|(_, next)| crate::sheets::check_key(&query.home, next));
+        .map(|next| crate::sheets::check_key(&query.home, &next));
     let left_out = match build {
         Some(build) => build.left_out,
         None => query.version.as_deref().map_or_else(Vec::new, |version| {
@@ -481,7 +480,7 @@ impl Launcher {
         let query = Query {
             home: instance.home.clone(),
             version: self.version_of(instance).cloned(),
-            newest: native_mods::newest_installed(&self.installed).cloned(),
+            installed: self.installed.clone(),
         };
         let mods = &mut self.ui.home.mods;
         if mods.query.as_ref() != Some(&query) {
@@ -802,7 +801,7 @@ mod tests {
         Query {
             home: path.into(),
             version: None,
-            newest: None,
+            installed: Vec::new(),
         }
     }
 
@@ -952,6 +951,74 @@ mod tests {
         assert_eq!(column.off, [1, 1, 0]);
         assert_eq!(snapshot.launch.mods_off, 0);
         std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn home_inventory_offline_uses_the_pinned_native_bases_channel() {
+        use std::{fs, io::Write, process::Command};
+        const ACTOR: &str = "SUNRISE_TEST_HOME_NATIVE_BASE";
+        if std::env::var_os(ACTOR).is_none() {
+            let root = tempfile::tempdir().unwrap();
+            assert!(Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "home_mods::tests::home_inventory_offline_uses_the_pinned_native_bases_channel"
+                ])
+                .env(ACTOR, "1")
+                .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+                .env("SUNRISE_HOME", root.path().join("game"))
+                .status()
+                .unwrap()
+                .success());
+            return;
+        }
+        let home = backend::game_home();
+        let mods = home.join(native_mods::INSTALLED);
+        fs::create_dir_all(&mods).unwrap();
+        let pin = "a".repeat(40);
+        let mut zip =
+            zip::ZipWriter::new(fs::File::create(mods.join("lanternlight.smod")).unwrap());
+        for (name, content) in [
+            ("sunrise-mod.toml", format!("id='lanternlight'\nname='Lanternlight'\nversion='1.0.0'\napi='0.2'\ncapabilities=['registries']\n[native]\ngame='26.3'\nsunrise='{pin}'\nmixins='{pin}'\n")),
+            ("Cargo.toml", "[package]\nname='lanternlight'\nversion='1.0.0'\n".into()),
+            ("src/lib.rs", "pub fn hooks() {}\n".into()),
+        ] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(content.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+        mod_list::set_enabled(&home, "lanternlight", true).unwrap();
+        assert_eq!(native_status::enabled(&home).len(), 1);
+        let version = "native-aaaaaaa-000000000000";
+        let dir = backend::version_dir(version);
+        fs::create_dir_all(&dir).unwrap();
+        let (base, nightly, next) = ("26.3-0.1.0", "nightly-2026-11-20-bbbbbbb", "26.3-0.1.1");
+        fs::write(
+            dir.join("native-mods.json"),
+            serde_json::json!({"base": base, "target": "client", "sunrise": pin}).to_string(),
+        )
+        .unwrap();
+        let mut query = Query {
+            home: home.clone(),
+            version: Some(version.into()),
+            installed: [nightly, base, version].map(str::to_owned).to_vec(),
+        };
+        let mut kept = Inventory::default();
+        let now = Instant::now();
+        let (generation, known) = kept.draw(&query, now).unwrap();
+        kept.took(generation, read_changed(&query, &known));
+        assert_eq!(kept.launch().unwrap().update_check, None);
+
+        // No live catalogue or change to the profile's pin. Only a Stable installation arrived.
+        query.installed.insert(1, next.into());
+        let (generation, known) = kept.draw(&query, now).unwrap();
+        kept.took(generation, read_changed(&query, &known));
+        let sheet_candidate = native_mods::update_for(version, &query.installed).unwrap();
+        assert_eq!(sheet_candidate, next);
+        assert_eq!(
+            kept.launch().unwrap().update_check,
+            Some(crate::sheets::check_key(&home, &sheet_candidate))
+        );
     }
 
     #[test]

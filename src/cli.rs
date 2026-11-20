@@ -758,8 +758,8 @@ enum Cmd {
     },
     /// Show the launcher's settings, or set one (the Settings page): selected-version TAG,
     /// game-architecture auto|x64|arm64,
-    /// minecraft-dir PATH, server-dir PATH ("default" resets a folder), install-new-versions
-    /// on|off, prune-old-versions on|off (delete old versions after an install, keeping the
+    /// minecraft-dir PATH, server-dir PATH ("default" resets a folder),
+    /// prune-old-versions on|off (delete old versions after an install, keeping the
     /// selected one, the ones profiles use and the newest few), keep-versions N (how many of the
     /// newest to keep; "default" is 2), opening-animation on|off, cat on|off (the corner cat), proxy http://host:port|socks5://host:port
     /// ("default" removes it), while-playing stay|minimize|hide (what the window does while the game runs), language
@@ -919,11 +919,10 @@ pub fn command() -> clap::Command {
 pub const AI_COMMANDS: [&str; 1] = ["mcp"];
 
 /// The keys `settings` sets.
-const SETTING_KEYS: [&str; 20] = [
+const SETTING_KEYS: [&str; 19] = [
     "selected-version",
     "minecraft-dir",
     "server-dir",
-    "install-new-versions",
     "prune-old-versions",
     "keep-versions",
     "opening-animation",
@@ -956,7 +955,6 @@ fn set_setting(s: &mut backend::Settings, key: &str, value: &str) -> Result<(), 
         "selected-version" => s.selected = Some(backend::resolve_version(Some(value))?),
         "minecraft-dir" => s.minecraft_dir = folder(value),
         "server-dir" => s.server_dir = folder(value),
-        "install-new-versions" => s.install_new_versions = Some(on_off(value)?),
         "prune-old-versions" => s.prune_old_versions = Some(on_off(value)?),
         "keep-versions" => {
             s.keep_versions = match value {
@@ -3537,14 +3535,14 @@ mod tests {
         // The export mode picks the newest installed release or Nightly, never a native build
         // (`native-*`), and `--update` changes nothing when it already is the newest.
         let installed = vec![
-            "v2026.10.13".to_string(),
-            "v2026.09.01".to_string(),
+            "26.3-0.1.1".to_string(),
+            "26.3-0.1.0".to_string(),
             "native-2b03c1".to_string(),
         ];
         for update in [false, true] {
             assert_eq!(
                 native_mods::base_for(None, &installed, update).as_deref(),
-                Some("v2026.10.13")
+                Some("26.3-0.1.1")
             );
         }
         assert_eq!(native_mods::base_for(None, &[], false), None);

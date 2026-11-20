@@ -60,7 +60,7 @@ fn run_launcher() {
     // A broken location must still open a window: startup() falls back to the default
     // folders and records the error, which Settings shows with Retry and Use the default folder.
     // It keeps the migration lease for the life of the process.
-    let _location_error = sunrise_launcher::data_location::startup();
+    let location_error = sunrise_launcher::data_location::startup();
     perf::process_started();
     backend::exe_path();
     if let Some(code) = sunrise_launcher::update_handoff::run() {
@@ -84,6 +84,12 @@ fn run_launcher() {
         let _ = sunrise_launcher::installer::ensure_notices();
     }
     if setup_window.is_none() {
+        if location_error.is_none() {
+            backend::recover_game_installations();
+            if let Err(error) = sunrise_launcher::instances::initialize_default() {
+                eprintln!("{error}");
+            }
+        }
         if let Some(code) = cli::run() {
             std::process::exit(code);
         }

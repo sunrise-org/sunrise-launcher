@@ -49,13 +49,18 @@ impl Launcher {
                 let _ = sunrise_launcher::desktop::repair(backend::exe_path());
             });
         }
-        let installed = backend::installed();
+        let (installed, known_nightly) = backend::play_installations(settings.selected.as_deref());
         if settings
             .selected
             .as_ref()
             .is_none_or(|s| !installed.contains(s))
         {
-            settings.selected = installed.first().cloned();
+            settings.selected = known_nightly.clone().or_else(|| {
+                installed
+                    .iter()
+                    .find(|tag| sunrise_launcher::nightly::date_of(tag).is_none())
+                    .cloned()
+            });
         }
         // Pin the window's chrome (macOS title bar) to the choice before the theme reads
         // `window.appearance()`, so both draw the same look.
@@ -83,11 +88,13 @@ impl Launcher {
             self_update: sunrise_launcher::update_handoff::take_failure()
                 .map_or(SelfUpdate::Idle, |e| SelfUpdate::Stuck(Some(e))),
             update_install: None,
+            architecture_reinstall: None,
             instance_install: None,
             install_next: None,
             bar: (0., 0.),
             releases: Load::Loading,
             installed,
+            known_nightly,
             installing: None,
             removing: Vec::new(),
             disk: Vec::new(),
@@ -370,6 +377,13 @@ impl Launcher {
             let message = match check {
                 UpdateCheck::Startup => {
                     let updates = backend::releases_and_updates(|releases| {
+                        if let Ok(list) = &releases {
+                            if let Err(error) = backend::note_play_catalogue(list) {
+                                eprintln!(
+                                    "Could not remember the current installed Nightly: {error}"
+                                );
+                            }
+                        }
                         let _ = tx.send(Msg::Releases(releases));
                     });
                     Msg::Updates(Box::new(updates))
@@ -447,10 +461,7 @@ impl Launcher {
 
     /// Installs the Sunrise version the last check found, keeping the player's choice of
     /// version unless they were on the newest one.
-    pub(crate) fn install_update(&mut self) {
-        let Some(release) = self.updates.sunrise.clone() else {
-            return;
-        };
+    pub(crate) fn install_update(&mut self, release: Release) {
         if self.installing.is_some() || self.removing.contains(&release.tag) {
             return;
         }

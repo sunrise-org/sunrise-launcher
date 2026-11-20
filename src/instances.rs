@@ -204,16 +204,31 @@ pub enum Channel {
 }
 
 impl Channel {
-    /// The channel a game release belongs to. Old versioned pre-releases can be pinned,
-    /// but are not followed. The rolling Nightly is a Nightly even when marked for updates.
+    /// Publication channels, not a classifier for arbitrary tags the player has on disk.
     pub fn of_release(release: &backend::Release) -> Option<Self> {
-        if release.nightly.is_some() || sunrise_launcher_release_verify::is_nightly(&release.tag) {
+        match release.nightly.as_deref() {
+            Some(sunrise_launcher_release_verify::NIGHTLY) => Some(Self::Nightly),
+            None if !release.prerelease && backend::is_game_tag(&release.tag) => Some(Self::Stable),
+            _ => None,
+        }
+    }
+
+    /// Installed Nightlies keep their date and optional commit in their local directory name.
+    pub fn of_build(tag: &str) -> Option<Self> {
+        if crate::nightly::date_of(tag).is_some() {
             Some(Self::Nightly)
-        } else if !release.prerelease && backend::is_game_tag(&release.tag) {
+        } else if backend::is_game_tag(tag) {
             Some(Self::Stable)
         } else {
             None
         }
+    }
+
+    /// The installed build on this channel, from the newest-first on-disk list.
+    pub fn newest_installed(self, installed: &[String]) -> Option<&String> {
+        installed
+            .iter()
+            .find(|tag| Self::of_build(tag) == Some(self))
     }
 
     /// The downloadable releases on this channel, in catalogue order (newest first).
@@ -221,6 +236,38 @@ impl Channel {
         releases
             .iter()
             .filter(move |r| r.asset.is_some() && Self::of_release(r) == Some(self))
+    }
+
+    /// The target of an unpinned profile: stay on an installed build until the player updates.
+    /// A Stable install keeps working without the catalogue. Before there is one, the profile
+    /// can play Nightly while there is no downloadable Stable, without changing its channel.
+    pub fn play_target<'a>(
+        self,
+        releases: &'a [backend::Release],
+        installed: &'a [String],
+        nightly: Option<&'a String>,
+        selected: Option<&'a String>,
+    ) -> Option<&'a String> {
+        let latest = self.builds(releases).next().map(|release| &release.tag);
+        let have = match self {
+            Self::Stable => self.newest_installed(installed),
+            Self::Nightly => nightly,
+        };
+        match (have, latest) {
+            // The rolling build wins a same-day tie once it is actually on disk.
+            (Some(have), Some(latest))
+                if installed.contains(latest)
+                    && backend::compare_game_versions(latest, have).is_ge() =>
+            {
+                Some(latest)
+            }
+            (Some(have), _) => Some(have),
+            (None, Some(latest)) => Some(latest),
+            (None, None) if self == Self::Stable => {
+                Self::Nightly.play_target(releases, installed, nightly, selected)
+            }
+            (None, None) => selected.filter(|tag| Self::of_build(tag).is_none()),
+        }
     }
 
     /// What an unpinned profile follows for now. Without a Stable download it plays Nightly
@@ -318,6 +365,10 @@ impl Store {
             .unwrap_or_default()
     }
     fn save(&self, data: &Path) -> Result<(), String> {
+        self.publish(data, true)
+    }
+
+    fn publish(&self, data: &Path, replace: bool) -> Result<(), String> {
         fs::create_dir_all(data).map_err(|e| format!("{}: {e}", data.display()))?;
         let write = || -> std::io::Result<()> {
             use std::io::Write as _;
@@ -329,11 +380,52 @@ impl Store {
                 .tempfile_in(&data)?;
             let text = serde_json::to_string_pretty(self).unwrap();
             part.write_all(text.as_bytes())?;
-            part.persist(data.join(FILE))?;
+            if replace {
+                part.persist(data.join(FILE))?;
+            } else {
+                match part.persist_noclobber(data.join(FILE)) {
+                    Ok(_) => (),
+                    Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => (),
+                    Err(e) => return Err(e.error),
+                }
+            }
             Ok(())
         };
         write().map_err(|e| format!("{FILE}: {e}"))
     }
+}
+
+/// Write the first profile choice before settings can be saved. An older launcher could have
+/// used the implicit Sunrise profile without ever writing `instances.json`.
+pub fn initialize_default() -> Result<(), String> {
+    initialize_default_in(&backend::game_home(), &backend::data_dir())
+}
+
+fn initialize_default_in(game_home: &Path, data: &Path) -> Result<(), String> {
+    use std::io::ErrorKind::NotFound;
+    let missing = |p: &Path| fs::symlink_metadata(p).is_err_and(|e| e.kind() == NotFound);
+    let empty = |p: &Path| match fs::read_dir(p) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(e) => e.kind() == NotFound,
+    };
+    if ![FILE, "settings.json", "accounts.json"]
+        .iter()
+        .all(|f| missing(&data.join(f)))
+        || !empty(game_home)
+        || !empty(&data.join("versions"))
+    {
+        return Ok(());
+    }
+    Store {
+        instances: BTreeMap::from([(
+            DEFAULT.to_owned(),
+            Meta {
+                channel: Some(Channel::Stable),
+                ..Meta::default()
+            },
+        )]),
+    }
+    .publish(data, false)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -361,8 +453,8 @@ pub struct Instance {
 }
 
 impl Instance {
-    /// The installed version this instance plays: its pinned one, else `requested` (the
-    /// command line's `--version`) or the launcher's (`backend::resolve_version`).
+    /// The installed version this instance plays: an explicit request or pin wins, then the
+    /// newest installed build on its channel, with an offline fallback.
     pub fn resolve_version(&self, requested: Option<&str>) -> Result<String, String> {
         match (requested, &self.version) {
             (None, Some(pinned)) => backend::resolve_version(Some(pinned)).map_err(|_| {
@@ -372,7 +464,21 @@ impl Instance {
                     self.name, self.name
                 )
             }),
-            _ => backend::resolve_version(requested),
+            (Some(tag), _) => backend::resolve_version(Some(tag)),
+            (None, None) => {
+                let selected = backend::Settings::load().selected;
+                let (installed, nightly) = backend::play_installations(selected.as_deref());
+                let selected = selected.filter(|tag| installed.contains(tag));
+                self.channel
+                    .play_target(
+                        &[],
+                        &installed,
+                        nightly.as_ref(),
+                        selected.as_ref().or(installed.first()),
+                    )
+                    .cloned()
+                    .ok_or_else(backend::no_version_installed)
+            }
         }
     }
 }

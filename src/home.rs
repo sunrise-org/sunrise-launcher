@@ -620,6 +620,22 @@ impl Launcher {
         // The cat walks the empty stretch and stands on the panel's edge. It stays in while a
         // button stands in its way.
         let (lane, _) = self.cat(act.is_none(), false, window, cx);
+        // The update target is part of the offer. On a narrow Home, put the whole offer
+        // below Play instead of squeezing the target between the button and the edge.
+        let narrow_update = matches!(&view.act, Some(crate::launch_state::Act::Update))
+            && f32::from(window.viewport_size().width) < 920.;
+        let (act, says, update_below) = if narrow_update {
+            let line = div()
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .mt(px(8.))
+                .children(act)
+                .child(says);
+            (None, None, Some(line))
+        } else {
+            (act, Some(says), None)
+        };
         let tall = tokens::PLAY;
         let controls = div()
             .flex()
@@ -636,13 +652,14 @@ impl Launcher {
                     .child(mods)
                     .child(folder)
                     .children(act)
-                    .child(says),
+                    .children(says),
             )
             .child(lane.ml(px(12.)).mb(px(-GAP - crate::cat::BELOW_FEET)));
         div()
             .flex()
             .flex_col()
             .child(controls)
+            .children(update_below)
             .children(recovery.map(|line| line.mt(px(8.))))
     }
 
@@ -658,23 +675,10 @@ impl Launcher {
         let made_from = version
             .filter(|t| native_mods::is_native(t))
             .and_then(|t| crate::glass_instance::native_base(t));
-        let build = match version {
-            Some(tag) => {
-                let base = made_from.as_ref().unwrap_or(tag);
-                match sunrise_launcher::nightly::date_of(base) {
-                    Some(date) => {
-                        let time =
-                            sunrise_launcher::nightly::same_day_time(base).unwrap_or_default();
-                        trf(
-                            "Sunrise · {build}",
-                            &[("build", &crate::glass_versions::published(date, &time))],
-                        )
-                    }
-                    None => self.version_label(tag),
-                }
-            }
-            None => tr("Sunrise").into(),
-        };
+        let build = version.map_or_else(
+            || tr("Sunrise").into(),
+            |tag| self.version_label(made_from.as_ref().unwrap_or(tag)),
+        );
         let at = self.ui.home.picker.clone();
         div()
             .id("alt-build")

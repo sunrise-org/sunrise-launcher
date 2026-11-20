@@ -1,18 +1,10 @@
-//! Nightly (docs/release-flow.md): the only build Sunrise ships since 2026-10-28, main plus the pull
-//! requests the trusted reviewers picked, published as the `nightly` pre-release a few times a day.
-//! Every launcher installs it as its update (`backend::sunrise_update`), as its own version
-//! `nightly-<date>-<commit>`, beside the player's worlds, which it never touches. Its checksums must
-//! be signed for the nightly channel (`signed::build_digest`).
-//!
-//! Before that it was opt-in and played in its own "Nightly" instance (`instances/nightly/`):
-//! that instance, and its worlds, stay, and keep following the Nightly.
+//! The rolling Nightly channel, alongside Stable. The game repository publishes it as `nightly`;
+//! each build installs under its own `nightly-<date>-<commit>` name after version-bound signature
+//! verification. Updating that channel is explicit; an exact profile pin remains exact.
 use crate::backend::{self, Release};
 use crate::instances;
 use std::{fs, path::Path};
 use sunrise_launcher_release_verify::NIGHTLY;
-
-/// The id of the instance (its folder in `instances/`) the opt-in Nightly played in.
-pub const INSTANCE: &str = "nightly";
 
 /// The version a nightly installs as: `nightly-2026-10-28-0c02067`, from its title
 /// ("Nightly 2026-10-28 · 0c02067"), else its publication date.
@@ -66,6 +58,65 @@ pub fn day(date: &str) -> String {
 /// The Nightlies of the last release list read that share their day with another, and the time
 /// (`HH:MM` UTC) each came out: [`same_day_time`] reads it for every screen that names a version.
 static SAME_DAY: std::sync::RwLock<Vec<(String, String)>> = std::sync::RwLock::new(Vec::new());
+
+const CURRENT_INSTALL: &str = ".nightly-current";
+
+/// Record the verified rolling build on install, independently of the global or profile selection.
+/// A concurrent reader sees the previous choice or the complete new one, never a partial tag.
+pub(crate) fn record_current(versions: &Path, tag: &str) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut part = tempfile::NamedTempFile::new_in(versions)?;
+    part.write_all(tag.as_bytes())?;
+    part.persist(versions.join(CURRENT_INSTALL))?;
+    Ok(())
+}
+
+/// The newest installed Nightly we can identify without assuming that commit hashes are ordered.
+/// The saved rolling install breaks a tie on the newest date. Older installs may instead prove the
+/// order with a full set of publication times and a unique latest time; otherwise keep a saved choice.
+pub(crate) fn known_install<'a>(
+    versions: &Path,
+    installed: &'a [String],
+    selected: Option<&str>,
+) -> Option<&'a String> {
+    let mut nightlies = installed
+        .iter()
+        .filter_map(|tag| Some((date_of(tag)?, tag)));
+    let (newest_date, first) = nightlies.next()?;
+    let mut same_day = nightlies.take_while(|(date, _)| *date == newest_date);
+    let Some((_, second)) = same_day.next() else {
+        return Some(first);
+    };
+    let candidates: Vec<_> = [first, second]
+        .into_iter()
+        .chain(same_day.map(|(_, tag)| tag))
+        .collect();
+    if let Ok(current) = fs::read_to_string(versions.join(CURRENT_INSTALL)) {
+        if let Some(tag) = candidates.iter().copied().find(|tag| **tag == current) {
+            return Some(tag);
+        }
+    }
+    let mut timed: Vec<_> = candidates
+        .iter()
+        .map(|tag| {
+            let time = fs::read_to_string(versions.join(tag).join(INSTALLED_TIME)).ok()?;
+            Some((
+                chrono::NaiveTime::parse_from_str(time.trim(), "%H:%M").ok()?,
+                *tag,
+            ))
+        })
+        .collect::<Option<_>>()
+        .unwrap_or_default();
+    timed.sort_unstable_by_key(|(time, _)| *time);
+    if let [.., (prior, _), (latest, tag)] = timed.as_slice() {
+        if latest > prior {
+            return Some(tag);
+        }
+    }
+    candidates
+        .into_iter()
+        .find(|tag| Some(tag.as_str()) == selected)
+}
 
 /// The publication time kept beside an installed Nightly so it survives a launcher restart.
 pub(crate) const INSTALLED_TIME: &str = ".nightly-time";
@@ -164,20 +215,6 @@ pub fn short_commit(version: &str) -> String {
     }
 }
 
-/// A Nightly's version as a player reads it: `Nightly · 4baa571` for `nightly-2026-10-29-4baa571`,
-/// or None for anything that is not one. The date is already on the row beside it.
-pub fn label(version: &str) -> Option<String> {
-    if let Some(label) = crate::developer_install::label(version) {
-        return Some(label);
-    }
-    date_of(version)?;
-    let commit = version.strip_prefix("nightly-")?.get(11..);
-    Some(match commit {
-        Some(commit) if !commit.is_empty() => format!("Nightly · {commit}"),
-        _ => "Nightly".to_owned(),
-    })
-}
-
 fn is_date(text: &str) -> bool {
     text.len() == 10
         && text.chars().enumerate().all(|(i, c)| {
@@ -189,16 +226,9 @@ fn is_date(text: &str) -> bool {
         })
 }
 
-/// After `version`, a Nightly, installed as an update: the old Nightly instance follows it, and the
-/// older Nightlies go unless the selection or an instance still plays them. Worlds stay.
+/// After a Nightly update, prune old automatic installs that no profile or global selection keeps.
+/// An exact profile pin is a choice, including one in the former opt-in Nightly profile.
 pub fn after_update(version: &str) {
-    let list = instances::list();
-    if list
-        .iter()
-        .any(|i| i.id == INSTANCE && i.version.as_deref().is_some_and(|v| date_of(v).is_some()))
-    {
-        let _ = instances::edit(INSTANCE, |meta| meta.version = Some(version.to_owned()));
-    }
     let selected = backend::Settings::load().selected;
     let pinned: Vec<String> = instances::list()
         .into_iter()
@@ -346,6 +376,68 @@ mod tests {
     }
 
     #[test]
+    fn a_current_already_installed_nightly_stays_current_after_going_offline() {
+        use crate::instances::Channel::Nightly;
+        use std::process::Command;
+        const ACTOR: &str = "SUNRISE_TEST_ACCEPT_ALREADY_INSTALLED_NIGHTLY";
+        if std::env::var_os(ACTOR).is_none() {
+            let root = tempfile::tempdir().unwrap();
+            assert!(Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "nightly::tests::a_current_already_installed_nightly_stays_current_after_going_offline"])
+                .env(ACTOR, "1")
+                .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+                .env("SUNRISE_HOME", root.path().join("game"))
+                .status().unwrap().success());
+            return;
+        }
+        let data = backend::data_dir();
+        let versions = data.join("versions");
+        let old = "nightly-2033-06-07-bbbbbbb".to_owned();
+        let current = "nightly-2033-06-07-aaaaaaa".to_owned();
+        let catalogue = [nightly_release(&current, "2033-06-07", "11:05")];
+        for tag in [&old, &current] {
+            let dir = backend::version_dir(tag);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join(INSTALLED_TIME), "11:05").unwrap();
+            fs::write(dir.join(".installed"), "").unwrap();
+        }
+        fs::write(
+            data.join("settings.json"),
+            serde_json::json!({"selected": old}).to_string(),
+        )
+        .unwrap();
+        let profile = crate::instances::selection().unwrap();
+        assert_eq!(profile.channel, Nightly);
+        assert_eq!(
+            profile.resolve_version(None).unwrap(),
+            old,
+            "pre-receipt saved choice"
+        );
+        assert!(!versions.join(CURRENT_INSTALL).exists());
+        let (installed, known) = backend::play_installations(Some(&old));
+        let online = profile
+            .channel
+            .play_target(&catalogue, &installed, known.as_ref(), Some(&old))
+            .unwrap();
+        assert_eq!(online, &current);
+        backend::note_play_catalogue(&catalogue).unwrap();
+        assert_eq!(
+            fs::read_to_string(versions.join(CURRENT_INSTALL)).unwrap(),
+            current
+        );
+        assert_eq!(&profile.resolve_version(None).unwrap(), online);
+        let next_day = "nightly-2033-06-08-ccccccc";
+        fs::create_dir(backend::version_dir(next_day)).unwrap();
+        fs::write(backend::version_dir(next_day).join(".installed"), "").unwrap();
+        record_current(&versions, next_day).unwrap();
+        backend::note_play_catalogue(&catalogue).unwrap();
+        assert_eq!(
+            fs::read_to_string(versions.join(CURRENT_INSTALL)).unwrap(),
+            next_day
+        );
+    }
+
+    #[test]
     fn an_installed_nightly_records_its_publication_time() {
         let dir = tempfile::tempdir().unwrap();
         let release = nightly_release("nightly-2033-06-07-bbbbbbb", "2033-06-07", "18:05");
@@ -361,16 +453,6 @@ mod tests {
         let full = "b1ff51d9e0123456789abcdef0123456789abcde";
         assert_eq!(short_commit(full), "b1ff51d9e…");
         assert_eq!(short_commit("v0.2.97"), "v0.2.97");
-    }
-
-    #[test]
-    fn a_nightly_reads_as_its_commit() {
-        assert_eq!(
-            label("nightly-2026-10-29-4baa571").as_deref(),
-            Some("Nightly · 4baa571")
-        );
-        assert_eq!(label("nightly-2026-10-29").as_deref(), Some("Nightly"));
-        assert_eq!(label("v0.2.97"), None);
     }
 
     #[test]

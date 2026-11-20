@@ -88,17 +88,16 @@ mod tests {
 
     #[test]
     fn channel_and_exact_version_select_the_same_published_build() {
-        for channel in ["nightly", "nightly-2026-11-10"] {
-            let releases = published(channel);
-            for requested in [channel, "nightly-2026-11-10-9f13812"] {
-                let release = by_tag(&releases, requested).unwrap();
-                assert_eq!(release.tag, "nightly-2026-11-10-9f13812");
-                assert_eq!(release.nightly.as_deref(), Some(channel));
-                assert_eq!(
+        let channel = "nightly";
+        let releases = published(channel);
+        for requested in [channel, "nightly-2026-11-10-9f13812"] {
+            let release = by_tag(&releases, requested).unwrap();
+            assert_eq!(release.tag, "nightly-2026-11-10-9f13812");
+            assert_eq!(release.nightly.as_deref(), Some(channel));
+            assert_eq!(
                     release.asset,
                     Some((format!("https://github.com/sunrise-org/sunrise/releases/download/{channel}/sunrise-linux-x86_64.tar.gz"), 123))
                 );
-            }
         }
     }
 
@@ -139,6 +138,7 @@ mod tests {
 
     #[test]
     fn an_unknown_tag_never_falls_back_to_an_available_build() {
+        assert!(published("nightly-2026-11-10").is_empty());
         let releases = published("nightly");
         assert!(by_tag(&releases, "nightly-2026-11-09").is_none());
         assert!(by_tag(&releases, "nightly-2026-11-10-deadbee").is_none());

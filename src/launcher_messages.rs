@@ -2,6 +2,11 @@
 use super::*;
 
 impl Launcher {
+    fn refresh_installed(&mut self) {
+        (self.installed, self.known_nightly) =
+            backend::play_installations(self.settings.selected.as_deref());
+    }
+
     pub(crate) fn drain(&mut self, window: gpui::AnyWindowHandle, cx: &mut Context<Self>) {
         let mut changed = false;
         self.perf.tick();
@@ -34,8 +39,8 @@ impl Launcher {
                     if let (Ok(_), Some(checked)) = (&r, self.checked) {
                         self.perf.record_since("launcher.release_list_ms", checked);
                     }
-                    if let Ok(list) = &r {
-                        sunrise_launcher::nightly::note_published(list);
+                    if r.is_ok() {
+                        self.refresh_installed();
                     }
                     self.releases = r.map_or_else(Load::Failed, Load::Ready);
                     // Once the list is in (or failed), each instance resolves to the build it plays.
@@ -46,7 +51,7 @@ impl Launcher {
                 }
                 Msg::Links(links) => self.links = links,
                 // The page reads is_prepared when drawn; `changed` redraws it.
-                Msg::Reused(_) => self.installed = backend::installed(),
+                Msg::Reused(_) => self.refresh_installed(),
                 Msg::Keychain(said) => self.keychain = said,
                 Msg::Owner(owns) => self.owner = Some(owns),
                 Msg::AccountHead(uuid, url, face, failed) => {
@@ -175,8 +180,9 @@ impl Launcher {
                 Msg::Installed(tag, result) => {
                     self.installing = None;
                     self.bar = (0., 0.);
-                    self.installed = backend::installed();
+                    self.refresh_installed();
                     let as_update = self.update_install.take().filter(|t| *t == tag);
+                    let repair = self.architecture_reinstall.take().is_some_and(|t| t == tag);
                     let for_instance = self.instance_install.take_if(|t| *t == tag).is_some();
                     if let (Ok(()), Some(started)) = (&result, self.install_started.take()) {
                         let name = if as_update.is_some() {
@@ -192,6 +198,7 @@ impl Launcher {
                         .take()
                         .filter(|(_, wanted)| result.is_ok() && *wanted == tag);
                     match result {
+                        Ok(()) if repair => {}
                         Ok(()) => {
                             if as_update.is_some()
                                 && sunrise_launcher::nightly::date_of(&tag).is_some()
@@ -199,9 +206,6 @@ impl Launcher {
                                 if let Err(e) = backend::mark_auto_installed(&tag) {
                                     eprintln!("Could not mark updated Nightly {tag}: {e}");
                                 }
-                            }
-                            if self.updates.sunrise.as_ref().is_some_and(|r| r.tag == tag) {
-                                self.updates.sunrise = None;
                             }
                             // An instance's own version leaves the other instances on theirs.
                             // Judged now, not when the download started: a version picked on
@@ -216,6 +220,7 @@ impl Launcher {
                                 backend::select_after_update(
                                     self.settings.selected.as_deref(),
                                     &before,
+                                    &tag,
                                 )
                             }) && (!for_instance || self.launcher_version().is_none());
                             if select {
@@ -243,7 +248,7 @@ impl Launcher {
                 }
                 Msg::Removed(tag, result) => {
                     self.removing.retain(|t| *t != tag);
-                    self.installed = backend::installed();
+                    self.refresh_installed();
                     let selected = if self.settings_save_error.is_some() {
                         self.settings.selected.take()
                     } else {
@@ -258,7 +263,7 @@ impl Launcher {
                 Msg::Storage(result) => self.storage_arrived(result),
                 Msg::Imported(result) => {
                     self.importing_build = false;
-                    self.installed = backend::installed();
+                    self.refresh_installed();
                     match result {
                         // `build_import::import` saved the selection; this keeps the window's copy.
                         Ok(tag) => self.settings.selected = Some(tag),
@@ -267,7 +272,7 @@ impl Launcher {
                 }
                 Msg::Pruned(gone) => {
                     if !gone.is_empty() {
-                        self.installed = backend::installed();
+                        self.refresh_installed();
                     }
                 }
                 Msg::Updates(updates) => {
@@ -277,9 +282,6 @@ impl Launcher {
                         settings::log_launcher_check_failure(error, |line| eprintln!("{line}"));
                     }
                     self.updates = *updates;
-                    if self.settings.auto_install() {
-                        self.install_update();
-                    }
                     if let Some(release) = self.updates.launcher.clone() {
                         self.update_launcher(release);
                     }
@@ -325,7 +327,7 @@ impl Launcher {
                     // have been picked, or its version changed, meanwhile).
                     let wanted = self.play_after_build.take();
                     let cancelled = matches!(&result, Err(native_mods::Failed::Other(error)) if error == native_mods::CANCELLED);
-                    self.installed = backend::installed();
+                    self.refresh_installed();
                     self.reload_instances();
                     // No permission: the question is the answer, not the refusal's words.
                     let no_consent = matches!(result, Err(native_mods::Failed::NoConsent));

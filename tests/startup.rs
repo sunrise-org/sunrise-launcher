@@ -14,7 +14,11 @@ fn fixture() -> PathBuf {
     for folder in ["game/telemetry", "launcher", "data", "config", "probes"] {
         fs::create_dir_all(root.join(folder)).unwrap();
     }
-    fs::write(root.join("launcher/settings.json"), r#"{"skip_opening":true,"install_new_versions":false,"desktop_entry":false,"ping_notice_seen":true}"#).unwrap();
+    fs::write(
+        root.join("launcher/settings.json"),
+        r#"{"skip_opening":true,"desktop_entry":false,"ping_notice_seen":true}"#,
+    )
+    .unwrap();
     let consent =
         serde_json::json!({"version":sunrise_launcher_telemetry::CONSENT_VERSION,"choices":{}});
     fs::write(
@@ -135,7 +139,7 @@ fn cli_settings_work_with_one_mib_process_stack() {
     fs::create_dir(root.join("launcher")).unwrap();
     fs::write(
         root.join("launcher/settings.json"),
-        br#"{"language":"en","install_new_versions":false,"desktop_entry":false}"#,
+        br#"{"language":"en","desktop_entry":false}"#,
     )
     .unwrap();
     let run = |args: &[&str]| {

@@ -557,30 +557,38 @@ pub(crate) fn resource_dependents(tag: &str) -> bool {
 pub fn newest_installed(installed: &[String]) -> Option<&String> {
     installed
         .iter()
-        .find(|t| backend::is_game_tag(t) || t.starts_with("nightly-"))
+        .find(|t| crate::instances::Channel::of_build(t).is_some())
 }
 
 /// The installed version a build for an instance that plays `current` starts from: `current`
 /// itself, so a rebuild stays on the Sunrise it plays (a native build's own revision, [`about`]).
-/// With `update`, or when it plays nothing installed, the newest installed release or Nightly.
+/// With `update`, follow the base build’s channel; with no current build, take the newest install.
 /// An imported build is no commit to build on: its game files' version is.
 pub fn base_for(current: Option<&str>, installed: &[String], update: bool) -> Option<String> {
     let imported = current.and_then(crate::build_import::about).map(|a| a.base);
-    match imported.as_deref().or(current) {
-        Some(v) if !update && installed.iter().any(|t| t == v) => Some(v.to_owned()),
+    match (update, imported.as_deref().or(current)) {
+        (true, Some(current)) => {
+            let native = about(current);
+            let base = native.as_ref().map_or(current, |build| build.base.as_str());
+            crate::instances::Channel::of_build(base)?
+                .newest_installed(installed)
+                .cloned()
+        }
+        (false, Some(v)) if installed.iter().any(|t| t == v) => Some(v.to_owned()),
         _ => newest_installed(installed).cloned(),
     }
 }
 
 /// The newer Sunrise a build with `update` would move native build `version` to: the newest
-/// installed release or Nightly, when it is newer than the one the build started from.
+/// installed build on its channel, when it is newer than the one the build started from.
 pub fn update_for(version: &str, installed: &[String]) -> Option<String> {
     newer_than(&about(version)?.base, installed)
 }
 
 pub fn newer_than(base: &str, installed: &[String]) -> Option<String> {
-    newest_installed(installed)
-        .filter(|n| *n != base && backend::compare_versions(n, base).is_gt())
+    crate::instances::Channel::of_build(base)?
+        .newest_installed(installed)
+        .filter(|n| backend::compare_game_versions(n, base).is_gt())
         .cloned()
 }
 
@@ -1905,15 +1913,14 @@ fn finish_profile_build(
     // and keeps which mods wait and why.
     if let Err(Failed::Mods { left, .. }) = &built {
         let plain = checked_about(base)?.map_or_else(|| base.to_owned(), |about| about.base);
-        let installed = backend::installed();
-        let selected = backend::Settings::load()
-            .selected
-            .filter(|s| installed.contains(s));
+        let selected = backend::Settings::load().selected;
+        let (installed, nightly) = backend::play_installations(selected.as_deref());
         let pin = plain_pin(
             instance.channel,
             &plain,
             selected.as_deref(),
             &installed,
+            nightly.as_ref(),
             catalogue,
             || cancellation.check(),
         )?;
@@ -1960,46 +1967,29 @@ fn finish_profile_build(
     Ok(ClientBuild::Native(built.version))
 }
 
-/// Clearing the pin must play the checked base both in the window and on the command line.
-/// Nightly follows the launcher's selection. Stable follows the newest installed Stable choice
-/// in the window, or Nightly when the known catalogue has no Stable release. With no catalogue,
-/// pin rather than guess.
-fn follows_plain(
-    channel: instances::Channel,
-    plain: &str,
-    selected: Option<&str>,
-    stable: impl FnOnce() -> Option<String>,
-) -> bool {
-    selected == Some(plain)
-        && match channel {
-            instances::Channel::Nightly => true,
-            instances::Channel::Stable => stable().as_deref() == Some(plain),
-        }
-}
-
-/// The version a plain fallback pins its instance to: None when clearing the pin plays `plain`
-/// ([`follows_plain`]). Stable asks the newest installed Stable build of `catalogue`, the release
-/// list the caller already has (None when it has none: the pin stays, and nothing is fetched).
-/// The lookup can take a while on the command line, so `cancelled` is asked once it is back, before anything is
-/// saved.
+/// Clear the pin only if the checked base will play both in the window and from the CLI.
+/// Without the Stable catalogue we cannot predict its ordinary Nightly fallback.
 fn plain_pin(
     channel: instances::Channel,
     plain: &str,
     selected: Option<&str>,
     installed: &[String],
+    nightly: Option<&String>,
     catalogue: impl FnOnce() -> Option<Vec<backend::Release>>,
     cancelled: impl FnOnce() -> Result<(), String>,
 ) -> Result<Option<String>, String> {
-    let follows = follows_plain(channel, plain, selected, || {
-        let releases = catalogue()?;
-        match channel.following(&releases) {
-            instances::Channel::Stable => channel
-                .builds(&releases)
-                .find(|b| installed.contains(&b.tag))
-                .map(|b| b.tag.clone()),
-            instances::Channel::Nightly => selected.map(str::to_owned),
-        }
-    });
+    let selected = installed.iter().find(|tag| Some(tag.as_str()) == selected);
+    let target = |releases: &[backend::Release]| {
+        channel
+            .play_target(releases, installed, nightly, selected)
+            .map(String::as_str)
+            == Some(plain)
+    };
+    let follows = target(&[])
+        && match channel {
+            instances::Channel::Nightly => true,
+            instances::Channel::Stable => catalogue().is_some_and(|releases| target(&releases)),
+        };
     cancelled()?;
     Ok((!follows).then(|| plain.to_owned()))
 }
@@ -2400,16 +2390,43 @@ mod tests {
                 prerelease: false,
                 nightly: None,
             };
-            backend::install_as(&release, tag, &sha256, None, |_| {}).unwrap();
+            let result = backend::install_as(&release, tag, &sha256, None, |_| {});
             server.join().unwrap();
+            result
+        };
+        let prepare = |tag| {
             // `sunrise-launcher prepare` writes the resources from the player's own Minecraft.
             let resources = backend::resources(tag);
             fs::create_dir_all(&resources).unwrap();
             fs::write(resources.join("sunrise-resources.json"), b"{}").unwrap();
         };
-        let (old, new) = ("v2026.11.01", "v2026.11.02");
+        let (old, new) = ("26.3-0.1.0", "26.3-0.1.1");
         // (a) A fresh install: the release is the build's base, chosen as the launcher chooses.
-        install_release(old);
+        install_release(old).unwrap();
+        prepare(old);
+        // The same-version install used to repair an architecture must not touch a running build.
+        let tree = cap_std::fs::Dir::open_ambient_dir(
+            backend::version_dir(old),
+            cap_std::ambient_authority(),
+        )
+        .unwrap();
+        let claim = crate::run_leases::Registry::open()
+            .unwrap()
+            .lock(&tree, crate::native_cache::LockMode::Shared)
+            .unwrap();
+        drop(tree);
+        assert_eq!(
+            install_release(old).unwrap_err(),
+            cache_error(crate::storage::Error::Busy)
+        );
+        assert!(backend::installed().iter().any(|tag| tag == old));
+        assert!(backend::resources(old)
+            .join("sunrise-resources.json")
+            .is_file());
+        drop(claim);
+        install_release(old).unwrap();
+        assert!(backend::installed().iter().any(|tag| tag == old));
+        prepare(old);
         let base = base_for(None, &backend::installed(), false).unwrap();
         assert_eq!(base, old);
         let binary = dir("player-flow").join("built");
@@ -2430,7 +2447,8 @@ mod tests {
         assert_eq!(backend::resources(native), backend::resources(old));
         // (b) An update: a newer release arrives, and a rebuild with `update` moves to it. The
         // build made before it still plays, on the base it was made from, which stays installed.
-        install_release(new);
+        install_release(new).unwrap();
+        prepare(new);
         assert_eq!(
             base_for(Some(native), &backend::installed(), true).as_deref(),
             Some(new)
@@ -2618,13 +2636,14 @@ mod tests {
     #[test]
     fn a_plain_fallback_is_cancelled_after_the_stable_lookup() {
         use instances::Channel::Stable;
-        let installed = ["v1.0.0".to_owned()];
+        let installed = ["26.3-0.1.0".to_owned()];
         let cancelled = std::cell::Cell::new(false);
         let pin = plain_pin(
             Stable,
-            "v1.0.0",
-            Some("v1.0.0"),
+            "26.3-0.1.0",
+            Some("26.3-0.1.0"),
             &installed,
+            None,
             || {
                 // A cancel that came while the lookup ran.
                 cancelled.set(true);
@@ -2641,13 +2660,14 @@ mod tests {
         assert_eq!(pin, Err("Cancelled".to_owned()));
         let pin = plain_pin(
             Stable,
-            "v1.0.0",
-            Some("v1.0.0"),
+            "26.3-0.1.0",
+            Some("26.3-0.1.0"),
             &installed,
+            None,
             || None,
             || Ok(()),
         );
-        assert_eq!(pin, Ok(Some("v1.0.0".to_owned())));
+        assert_eq!(pin, Ok(Some("26.3-0.1.0".to_owned())));
     }
 
     #[test]
@@ -2663,17 +2683,18 @@ mod tests {
             prerelease: false,
             nightly: None,
         };
-        let installed = ["v1.0.0".to_owned()];
+        let installed = ["26.3-0.1.0".to_owned()];
         let mut asked = 0;
-        // The newest installed Stable build of the caller's list is v1.0.0: the pin clears.
+        // The newest installed Stable build of the caller's list is 26.3-0.1.0: the pin clears.
         let pin = plain_pin(
             Stable,
-            "v1.0.0",
-            Some("v1.0.0"),
+            "26.3-0.1.0",
+            Some("26.3-0.1.0"),
             &installed,
+            None,
             || {
                 asked += 1;
-                Some(vec![release("v1.0.0")])
+                Some(vec![release("26.3-0.1.0")])
             },
             || Ok(()),
         );
@@ -2681,20 +2702,21 @@ mod tests {
         // The window has no list yet: the pin stays, and the build asks nobody for one.
         let pin = plain_pin(
             Stable,
-            "v1.0.0",
-            Some("v1.0.0"),
+            "26.3-0.1.0",
+            Some("26.3-0.1.0"),
             &installed,
+            None,
             || None,
             || Ok(()),
         );
-        assert_eq!(pin, Ok(Some("v1.0.0".to_owned())));
+        assert_eq!(pin, Ok(Some("26.3-0.1.0".to_owned())));
     }
 
     #[test]
     fn a_stable_setup_can_unpin_to_nightly_only_while_there_is_no_stable_release() {
         let nightly = "nightly-2026-11-17-2d81263";
         let mut releases = vec![backend::Release {
-            tag: "v1.1.0".into(),
+            tag: "26.3-0.1.1".into(),
             name: String::new(),
             body: String::new(),
             date: String::new(),
@@ -2710,41 +2732,19 @@ mod tests {
                 nightly,
                 Some(nightly),
                 &installed,
+                Some(&installed[0]),
                 || Some(releases),
                 || Ok(()),
             )
         };
         assert_eq!(pin(releases.clone()), Ok(None));
         releases.push(backend::Release {
-            tag: "v1.0.0".into(),
+            tag: "26.3-0.1.0".into(),
             prerelease: false,
             ..releases[0].clone()
         });
-        // Stable will download v1.0.0 next Play, so keep the Nightly we actually checked.
+        // Stable will download 26.3-0.1.0 next Play, so keep the Nightly we actually checked.
         assert_eq!(pin(releases), Ok(Some(nightly.to_owned())));
-    }
-
-    #[test]
-    fn a_stable_setup_cannot_unpin_to_a_different_or_unknown_build_after_a_plain_fallback() {
-        use instances::Channel::{Nightly, Stable};
-        let nightly = "nightly-2026-11-17-2d81263";
-        let stable = "v1.0.0";
-        let checked = |tag: &str| Some(tag.to_owned());
-        assert!(!follows_plain(Stable, nightly, Some(nightly), || checked(
-            stable
-        )));
-        assert!(!follows_plain(Stable, nightly, Some(nightly), || None));
-        assert!(follows_plain(Stable, stable, Some(stable), || checked(
-            stable
-        )));
-        // The CLI without an explicit version follows the launcher's selection.
-        assert!(!follows_plain(Stable, stable, Some(nightly), || checked(
-            stable
-        )));
-        assert!(follows_plain(Nightly, nightly, Some(nightly), || panic!(
-            "unneeded release lookup"
-        )));
-        assert!(!follows_plain(Nightly, nightly, None, || None));
     }
 
     #[test]
@@ -4218,9 +4218,9 @@ printf ']}}\n'
     fn a_rebuild_stays_on_the_instances_sunrise_until_an_update() {
         let installed: Vec<String> = [
             "nightly-2026-10-29-4baa571",
-            "v2026.10.20",
+            "26.3-0.1.1",
             "native-83f15fa-0123456789ab",
-            "v2026.10.13",
+            "26.3-0.1.0",
         ]
         .map(String::from)
         .to_vec();
@@ -4228,23 +4228,24 @@ printf ']}}\n'
         let native = "native-83f15fa-0123456789ab";
         assert_eq!(base(Some(native), false).as_deref(), Some(native));
         assert_eq!(
-            base(Some("v2026.10.13"), false).as_deref(),
-            Some("v2026.10.13")
+            base(Some("26.3-0.1.0"), false).as_deref(),
+            Some("26.3-0.1.0")
         );
         let newest = Some("nightly-2026-10-29-4baa571");
-        assert_eq!(base(Some(native), true).as_deref(), newest);
+        assert_eq!(
+            base(Some("26.3-0.1.0"), true).as_deref(),
+            Some("26.3-0.1.1")
+        );
         assert_eq!(base(None, false).as_deref(), newest);
         assert_eq!(base(Some("native-gone"), false).as_deref(), newest);
         assert_eq!(base_for(Some(native), &[native.into()], true), None);
-        // Update offers the newest release or Nightly, when newer than the build's own.
-        assert_eq!(newer_than("v2026.10.20", &installed).as_deref(), newest);
-        assert_eq!(newer_than("nightly-2026-10-29-4baa571", &installed), None);
-        let releases = ["v2026.10.20".to_string(), "v2026.10.13".to_string()];
-        assert_eq!(newer_than("v2026.10.20", &releases), None);
+        // Updates stay on the base’s channel.
         assert_eq!(
-            newer_than("v2026.10.13", &releases).as_deref(),
-            Some("v2026.10.20")
+            newer_than("26.3-0.1.0", &installed).as_deref(),
+            Some("26.3-0.1.1")
         );
+        assert_eq!(newer_than("nightly-2026-10-29-4baa571", &installed), None);
+        assert_eq!(newer_than("26.3-0.1.1", &installed), None);
     }
 
     #[test]
