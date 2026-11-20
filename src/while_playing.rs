@@ -1,56 +1,61 @@
-//! What the window does while the game runs (`backend::WhilePlaying`): stay, minimise, or hide
-//! (macOS), and come back to the front when the game closes, with how the run ended.
+//! What the launcher does while the game runs (`Settings::keep_open_while_playing`): it stays
+//! open, or (the default) it closes once the game has started, the way closing its window does
+//! (`shut_down`). The game runs on without it: it is its own process in its own process group,
+//! writes its own `latest.log`, reads its account from the session file and refreshes it itself.
 use super::*;
-use backend::WhilePlaying;
-use gpui::AnyWindowHandle;
+use std::path::PathBuf;
 
+/// How long the game has to have run before its start counts as successful: a game that fails
+/// at once is still reported here, in the window that started it.
+const STARTED: Duration = Duration::from_secs(10);
+/// How often a watched start is looked at.
+const LOOK: Duration = Duration::from_millis(500);
+
+#[derive(Default)]
 pub(super) struct Aside {
-    /// The launcher's window.
-    window: AnyWindowHandle,
-    /// What the window did when the game started, to undo when it closes.
-    stepped: Option<WhilePlaying>,
-}
-
-impl Aside {
-    pub(super) fn new(window: AnyWindowHandle) -> Self {
-        Aside {
-            window,
-            stepped: None,
-        }
-    }
+    /// Counts the starts watched: a watch whose game ended or was followed by another one stops.
+    watch: u64,
 }
 
 impl Launcher {
-    /// The game started: get out of its way as the player asked. Read from `settings.json`, so
-    /// `sunrise-launcher settings while-playing …` counts at once.
-    pub(super) fn step_aside(&mut self, cx: &mut Context<Self>) {
+    /// Whether the launcher stays open for the game about to start. Read from `settings.json`,
+    /// so `sunrise-launcher settings keep-open-while-playing …` counts at once.
+    pub(super) fn keep_open_while_playing(&mut self) -> bool {
         // Keep a choice whose save failed available for Retry instead of replacing it from disk.
         if self.settings_save_error.is_none() {
-            self.settings.while_playing = Settings::load().while_playing;
+            self.settings.keep_open_while_playing = Settings::load().keep_open_while_playing;
         }
-        let how = self.settings.while_playing.here();
-        if how == WhilePlaying::Stay {
-            return;
-        }
-        let window = self.aside.window;
-        self.aside.stepped = Some(how);
-        cx.defer(move |cx| match how {
-            WhilePlaying::Hide => cx.hide(),
-            _ => {
-                let _ = window.update(cx, |_, window, _| window.minimize_window());
-            }
-        });
+        self.settings.keep_open_while_playing
     }
 
-    /// The game closed: back to the front, where its play time, errors and log are.
-    pub(super) fn come_back(&mut self, cx: &mut Context<Self>) {
-        if self.aside.stepped.take().is_none() {
-            return;
-        }
-        let window = self.aside.window;
-        cx.defer(move |cx| {
-            cx.activate(true);
-            let _ = window.update(cx, |_, window, _| window.activate_window());
-        });
+    /// The game started, with its output in its own file (`backend::spawn_logged`): the launcher
+    /// closes once the game has run for [`STARTED`] and has read its session file (`session`),
+    /// so no token is left on disk.
+    pub(super) fn step_aside(&mut self, session: Option<PathBuf>, cx: &mut Context<Self>) {
+        self.aside.watch += 1;
+        let (watch, since) = (self.aside.watch, Instant::now());
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(LOOK).await;
+            let Ok(watching) = this.update(cx, |this, cx| {
+                // The game ended (its error is shown as before), or another one started.
+                if this.aside.watch != watch || this.client.is_none() {
+                    return false;
+                }
+                let read = session.as_ref().is_none_or(|file| !file.exists());
+                // Closing now would stop work in progress, or a server this launcher hosts.
+                let free = !this.launch_busy() && !this.hosting_here();
+                if since.elapsed() >= STARTED && read && free {
+                    shut_down(cx);
+                    return false;
+                }
+                true
+            }) else {
+                break;
+            };
+            if !watching {
+                break;
+            }
+        })
+        .detach();
     }
 }

@@ -11,7 +11,7 @@
 //! `datapack-browser.json` beside `mod-browser.json` ([`Origin`]). It is only read for a file
 //! that is still in the world, and is how a world is known to have a project already.
 use super::pack_discover::check_world;
-use super::ui::{added_mark, c, card, checkbox, dim, muted, primary, tile};
+use super::ui::{added_mark, c, card, checkbox, dim, empty_state, muted, primary, tile};
 use super::*;
 use crate::frame::button;
 use crate::paint::palette;
@@ -501,21 +501,12 @@ impl Launcher {
             groups = groups.child(group);
         }
         if worlds.is_empty() {
-            groups = groups.child(
-                card()
-                    .p(px(24.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.))
-                    .child(
-                        div()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(tr("No worlds yet")),
-                    )
-                    .child(muted(tr(
-                        "A data pack goes into a world. Make one in the game first.",
-                    ))),
-            );
+            groups = groups.child(empty_state(
+                "earth",
+                tr("No worlds yet"),
+                tr("A data pack goes into a world. Make one in the game first."),
+                None,
+            ));
         } else if shown == 0 {
             groups = groups.child(muted(tr("No packs match your search.")));
         }
@@ -564,7 +555,7 @@ impl Launcher {
             .flex_col()
             .rounded(crate::tokens::r(crate::tokens::R_CARD))
             .border_1()
-            .border_color(c(palette().line))
+            .border_color(palette().input_edge())
             .overflow_hidden();
         let mut free = 0;
         for (n, (world, packs)) in worlds.iter().enumerate() {

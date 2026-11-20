@@ -310,7 +310,15 @@ impl Launcher {
             }))
             .cursor_pointer()
             .focus_visible(|s| s.border_color(c(palette().focus)))
-            .child("?")
+            // One line the size of the ring's inside, its text centred: the "?" sits in the
+            // middle both ways, whatever width its text element measures.
+            .child(
+                div()
+                    .w_full()
+                    .text_center()
+                    .line_height(px(16. - 2.))
+                    .child("?"),
+            )
             .on_hover(cx.listener(|this, over: &bool, _, cx| {
                 this.ui.mods.packs.help.0 = *over;
                 cx.notify();
@@ -332,7 +340,7 @@ impl Launcher {
                     .p(px(12.))
                     .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                     .border_1()
-                    .border_color(c(palette().line))
+                    .border_color(palette().input_edge())
                     .bg(c(palette().raised))
                     .shadow_lg()
                     .occlude()

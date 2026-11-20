@@ -121,7 +121,7 @@ impl Entry {
 
 /// The rows of Settings found by name, as their sections title them.
 const SETTINGS_ROWS: [(&str, Section); 16] = [
-    ("While you play", Section::Game),
+    ("Keep launcher open while you play", Section::Game),
     ("Minecraft folder", Section::Game),
     ("Remove old game builds", Section::Game),
     ("Profiles", Section::Game),
@@ -601,7 +601,7 @@ impl Launcher {
                         true,
                         false,
                         false,
-                        "Search pages, profiles, worlds, mods, settings and shortcuts",
+                        "Search pages, profiles, worlds, mods, settings and shortcuts…",
                     )),
             )
             .child(

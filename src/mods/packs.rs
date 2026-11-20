@@ -1,6 +1,6 @@
 //! The selected setup’s local collections. Reading a list never creates its folder. Choosing a
 //! file targets the collection that opened the dialog, even if another setup exists.
-use super::ui::{c, card, dim, muted, primary, switch};
+use super::ui::{c, card, dim, empty_state, muted, primary, switch};
 use super::*;
 use crate::frame::button;
 use crate::paint::palette;
@@ -400,28 +400,25 @@ impl Launcher {
             };
             list = list.child(row.child(remove).child(toggle));
         }
-        if items.is_empty() {
+        // None at all: the empty state stands in the list's place, centred in the page.
+        let none = items.is_empty().then(|| {
             let (none, find) = match kind {
                 Kind::Resource => (tr("No resource packs yet"), tr("Find resource packs")),
                 Kind::Shader => (tr("No shader packs yet"), tr("Find shader packs")),
             };
-            list = list.child(
-                div()
-                    .p(px(24.))
-                    .flex()
-                    .flex_col()
-                    .items_start()
-                    .gap(px(12.))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(none))
-                    .child(muted(empty))
-                    .child(primary("alt-packs-browse", find).on_click(cx.listener(
-                        |this, _: &ClickEvent, _, cx| {
-                            this.choose_view(Page::PackFind);
-                            cx.notify();
-                        },
-                    ))),
-            );
-        } else if shown == 0 {
+            empty_state(
+                "package-01",
+                none,
+                empty,
+                Some(primary("alt-packs-browse", find).on_click(cx.listener(
+                    |this, _: &ClickEvent, _, cx| {
+                        this.choose_view(Page::PackFind);
+                        cx.notify();
+                    },
+                ))),
+            )
+        });
+        if none.is_none() && shown == 0 {
             list = list.child(muted(tr("No packs match your search.")).p(px(20.)));
         }
         div()
@@ -432,6 +429,9 @@ impl Launcher {
             .gap(px(14.))
             .child(header)
             .children(self.mods_locked().map(muted))
-            .child(list)
+            .map(|d| match none {
+                Some(none) => d.child(none),
+                None => d.child(list),
+            })
     }
 }

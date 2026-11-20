@@ -32,7 +32,7 @@ fn settings_json_with_paths(
         "game_args": s.game_args,
         "proxy": s.proxy,
         "desktop_entry": s.desktop_entry.unwrap_or(true),
-        "while_playing": s.while_playing.name(),
+        "keep_open_while_playing": s.keep_open_while_playing,
         "world_layout": s.world_layout.name(),
         "language": s.language.map_or("system", |l| l.code()),
         "theme": sunrise_launcher::appearance::effective_id(s),

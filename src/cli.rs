@@ -762,7 +762,7 @@ enum Cmd {
     /// on|off, prune-old-versions on|off (delete old versions after an install, keeping the
     /// selected one, the ones profiles use and the newest few), keep-versions N (how many of the
     /// newest to keep; "default" is 2), opening-animation on|off, cat on|off (the corner cat), proxy http://host:port|socks5://host:port
-    /// ("default" removes it), while-playing stay|minimize|hide (what the window does while the game runs), language
+    /// ("default" removes it), keep-open-while-playing on|off (whether the launcher stays open while the game runs; off, it closes once the game has started), language
     /// system|CODE (the window's language: en, fr, de, ja, pt-br... any language the launcher has;
     /// system follows the computer's; a wrong code lists them all), theme default|ID|local:SLUG
     /// (a built-in theme, or one of yours from the themes folder; "default" is Dawn; a wrong id
@@ -930,7 +930,7 @@ const SETTING_KEYS: [&str; 20] = [
     "cat",
     "game-architecture",
     "proxy",
-    "while-playing",
+    "keep-open-while-playing",
     "worlds",
     "language",
     "theme",
@@ -983,10 +983,7 @@ fn set_setting(s: &mut backend::Settings, key: &str, value: &str) -> Result<(), 
             }
             s.game_architecture = choice;
         }
-        "while-playing" => {
-            s.while_playing = backend::WhilePlaying::parse(value)
-                .ok_or_else(|| format!("{value}: say stay, minimize or hide"))?
-        }
+        "keep-open-while-playing" => s.keep_open_while_playing = on_off(value)?,
         "worlds" => {
             s.world_layout = backend::WorldLayout::parse(value).ok_or_else(|| {
                 trf(

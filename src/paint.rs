@@ -28,6 +28,9 @@ const SCRIM_ALPHAS: std::ops::RangeInclusive<u32> = 45..=75;
 const BRIGHT: [u32; 2] = [sunrise_launcher_theme::BRIGHT_BACKDROP, 0xffffff];
 /// The glass plates' own opacity, as the mockup's `.hzl-glass` mixes it (`Glass::new`).
 const PLATE_BASE: f32 = 0.81;
+/// How far Play's colour is pulled toward the theme's own chrome (OKLab), so it sits in the theme
+/// instead of shouting over it. The white label's fit comes after, unchanged.
+pub(crate) const PLAY_TONE: f32 = 0.3;
 /// Text reads at this contrast on its surface; edges, marks and the focus ring at the other.
 const TEXT: f32 = 4.5;
 const MARK: f32 = 3.;
@@ -265,31 +268,34 @@ impl Inputs {
                 plate,
             )
         };
-        let [chrome_base, card_base, raised_base] = if let Some(tone) = photo_tone.or(scene_tone) {
-            let [l, a, b] = oklab(tone);
-            let chroma = a.hypot(b);
-            let levels = if n.dark {
-                [0.30, 0.35, 0.42]
-            } else {
-                [0.86, 0.90, 0.94]
-            };
-            // Keep the source's hue. Scale chroma with lightness, with a minimum to keep a
-            // pale sky recognisably tinted, and a maximum so vivid sources aren't loud.
-            // Exact neutral RGB has no hue; don't amplify the matrix's rounding noise.
-            let neutral = tone == (tone & 255) * 0x01_01_01;
-            [0, 1, 2].map(|i| {
-                let level = levels[i];
-                let gain = if neutral {
-                    0.
+        let bases = |tone: Option<u32>| {
+            if let Some(tone) = tone {
+                let [l, a, b] = oklab(tone);
+                let chroma = a.hypot(b);
+                let levels = if n.dark {
+                    [0.30, 0.35, 0.42]
                 } else {
-                    let floor = if i == 0 { 0.046 } else { 0.055 };
-                    (chroma * level / l.max(0.25)).clamp(floor, 0.10) / chroma
+                    [0.86, 0.90, 0.94]
                 };
-                from_oklab([level, a * gain, b * gain])
-            })
-        } else {
-            [n.side, n.card, n.card_hi]
+                // Keep the source's hue. Scale chroma with lightness, with a minimum to keep a
+                // pale sky recognisably tinted, and a maximum so vivid sources aren't loud.
+                // Exact neutral RGB has no hue; don't amplify the matrix's rounding noise.
+                let neutral = tone == (tone & 255) * 0x01_01_01;
+                [0, 1, 2].map(|i| {
+                    let level = levels[i];
+                    let gain = if neutral {
+                        0.
+                    } else {
+                        let floor = if i == 0 { 0.046 } else { 0.055 };
+                        (chroma * level / l.max(0.25)).clamp(floor, 0.10) / chroma
+                    };
+                    from_oklab([level, a * gain, b * gain])
+                })
+            } else {
+                [n.side, n.card, n.card_hi]
+            }
         };
+        let [chrome_base, card_base, raised_base] = bases(photo_tone.or(scene_tone));
         let background = n.page;
         let card_color = veil(card_base);
         let raised = veil(raised_base);
@@ -354,14 +360,18 @@ impl Inputs {
         // Leave room beyond 4.5:1 for renderer rounding.
         let accent_on = 0xffffff;
         let play_text = |c| contrast(accent_on, c) >= 4.65;
-        let play_glow = play_seed.unwrap_or(raw);
+        // Play takes the theme's own colour: its accent (or the theme's authored face) is pulled
+        // [`PLAY_TONE`] toward the theme's chrome, never a photo's, before the fits below.
+        let theme_chrome = veil(bases(scene_tone)[0]);
+        let toned = |c: u32| mix_oklab(theme_chrome, c, PLAY_TONE);
+        let play_glow = toned(play_seed.unwrap_or(raw));
         let base = fit(play_glow, false, play_text);
         // An authored vivid face already has the right lift. Mixing white into it would
         // put back the dusty colour this shade is meant to avoid.
         let light = if play_seed.is_some() {
             base
         } else {
-            fit_toward(mix_oklab(accent_on, raw, 0.25), base, play_text)
+            fit_toward(mix_oklab(accent_on, toned(raw), 0.25), base, play_text)
         };
         let dark = fit(play_glow, false, |c| {
             contrast(accent_on, c) >= contrast(accent_on, light) + 1.5
@@ -671,9 +681,12 @@ mod tests {
         let ramp = std::array::from_fn::<_, 101, _>(|i| over(light, i as f32 / 100., dark));
         reads("white on Play", p.accent_on, &ramp, TEXT);
         assert!(luminance(light) > luminance(dark));
+        // Play is its accent (or the theme's authored face) pulled toward the theme's chrome.
+        let toned = mix_oklab(p.chrome, theme.play_seed.unwrap_or(p.accent), PLAY_TONE);
+        assert_eq!(p.play_glow, toned, "{name}: Play's colour");
         if spread(p.accent) > 60 && spread(dark) > 40 {
             let vivid = theme.play_seed.is_some();
-            let drift = (play_hue(dark, vivid) - play_hue(p.accent, vivid)).abs();
+            let drift = (play_hue(dark, vivid) - play_hue(toned, vivid)).abs();
             assert!(
                 drift.min(std::f32::consts::TAU - drift) < 0.1,
                 "{name}: hue {drift}"
@@ -865,7 +878,7 @@ mod tests {
     }
 
     #[test]
-    fn every_builtin_play_uses_its_accent_at_readable_white_contrast() {
+    fn every_builtin_play_is_its_accent_toned_to_the_theme_at_readable_white_contrast() {
         let ids = [themes::TWILIGHT]
             .into_iter()
             .chain(themes::THEMES.iter().map(|t| t.id));
@@ -884,8 +897,12 @@ mod tests {
                 dark_contrast >= bright_contrast + 1.5,
                 "{id}: flat gradient"
             );
+            // The accent (or the authored face) pulled exactly PLAY_TONE toward the theme's
+            // chrome, and both stops keep that blend's hue.
+            let toned = mix_oklab(p.chrome, theme.play_seed.unwrap_or(own), PLAY_TONE);
+            assert_eq!(p.play_glow, toned, "{id}: Play's colour");
             let vivid = theme.play_seed.is_some();
-            let drift = (play_hue(dark, vivid) - play_hue(own, vivid)).abs();
+            let drift = (play_hue(dark, vivid) - play_hue(toned, vivid)).abs();
             assert!(
                 drift.min(std::f32::consts::TAU - drift) < 0.02,
                 "{id}: hue drift {drift:.3}"
@@ -895,16 +912,23 @@ mod tests {
 
     #[test]
     fn cherry_and_nord_keep_their_swatches_with_vivid_primary_actions() {
-        for (id, accent, min_chroma) in
-            [("cherry_blossom", 0xf59ac0, 0.16), ("nord", 0x88c0d0, 0.07)]
-        {
+        let chroma = |c: u32| {
+            let [_, a, b] = oklab(c);
+            a.hypot(b)
+        };
+        for (id, accent, seed) in [
+            ("cherry_blossom", 0xf59ac0, 0xc8297e),
+            ("nord", 0x88c0d0, 0x087d95),
+        ] {
             let settings = Settings::parse(&format!(r#"{{"theme":"{id}"}}"#));
             let theme = from_settings(&settings, WindowAppearance::Dark);
             let p = Palette::of(&settings, &theme);
             assert_eq!(p.accent, accent);
+            // The authored face, toned like every Play, stays more vivid than the toned swatch.
+            assert_eq!(p.play_glow, mix_oklab(p.chrome, seed, PLAY_TONE), "{id}");
+            let swatch = chroma(mix_oklab(p.chrome, accent, PLAY_TONE));
             for stop in p.play_stops {
-                let [_, a, b] = oklab(stop);
-                assert!(a.hypot(b) > min_chroma, "{id}: faded stop {stop:06x}");
+                assert!(chroma(stop) > swatch, "{id}: faded stop {stop:06x}");
             }
             assert_eq!(p.play_glow, p.play_stops[1]);
         }
@@ -914,8 +938,8 @@ mod tests {
         let p = Palette::of(&settings, &theme);
         assert_eq!(
             p.play_glow,
-            custom.rgb(),
-            "custom accents keep their own glow"
+            mix_oklab(p.chrome, custom.rgb(), PLAY_TONE),
+            "custom accents keep their own glow, toned like every Play"
         );
     }
 
@@ -1234,8 +1258,9 @@ accent = "#101010""##,
         assert_ne!(p.play_stops[0], p.accent);
         let (settings, theme) = look(None, Accent::from_rgb(0x372890), 6., true);
         let p = Palette::of(&settings, &theme);
-        assert_eq!(p.play_stops[0], p.accent, "a dark accent needs no shading");
-        assert_eq!(p.play_stops[1], mix_oklab(p.accent_on, p.accent, 0.25));
+        let toned = mix_oklab(p.chrome, p.accent, PLAY_TONE);
+        assert_eq!(p.play_stops[0], toned, "a dark accent needs no shading");
+        assert_eq!(p.play_stops[1], mix_oklab(p.accent_on, toned, 0.25));
     }
 
     /// The theme and the player's accent decide the palette; a frame reads what it began, and

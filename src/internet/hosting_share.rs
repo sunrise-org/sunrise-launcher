@@ -62,11 +62,11 @@ impl Launcher {
             .px(px(12.))
             .rounded(tokens::r(tokens::R_CONTROL))
             .border_1()
-            .border_color(rgb(if focused {
-                palette().focus
+            .border_color(if focused {
+                rgb(palette().focus).into()
             } else {
-                palette().line
-            }))
+                palette().input_edge()
+            })
             .bg(rgb(palette().field))
             .text_size(px(13.))
             .text_color(rgb(palette().text))

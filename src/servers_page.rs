@@ -365,6 +365,15 @@ fn own_name(accounts: &Accounts) -> Option<String> {
 }
 
 impl Launcher {
+    /// Whether a server this launcher started still runs and would stop with it
+    /// ([`stop_on_quit`]): the launcher doesn't close itself under it while the game plays.
+    pub(super) fn hosting_here(&self) -> bool {
+        STARTED_HERE.lock().unwrap().iter().any(|dir| {
+            !servers::service_installed(dir)
+                && self.servers.statuses.get(dir).is_some_and(Status::running)
+        })
+    }
+
     // ----- Background work ------------------------------------------------------------------
 
     /// Runs `job` on a thread with the page busy; its lines and result arrive as events.

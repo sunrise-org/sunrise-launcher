@@ -425,7 +425,7 @@ struct Launcher {
     game_packs: packs_page::Packs,
     world_packs: datapacks_page::WorldPacks,
     launch: Option<launch_page::LaunchPanel>,
-    /// What the window did when the game started (`while_playing.rs`).
+    /// The game start being watched, to close the launcher once it started (`while_playing.rs`).
     aside: while_playing::Aside,
     /// The player's servers, for the sidebar until the Servers page has read them.
     side_servers: Vec<sunrise_launcher::servers::Entry>,

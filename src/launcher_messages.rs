@@ -118,6 +118,11 @@ impl Launcher {
                         );
                     }
                     self.play_registry_notices = registry_notices;
+                    // The launcher closes under this game, unless it stays open or the registry
+                    // has something the player needs to see about this run: then the game's
+                    // output goes to a file, not to pipes that close with the launcher.
+                    let closes =
+                        !self.keep_open_while_playing() && self.play_registry_notices.is_empty();
                     let started = prepared.and_then(|cmd| {
                         self.accounts = Accounts::load();
                         if let Some(uuid) = accepted.as_deref() {
@@ -126,16 +131,19 @@ impl Launcher {
                         }
                         native_status::check_permission(&tag)?;
                         self.client_home = cmd.get_current_dir().map(|d| d.to_path_buf());
-                        backend::spawn(Job::Client, cmd, self.tx.clone())
+                        if closes {
+                            let log = backend::game_output_log();
+                            backend::spawn_logged(Job::Client, cmd, self.tx.clone(), &log)
+                        } else {
+                            backend::spawn(Job::Client, cmd, self.tx.clone())
+                        }
                     });
                     match started {
                         Ok(r) => {
                             self.client = Some(r);
                             self.client_run = run.map(|id| (id, Instant::now()));
-                            // Do not hide or minimize the window when the registry has
-                            // something the player needs to see about this run.
-                            if self.play_registry_notices.is_empty() {
-                                self.step_aside(cx);
+                            if closes {
+                                self.step_aside(session_file.clone(), cx);
                             }
                         }
                         // A start that does not happen leaves no session file behind.
@@ -435,7 +443,6 @@ impl Launcher {
                             self.client = None;
                             // Any session file the game didn't read (it crashed first).
                             account::discard_unread_sessions();
-                            self.come_back(cx);
                             // The game saved: last played, sizes and pictures changed.
                             self.worlds.stale();
                             self.multiplayer.stale();

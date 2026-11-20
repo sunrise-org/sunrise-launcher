@@ -214,7 +214,7 @@ impl Launcher {
             game_packs: packs_page::Packs::default(),
             world_packs: datapacks_page::WorldPacks::default(),
             launch: None,
-            aside: while_playing::Aside::new(window.window_handle()),
+            aside: while_playing::Aside::default(),
             side_servers: sunrise_launcher::servers::list(),
             scale: window.scale_factor(),
         };

@@ -189,11 +189,68 @@ pub(crate) fn snapshot(command: &mut Command) {
     );
 }
 
+/// Where a game's stdin, stdout and stderr go.
+#[cfg_attr(not(unix), allow(dead_code))]
+enum Output<'a> {
+    /// The caller's own (a terminal-attached `play`).
+    Inherit,
+    /// Pipes the launcher reads, for its console view.
+    Piped,
+    /// A log file and an empty stdin: nothing the game writes depends on the launcher.
+    File(&'a fs::File),
+}
+
+impl Output<'_> {
+    /// Gives `command` these; any but the caller's own also puts it in its own process group.
+    #[cfg(unix)]
+    fn apply(&self, command: &mut Command) -> std::io::Result<()> {
+        use std::os::unix::process::CommandExt;
+        use std::process::Stdio;
+        match self {
+            Output::Inherit => return Ok(()),
+            Output::Piped => {
+                command
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+            }
+            Output::File(log) => {
+                command
+                    .stdin(Stdio::null())
+                    .stdout(log.try_clone()?)
+                    .stderr(log.try_clone()?);
+            }
+        }
+        command.process_group(0);
+        Ok(())
+    }
+}
+
 /// Unix holder owns the wrapped program; Windows retains its existing launch path.
 pub(crate) fn spawn(command: &mut Command, piped: bool) -> std::io::Result<std::process::Child> {
+    spawn_with(
+        command,
+        if piped {
+            Output::Piped
+        } else {
+            Output::Inherit
+        },
+    )
+}
+
+/// [`spawn`] with the game's stdout and stderr in `log`, as `command` has them set: the
+/// launcher can close while the game runs without the game writing into a closed pipe.
+pub(crate) fn spawn_logged(
+    command: &mut Command,
+    log: &fs::File,
+) -> std::io::Result<std::process::Child> {
+    spawn_with(command, Output::File(log))
+}
+
+fn spawn_with(command: &mut Command, output: Output) -> std::io::Result<std::process::Child> {
     // Older game versions still read this credential handoff; never let it reach them.
     command.env_remove("SUNRISE_ACCOUNT_SESSIONS");
-    spawn_inner(command, piped).map_err(|error| {
+    spawn_inner(command, &output).map_err(|error| {
         match write_launch_failure(&crate::backend::data_dir().join("logs"), command, &error) {
             Ok(path) => std::io::Error::new(
                 error.kind(),
@@ -303,9 +360,9 @@ fn record_launch_path(file: &mut fs::File, role: &str, path: &Path) -> std::io::
     }
 }
 
-fn spawn_inner(command: &mut Command, piped: bool) -> std::io::Result<std::process::Child> {
+fn spawn_inner(command: &mut Command, output: &Output) -> std::io::Result<std::process::Child> {
     #[cfg(not(unix))]
-    let _ = piped;
+    let _ = output;
     #[cfg(unix)]
     {
         use sunrise_launcher_smod::{holder, selection::LaunchArguments};
@@ -365,16 +422,7 @@ fn spawn_inner(command: &mut Command, piped: bool) -> std::io::Result<std::proce
                 // Spawn inherits the caller's chosen pipe/terminal configuration.
                 // Transfer stdio through the original Command is not possible; callers set
                 // the same policy on the holder via the explicit mode below.
-                if piped {
-                    holder_command
-                        .stdin(std::process::Stdio::piped())
-                        .stdout(std::process::Stdio::piped())
-                        .stderr(std::process::Stdio::piped());
-                }
-                if piped {
-                    use std::os::unix::process::CommandExt;
-                    holder_command.process_group(0);
-                }
+                output.apply(&mut holder_command)?;
                 return match holder::launch(
                     holder_command,
                     &marker,
@@ -383,14 +431,7 @@ fn spawn_inner(command: &mut Command, piped: bool) -> std::io::Result<std::proce
                 )? {
                     holder::Started::Holder { child } => Ok(child),
                     holder::Started::Legacy(mut legacy) => {
-                        if piped {
-                            legacy
-                                .stdin(std::process::Stdio::piped())
-                                .stdout(std::process::Stdio::piped())
-                                .stderr(std::process::Stdio::piped());
-                            use std::os::unix::process::CommandExt;
-                            legacy.process_group(0);
-                        }
+                        output.apply(&mut legacy)?;
                         spawn_program(&mut legacy)
                     }
                 };

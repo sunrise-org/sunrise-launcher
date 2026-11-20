@@ -94,6 +94,7 @@ pub mod glass_icons {
         "puzzle",
         "refresh",
         "search-01",
+        "settings-01",
         "shield",
         "sliders-horizontal",
         "sparkles",

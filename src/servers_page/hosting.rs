@@ -112,13 +112,13 @@ impl Launcher {
             .px(px(12.))
             .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
             .border_1()
-            .border_color(rgb(if invalid {
-                palette().danger
+            .border_color(if invalid {
+                rgb(palette().danger).into()
             } else if focused {
-                palette().focus
+                rgb(palette().focus).into()
             } else {
-                palette().line
-            }))
+                palette().input_edge()
+            })
             .bg(rgb(palette().field))
             .text_size(px(tokens::LABEL))
             .text_color(rgb(palette().text))
@@ -220,6 +220,9 @@ impl Launcher {
             .open
             .clone()
             .filter(|dir| self.servers.list.iter().any(|e| &e.dir == dir));
+        // The list of servers fills the page, as Versions' does; one server's page keeps its
+        // width.
+        let listing = open.is_none();
         let body = match open {
             Some(dir) => self.host_server(&dir, cx),
             None => {
@@ -236,7 +239,12 @@ impl Launcher {
             .pt(px(18.))
             .pb(px(24.))
             .text_color(rgb(palette().text))
-            .child(body.max_w(px(1180.)).flex().flex_col().gap(px(18.)))
+            .child(
+                body.when(!listing, |b| b.max_w(px(1180.)))
+                    .flex()
+                    .flex_col()
+                    .gap(px(18.)),
+            )
             .into_any_element()
     }
 
@@ -1639,7 +1647,7 @@ impl Launcher {
                         .px(px(12.))
                         .rounded(crate::tokens::r(crate::tokens::R_PANEL))
                         .border_1()
-                        .border_color(rgb(palette().line))
+                        .border_color(palette().input_edge())
                         .text_size(px(tokens::LABEL))
                         .cursor_pointer()
                         .child(friend)

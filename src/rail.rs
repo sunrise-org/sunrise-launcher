@@ -16,6 +16,19 @@ pub(crate) fn rail_width(open: bool) -> f32 {
     }
 }
 
+/// The column a sidebar icon is centred in, open or closed: a closed row's inside (the closed
+/// rail less its 1 px edges, its 5 px padding and the row's own 1 px edges). Labels follow it,
+/// so no icon moves when the sidebar opens or closes.
+fn icon_slot(icon: impl IntoElement) -> Div {
+    div()
+        .flex_none()
+        .w(px(rail_width(false) - 2. * (1. + 5. + 1.)))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(icon)
+}
+
 fn profile_lock_reason(
     work: &crate::launch_state::Facts,
     located: bool,
@@ -150,11 +163,13 @@ impl Launcher {
                 } else {
                     gpui::transparent_black()
                 })
-                .when(on, |d| d.bg(rgb(p.selected)))
+                // The chrome's own lift, in the theme's hue, under the accent's edge: the
+                // accent washed into the fill stood out in themes whose hue differs from it.
+                .when(on, |d| d.bg(rgb(p.chrome_raised)))
                 .flex()
                 .items_center()
-                .when(wide, |d| d.px(px(8.)).gap(px(10.)))
-                .when(!wide, |d| d.justify_center())
+                .gap(px(4.))
+                .when(wide, |d| d.pr(px(8.)))
                 .when(lock.is_none(), |d| {
                     d.cursor_pointer().hover(|d| d.bg(rgb(p.chrome_raised)))
                 })
@@ -176,9 +191,9 @@ impl Launcher {
             .flex_none()
             .h(px(32.))
             .items_center()
-            .when(wide, |d| d.px(px(4.)))
-            .when(!wide, |d| d.justify_center())
-            .child(
+            // In line with the rows' icons, whose rows have a 1 px edge.
+            .px(px(1.))
+            .child(icon_slot(
                 div()
                     .id("sidebar-toggle")
                     .reach()
@@ -208,9 +223,13 @@ impl Launcher {
                         this.toggle_sidebar();
                         cx.notify();
                     })),
-            );
+            ));
         let add = row("sidebar-create".into(), tr("New profile").into(), false)
-            .child(blocks::icon("plus", 20., rgb(p.chrome_text).into()))
+            .child(icon_slot(blocks::icon(
+                "plus",
+                20.,
+                rgb(p.chrome_text).into(),
+            )))
             .when(wide, |d| d.child(txt(tr("New profile").into())))
             .when(lock.is_none(), |d| {
                 d.on_click(cx.listener(|this, _, _, cx| {
@@ -237,7 +256,7 @@ impl Launcher {
                     i.name.clone(),
                     on,
                 )
-                .child(self.profile_mark(&i, 28.))
+                .child(icon_slot(self.profile_mark(&i, 28.)))
                 .when(wide, |d| d.child(txt(i.name.clone())))
                 .when(lock.is_none(), |d| {
                     d.on_click(cx.listener(move |this, _, _, cx| this.switch_profile(&i, cx)))
@@ -287,7 +306,11 @@ impl Launcher {
                     label.into(),
                     settings && self.ui.page == Page::Settings,
                 )
-                .child(crate::glass_ui::icon(icon, 18., rgb(p.chrome_muted).into()))
+                .child(icon_slot(crate::glass_ui::icon(
+                    icon,
+                    18.,
+                    rgb(p.chrome_muted).into(),
+                )))
                 .when(wide, |d| d.child(txt(label.into())))
                 .when(settings || !url.is_empty(), |d| {
                     d.on_click(cx.listener(move |this, _, _, cx| {

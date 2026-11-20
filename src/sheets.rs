@@ -36,6 +36,9 @@ pub(crate) enum Sheet {
     Versions,
     /// Who plays, under the account chip (`account_chip`).
     AccountMenu,
+    /// The selected profile's options (Sunrise Extras, its folder), a popover under Home's
+    /// menu button.
+    ProfileMenu,
     Search,
     /// The build window (`mods::build_modal`): closing it leaves the build running.
     ModBuild,
@@ -157,7 +160,7 @@ fn card() -> Div {
         .flex_col()
         .rounded(crate::tokens::r(crate::tokens::R_CARD))
         .border_1()
-        .border_color(rgb(palette().line))
+        .border_color(palette().input_edge())
         .bg(rgb(palette().background))
 }
 
@@ -549,6 +552,7 @@ impl Launcher {
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
             Some(Sheet::Versions) => Some(self.versions_sheet(cx)),
             Some(Sheet::AccountMenu) => self.account_menu(cx),
+            Some(Sheet::ProfileMenu) => Some(self.profile_menu(cx)),
             Some(Sheet::Search) => Some(self.command_search(cx)),
             Some(Sheet::ModBuild) => {
                 let sheet = self.build_modal(cx);
@@ -631,7 +635,7 @@ impl Launcher {
             .overflow_y_scroll()
             .rounded(crate::tokens::r(crate::tokens::R_CARD))
             .border_1()
-            .border_color(rgb(palette().line))
+            .border_color(palette().input_edge())
             .bg(rgb(palette().background));
         for (n, (id, (name, newer))) in mods.iter().zip(&known).enumerate() {
             // Only a mod that can do something here gets a line under its name; the ones that
@@ -1300,7 +1304,13 @@ impl Launcher {
                         .flex()
                         .flex_col()
                         .child(div().text_size(px(tokens::BODY)).child(head))
-                        .child(muted(sub).text_size(px(tokens::SMALL))),
+                        // Plain text: the whole option is the button, nothing in it selects.
+                        .child(
+                            div()
+                                .text_size(px(tokens::SMALL))
+                                .text_color(rgb(palette().muted))
+                                .child(sub),
+                        ),
                 )
         };
         // Three choices, however many builds there are: the two that follow, and one build
@@ -1374,36 +1384,6 @@ impl Launcher {
                 .px(px(10.))
             })
         });
-        let extras = div()
-            .flex()
-            .items_start()
-            .justify_between()
-            .gap(px(12.))
-            .opacity(0.5)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(div().text_size(px(tokens::BODY)).child(tr("Sunrise Extras")))
-                    .child(
-                        muted(tr(
-                            "Sunrise’s additions on top of vanilla. This switch arrives with the build that supports it.",
-                        ))
-                        .text_size(px(tokens::SMALL)),
-                    ),
-            )
-            .child(
-                div()
-                    .mt(px(2.))
-                    .flex_none()
-                    .w(px(34.))
-                    .h(px(20.))
-                    .rounded_full()
-                    .border_1()
-                    .border_color(rgb(palette().line)),
-            );
         let body = div()
             .flex()
             .flex_col()
@@ -1417,8 +1397,6 @@ impl Launcher {
             .children(status.map(muted))
             .child(list)
             .children(native)
-            .child(div().h(px(1.)).bg(rgb(palette().line)))
-            .child(extras)
             .children(self.ui.sheets.error.clone().map(|e| {
                 div()
                     .text_color(rgb(palette().danger))
@@ -1426,10 +1404,71 @@ impl Launcher {
                     .child(e)
             }));
         // A popover under Home's build picker: the scrim is clear.
-        let (left, top) = self.ui.home.chooser_at();
+        let at = self.ui.home.chooser_at();
+        self.popover(("alt-build", "alt-build-body", "build-list"), body, at, cx)
+    }
+
+    /// The selected profile's options, under Home's menu button: Sunrise Extras (here only, no
+    /// longer in the build chooser) and the profile's folder.
+    fn profile_menu(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let Some(instance) = self.selected_instance() else {
+            return div().id("alt-profile-menu");
+        };
+        let home = instance.home.clone();
+        let folder = div()
+            .id("alt-profile-folder")
+            .reach()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .p(px(10.))
+            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+            .cursor_pointer()
+            .hover(|d| d.bg(rgb(palette().hover)))
+            .child(crate::glass_ui::icon(
+                "folder-01",
+                16.,
+                rgb(palette().text).into(),
+            ))
+            .child(
+                div()
+                    .text_size(px(tokens::BODY))
+                    .child(tr("Open profile folder")),
+            )
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.close_sheet();
+                crate::glass_toast::open(cx, &home);
+                cx.notify();
+            }));
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .child(extras().px(px(10.)))
+            .child(div().h(px(1.)).bg(rgb(palette().line)))
+            .child(folder);
+        let at = self.ui.home.menu_at();
+        self.popover(
+            ("alt-profile-menu", "alt-profile-menu-body", "profile-menu"),
+            body,
+            at,
+            cx,
+        )
+    }
+
+    /// A popover under one of Home's controls, its top left at `at`: a clear layer that a
+    /// press outside closes, and `body` on a raised plate inside the window. `ids`: the
+    /// layer's, the plate's and its scroll's.
+    fn popover(
+        &mut self,
+        (layer, plate, scroll): (&'static str, &'static str, &'static str),
+        body: Div,
+        (left, top): (f32, f32),
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let width = 372_f32.min(self.window_width - 24.);
         div()
-            .id("alt-build")
+            .id(layer)
             .absolute()
             .inset_0()
             .occlude()
@@ -1448,12 +1487,12 @@ impl Launcher {
                 }),
             )
             .child(
-                body.id("alt-build-body")
+                body.id(plate)
                     .absolute()
                     // Never taller than the room under the picker: a long list scrolls.
                     .max_h(px((self.window_height - top - 12.).max(120.)))
                     .overflow_y_scroll()
-                    .track_scroll(&crate::frame::scrolls("build-list"))
+                    .track_scroll(&crate::frame::scrolls(scroll))
                     // Inside the window, however narrow it is.
                     .left(px(left.min(self.window_width - width - 12.).max(12.)))
                     .top(px(top))
@@ -1461,7 +1500,7 @@ impl Launcher {
                     .p(px(14.))
                     .rounded(crate::tokens::r(crate::tokens::R_CARD))
                     .border_1()
-                    .border_color(rgb(palette().line))
+                    .border_color(palette().input_edge())
                     .bg(rgb(palette().raised))
                     .text_color(rgb(palette().text))
                     .on_mouse_down(MouseButton::Left, |_: &MouseDownEvent, _, cx| {
@@ -1469,6 +1508,42 @@ impl Launcher {
                     }),
             )
     }
+}
+
+/// Sunrise Extras' switch, shown off and dim: it arrives with the build that supports it.
+fn extras() -> Div {
+    div()
+        .flex()
+        .items_start()
+        .justify_between()
+        .gap(px(12.))
+        .opacity(0.5)
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .child(div().text_size(px(tokens::BODY)).child(tr("Sunrise Extras")))
+                .child(
+                    div()
+                        .text_size(px(tokens::SMALL))
+                        .text_color(rgb(palette().muted))
+                        .child(tr(
+                            "Sunrise’s additions on top of vanilla. This switch arrives with the build that supports it.",
+                        )),
+                ),
+        )
+        .child(
+            div()
+                .mt(px(2.))
+                .flex_none()
+                .w(px(34.))
+                .h(px(20.))
+                .rounded_full()
+                .border_1()
+                .border_color(rgb(palette().line)),
+        )
 }
 
 fn list_or_none(names: &[String]) -> String {

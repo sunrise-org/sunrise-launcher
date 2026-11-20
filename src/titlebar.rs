@@ -66,6 +66,7 @@ pub fn render(theme: &Theme, window: &Window) -> Option<Div> {
     }
 
     let controls = window.window_controls();
+    let maximize = controls.maximize;
     let drag = div()
         .id("window-drag")
         .flex()
@@ -74,7 +75,15 @@ pub fn render(theme: &Theme, window: &Window) -> Option<Div> {
         .items_center()
         .gap(px(8.))
         .px(px(12.))
-        .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
+        // A double click maximises or restores the window, as native title bars do; a single
+        // press starts moving it.
+        .on_mouse_down(MouseButton::Left, move |ev, window, _| {
+            if maximize && ev.click_count == 2 {
+                window.zoom_window();
+            } else {
+                window.start_window_move();
+            }
+        })
         .child(mark(16.))
         .child(label());
 
@@ -315,7 +324,7 @@ mod windows {
     use crate::glass;
     use crate::glass_ui::{color, hover_edge, white};
     use crate::{blocks, mark};
-    use gpui::{div, prelude::*, px, Hsla, SharedString, Stateful, WindowControlArea};
+    use gpui::{div, prelude::*, px, Hsla, MouseButton, SharedString, Stateful, WindowControlArea};
 
     const HEIGHT: f32 = 32.;
     const BUTTON_WIDTH: f32 = 30.;
@@ -450,6 +459,14 @@ mod windows {
             .gap(px(8.))
             .px(px(12.))
             .window_control_area(WindowControlArea::Drag)
+            // A double click maximises or restores. Handled here, the press is not passed on,
+            // so the native caption cannot toggle the window a second time.
+            .on_mouse_down(MouseButton::Left, |ev, window, cx| {
+                if ev.click_count == 2 {
+                    window.zoom_window();
+                    cx.stop_propagation();
+                }
+            })
             .child(mark(16.))
             .child(label());
         Some(

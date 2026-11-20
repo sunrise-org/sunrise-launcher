@@ -198,7 +198,8 @@ impl Launcher {
             .px(px(24.))
             .pt(px(18.))
             .pb(px(24.))
-            .child(servers.max_w(px(720.)))
+            // The list fills the page at every width, as Versions' does.
+            .child(servers)
             .into_any_element()
     }
 

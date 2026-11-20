@@ -257,9 +257,9 @@ page `servers.json` (the list), `servers/<name>/` (the servers created there) an
 
 - **Settings**: install new Sunrise versions automatically (on unless you turn it off; the
   selected version only moves to the new one if you were on the newest), the opening animation,
-  what the window does while you play (stays by default; Minimise, or Hide on macOS, puts it away
-  when the game starts and brings it back to the front when the game closes; `settings
-  while-playing stay|minimize|hide`), the game's extra command-line arguments, an HTTP proxy for
+  whether the launcher stays open while you play (off by default: it closes once the game has
+  started and runs on without it; `settings keep-open-while-playing on|off`), the game's extra
+  command-line arguments, an HTTP proxy for
   downloads, and the launcher's own version and update state. On Windows ARM, **Game
   architecture** chooses Automatic, x64 or ARM64 independently from the launcher; automatic
   preserves the launcher's architecture, and a release without ARM64 uses the signed x64 build.

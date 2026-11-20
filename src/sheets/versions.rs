@@ -249,7 +249,7 @@ impl Launcher {
                 focused,
                 false,
                 false,
-                "Search by date or commit",
+                "Search by date or commit…",
             ))
             .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| {
                 window.focus(&focus, cx);
@@ -457,7 +457,7 @@ impl Launcher {
                 div()
                     .rounded(crate::tokens::r(crate::tokens::R_CARD))
                     .border_1()
-                    .border_color(rgb(palette().line))
+                    .border_color(palette().input_edge())
                     .p(px(4.))
                     .child(rows)
                     .children(nothing),

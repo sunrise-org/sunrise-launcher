@@ -490,6 +490,9 @@ impl Launcher {
         scrolls_begin();
         crate::selectable::begin();
         crate::tokens::set_roundness(self.corner_roundness());
+        // The plates drawn with `glass::backdrop` (the title bar, dialogs' backdrops) take the
+        // theme's own plate colour, not the Outline look's default.
+        crate::glass::set_panel(self.theme.look.plate);
         self.modal_before(window, cx);
         self.servers.note_focus(window, cx);
         self.friend_focused = self.friend_focus.is_focused(window);

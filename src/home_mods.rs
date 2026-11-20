@@ -1,17 +1,14 @@
-//! Home's Mods column: what the selected profile plays with, to read. Its mods and its
-//! resource and shader packs that are on, each a row that opens the item's own page; what is
-//! off is one quiet line that leads to Mods, where things are turned on and off.
+//! The selected profile’s Mods and Resource Packs overviews and the Play bar’s launch facts.
 //!
 //! What the profile has is read in the background ([`read`]) and kept ([`Inventory`]): drawing
 //! Home opens no file of a mod or a pack. It is read again when the files it was read from
 //! change ([`stamp`]).
 use super::*;
-use crate::frame::{button, Page, Reach as _};
-use crate::home::{card, heading, muted};
+use crate::frame::{button, Page};
+use crate::home::tabs::{self, Content};
 use crate::mod_icons::tile;
-use crate::paint::palette;
-use gpui::{rgb, RenderImage};
-use std::collections::HashSet;
+use gpui::RenderImage;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use sunrise_launcher::browser::{installed, mod_list, sunrise};
@@ -21,50 +18,6 @@ use sunrise_launcher::packs::{self, Kind as PackKind};
 pub(crate) enum Kind {
     Mod,
     Resource,
-    Shader,
-}
-
-impl Kind {
-    const ALL: [Kind; 3] = [Kind::Mod, Kind::Resource, Kind::Shader];
-
-    pub(crate) fn of(pack: PackKind) -> Kind {
-        match pack {
-            PackKind::Resource => Kind::Resource,
-            PackKind::Shader => Kind::Shader,
-        }
-    }
-
-    /// Where the ones of this kind that are turned off are listed.
-    pub(crate) fn turned_off(self) -> crate::mods::Installed {
-        use crate::mods::Installed;
-        match self {
-            Kind::Mod => Installed::ModsOff,
-            Kind::Resource => Installed::Shelf(PackKind::Resource),
-            Kind::Shader => Installed::Shelf(PackKind::Shader),
-        }
-    }
-
-    /// "2 mods", for the line that counts what is turned off.
-    fn counted(self, count: usize) -> String {
-        let (one, many) = match self {
-            Kind::Mod => ("1 mod", "{count} mods"),
-            Kind::Resource => ("1 resource pack", "{count} resource packs"),
-            Kind::Shader => ("1 shader pack", "{count} shader packs"),
-        };
-        match count {
-            1 => tr(one).to_string(),
-            _ => trf(many, &[("count", &count.to_string())]),
-        }
-    }
-
-    /// What a row says under the name.
-    fn label(self) -> &'static str {
-        match self {
-            Kind::Mod => "Mod",
-            Kind::Resource => "Resource pack",
-            Kind::Shader => "Shader pack",
-        }
-    }
 }
 
 /// Where a row's picture comes from.
@@ -176,28 +129,31 @@ pub(crate) struct Item {
     mod_version: Option<String>,
 }
 
-/// What the column lists: the items that are on, in the order given, and how many of each
-/// kind are off.
-pub(crate) struct Column {
-    pub shown: Vec<Item>,
-    /// By kind, as [`Kind::ALL`] orders them.
-    pub off: [usize; 3],
+/// Order is carried in from the inventory: mods by name; packs by priority, then name.
+#[derive(Default)]
+struct Collections {
+    mods: Vec<Item>,
+    mods_off: usize,
+    resources: Vec<Item>,
 }
 
-/// The column for a profile with `items` installed; `None` when it has nothing at all.
-pub(crate) fn column(items: Vec<Item>) -> Option<Column> {
-    if items.is_empty() {
-        return None;
+impl FromIterator<Item> for Collections {
+    fn from_iter<T: IntoIterator<Item = Item>>(items: T) -> Self {
+        let mut tabs = Self::default();
+        for item in items {
+            match item.kind {
+                Kind::Mod if item.on => tabs.mods.push(item),
+                Kind::Mod => tabs.mods_off += 1,
+                Kind::Resource => tabs.resources.push(item),
+            }
+        }
+        tabs
     }
-    Some(Column {
-        off: Kind::ALL.map(|kind| items.iter().filter(|i| !i.on && i.kind == kind).count()),
-        shown: items.into_iter().filter(|i| i.on).collect(),
-    })
 }
 
 /// Everything the profile in `home` has installed: its registry mods and the mod files put
-/// there by hand, by name, then its resource packs as the game stacks them, then its shader
-/// packs. Each is on or off, with references to pack artwork, not the images. Reads files:
+/// there by hand, by name, then its resource packs as the game stacks them.
+/// Each is on or off, with references to pack artwork, not the images. Reads files:
 /// never called while drawing.
 pub(crate) fn read(home: &Path) -> Vec<Item> {
     let image = |png: Vec<u8>| Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, png));
@@ -243,7 +199,7 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
     }));
     mods.sort_by_key(|item| item.name.to_lowercase());
     let pack = |pack: packs::Pack| Item {
-        kind: Kind::of(pack.kind),
+        kind: Kind::Resource,
         picture: Picture::Pack(Arc::new(PackPicture {
             path: pack.path,
             kind: pack.kind,
@@ -257,17 +213,14 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
     };
     let mut resource = packs::list_with(home, PackKind::Resource, packs::Pictures::None);
     let order = packs::resource_order(home);
-    // Stable: the packs that are off stay by name after the stack.
-    resource.sort_by_key(|p| {
-        order
-            .iter()
-            .position(|file| *file == p.file)
-            .unwrap_or(usize::MAX)
-    });
-    let shader = packs::list_with(home, PackKind::Shader, packs::Pictures::None);
+    let rank: HashMap<_, _> = order
+        .iter()
+        .enumerate()
+        .map(|(i, file)| (file, i))
+        .collect();
+    resource.sort_by_key(|p| rank.get(&p.file).copied().unwrap_or(usize::MAX));
     mods.into_iter()
         .chain(resource.into_iter().map(pack))
-        .chain(shader.into_iter().map(pack))
         .collect()
 }
 
@@ -290,7 +243,7 @@ pub(crate) struct LaunchSummary {
 
 #[derive(Default)]
 struct Snapshot {
-    column: Option<Column>,
+    tabs: Collections,
     launch: LaunchSummary,
 }
 
@@ -347,7 +300,7 @@ fn read_changed(query: &Query, known: &str) -> Option<(String, Snapshot)> {
     Some((
         stamp,
         Snapshot {
-            column: column(items),
+            tabs: items.into_iter().collect(),
             launch: LaunchSummary {
                 mods_off,
                 update_check,
@@ -369,6 +322,7 @@ pub(crate) struct Inventory {
     stale: bool,
     drawn: Option<Instant>,
     watched: bool,
+    mod_facts: Option<ModFacts>,
 }
 
 /// Home drawn again after this long checks the files once more: the player was elsewhere.
@@ -424,7 +378,7 @@ impl Inventory {
 
 /// Release superseded pack thumbnails from the window's sprite atlas on its next frame.
 fn retire(snapshot: &Snapshot, pictures: &mut crate::picture_cache::Pictures) {
-    for item in snapshot.column.iter().flat_map(|column| &column.shown) {
+    for item in &snapshot.tabs.resources {
         if let Picture::Pack(art) = &item.picture {
             if let Thumbnail::Ready(Some(image)) = &*art.thumbnail.lock().unwrap() {
                 pictures.retire(image.clone());
@@ -433,27 +387,13 @@ fn retire(snapshot: &Snapshot, pictures: &mut crate::picture_cache::Pictures) {
     }
 }
 
-/// Home's two columns stand side by side from this window width; under it they stack.
-const SIDE_BY_SIDE_FROM: f32 = 1000.;
+const PICTURE: f32 = 30.;
 
-pub(crate) fn side_by_side(window_width: f32) -> bool {
-    window_width >= SIDE_BY_SIDE_FROM
-}
-
-const PICTURE: f32 = 40.;
-
-/// A line of text that is pressed like a link: a Tab stop with the ring.
-fn link(id: &'static str, label: String) -> Stateful<Div> {
-    div()
-        .id(id)
-        .flex_none()
-        .cursor_pointer()
-        .tab_index(0)
-        .rounded(crate::tokens::r(crate::tokens::R_SMALL))
-        .text_size(px(tokens::SMALL))
-        .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
-        .seen()
-        .child(label)
+struct ModFacts {
+    source: Arc<Snapshot>,
+    index: Option<Arc<sunrise_launcher_smod::index::Index>>,
+    native_allowed: bool,
+    rows: HashMap<String, crate::mods::HomeModFacts>,
 }
 
 impl Launcher {
@@ -544,165 +484,171 @@ impl Launcher {
         }
     }
 
-    /// Home's Mods column for the profile whose game folder is `home`.
-    pub(crate) fn home_mods(&mut self, home: &Path, cx: &mut Context<Self>) -> Div {
-        let snapshot = self.ui.home.mods.snapshot.clone();
-        let column = snapshot
-            .as_ref()
-            .and_then(|snapshot| snapshot.column.as_ref());
-        let index = sunrise::known_index();
-        let head = div()
-            .h(px(tokens::CONTROL))
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap(px(12.))
-            .child(heading(tr("Mods")))
-            .child(
-                button("alt-home-manage-mods", tr("Manage mods")).on_click(cx.listener(
-                    |this, _: &ClickEvent, _, cx| {
-                        this.navigate(Page::Discover);
-                        cx.notify();
-                    },
-                )),
-            );
-        let body = match column {
-            // Still being read: no "none yet" until that is known.
-            None if snapshot.is_none() => div(),
-            None => div()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .py(px(8.))
-                .child(muted(tr("No mods yet")))
-                .child(
-                    link("alt-home-browse-mods", tr("Browse mods").to_string())
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(palette().text))
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            // Discover itself, wherever Mods was last left.
-                            this.show_discover();
-                            cx.notify();
-                        })),
-                ),
-            Some(column) => {
-                let (built, place) = self.ui.home.mods_at.clone().list(
-                    column.shown.len(),
-                    1,
-                    crate::home::ROW,
-                    crate::home::ROW_GAP,
-                );
-                let mut rows = div().flex().flex_col().gap(px(crate::home::ROW_GAP));
-                for item in &column.shown[built] {
-                    let picture = match &item.picture {
-                        Picture::Project(project) => {
-                            self.ensure_mod_catalog();
-                            tile(
-                                index
-                                    .as_ref()
-                                    .and_then(|index| index.project(project)?.icon.clone())
-                                    .and_then(|url| {
-                                        self.mods_image(
-                                            &url,
-                                            sunrise_launcher::browser::images::ROW,
-                                        )
-                                    }),
-                                &item.id,
-                                &item.name,
-                                PICTURE,
-                            )
-                        }
-                        Picture::Image(image) => tile(image.clone(), &item.id, &item.name, PICTURE),
-                        Picture::Pack(art) => tile(art.show(cx), &item.id, &item.name, PICTURE),
-                    };
-                    let open = item.open.clone();
-                    rows = rows.child(
-                        card()
-                            // By what it is, not where it stands: when the list changes
-                            // under the keyboard, the focus does not pass to a neighbour.
-                            .id(SharedString::from(format!(
-                                "alt-home-mod:{}:{:?}:{}",
-                                home.display(),
-                                item.kind,
-                                item.id
-                            )))
-                            .flex_none()
-                            .min_h(px(crate::home::ROW))
-                            .flex()
-                            .items_center()
-                            .gap(px(10.))
-                            .p(px(5.))
-                            .pr(px(10.))
-                            .cursor_pointer()
-                            .tab_index(0)
-                            .hover(|s| s.bg(rgb(palette().hover)))
-                            .focus_visible(|s| s.border_color(rgb(palette().focus)))
-                            .seen()
-                            .child(picture)
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .flex()
-                                    .flex_col()
-                                    .child(
-                                        div()
-                                            .text_size(px(tokens::LABEL))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(rgb(palette().text))
-                                            .truncate()
-                                            .child(item.name.clone()),
-                                    )
-                                    .child(muted(tr(item.kind.label()))),
-                            )
-                            .child(blocks::icon(
-                                "chevron-right",
-                                14.,
-                                rgb(palette().muted).into(),
-                            ))
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.open_home_item(open.clone());
-                                cx.notify();
-                            })),
-                    );
-                }
-                let mut rows = div().flex().flex_col().gap(px(4.)).child(place(rows));
-                // What is off is counted by kind, each count leading to where those are listed.
-                if column.off.iter().any(|&count| count > 0) {
-                    let mut line = div()
-                        .flex()
-                        .flex_wrap()
-                        .items_center()
-                        .gap_x(px(10.))
-                        .gap_y(px(4.))
-                        .mt(px(4.))
-                        .px(px(6.))
-                        .child(muted(tr("Turned off:")));
-                    for (kind, count) in Kind::ALL.into_iter().zip(column.off) {
-                        if count == 0 {
-                            continue;
-                        }
-                        let id = match kind {
-                            Kind::Mod => "alt-home-off-mods",
-                            Kind::Resource => "alt-home-off-resource",
-                            Kind::Shader => "alt-home-off-shader",
-                        };
-                        line = line.child(
-                            link(id, kind.counted(count))
-                                .text_color(rgb(palette().muted))
-                                .hover(|s| s.text_color(rgb(palette().text)))
-                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                    this.open_installed(kind.turned_off());
-                                    cx.notify();
-                                })),
-                        );
-                    }
-                    rows = rows.child(line);
-                }
-                rows
-            }
+    /// Home reads the same row facts as Installed, once per inventory or registry change.
+    pub(crate) fn home_installed_tab(&mut self, packs: bool, cx: &mut Context<Self>) -> Content {
+        use crate::mods::Installed;
+        let manage = if packs {
+            button("home-manage-resource", tr("Manage resource packs")).on_click(cx.listener(
+                |this, _, _, cx| {
+                    this.open_installed(Installed::Shelf(PackKind::Resource));
+                    cx.notify();
+                },
+            ))
+        } else {
+            button("home-manage-mods", tr("Manage mods")).on_click(cx.listener(|this, _, _, cx| {
+                this.show_installed_mods();
+                cx.notify();
+            }))
         };
-        div().flex().flex_col().gap(px(10.)).child(head).child(body)
+        let Some(snapshot) = self.ui.home.mods.snapshot.clone() else {
+            return Content {
+                count: None,
+                extra: None,
+                manage: Some(manage),
+                items: div(),
+            };
+        };
+        let list = if packs {
+            &snapshot.tabs.resources
+        } else {
+            &snapshot.tabs.mods
+        };
+        let off = if packs { 0 } else { snapshot.tabs.mods_off };
+        let extra = (off > 0).then(|| {
+            button(
+                "home-off-mods",
+                trf("{count} turned off", &[("count", &off.to_string())]),
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.open_installed(Installed::ModsOff);
+                cx.notify();
+            }))
+        });
+        if list.is_empty() {
+            let items = if packs {
+                tabs::empty(
+                    "package-01",
+                    tr("No resource packs yet"),
+                    tr("Resource packs you add to this profile show up here."),
+                    Some(
+                        button("home-find-packs", tr("Find resource packs")).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.show_resource_pack_discover();
+                                cx.notify();
+                            },
+                        )),
+                    ),
+                )
+            } else if off == 0 {
+                tabs::empty(
+                    "puzzle",
+                    tr("No mods yet"),
+                    tr("Mods you add to this profile show up here."),
+                    Some(
+                        button("home-browse-mods", tr("Find mods")).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.show_discover();
+                                cx.notify();
+                            },
+                        )),
+                    ),
+                )
+            } else {
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(crate::home::muted(tr("No mods turned on")))
+            };
+            return Content {
+                count: Some(0),
+                extra,
+                manage: (off > 0).then_some(manage),
+                items,
+            };
+        }
+        if !packs {
+            let index = sunrise::fetched_index();
+            let native_allowed = self.settings.native_mods_allowed_at.is_some();
+            let facts = &self.ui.home.mods.mod_facts;
+            if facts.as_ref().is_none_or(|facts| {
+                !Arc::ptr_eq(&facts.source, &snapshot)
+                    || native_allowed != facts.native_allowed
+                    || match (&facts.index, &index) {
+                        (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
+                        (None, None) => false,
+                        _ => true,
+                    }
+            }) {
+                let rows = self.home_mod_facts();
+                self.ui.home.mods.mod_facts = Some(ModFacts {
+                    source: snapshot.clone(),
+                    index,
+                    native_allowed,
+                    rows,
+                });
+            }
+        }
+        let (built, place) = self.home_installed_list(packs, list.len());
+        let index = (!packs).then(sunrise::known_index).flatten();
+        let mut rows = div().flex().flex_col();
+        let mut priority = list[..built.start].iter().filter(|item| item.on).count();
+        for item in &list[built] {
+            let picture = match &item.picture {
+                Picture::Project(project) => tile(
+                    index
+                        .as_ref()
+                        .and_then(|index| index.project(project)?.icon.clone())
+                        .and_then(|url| {
+                            self.mods_image(&url, sunrise_launcher::browser::images::ROW)
+                        }),
+                    &item.id,
+                    &item.name,
+                    PICTURE,
+                ),
+                Picture::Image(image) => tile(image.clone(), &item.id, &item.name, PICTURE),
+                Picture::Pack(art) => tile(art.show(cx), &item.id, &item.name, PICTURE),
+            };
+            let (detail, state) = if packs {
+                let status = if item.on {
+                    priority += 1;
+                    trf(
+                        "Enabled · {priority}",
+                        &[("priority", &priority.to_string())],
+                    )
+                } else {
+                    tr("Off").to_owned()
+                };
+                (None, Some(status))
+            } else {
+                let fact = self
+                    .ui
+                    .home
+                    .mods
+                    .mod_facts
+                    .as_ref()
+                    .and_then(|facts| facts.rows.get(&item.id));
+                let kind = fact.map_or(tr("Content"), |fact| fact.kind);
+                (Some(kind.into()), fact.and_then(|fact| fact.status.clone()))
+            };
+            let open = item.open.clone();
+            rows = rows.child(self.home_overview_row(
+                format!("home-item:{:?}:{}", item.kind, item.id).into(),
+                picture.into_any_element(),
+                item.name.clone(),
+                detail,
+                state,
+                cx,
+                move |this| this.open_home_item(open.clone()),
+            ));
+        }
+        Content {
+            count: Some(list.len()),
+            extra,
+            manage: Some(manage),
+            items: place(rows),
+        }
     }
 }
 
@@ -722,8 +668,8 @@ mod tests {
         }
     }
 
-    fn names(column: &Column) -> Vec<&str> {
-        column.shown.iter().map(|i| i.name.as_str()).collect()
+    fn names(list: &[Item]) -> Vec<&str> {
+        list.iter().map(|i| i.name.as_str()).collect()
     }
 
     #[test]
@@ -743,7 +689,7 @@ mod tests {
             bytes
         };
         let art = pack_thumbnail(png(1024, 64)).expect("an ordinary large PNG is resized");
-        assert_eq!((art.size(0).width.0, art.size(0).height.0), (80, 80));
+        assert_eq!((art.size(0).width.0, art.size(0).height.0), (60, 60));
         assert!(
             pack_thumbnail(png(4097, 1)).is_none(),
             "reject over-limit dimensions"
@@ -751,51 +697,20 @@ mod tests {
     }
 
     #[test]
-    fn the_column_lists_only_what_is_on_and_counts_what_is_off() {
-        let column = column(vec![
+    fn the_mod_tab_lists_enabled_mods_and_keeps_off_packs_in_the_pack_tab() {
+        let tabs: Collections = [
             item("Lanternlight", Kind::Mod, true),
             item("Trailmarks", Kind::Mod, false),
             item("Quiet Rain", Kind::Mod, true),
             item("Soft Edges", Kind::Resource, true),
             item("Old Paper", Kind::Resource, false),
-            item("Evening Glow", Kind::Shader, false),
-        ])
-        .unwrap();
-        assert_eq!(names(&column), ["Lanternlight", "Quiet Rain", "Soft Edges"]);
-        assert_eq!(column.off, [1, 1, 1], "mods, resource packs, shader packs");
-    }
-
-    #[test]
-    fn each_kind_that_is_off_is_counted_and_leads_to_its_own_list() {
-        use crate::mods::Installed;
-        let all_on = column(vec![
-            item("Lanternlight", Kind::Mod, true),
-            item("Soft Edges", Kind::Resource, true),
-        ])
-        .unwrap();
-        assert_eq!((all_on.shown.len(), all_on.off), (2, [0, 0, 0]));
-        // Only a shader pack is off: it is counted as one, not as a mod.
-        let shader = column(vec![
-            item("Lanternlight", Kind::Mod, true),
-            item("Evening Glow", Kind::Shader, false),
-        ])
-        .unwrap();
-        assert_eq!(shader.off, [0, 0, 1]);
-        assert!(Kind::Mod.turned_off() == Installed::ModsOff);
-        assert!(Kind::Resource.turned_off() == Installed::Shelf(PackKind::Resource));
-        assert!(Kind::Shader.turned_off() == Installed::Shelf(PackKind::Shader));
-    }
-
-    #[test]
-    fn a_profile_with_nothing_is_empty_and_one_with_everything_off_is_not() {
-        assert!(column(Vec::new()).is_none());
-        let all_off = column(vec![
-            item("Trailmarks", Kind::Mod, false),
-            item("Old Paper", Kind::Resource, false),
-        ])
-        .unwrap();
-        assert!(all_off.shown.is_empty());
-        assert_eq!(all_off.off, [1, 1, 0]);
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(names(&tabs.mods), ["Lanternlight", "Quiet Rain"]);
+        assert_eq!(tabs.mods_off, 1);
+        assert_eq!(names(&tabs.resources), ["Soft Edges", "Old Paper"]);
+        assert!(!tabs.resources[1].on);
     }
 
     fn query(path: impl Into<PathBuf>) -> Query {
@@ -819,7 +734,9 @@ mod tests {
             Some((
                 "one".into(),
                 Snapshot {
-                    column: column(vec![item("Lanternlight", Kind::Mod, true)]),
+                    tabs: [item("Lanternlight", Kind::Mod, true)]
+                        .into_iter()
+                        .collect(),
                     launch: LaunchSummary::default(),
                 },
             )),
@@ -924,9 +841,10 @@ mod tests {
         let (generation, known) = kept.draw(&query, now).unwrap();
         kept.took(generation, read_changed(&query, &known));
         let snapshot = kept.snapshot.as_deref().unwrap();
-        let column = snapshot.column.as_ref().unwrap();
-        assert_eq!(names(column), ["Lanternlight", "Soft Edges.zip"]);
-        assert_eq!(column.off, [0, 0, 0]);
+        assert_eq!(names(&snapshot.tabs.mods), ["Lanternlight"]);
+        assert_eq!(names(&snapshot.tabs.resources), ["Soft Edges.zip"]);
+        assert_eq!(snapshot.tabs.mods_off, 0);
+        assert!(snapshot.tabs.resources[0].on);
         assert_eq!(
             snapshot.launch.mods_off, 1,
             "only the enabled recorded version"
@@ -947,26 +865,10 @@ mod tests {
         let (generation, known) = kept.draw(&query, now).unwrap();
         kept.took(generation, read_changed(&query, &known));
         let snapshot = kept.snapshot.as_deref().unwrap();
-        let column = snapshot.column.as_ref().unwrap();
-        assert!(column.shown.is_empty());
-        assert_eq!(column.off, [1, 1, 0]);
+        assert!(snapshot.tabs.mods.is_empty());
+        assert_eq!(snapshot.tabs.mods_off, 1);
+        assert!(!snapshot.tabs.resources[0].on);
         assert_eq!(snapshot.launch.mods_off, 0);
         std::fs::remove_dir_all(&home).unwrap();
-    }
-
-    #[test]
-    fn every_kind_names_itself() {
-        assert_eq!(
-            [Kind::Mod, Kind::Resource, Kind::Shader].map(Kind::label),
-            ["Mod", "Resource pack", "Shader pack"]
-        );
-    }
-
-    #[test]
-    fn the_columns_stack_on_a_narrow_window() {
-        assert!(side_by_side(1280.));
-        assert!(side_by_side(1000.));
-        assert!(!side_by_side(999.));
-        assert!(!side_by_side(800.));
     }
 }

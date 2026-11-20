@@ -29,25 +29,19 @@ impl Launcher {
         let rows = self.rows();
         if rows.is_empty() {
             return page
-                .child(
-                    card()
-                        .p(px(24.))
-                        .flex()
-                        .flex_col()
-                        .items_start()
-                        .gap(px(12.))
-                        .child(
-                            div()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child(tr("No mods yet")),
-                        )
-                        .child(primary("alt-installed-browse", tr("Find mods")).on_click(
-                            cx.listener(|this, _: &ClickEvent, _, cx| {
+                .child(empty_state(
+                    "puzzle",
+                    tr("No mods yet"),
+                    tr("Mods you add to this profile show up here."),
+                    Some(
+                        primary("alt-installed-browse", tr("Find mods")).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
                                 this.choose_view(Page::Discover);
                                 cx.notify();
-                            }),
+                            },
                         )),
-                )
+                    ),
+                ))
                 .into_any_element();
         }
 
@@ -868,7 +862,7 @@ impl Launcher {
                     .gap(px(10.))
                     .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                     .border_1()
-                    .border_color(c(palette().line))
+                    .border_color(palette().input_edge())
                     .bg(c(palette().raised))
                     .shadow_lg()
                     .occlude()

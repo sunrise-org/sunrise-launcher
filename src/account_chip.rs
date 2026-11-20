@@ -175,26 +175,14 @@ impl Launcher {
             )
             .child(face)
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .min_w_0()
-                    .max_w(px(160.))
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(px(tokens::BODY))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(palette().chrome_text))
-                            .child(name),
-                    )
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(px(tokens::CAPTION))
-                            .text_color(rgb(palette().chrome_muted))
-                            .child(tr("Microsoft account")),
-                    ),
+                div().flex().flex_col().min_w_0().max_w(px(160.)).child(
+                    div()
+                        .truncate()
+                        .text_size(px(tokens::BODY))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(palette().chrome_text))
+                        .child(name),
+                ),
             )
             .child(crate::glass_ui::icon(
                 "arrow-down-01",
@@ -315,7 +303,7 @@ impl Launcher {
             .p(px(8.))
             .rounded(crate::tokens::r(crate::tokens::R_CARD))
             .border_1()
-            .border_color(rgb(palette().line))
+            .border_color(palette().input_edge())
             .bg(rgb(palette().raised))
             .text_color(rgb(palette().text))
             .shadow_lg()

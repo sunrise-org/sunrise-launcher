@@ -120,7 +120,7 @@ impl Launcher {
                     .p(px(6.))
                     .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                     .border_1()
-                    .border_color(c(palette().line))
+                    .border_color(palette().input_edge())
                     .bg(c(palette().raised))
                     .shadow_lg()
                     .occlude()

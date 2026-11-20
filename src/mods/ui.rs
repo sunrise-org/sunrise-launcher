@@ -53,6 +53,43 @@ pub(super) fn note(text: impl Into<SharedString>) -> Div {
         .child(crate::selectable::selectable(text))
 }
 
+/// An empty list's place, as big apps draw it: a large icon, a title, one short line and the
+/// way on, centred in the room the list would take.
+pub(crate) fn empty_state(
+    icon: &'static str,
+    title: impl Into<SharedString>,
+    line: impl Into<SharedString>,
+    action: Option<Stateful<Div>>,
+) -> Div {
+    div()
+        .flex_1()
+        .min_h(px(240.))
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(8.))
+        .p(px(24.))
+        .child(crate::glass_ui::icon(icon, 48., c(palette().muted)))
+        .child(
+            div()
+                .mt(px(4.))
+                .text_size(px(tokens::HEADING))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(c(palette().text))
+                .child(title.into()),
+        )
+        .child(
+            div()
+                .max_w(px(420.))
+                .text_center()
+                .text_size(px(tokens::LABEL))
+                .text_color(c(palette().muted))
+                .child(line.into()),
+        )
+        .children(action.map(|a| a.mt(px(8.))))
+}
+
 /// The main action on a screen, in cream: gold is Play's alone.
 pub(super) use crate::frame::primary;
 
@@ -80,7 +117,7 @@ pub(crate) fn chip(
         .border_color(if on {
             c(palette().text)
         } else {
-            c(palette().line)
+            palette().input_edge()
         })
         .bg(if on {
             c(palette().text)
@@ -181,7 +218,7 @@ pub(crate) fn segmented(
         .p(px(3.))
         .rounded(tokens::r(tokens::R_CARD))
         .border_1()
-        .border_color(c(palette().line))
+        .border_color(palette().input_edge())
         .bg(palette().card());
     for (view, label, on, page) in views {
         pair = pair.child(
@@ -373,7 +410,7 @@ pub(super) fn browse_card(
         .overflow_hidden()
         .rounded(crate::tokens::r(crate::tokens::R_CARD))
         .border_1()
-        .border_color(c(palette().line))
+        .border_color(palette().input_edge())
         .bg(palette().card())
         .cursor_pointer()
         .hover(|s| s.border_color(c(palette().muted)))

@@ -29,25 +29,11 @@ fn a_long_list_builds_the_rows_near_the_view() {
     assert_eq!(near(100, 1, 56., (-500., -100.)), 0..2);
     // A short list is whole.
     assert_eq!(near(6, 1, 56., (0., 400.)), 0..6);
+    // The last row of a thousand still belongs to the active virtual range.
+    assert_eq!(near(1_000, 1, ROW, (39_800., 40_000.)), 992..1_000);
     // Tiles go by whole bands of four.
     assert_eq!(near(30, 4, 196., (400., 800.)), 0..30);
     assert_eq!(near(300, 4, 196., (1960., 2360.)), 28..64);
-}
-
-#[test]
-fn the_strip_takes_over_once_play_is_scrolled_out_of_view() {
-    let at = |top: f32, tall: f32| Bounds {
-        origin: gpui::point(px(110.), px(top)),
-        size: gpui::size(px(300.), px(tall)),
-    };
-    let view = at(78., 500.);
-    // Not drawn yet, at rest, and cut by less than half: Play says it.
-    assert!(play_shows(None, view));
-    assert!(play_shows(Some(at(238., 50.)), view));
-    assert!(play_shows(Some(at(60., 50.)), view));
-    // Half gone or more: the strip says it, so progress and Stop never leave the window.
-    assert!(!play_shows(Some(at(50., 50.)), view));
-    assert!(!play_shows(Some(at(-400., 50.)), view));
 }
 
 #[test]
