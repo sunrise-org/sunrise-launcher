@@ -35,6 +35,7 @@ pub struct Cancellation(Arc<Mutex<Attempt>>);
 #[derive(Default)]
 struct Attempt {
     stopped: bool,
+    publishing: bool,
     tool: Option<u32>,
     #[cfg(windows)]
     job: Option<Arc<crate::process::leases::CompilerJob>>,
@@ -68,7 +69,7 @@ impl Cancellation {
         Ok(())
     }
 
-    pub(super) fn check(&self) -> Result<(), String> {
+    pub(crate) fn check(&self) -> Result<(), String> {
         self.state().check()
     }
 
@@ -78,9 +79,21 @@ impl Cancellation {
         state.grant.map(NativeGrant::hold).transpose()
     }
 
+    /// Serialize the staged journal's cutoff with Stop. No worker cancellation follows it.
+    pub(crate) fn begin_publication(&self) -> Result<Option<PermissionFence>, String> {
+        let mut state = self.state();
+        state.check()?;
+        let permission = state.grant.map(NativeGrant::hold).transpose()?;
+        state.publishing = true;
+        Ok(permission)
+    }
+
     /// Stops this attempt and the SDK tool it started, if any.
     pub fn stop(&self) {
         let mut state = self.state();
+        if state.publishing {
+            return;
+        }
         state.stopped = true;
         #[cfg(windows)]
         if let Some(job) = &state.job {

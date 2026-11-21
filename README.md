@@ -399,7 +399,8 @@ and don't set `%ERRORLEVEL%` / `$LASTEXITCODE`. Scripts that need the exit code 
     sunrise-launcher remove <tag>
     sunrise-launcher import-build <path> [--version <tag>] --trust-unsigned   a game program you have, as its own version
     sunrise-launcher prepare [--minecraft <dir>] [--version <tag>]
-    sunrise-launcher play [--version <tag>] [--instance <name>] [--arg <ARG>]...   start the client; --arg passes an extra argument through (repeatable)
+    sunrise-launcher play [--instance <name>] [--arg <ARG>]...   start the profile’s committed build; --arg passes an extra argument through (repeatable)
+    sunrise-launcher switch <tag> [--profile <name>]   switch to an exact installed and prepared build; world decisions require a terminal
     sunrise-launcher server [--dir <dir>] [--version <tag>] [--accept-eula]
     sunrise-launcher notes [<tag>]                  patch notes as plain text
     sunrise-launcher links                          the Discord and website links
@@ -414,7 +415,7 @@ and don't set `%ERRORLEVEL%` / `$LASTEXITCODE`. Scripts that need the exit code 
     sunrise-launcher instance create <name> [--copy <instance>]   empty, or a copy of one's worlds, options and packs
     sunrise-launcher instance rename|icon|group <instance> <value>  icon: a block or item name, #rrggbb or none
     sunrise-launcher instance select <instance>     make Play start it
-    sunrise-launcher instance version <instance> <tag|latest>   keep it on one installed version, or follow updates
+    sunrise-launcher instance show [profile]        show the committed build
     sunrise-launcher worlds [list] [--instance <name>]        an instance's worlds
     sunrise-launcher worlds backup|copy|delete <world> [--instance <name>]   delete moves it to the trash
     sunrise-launcher packs [list] [--kind resource|shader] [--instance <name>]   resource and shader packs, on or off
@@ -426,7 +427,7 @@ and don't set `%ERRORLEVEL%` / `$LASTEXITCODE`. Scripts that need the exit code 
     sunrise-launcher multiplayer [list] [--instance <name>]   the servers in an instance's Multiplayer list
     sunrise-launcher multiplayer add <address> [--name <name>] | remove <server>
     sunrise-launcher modpack [list]                 the installed Sunrise modpacks
-    sunrise-launcher modpack play <pack> [--version <tag>]                 play it as its own profile
+    sunrise-launcher modpack play <pack>                 play it as its own profile
     sunrise-launcher modpack remove <pack>
     sunrise-launcher mods [list]                    what the mod browser installed (docs/mod-browser.md)
     sunrise-launcher mods search <text> [--kind resource|shader|datapack|mod|modpack] [--everything] [--source modrinth]

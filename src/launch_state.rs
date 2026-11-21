@@ -437,7 +437,7 @@ impl Launcher {
             building: self.native_step.is_some(),
             starting: self.starting_client.is_some() || self.play_admission.is_some(),
             step: self.play_step,
-            mutating: self.mutating() || self.pinning_build,
+            mutating: self.mutating() || self.pinning_build || self.switch_busy(),
             registry: self.registry_stage(),
             registry_accepts_play: self.registry_accepts_play(),
             running: self.client.is_some(),
@@ -448,7 +448,7 @@ impl Launcher {
     pub(crate) fn launch_facts(&self) -> Facts {
         let active = self.selected_instance();
         let launch = self.ui.home.mods.launch();
-        let held = self.held_for_launch(launch.and_then(|summary| summary.update_check.as_deref()));
+        let held = self.held_update();
         let follows_nightly =
             active.is_some_and(|i| i.version.is_none() && i.channel == instances::Channel::Nightly);
         Facts {
@@ -496,17 +496,13 @@ impl Launcher {
             Act::Notice { text, way_out } => self.open_notice(text.clone(), way_out.clone()),
             Act::Resolve => self.open_sheet(Sheet::Resolve),
             Act::Update => {
-                let (Some(release), Some(instance)) =
-                    (self.updates.sunrise.clone(), self.selected_instance())
-                else {
-                    return;
-                };
-                if self.native_state_of(instance) != native_status::State::NoMods {
-                    // Never overwrite a working native build while staging its candidate.
-                    self.instance_install = Some(release.tag.clone());
-                    self.install(&release);
-                } else {
-                    self.install_update();
+                if let Some(tag) = self
+                    .updates
+                    .sunrise
+                    .as_ref()
+                    .map(|release| release.tag.clone())
+                {
+                    self.open_update_picker(tag);
                 }
             }
         }

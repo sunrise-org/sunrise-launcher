@@ -567,7 +567,7 @@ fn ids(found: &[Packed]) -> String {
         .join(", ")
 }
 
-fn origin_path(home: &Path, id: &str) -> PathBuf {
+pub(crate) fn origin_path(home: &Path, id: &str) -> PathBuf {
     home.join(INSTALLED).join(format!("{id}.origin.json"))
 }
 

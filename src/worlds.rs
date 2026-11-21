@@ -16,6 +16,8 @@ use sunrise_launcher_smod::{manifest::revision, runtime_leases::linked};
 mod effects;
 pub use effects::{unproved_mod_effects, SuspectMods};
 
+pub(crate) mod switch;
+
 /// The lock a running game holds on a world; vanilla's backups leave it out.
 const LOCK: &str = "session.lock";
 /// The latest `LastPlayed` kept: the end of year 9999, in milliseconds. A later time does not fit a

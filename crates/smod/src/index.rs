@@ -474,6 +474,11 @@ impl Index {
         self.check_with(false)
     }
 
+    /// Strict validation of a fixture index, allowing local archive URLs but no omitted rows.
+    pub fn check_local(&self) -> Result<(), String> {
+        self.check_with(true)
+    }
+
     fn check_with(&self, local_files: bool) -> Result<(), String> {
         for (i, p) in self.projects.iter().enumerate() {
             if self.projects[..i].iter().any(|q| q.id == p.id) {

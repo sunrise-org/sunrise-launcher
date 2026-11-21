@@ -388,6 +388,7 @@ fn left_out(left: &native_mods::LeftOut, on: &str) -> State {
                 details: detail.changes,
             }
         }
+        Why::Unproved(_) => State::Skipped(left.label()),
         Why::Needs(other) => State::Skipped(trf(
             "Waits for {other}, which is not in this build.",
             &[("other", other)],

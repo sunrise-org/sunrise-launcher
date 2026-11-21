@@ -8,9 +8,10 @@ use crate::{
     browser::{mod_list, Kind, SourceId},
     i18n::{tr, trf},
     instances::{Instance, Kind as InstanceKind},
-    managed_play::{self, FirstBuild, Profile, ScannedPackage},
+    managed_play::{self, FirstBuild, Held, Profile, ScannedPackage},
     native_mods,
     profile_txn::Identity,
+    worlds::switch::{Fence, Question},
 };
 use serde_json::{Map, Value};
 use std::{
@@ -25,6 +26,10 @@ use sunrise_launcher_smod::{
 };
 
 const MAX_TRIALS: usize = 64;
+mod conflicts;
+mod switch;
+pub use conflicts::ResolveQuestion;
+pub use switch::{checked_switch_fit, switch_build, SwitchHooks, SwitchQuestion, Switched};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InstallProgress {
@@ -110,6 +115,8 @@ pub struct InstallHooks<'a> {
     pub native: &'a dyn Fn(&NativeQuestion) -> Result<bool, String>,
     pub registry_crates: Option<&'a dyn Fn(&native_mods::Consent) -> bool>,
     pub continue_after_failure: &'a dyn Fn(&BuildNotice) -> bool,
+    /// Interactive approval of a fully prepared same-base conflict plan; absent in automation.
+    pub resolve: Option<&'a dyn Fn(&ResolveQuestion) -> bool>,
 }
 
 /// Capture the Install target before it queues. The initial default profile may not have
@@ -194,7 +201,7 @@ pub fn install_registry(
             )));
         }
     }
-    let held = before
+    let enabled_before = before
         .iter()
         .filter(|(id, _)| mod_list::is_enabled(old.path(), id))
         .map(|(id, p)| {
@@ -206,32 +213,73 @@ pub fn install_registry(
             }
         })
         .collect::<Vec<_>>();
+    let saved_holds: BTreeMap<_, _> = edit
+        .current()
+        .into_iter()
+        .flat_map(managed_play::Active::holds)
+        .map(|hold| (hold.id().to_owned(), hold.clone()))
+        .collect();
+    // Holds are changed only by an explicit request for a different, fitting artifact.
+    // Keep the complete registry unchanged for package checks and cutoff evidence.
+    let planning = if saved_holds.is_empty() {
+        std::borrow::Cow::Borrowed(&catalogue)
+    } else {
+        let mut eligible = catalogue.clone();
+        for project in &mut eligible.projects {
+            if let Some(hold) = saved_holds.get(&project.id) {
+                project.versions.retain(|version| {
+                    ids.contains(&project.id)
+                        && switch::sha256_bytes(&version.file.sha256)
+                            .is_ok_and(|hash| &hash != hold.digest())
+                });
+            }
+        }
+        std::borrow::Cow::Owned(eligible)
+    };
     let mut unfit = BTreeSet::new();
     let mut conflicts = Vec::new();
     let mut last_sdk_refusal = None;
     let mut named_native: Option<BTreeSet<String>> = None;
     for _ in 0..MAX_TRIALS {
+        let options = resolve::WholeOptions {
+            conflicts: &conflicts,
+            native_fits: |p: &index::Project, v: &index::Version| {
+                !unfit.contains(&(p.id.clone(), v.version.clone()))
+            },
+            messages: trf,
+        };
         let plan = resolve::install_whole(
-            &catalogue,
+            &planning,
             &roots,
-            &held,
+            &enabled_before,
             &game,
             Side::Both,
-            resolve::WholeOptions {
-                conflicts: &conflicts,
-                native_fits: |p: &index::Project, v: &index::Version| {
-                    !unfit.contains(&(p.id.clone(), v.version.clone()))
-                },
-                messages: trf,
-            },
+            options,
         );
-        let plan = match plan {
-            Ok(plan) => plan,
+        let (plan, disabled) = match plan {
+            Ok(plan) => (plan, Vec::new()),
             Err(resolve::WholeRefusal::Unproved(reason)) => {
                 return Err(InstallError::Unproved(reason))
             }
             Err(resolve::WholeRefusal::Inconsistent(reason)) => {
-                return Err(InstallError::Refused(last_sdk_refusal.unwrap_or(reason)))
+                if hooks.resolve.is_none() || edit.current().is_none() {
+                    return Err(InstallError::Refused(last_sdk_refusal.unwrap_or(reason)));
+                }
+                // Negative evidence must come from a complete index, not Discover or cached rows.
+                let (_, complete, proof) = super::complete_index(&source, local)?;
+                if complete != source_bytes || proof.is_some() != authority.is_some() {
+                    return Err(registry_changed().into());
+                }
+                validate_enabled(old.path(), &catalogue, authority)?;
+                conflicts::minimal(
+                    &planning,
+                    &roots,
+                    &enabled_before,
+                    &game,
+                    &conflicts,
+                    |p, v| !unfit.contains(&(p.id.clone(), v.version.clone())),
+                )?
+                .ok_or_else(|| InstallError::Refused(last_sdk_refusal.take().unwrap_or(reason)))?
             }
         };
         let versions = plan
@@ -244,7 +292,7 @@ pub fn install_registry(
                     .map(|row| (row.id.as_str(), row.to.as_str())),
             )
             .map(|(id, version)| {
-                let project = catalogue.project(id).ok_or_else(unproved_mods)?;
+                let project = planning.project(id).ok_or_else(unproved_mods)?;
                 let version = project
                     .versions
                     .iter()
@@ -274,8 +322,26 @@ pub fn install_registry(
             )?;
             entries.insert(entry.project.clone(), entry);
         }
+        let mut restores = BTreeMap::<String, &Held>::new();
         let mut doc = Document::read(next.path())?;
         for entry in entries.values_mut() {
+            if let Some(hold) = saved_holds.get(entry.project.as_str()) {
+                let previous = before.get(&entry.project).ok_or_else(unproved_mods)?;
+                let digest = previous
+                    .digest
+                    .as_deref()
+                    .map(switch::sha256_bytes)
+                    .transpose()?;
+                if !previous.owned
+                    || digest.as_ref() != Some(hold.digest())
+                    || old.path().join(hold.path()) != previous.package.path
+                    || next.path().join(hold.path()) != next.path().join(&entry.file)
+                    || mod_list::is_enabled(old.path(), hold.id())
+                {
+                    return Err(unproved_mods().into());
+                }
+                restores.insert(entry.project.clone(), hold);
+            }
             entry.dependency = !ids.contains(&entry.project);
             if let Some(old) = doc.row(&entry.project)? {
                 entry.dependency &= old["dependency"].as_bool().unwrap_or(false);
@@ -285,13 +351,25 @@ pub fn install_registry(
         doc.write(next.path())?;
         let enabled: Vec<_> = entries
             .keys()
-            .filter(|id| !before.contains_key(*id) || mod_list::is_enabled(old.path(), id))
+            .filter(|id| {
+                !before.contains_key(*id)
+                    || mod_list::is_enabled(old.path(), id)
+                    || restores.get(*id).is_some_and(|hold| hold.enabled_before())
+            })
             .map(String::as_str)
             .collect();
         if !enabled.is_empty() {
             mod_list::set_all_enabled(next.path(), &enabled, true)?;
         }
-        if let Some(conflict) = manifest_conflict(next.path(), &catalogue, authority)? {
+        if !disabled.is_empty() {
+            if disabled.iter().any(|id| entries.contains_key(*id)) {
+                return Err(unproved_mods().into());
+            }
+            mod_list::set_all_enabled(next.path(), &disabled, false)?;
+        }
+        if let Some(conflict) = manifest_conflict(next.path(), &catalogue, authority, |id| {
+            entries.contains_key(id)
+        })? {
             if conflicts.contains(&conflict) {
                 return Err(InstallError::Unproved(conflict.reason));
             }
@@ -328,19 +406,7 @@ pub fn install_registry(
                             .iter()
                             .map(|p| p.package.manifest.name.clone())
                             .collect(),
-                        reviewed: source == super::INDEX_URL
-                            && newly_named.iter().all(|p| {
-                                p.owned
-                                    && p.digest.as_ref().is_some_and(|hash| {
-                                        catalogue.project(&p.package.manifest.id).is_some_and(
-                                            |project| {
-                                                project.versions.iter().any(|v| {
-                                                    v.file.sha256.eq_ignore_ascii_case(hash)
-                                                })
-                                            },
-                                        )
-                                    })
-                            }),
+                        reviewed: newly_named.iter().all(|p| p.owned),
                         retry,
                     })? {
                         return Err(InstallError::Cancelled);
@@ -360,24 +426,7 @@ pub fn install_registry(
                 next.path(),
                 instance.native_profile,
                 &cancelled,
-                |step| {
-                    let event = match step {
-                        native_mods::Step::Tools { done, total, .. } => {
-                            InstallProgress::Tools { done, total }
-                        }
-                        native_mods::Step::Install | native_mods::Step::Done { .. } => {
-                            InstallProgress::Building(Some(1.))
-                        }
-                        _ => match step.progress() {
-                            native_mods::Progress {
-                                stage: native_mods::Stage::Compile,
-                                fraction,
-                            } => InstallProgress::Building(fraction),
-                            _ => InstallProgress::Preparing,
-                        },
-                    };
-                    (hooks.progress)(event);
-                },
+                |step| build_progress(step, hooks.progress),
                 hooks.registry_crates,
             )
         };
@@ -441,7 +490,11 @@ pub fn install_registry(
                     &mut doc,
                     failed,
                 )?;
-                if let Some(conflict) = manifest_conflict(next.path(), &catalogue, authority)? {
+                if let Some(conflict) =
+                    manifest_conflict(next.path(), &catalogue, authority, |id| {
+                        entries.contains_key(id)
+                    })?
+                {
                     return Err(InstallError::Refused(conflict.reason));
                 }
                 let notice = BuildNotice {
@@ -449,7 +502,7 @@ pub fn install_registry(
                     detail: error,
                     log,
                 };
-                if !(hooks.continue_after_failure)(&notice) {
+                if !disabled.is_empty() || !(hooks.continue_after_failure)(&notice) {
                     return Err(InstallError::Compile(notice));
                 }
                 result.failure = Some(notice);
@@ -462,35 +515,115 @@ pub fn install_registry(
             }
             Err(error) => return Err(InstallError::Unproved(error.into())),
         };
-        // One-click Install cannot consent to replace definitions a saved world may use.
-        let mut replaced = entries
+        for id in restores.keys().filter(|id| entries.contains_key(*id)) {
+            let package = &before[id].package;
+            if package.manifest.native.is_some() && !mod_list::is_enabled(next.path(), id) {
+                let activation = edit.candidate()?;
+                Document::read(next.path())?.write(activation.path())?;
+                // Copy all staged package changes and exact selection before testing activation.
+                for other in entries.values() {
+                    let dest = activation.path().join(&other.file);
+                    fs::create_dir_all(dest.parent().expect("validated package location"))
+                        .map_err(|e| at(&dest, e))?;
+                    fs::copy(next.path().join(&other.file), &dest).map_err(|e| at(&dest, e))?;
+                }
+                let selection = next.path().join(sunrise_launcher_smod::mod_list::FILE);
+                match fs::copy(
+                    &selection,
+                    activation
+                        .path()
+                        .join(sunrise_launcher_smod::mod_list::FILE),
+                ) {
+                    Ok(_) => (),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                    Err(e) => return Err(at(&selection, e).into()),
+                }
+                prove_activation_inputs(activation.path(), id, &catalogue, authority)?;
+                edit.prove(
+                    activation.path(),
+                    instance.native_profile,
+                    &cancelled,
+                    |step| build_progress(step, hooks.progress),
+                    hooks.registry_crates,
+                )
+                .map_err(|e| InstallError::Unproved(e.into()))?;
+            }
+        }
+        let (fence, replacements) =
+            if let Some(approve) = hooks.resolve.filter(|_| !disabled.is_empty()) {
+                let question =
+                    conflicts::question(&catalogue, &roots, &before, next.path(), &disabled)?;
+                let affected = crate::worlds::unproved_mod_effects(
+                    old.path(),
+                    edit.current(),
+                    next.path(),
+                    edit.current(),
+                    disabled
+                        .iter()
+                        .copied()
+                        .chain(entries.keys().map(String::as_str)),
+                )?;
+                let (fence, worlds) = Fence::hold(
+                    &instance.home,
+                    affected,
+                    |id| &before[id].package.manifest.name,
+                    None,
+                )?;
+                if !approve(&ResolveQuestion { worlds, ..question }) {
+                    return Err(InstallError::Cancelled);
+                }
+                (Some(fence), None)
+            } else {
+                // One-click Install cannot consent to replace definitions a saved world may use.
+                let mut replaced = entries
+                    .keys()
+                    .filter(|id| before.contains_key(*id))
+                    .map(String::as_str)
+                    .peekable();
+                let suspect = if replaced.peek().is_some() {
+                    crate::worlds::unproved_mod_effects(
+                        old.path(),
+                        edit.current(),
+                        next.path(),
+                        edit.current(),
+                        replaced,
+                    )?
+                } else {
+                    crate::worlds::SuspectMods::new()
+                };
+                let reviewed = guard_replacements(&instance.home, &suspect)?;
+                (None, Some((suspect, reviewed)))
+            };
+        let restored = restores
             .keys()
-            .filter(|id| before.contains_key(*id))
-            .map(String::as_str)
-            .peekable();
-        let suspect = if replaced.peek().is_some() {
-            crate::worlds::unproved_mod_effects(
-                old.path(),
-                edit.active_basis(),
-                next.path(),
-                edit.active_basis(),
-                replaced,
-            )?
-        } else {
-            crate::worlds::SuspectMods::new()
-        };
-        let reviewed = guard_replacements(&instance.home, &suspect)?;
+            .filter(|id| entries.contains_key(*id))
+            .cloned()
+            .collect();
         (hooks.progress)(InstallProgress::Publishing);
-        edit.publish(proof, &cancelled, || {
-            let (_, current, proof) = fetch_with_official(&source, local)?;
+        edit.publish_install(proof, &cancelled, &restored, || {
+            let (_, current, proof) = if fence.is_some() {
+                super::complete_index(&source, local)?
+            } else {
+                fetch_with_official(&source, local)?
+            };
             if source_bytes != current || proof.is_some() != authority.is_some() {
-                return Err(tr("The mod registry changed while the install was being prepared. Nothing was installed.").into());
+                return Err(registry_changed());
             }
-            let guard = crate::worlds::lock_reviewed(&reviewed)?;
-            if reviewed != guard_replacements(&instance.home, &suspect)? {
-                return Err(tr("The affected worlds changed after review. Nothing was changed; try again.").into());
+            if let Some(fence) = &fence {
+                fence.revalidate(&instance.home)?;
             }
-            Ok(guard)
+            if let Some((suspect, reviewed)) = replacements {
+                let guard = crate::worlds::lock_reviewed(&reviewed)?;
+                if reviewed != guard_replacements(&instance.home, &suspect)? {
+                    return Err(tr(
+                        "The affected worlds changed after review. Nothing was changed; try again.",
+                    )
+                    .into());
+                }
+                Ok(Some(guard))
+            } else {
+                Ok(None)
+            }
         })?;
         for (id, entry) in entries {
             if let Some(previous) = before.get(&id) {
@@ -508,9 +641,26 @@ pub fn install_registry(
     ))
 }
 
+fn build_progress(step: native_mods::Step, progress: &dyn Fn(InstallProgress)) {
+    progress(match step {
+        native_mods::Step::Tools { done, total, .. } => InstallProgress::Tools { done, total },
+        native_mods::Step::Install | native_mods::Step::Done { .. } => {
+            InstallProgress::Building(Some(1.))
+        }
+        _ => match step.progress() {
+            native_mods::Progress {
+                stage: native_mods::Stage::Compile,
+                fraction,
+            } => InstallProgress::Building(fraction),
+            _ => InstallProgress::Preparing,
+        },
+    });
+}
+
 struct SeenPackage {
     package: ScannedPackage,
     digest: Option<String>,
+    registry_claim: bool,
     owned: bool,
 }
 
@@ -533,6 +683,7 @@ fn inventory(home: &Path, authority: Option<&OfficialRegistry>) -> Result<Invent
                     && row.kind == Kind::Mod
                     && row.path(home).as_ref() == Some(&p.path)
             });
+            let registry_claim = claim.is_some();
             let owned = if let Some((row, digest)) = claim {
                 doc.rows
                     .check_other_claims(home, &id, &row.file)
@@ -546,6 +697,7 @@ fn inventory(home: &Path, authority: Option<&OfficialRegistry>) -> Result<Invent
                 SeenPackage {
                     package: p,
                     digest,
+                    registry_claim,
                     owned,
                 },
             ))
@@ -634,6 +786,7 @@ fn missing_required<'a>(
     manifest.dependencies.iter().find_map(|(id, dependency)| {
         let need = dependency.details();
         (!need.optional
+            && need.side != Side::Server
             && !enabled.get(id.as_str()).is_some_and(|other| {
                 sunrise_launcher_smod::dependencies::parse_version(&other.version)
                     .is_ok_and(|v| need.version.matches(&v))
@@ -646,6 +799,7 @@ fn manifest_conflict(
     home: &Path,
     catalogue: &index::Index,
     authority: Option<&OfficialRegistry>,
+    staged: impl Fn(&str) -> bool,
 ) -> Result<Option<resolve::ManifestConflict>, InstallError> {
     let packages = inventory(home, authority)?;
     let enabled: BTreeMap<_, _> = packages
@@ -658,7 +812,10 @@ fn manifest_conflict(
         resolve::InstalledMod {
             id: id.to_owned(),
             version: package.package.manifest.version.clone(),
-            sha256: package.owned.then(|| package.digest.clone()).flatten(),
+            // A freshly checked download names a resolver choice, not replacement authority.
+            sha256: (package.owned || staged(id))
+                .then(|| package.digest.clone())
+                .flatten(),
         }
     };
     let mut namespaces = BTreeMap::new();
@@ -728,6 +885,17 @@ fn manifest_conflict(
         }
     }
     Ok(None)
+}
+
+fn validate_enabled(
+    home: &Path,
+    catalogue: &index::Index,
+    authority: Option<&OfficialRegistry>,
+) -> Result<(), InstallError> {
+    match manifest_conflict(home, catalogue, authority, |_| false)? {
+        Some(conflict) => Err(InstallError::Refused(conflict.reason)),
+        None => Ok(()),
+    }
 }
 
 fn restore_or_disable(
@@ -841,6 +1009,12 @@ impl Document {
         }
         Ok(())
     }
+    fn remove(&mut self, id: &str) -> Result<(), String> {
+        if let Some(i) = self.position(id)? {
+            self.rows.entries.remove(i);
+        }
+        Ok(())
+    }
     fn replace(&mut self, entry: &installed::Entry) -> Result<(), String> {
         let encoded = serde_json::to_value(entry).map_err(|e| e.to_string())?;
         let mut fields = match self.row(&entry.project)? {
@@ -865,11 +1039,47 @@ impl Document {
     }
 }
 
+fn registry_changed() -> String {
+    tr("The mod registry changed while the install was being prepared. Nothing was installed.")
+        .into()
+}
+
 fn unproved_mods() -> String {
     tr("Sunrise couldn't verify the installed mod set. Nothing was installed.").into()
 }
 fn at(path: &Path, error: impl std::fmt::Display) -> String {
     format!("{}: {error}", path.display())
+}
+
+fn prove_activation_inputs(
+    home: &Path,
+    root: &str,
+    catalogue: &index::Index,
+    authority: Option<&OfficialRegistry>,
+) -> Result<(), InstallError> {
+    let packages = inventory(home, authority)?;
+    let mut extra = BTreeSet::new();
+    let mut todo = vec![root];
+    while let Some(id) = todo.pop() {
+        let Some(package) = packages.get(id) else {
+            return Err(unproved_mods().into());
+        };
+        if extra.insert(id) {
+            todo.extend(
+                package
+                    .package
+                    .manifest
+                    .dependencies
+                    .iter()
+                    .filter_map(|(id, need)| {
+                        let need = need.details();
+                        (!need.optional && need.side != Side::Server).then_some(id.as_str())
+                    }),
+            );
+        }
+    }
+    mod_list::set_all_enabled(home, &extra.into_iter().collect::<Vec<_>>(), true)?;
+    validate_enabled(home, catalogue, authority)
 }
 
 #[cfg(test)]

@@ -60,7 +60,6 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
         instance: &instance,
         accepted_account: None,
         explicit_account: false,
-        requested_build: None,
         piped: false,
     };
     let mut profile = Profile::open(&home, None).unwrap();
@@ -252,7 +251,6 @@ fn windows_bound_x64_fallback_survives_pending_retry_and_committed_replay() {
         instance: &instance,
         accepted_account: None,
         explicit_account: false,
-        requested_build: None,
         piped: false,
     };
     let cancellation = native_mods::Cancellation::default();

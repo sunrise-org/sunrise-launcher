@@ -33,12 +33,12 @@ struct Session {
 /// The tools the session runs itself, under their CLI names: they keep a process (the game, a
 /// server) or a sign-in going between calls. Every other CLI command is generated (cli_tools.rs).
 fn session_tools() -> Value {
-    let version = json!({ "type": "string", "description": "An installed version tag such as v2026.10.13. Default: the selected version (play: the profile's own first)." });
+    let version = json!({ "type": "string", "description": "An installed version tag such as v2026.10.13. Default: the selected version." });
     let none = json!({ "type": "object", "properties": {} });
     let jar_downloads = json!({ "type": "boolean", "description": "Explicit consent to download missing original Java asset/data jars from Modrinth for this launch. Default: false; verified cached jars work offline." });
     json!([
         { "name": "play", "description": "Start the Sunrise client (a game window on the player's screen) under agent control: the game_* tools then play it. Returns once it has started; game_wait_ready waits for the world. CLI: sunrise-launcher play",
-          "inputSchema": { "type": "object", "properties": { "version": version,
+          "inputSchema": { "type": "object", "additionalProperties": false, "properties": {
             "allow_jar_downloads": jar_downloads,
             "instance": { "type": "string", "description": "The profile to play, by name or id (instance_list). Default: the selected one." },
             "world": { "type": "string", "description": "Open or create this world (a folder under saves) at once." },
@@ -88,7 +88,9 @@ impl Session {
                     None => instances::selection()?,
                 };
                 use sunrise_launcher::managed_play;
-                let requested = arg_str(args, "version");
+                if args.get("version").is_some() {
+                    return Err("Play starts the committed build. Use the human Switch command to change it.".into());
+                }
                 let add_arguments = |cmd: &mut std::process::Command| -> Result<(), String> {
                     cmd.args(game_tools::control_args());
                     if let Some(world) = arg_str(args, "world") {
@@ -115,7 +117,7 @@ impl Session {
                 };
                 let jar_permission = Permission::headless(allow_jar_downloads);
                 let (client, tag, notices) = if instance.kind == instances::Kind::Pack {
-                    let tag = instance.resolve_version(requested)?;
+                    let tag = instance.resolve_version(None)?;
                     let mut cmd = backend::client(&tag)?;
                     instances::apply(&mut cmd, &instance)?;
                     add_arguments(&mut cmd)?;
@@ -134,11 +136,10 @@ impl Session {
                         instance: &instance,
                         accepted_account: accounts.selected().map(|a| a.uuid.as_str()),
                         explicit_account: false,
-                        requested_build: requested,
                         piped: true,
                     }
                     .start(
-                        || managed_play::headless_first(&instance, requested),
+                        || managed_play::headless_first(&instance),
                         |cmd| {
                             backend::append_game_args(cmd);
                             add_arguments(cmd)

@@ -1310,6 +1310,16 @@ pub fn game_version(tag: &str) -> String {
     game_version_at(&version_dir(tag))
 }
 
+/// Switch must classify packages against the exact build, never the legacy default JAR.
+pub(crate) fn switch_game_version(tag: &str) -> Result<String, String> {
+    locked_game(&version_dir(tag)).ok_or_else(|| {
+        crate::i18n::tr(
+            "The selected build's game version could not be verified. Nothing was switched.",
+        )
+        .into()
+    })
+}
+
 fn read_json(path: &Path) -> Option<serde_json::Value> {
     serde_json::from_str(&fs::read_to_string(path).ok()?).ok()
 }
@@ -1390,6 +1400,12 @@ fn resources_at(dir: &Path) -> PathBuf {
 }
 
 const RESOURCES_MANIFEST: &str = "sunrise-resources.json";
+
+/// The target preparation records the world format of the verified client JAR it used.
+pub(crate) fn prepared_world_version(resources: &Path) -> Option<i32> {
+    let manifest = read_json(&resources.join(RESOURCES_MANIFEST))?;
+    i32::try_from(manifest.get("data_version")?.as_i64()?).ok()
+}
 
 /// How long a drawn page believes an answer of [`is_prepared`] without looking at the disk again.
 /// What the launcher itself changes (a preparation, an install, a removal) drops it at once
@@ -3253,6 +3269,7 @@ pub fn server(tag: &str, folder: &Path, accept_eula: bool) -> Result<Command, St
 }
 
 mod release_selection;
+pub(crate) use release_selection::WorldBuildOrder;
 
 /// One release's notes: the tag given, or the newest.
 pub fn release_notes(tag: Option<&str>) -> Result<Release, String> {

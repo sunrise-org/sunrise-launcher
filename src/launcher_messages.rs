@@ -21,7 +21,7 @@ impl Launcher {
                 changed = true;
             }
             Some(perf::Step::Scroll) => {
-                self.go(Page::Versions);
+                self.open_versions();
                 changed = true;
             }
             Some(perf::Step::Quit) => cx.quit(),
@@ -166,11 +166,11 @@ impl Launcher {
                         }
                     }
                 }
-                Msg::PinnedBuild {
-                    home,
-                    result,
-                    close_versions,
-                } => self.finish_build_pin(&home, result, close_versions),
+                Msg::PinnedBuild { home, result } => self.finish_build_pin(&home, result),
+                Msg::SwitchProgress(stage) => self.switch_progress(stage),
+                Msg::SwitchQuestion(question, reply) => self.switch_question(question, reply),
+                Msg::Switched(home, result) => self.switch_finished(&home, *result),
+                Msg::ReceiptAcknowledged(home, result) => self.receipt_acknowledged(&home, result),
                 Msg::Session(session) => self.handle_game_session(session),
                 Msg::JarConsent { jars, reply } => jar_launch::consent(window, jars, reply, cx),
                 Msg::JarClient {
@@ -227,15 +227,16 @@ impl Launcher {
                     self.installing = None;
                     self.bar = (0., 0.);
                     self.installed = backend::installed();
-                    let as_update = self.update_install.take().filter(|t| *t == tag);
+                    if self.finish_switch_download(&tag, &result) {
+                        self.install_started = None;
+                        if let Some(next) = self.install_next.take() {
+                            self.install_for_instance(next);
+                        }
+                        continue;
+                    }
                     let for_instance = self.instance_install.take_if(|t| *t == tag).is_some();
                     if let (Ok(()), Some(started)) = (&result, self.install_started.take()) {
-                        let name = if as_update.is_some() {
-                            "launcher.update_ms"
-                        } else {
-                            "launcher.install_ms"
-                        };
-                        self.perf.record_since(name, started);
+                        self.perf.record_since("launcher.install_ms", started);
                     }
                     let resume = self
                         .ui
@@ -244,31 +245,11 @@ impl Launcher {
                         .filter(|(_, wanted)| result.is_ok() && *wanted == tag);
                     match result {
                         Ok(()) => {
-                            if as_update.is_some()
-                                && sunrise_launcher::nightly::date_of(&tag).is_some()
-                            {
-                                if let Err(e) = backend::mark_auto_installed(&tag) {
-                                    eprintln!("Could not mark updated Nightly {tag}: {e}");
-                                }
-                            }
                             if self.updates.sunrise.as_ref().is_some_and(|r| r.tag == tag) {
                                 self.updates.sunrise = None;
                             }
-                            // An instance's own version leaves the other instances on theirs.
-                            // Judged now, not when the download started: a version picked on
-                            // Versions meanwhile stays picked.
-                            let before: Vec<String> = self
-                                .installed
-                                .iter()
-                                .filter(|t| **t != tag)
-                                .cloned()
-                                .collect();
-                            let select = as_update.is_none_or(|_| {
-                                backend::select_after_update(
-                                    self.settings.selected.as_deref(),
-                                    &before,
-                                )
-                            }) && (!for_instance || self.launcher_version().is_none());
+                            // An instance's own download leaves other selections alone.
+                            let select = !for_instance || self.launcher_version().is_none();
                             if select {
                                 self.settings.selected = Some(tag.clone());
                             }

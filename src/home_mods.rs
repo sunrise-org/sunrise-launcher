@@ -277,7 +277,6 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
 struct Query {
     home: PathBuf,
     version: Option<String>,
-    newest: Option<String>,
 }
 
 /// Just the facts about installed mods needed to draw Play and its strip. The launch and
@@ -285,7 +284,6 @@ struct Query {
 #[derive(Default)]
 pub(crate) struct LaunchSummary {
     pub(crate) mods_off: usize,
-    pub(crate) update_check: Option<String>,
 }
 
 #[derive(Default)]
@@ -318,12 +316,6 @@ fn read_changed(query: &Query, known: &str) -> Option<(String, Snapshot)> {
         .version
         .as_deref()
         .and_then(native_status::Build::read);
-    let update_check = build
-        .as_ref()
-        .zip(query.newest.as_deref())
-        .filter(|(build, next)| backend::compare_versions(next, &build.base).is_gt())
-        .filter(|_| !native_status::enabled(&query.home).is_empty())
-        .map(|(_, next)| crate::sheets::check_key(&query.home, next));
     let left_out = match build {
         Some(build) => build.left_out,
         None => query.version.as_deref().map_or_else(Vec::new, |version| {
@@ -348,10 +340,7 @@ fn read_changed(query: &Query, known: &str) -> Option<(String, Snapshot)> {
         stamp,
         Snapshot {
             column: column(items),
-            launch: LaunchSummary {
-                mods_off,
-                update_check,
-            },
+            launch: LaunchSummary { mods_off },
         },
     ))
 }
@@ -481,7 +470,6 @@ impl Launcher {
         let query = Query {
             home: instance.home.clone(),
             version: self.version_of(instance).cloned(),
-            newest: native_mods::newest_installed(&self.installed).cloned(),
         };
         let mods = &mut self.ui.home.mods;
         if mods.query.as_ref() != Some(&query) {
@@ -802,7 +790,6 @@ mod tests {
         Query {
             home: path.into(),
             version: None,
-            newest: None,
         }
     }
 

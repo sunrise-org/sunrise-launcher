@@ -6,7 +6,14 @@ use sunrise_launcher::{
     browser::{installed::Entry, mod_list, sunrise::NativeQuestion},
     github_mods::Resolved,
     native_status::{BuildInput, Registry},
+    profile_txn::Identity,
 };
+
+pub(super) struct Toggle {
+    pub(super) entry: Entry,
+    pub(super) home: PathBuf,
+    pub(super) identity: Identity,
+}
 
 pub(super) enum PendingConsent {
     /// A build's package files are being read. The Arc also identifies this request, not just
@@ -14,7 +21,7 @@ pub(super) enum PendingConsent {
     ReadingBuild(Arc<PathBuf>),
     /// A build of these packages, named when the question opened from the files it takes in.
     Build(Vec<BuildInput>),
-    Toggle(Entry),
+    Toggle(Toggle),
     /// The exact batch's native inputs, including required native dependencies.
     Registry(
         NativeQuestion,
@@ -40,7 +47,7 @@ impl PendingConsent {
                 1 => crate::i18n::tr("this mod").into(),
                 count => crate::i18n::trf("{count} mods", &[("count", &count.to_string())]),
             },
-            Self::Toggle(entry) => entry.title.clone(),
+            Self::Toggle(toggle) => toggle.entry.title.clone(),
             Self::Registry(question, _) => crate::mods::names(&question.names),
             Self::Github(found, _) => found.label(),
         }
@@ -91,7 +98,8 @@ fn build_row(input: &BuildInput) -> BuildRow {
     }
 }
 
-/// Consume exactly one request. Permission is persisted before returning an action to execute.
+/// Consume exactly one request. Toggle sends the explicit permission to its On worker;
+/// a scoped Registry retry uses its existing grant. Other allows persist the permission here.
 /// Cancel and Escape both use `allow = false`, and cannot return an executable action.
 pub(super) fn resolve(
     pending: &mut Option<PendingConsent>,
@@ -112,8 +120,10 @@ pub(super) fn resolve(
         }
         // The scoped second answer doesn't replace (or resurrect) the grant pinned by
         // the running attempt. The worker still checks the original revision after reply.
-        if !matches!(pending, Some(PendingConsent::Registry(question, _)) if question.retry) {
-            settings.allow_native_mods()?;
+        match pending {
+            Some(PendingConsent::Toggle(_)) => (),
+            Some(PendingConsent::Registry(question, _)) if question.retry => (),
+            _ => settings.allow_native_mods()?,
         }
         return Ok(pending.take());
     }
@@ -124,15 +134,13 @@ pub(super) fn resolve(
                 let ids: Vec<&str> = inputs.iter().map(|i| i.id.as_str()).collect();
                 mod_list::set_all_enabled(home, &ids, false)?;
             }
-            PendingConsent::Toggle(entry) => {
-                if let Some(id) = sunrise_launcher::browser::sunrise::mod_id(&entry) {
-                    mod_list::set_enabled(home, id, false)?;
-                }
-            }
             PendingConsent::Registry(_, reply) => {
                 let _ = reply.send(Ok(false));
             }
-            PendingConsent::ReadingBuild(_) | PendingConsent::Github(..) => {}
+            // Toggle was only a request to turn an off row on; there is nothing to undo.
+            PendingConsent::Toggle(_)
+            | PendingConsent::ReadingBuild(_)
+            | PendingConsent::Github(..) => {}
         }
     }
     Ok(None)
@@ -236,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn cancel_escape_and_allow_consume_only_the_pending_toggle() {
+    fn cancel_escape_and_allow_consume_only_the_pending_build() {
         // Settings is process-global: exercise this transition in its own isolated process.
         let input = |id: &str| BuildInput {
             id: id.into(),
@@ -246,11 +254,15 @@ mod tests {
         if std::env::var_os("SUNRISE_CONSENT_TEST_CHILD").is_none() {
             let home = tempfile::tempdir().unwrap();
             let status = std::process::Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "native_consent::tests::cancel_escape_and_allow_consume_only_the_pending_toggle"])
+                .args([
+                    "--exact",
+                    "native_consent::tests::cancel_escape_and_allow_consume_only_the_pending_build",
+                ])
                 .env("SUNRISE_CONSENT_TEST_CHILD", "1")
                 .env("SUNRISE_LAUNCHER_HOME", home.path())
                 .env("SUNRISE_HOME", home.path())
-                .status().unwrap();
+                .status()
+                .unwrap();
             assert!(status.success());
             return;
         }

@@ -3,15 +3,25 @@
 //! One list, drawn only where it is on screen: what is installed first (the build kept or played
 //! leading), then every build that can be downloaded, by channel and month, newest first. The
 //! field narrows it by date, name or commit. A row is only chosen; "Keep this build" is what
-//! changes the setup (`pin_build`), and Play installs a build that isn't here yet.
+//! starts the staged Switch. Download and Prepare do not change the playing build.
 use super::*;
 use crate::line_edit::{self, LineEdit};
 use crate::paint::palette;
-use std::rc::Rc;
+use std::{
+    path::PathBuf,
+    rc::Rc,
+    sync::{Arc, OnceLock},
+};
 use sunrise_launcher::{backend::Release, instances::Channel};
 
 /// The height of every line of the list, headings included.
 const LINE_H: f32 = 40.;
+
+struct FitPreview {
+    home: PathBuf,
+    tag: String,
+    checked: Arc<OnceLock<bool>>,
+}
 
 #[derive(Default)]
 pub(crate) struct State {
@@ -21,6 +31,7 @@ pub(crate) struct State {
     focused: bool,
     /// The build chosen in the list, before it is kept.
     pick: Option<String>,
+    preview: Option<FitPreview>,
     /// The list's scroll, which the arrow keys move to the row they land on.
     scroll: gpui::UniformListScrollHandle,
     /// The keyboard focus of each row, by line: a row that is not drawn has no element, so the
@@ -60,6 +71,27 @@ struct Build {
     /// "Nightly · 0c02067", or a release's day.
     about: String,
     installed: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum VersionAction {
+    Download,
+    Prepare,
+    Keep,
+}
+
+fn version_action(
+    installed: bool,
+    prepared: impl FnOnce() -> bool,
+    can_switch: bool,
+) -> Option<VersionAction> {
+    if !installed {
+        Some(VersionAction::Download)
+    } else if !prepared() {
+        Some(VersionAction::Prepare)
+    } else {
+        can_switch.then_some(VersionAction::Keep)
+    }
 }
 
 /// "November 2026" for `2026-11`.
@@ -174,17 +206,20 @@ fn lines(
 
 impl Launcher {
     /// Opens the sheet on the build the setup keeps now.
-    pub(super) fn open_versions(&mut self) {
+    pub(crate) fn open_versions(&mut self) {
         self.open_sheet(Sheet::Versions);
         self.reset_versions();
     }
 
     pub(crate) fn reset_versions(&mut self) {
         self.ui.sheets.error = None;
-        let pinned = self.selected_instance().and_then(|i| i.version.clone());
+        let pinned = self
+            .selected_instance()
+            .and_then(|i| self.profile_target(i));
         let v = &mut self.ui.sheets.versions;
         v.find.set(String::new());
         v.pick = pinned;
+        v.preview = None;
         v.rows.clear();
     }
 
@@ -197,6 +232,11 @@ impl Launcher {
     pub(super) fn versions_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         let body = self.versions_content(true, cx);
         frame("alt-versions", 560., body, cx)
+    }
+
+    pub(crate) fn open_update_picker(&mut self, tag: String) {
+        self.open_versions();
+        self.ui.sheets.versions.pick = Some(tag);
     }
 
     pub(crate) fn versions_page(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -214,15 +254,14 @@ impl Launcher {
         let Some(instance) = self.selected_instance() else {
             return div().child(tr("No profile selected."));
         };
-        let (pinned, channel) = (instance.version.clone(), instance.channel);
-        let plays = self.version_of(instance).cloned();
-        // Another build under native mods isn't kept from here: they are checked first.
-        let has_native = !native_status::enabled(&instance.home).is_empty();
+        let plays = self.profile_target(instance);
+        let is_pack = instance.kind == instances::Kind::Pack;
+        let home = instance.home.clone();
         let releases: &[Release] = match &self.releases {
             Load::Ready(rows) => rows,
             _ => &[],
         };
-        let current = pinned.as_deref().or(plays.as_deref());
+        let current = plays.as_deref();
         let query = self.ui.sheets.versions.find.text().to_owned();
         let list = Rc::new(lines(releases, &self.installed, current, &query));
         let pick = self.ui.sheets.versions.pick.clone();
@@ -289,7 +328,6 @@ impl Launcher {
                         Line::Build(b) => {
                             let on = chosen.as_deref() == Some(b.tag.as_str());
                             let playing = now.as_deref() == Some(b.tag.as_str());
-                            let blocked = has_native && !playing;
                             let tag = b.tag.clone();
                             let handle = this
                                 .ui
@@ -345,19 +383,18 @@ impl Launcher {
                                         .flex_none()
                                         .text_size(px(tokens::SMALL))
                                 }))
-                                .when(blocked, |d| d.opacity(0.45))
-                                .when(!blocked, |d| {
-                                    d.track_focus(&handle)
-                                        .reach()
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(rgb(palette().hover)))
-                                        .on_click(cx.listener(
-                                            move |this, _: &ClickEvent, _, cx| {
-                                                this.ui.sheets.versions.pick = Some(tag.clone());
-                                                cx.notify();
-                                            },
-                                        ))
-                                })
+                                .track_focus(&handle)
+                                .reach()
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(palette().hover)))
+                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    let v = &mut this.ui.sheets.versions;
+                                    if v.pick.as_ref() != Some(&tag) {
+                                        v.preview = None;
+                                        v.pick = Some(tag.clone());
+                                    }
+                                    cx.notify();
+                                }))
                         }
                     })
                     .collect::<Vec<_>>()
@@ -388,29 +425,89 @@ impl Launcher {
             .border_color(rgb(palette().text))
             .text_color(rgb(palette().background))
             .hover(|s| s.bg(rgb(palette().accent_on)));
-        let keep = match pick.filter(|p| Some(p) != pinned.as_ref()) {
-            Some(tag) if !self.launch_busy() && self.client.is_none() => {
-                keep.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.pin_build(Some(tag.clone()), channel, sheet);
-                    cx.notify();
-                }))
+        let idle = !is_pack && !self.launch_busy() && self.client.is_none();
+        let mut cache_action = None;
+        let mut plan = None;
+        let mut keep_tag = None;
+        if let Some(tag) = pick.as_ref() {
+            match version_action(
+                self.installed.contains(tag),
+                || backend::is_prepared(tag),
+                sheet && !is_pack && Some(tag.as_str()) != current,
+            ) {
+                Some(VersionAction::Keep) => {
+                    if idle {
+                        keep_tag = Some(tag.clone());
+                    }
+                    let request = &mut self.ui.sheets.versions.preview;
+                    if request
+                        .as_ref()
+                        .is_none_or(|preview| preview.home != home || preview.tag != *tag)
+                    {
+                        let checked = Arc::new(OnceLock::new());
+                        *request = Some(FitPreview {
+                            home: home.clone(),
+                            tag: tag.clone(),
+                            checked: checked.clone(),
+                        });
+                        let target = tag.clone();
+                        let work = cx.background_executor().spawn(async move {
+                            sunrise_launcher::browser::sunrise::checked_switch_fit(&home, &target)
+                        });
+                        cx.spawn(async move |this, cx| {
+                            let _ = checked.set(work.await);
+                            let _ = this.update(cx, |_, cx| cx.notify());
+                        })
+                        .detach();
+                    }
+                    plan = Some(
+                        if request.as_ref().and_then(|p| p.checked.get()) == Some(&true) {
+                            tr("The installed mod files fit this build.")
+                        } else {
+                            tr("The mod changes aren't known until Sunrise checks this build.")
+                        },
+                    );
+                }
+                Some(VersionAction::Prepare) => {
+                    plan = Some(tr("Prepare this build before switching. Your profile stays on its current build."));
+                    let target = tag.clone();
+                    let b = button("alt-versions-prepare", tr("Prepare"));
+                    cache_action = Some(if idle {
+                        b.on_click(cx.listener(move |this, _, _, cx| {
+                            this.prepare_version(target.clone(), backend::MinecraftFrom::Install);
+                            cx.notify();
+                        }))
+                    } else {
+                        b.opacity(0.45).tab_stop(false)
+                    });
+                }
+                Some(VersionAction::Download) => {
+                    if let Some(release) = self.release_to_install(tag) {
+                        plan = Some(tr(
+                            "Download this build first. Your profile stays on its current build.",
+                        ));
+                        let b = button("alt-versions-download", tr("Download"));
+                        cache_action = Some(if idle {
+                            b.on_click(cx.listener(move |this, _, _, cx| {
+                                this.download_for_switch(&release);
+                                cx.notify();
+                            }))
+                        } else {
+                            b.opacity(0.45).tab_stop(false)
+                        });
+                    }
+                }
+                None => (),
             }
-            _ => keep.opacity(0.45).cursor_default().tab_stop(false),
+        }
+        let keep = match keep_tag {
+            Some(tag) => keep.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.begin_switch(tag.clone());
+                cx.notify();
+            })),
+            None => keep.opacity(0.45).cursor_default().tab_stop(false),
         };
-        // Said once, and only when it stops a choice: with the check that lifts it.
-        let native = has_native.then(|| {
-            div()
-                .flex()
-                .flex_col()
-                .child(muted(tr(
-                    "Your native mods are made for the build you play. Another build needs them checked first.",
-                ))
-                .text_size(px(tokens::SMALL)))
-                .children(self.native_check_block(cx))
-        });
-        // Up and Down move through the builds, from the field or from a row: the list scrolls to
-        // the row and the row takes the keyboard.
-        let (all, playing, blocked_by_native) = (Rc::clone(&list), plays.clone(), has_native);
+        let all = Rc::clone(&list);
         let body = div()
             .flex()
             .flex_col()
@@ -426,9 +523,7 @@ impl Launcher {
                     .iter()
                     .find(|(_, h)| h.is_focused(window))
                     .map(|(n, _)| *n);
-                let usable =
-                    |b: &Build| !blocked_by_native || playing.as_deref() == Some(b.tag.as_str());
-                if let Some(to) = next_row(&all, from, down, usable) {
+                if let Some(to) = next_row(&all, from, down, |_| true) {
                     v.scroll.scroll_to_item(to, gpui::ScrollStrategy::Nearest);
                     let row = v
                         .rows
@@ -440,16 +535,8 @@ impl Launcher {
                 cx.stop_propagation();
                 cx.notify();
             }))
-            .child(title(
-                if sheet {
-                    tr("Choose a version")
-                } else {
-                    tr("Versions")
-                }
-                .into(),
-            ))
+            .child(title(tr("Choose a version").into()))
             .child(field)
-            .children(native)
             .child(
                 div()
                     .rounded(crate::tokens::r(crate::tokens::R_CARD))
@@ -459,6 +546,8 @@ impl Launcher {
                     .child(rows)
                     .children(nothing),
             )
+            .children(plan.map(muted))
+            .children(self.prepare_error.as_ref().map(|e| muted(e.clone())))
             .children(self.ui.sheets.error.clone().map(|e| {
                 div()
                     .text_color(rgb(palette().danger))
@@ -470,8 +559,9 @@ impl Launcher {
                     .flex()
                     .justify_end()
                     .gap(px(8.))
-                    .when(sheet, |d| d.child(cancel))
-                    .child(keep),
+                    .children(sheet.then_some(cancel))
+                    .children(cache_action)
+                    .children(sheet.then_some(keep)),
             );
         body
     }
@@ -480,6 +570,23 @@ impl Launcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_current_unready_build_can_be_downloaded_or_prepared_but_never_kept() {
+        assert_eq!(
+            version_action(false, || unreachable!(), false),
+            Some(VersionAction::Download)
+        );
+        assert_eq!(
+            version_action(true, || false, false),
+            Some(VersionAction::Prepare)
+        );
+        assert_eq!(version_action(true, || true, false), None);
+        assert_eq!(
+            version_action(true, || true, true),
+            Some(VersionAction::Keep)
+        );
+    }
 
     fn release(tag: &str, date: &str, nightly: bool) -> Release {
         Release {

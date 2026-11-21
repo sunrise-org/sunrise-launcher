@@ -82,7 +82,6 @@ impl Launcher {
             // The installer the last Update started could not put the new launcher in place.
             self_update: sunrise_launcher::update_handoff::take_failure()
                 .map_or(SelfUpdate::Idle, |e| SelfUpdate::Stuck(Some(e))),
-            update_install: None,
             instance_install: None,
             install_next: None,
             bar: (0., 0.),
@@ -442,17 +441,11 @@ impl Launcher {
         }
     }
 
-    /// Installs the Sunrise version the last check found, keeping the player's choice of
-    /// version unless they were on the newest one.
+    /// Automatic game downloads only warm the cache. The profile does not move until Switch.
     pub(crate) fn install_update(&mut self) {
-        let Some(release) = self.updates.sunrise.clone() else {
-            return;
-        };
-        if self.installing.is_some() || self.removing.contains(&release.tag) {
-            return;
+        if let Some(release) = self.updates.sunrise.clone() {
+            self.download_for_switch(&release);
         }
-        self.update_install = Some(release.tag.clone());
-        self.install(&release);
     }
 
     /// What installed native build `version` was made from (`native_status::Build`), read once.

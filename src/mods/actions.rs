@@ -14,6 +14,54 @@ pub(super) enum Action {
     Update(Vec<Included>),
 }
 
+use sunrise_launcher::{
+    managed_play::{HeldReason, Profile},
+    profile_txn::Identity,
+};
+
+pub(super) enum EnableNotice {
+    One(String),
+    Bulk {
+        held: Vec<(String, HeldReason)>,
+        blocked: Vec<(String, String)>,
+    },
+}
+
+pub(super) struct EnabledMods {
+    count: usize,
+    skipped: Vec<(String, HeldReason)>,
+}
+
+fn dispatch_enable(
+    home: PathBuf,
+    identity: Identity,
+    ids: Vec<String>,
+    grant_native: bool,
+    reply: impl FnOnce(Result<EnabledMods, String>, Option<u64>) + Send + 'static,
+) {
+    std::thread::spawn(move || {
+        let mut allowed_at = None;
+        let result = (|| {
+            let profile = Profile::open_for(&home, None, Some(identity)).map_err(String::from)?;
+            if grant_native {
+                let mut settings = backend::Settings::default();
+                settings.allow_native_mods()?;
+                allowed_at = settings.native_mods_allowed_at;
+            }
+            let ids: Vec<_> = ids.iter().map(String::as_str).collect();
+            let skipped = profile.enable_unheld(&ids)?;
+            Ok(EnabledMods {
+                count: ids.len() - skipped.len(),
+                skipped: skipped
+                    .into_iter()
+                    .map(|(id, reason)| (id.into(), reason))
+                    .collect(),
+            })
+        })();
+        reply(result, allowed_at);
+    });
+}
+
 impl Launcher {
     /// Opens a confirmation, remembering which folder it was reviewed for.
     fn confirm(&mut self, confirm: Confirm) {
@@ -63,6 +111,16 @@ impl Launcher {
             .and_then(|s| s.error.as_ref())
         {
             Some(problem.summary().into())
+        } else if self
+            .ui
+            .mods
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| !snapshot.ready())
+        {
+            Some(
+                tr("Installed mods aren't settled yet. Wait or retry before changing them.").into(),
+            )
         } else if self.mutating() {
             Some(tr("Wait for the current operation to finish.").to_string())
         } else {
@@ -94,71 +152,181 @@ impl Launcher {
             self.run(Action::TurnOff(vec![(row.id.clone(), row.title.clone())]));
         } else if let Some(entry) = &row.entry {
             self.mods.message = None;
-            self.mods_switch(entry);
+            self.enable_registry_mod(entry, self.mods_home(), None);
             if let Some(Err(e)) = self.mods.message.take() {
                 self.ui.mods.notice = Some(Err(e));
             }
-        } else if let Some(snapshot) = &mut self.ui.mods.snapshot {
-            let Some(_lock) = sunrise_launcher::browser::try_lock_home(&snapshot.home) else {
-                self.ui.mods.notice =
-                    Some(Err(tr("Wait for the current operation to finish.").into()));
-                return;
-            };
-            self.ui.mods.notice = match mod_list::set_enabled(&snapshot.home, &row.id, true) {
-                Ok(()) => {
-                    snapshot.key.clear();
-                    None
-                }
-                Err(e) => Some(Err(e)),
-            };
+        } else if let Some(snapshot) = &self.ui.mods.snapshot {
+            self.enable_one_in(snapshot.home.clone(), row.id.clone(), row.title.clone());
         }
     }
 
-    /// Turn the chosen registry mods on in one rewrite of the list. Local and GitHub mods
-    /// have individual switches only: they aren't selectable for registry bulk actions.
-    /// A mod that can't be turned on stays as it is and its row says why.
+    pub(crate) fn enable_one_in(&mut self, home: PathBuf, id: String, title: String) {
+        self.queue_enable(home, vec![id], EnableNotice::One(title), None);
+    }
+
+    pub(crate) fn enable_native_in(
+        &mut self,
+        home: PathBuf,
+        identity: Identity,
+        id: String,
+        title: String,
+    ) {
+        self.queue_enable(home, vec![id], EnableNotice::One(title), Some(identity));
+    }
+
+    /// Turn the chosen registry mods on in one admitted rewrite. An already-known hold
+    /// stays out of the plan; the worker also checks live holds before touching the file.
     pub(super) fn bulk_on(&mut self) {
         if !self.guard() {
             return;
         }
         let rows = self.rows();
-        let chosen: Vec<&Row> = rows
+        let Some(snapshot) = &self.ui.mods.snapshot else {
+            return;
+        };
+        let mut held = Vec::new();
+        let mut candidates = Vec::new();
+        for row in rows
             .iter()
             .filter(|r| r.local.is_none() && self.ui.mods.selection.contains(&r.id))
+        {
+            if let Some(reason) = snapshot.switch_held.get(&row.id) {
+                held.push((row.id.clone(), reason.clone()));
+            } else {
+                candidates.push(row);
+            }
+        }
+        let (go, blocked) =
+            model::turn_on_plan(&candidates, self.settings.native_mods_allowed_at.is_some());
+        let blocked = blocked
+            .into_iter()
+            .map(|(row, reason)| (row.id.clone(), reason))
             .collect();
-        let (go, held) =
-            model::turn_on_plan(&chosen, self.settings.native_mods_allowed_at.is_some());
-        let m = &mut self.ui.mods;
-        m.errors = held
-            .iter()
-            .map(|(r, why)| (r.id.clone(), why.clone()))
-            .collect();
-        let Some(home) = m.snapshot.as_ref().map(|s| s.home.clone()) else {
-            return;
-        };
-        if go.is_empty() {
-            m.notice = Some(Err(tr("Nothing selected can be turned on yet.").to_string()));
+        let ids = go.into_iter().map(|row| row.id.clone()).collect();
+        self.queue_enable(
+            snapshot.home.clone(),
+            ids,
+            EnableNotice::Bulk { held, blocked },
+            None,
+        );
+    }
+
+    fn queue_enable(
+        &mut self,
+        home: PathBuf,
+        ids: Vec<String>,
+        notice: EnableNotice,
+        approved: Option<Identity>,
+    ) {
+        if !self.guard() {
             return;
         }
-        let Some(_lock) = sunrise_launcher::browser::try_lock_home(&home) else {
-            m.notice = Some(Err(
-                tr("Wait for the current operation to finish.").to_string()
-            ));
+        if home != self.mods_home() {
+            self.ui.mods.notice = Some(Err(tr("The selected profile changed. Try again.").into()));
             return;
+        }
+        self.ui.mods.errors.clear();
+        self.ui.mods.notice = None;
+        if ids.is_empty() {
+            self.enabled_mods(
+                &home,
+                notice,
+                Ok(EnabledMods {
+                    count: 0,
+                    skipped: Vec::new(),
+                }),
+                None,
+            );
+            return;
+        }
+        let identity = match approved.map_or_else(|| Identity::of(&home), Ok) {
+            Ok(identity) => identity,
+            Err(error) => {
+                self.ui.mods.notice = Some(Err(error));
+                return;
+            }
         };
-        let ids: Vec<&str> = go.iter().map(|r| r.id.as_str()).collect();
-        let count = ids.len().to_string();
-        m.notice = Some(match mod_list::set_all_enabled(&home, &ids, true) {
-            Ok(()) if held.is_empty() => Ok(trf(
-                "Turned on {count} mods. The game reads this when it starts.",
-                &[("count", &count)],
-            )),
-            Ok(()) => Err(trf(
-                "Turned on {done}. {held} stayed off: see their rows.",
-                &[("done", &count), ("held", &held.len().to_string())],
-            )),
-            Err(e) => Err(e),
-        });
+        self.ui.mods.busy = Some((tr("Turning on mods…").into(), 0.));
+        let tx = self.ui.mods.tx.clone();
+        dispatch_enable(
+            home.clone(),
+            identity,
+            ids,
+            approved.is_some(),
+            move |result, allowed_at| {
+                let _ = tx.send(Event::Enabled(home, notice, result, allowed_at));
+            },
+        );
+    }
+
+    pub(super) fn enabled_mods(
+        &mut self,
+        home: &Path,
+        notice: EnableNotice,
+        result: Result<EnabledMods, String>,
+        allowed_at: Option<u64>,
+    ) {
+        if allowed_at.is_some() {
+            self.settings.native_mods_allowed_at = allowed_at;
+        }
+        self.ui.mods.busy = None;
+        if self.mods_home() != home {
+            return;
+        }
+        let m = &mut self.ui.mods;
+        m.notice = Some(result.and_then(|result| match notice {
+            EnableNotice::One(title) => {
+                if let Some((_, reason)) = result.skipped.first() {
+                    Err(reason.label().into())
+                } else {
+                    Ok(trf(
+                        "{mod} is on. The game reads this when it starts.",
+                        &[("mod", &title)],
+                    ))
+                }
+            }
+            EnableNotice::Bulk { mut held, blocked } => {
+                held.extend(result.skipped);
+                let unknown = held.iter().filter(|(_, reason)| reason.unproved()).count();
+                let needs_update = held.len() - unknown;
+                m.errors.extend(
+                    held.into_iter()
+                        .map(|(id, reason)| (id, reason.label().into())),
+                );
+                let other = blocked.len();
+                m.errors.extend(blocked);
+                if needs_update == 0 && unknown == 0 && other == 0 {
+                    return Ok(trf(
+                        "Turned on {count} mods. The game reads this when it starts.",
+                        &[("count", &result.count.to_string())],
+                    ));
+                }
+                let mut lines = vec![trf(
+                    "Turned on {count}.",
+                    &[("count", &result.count.to_string())],
+                )];
+                if needs_update != 0 {
+                    lines.push(trf(
+                        "Needs an update from its author: {count}.",
+                        &[("count", &needs_update.to_string())],
+                    ));
+                }
+                if unknown != 0 {
+                    lines.push(trf(
+                        "Fit could not be verified: {count}.",
+                        &[("count", &unknown.to_string())],
+                    ));
+                }
+                if other != 0 {
+                    lines.push(trf(
+                        "{count} stayed off: see their rows.",
+                        &[("count", &other.to_string())],
+                    ));
+                }
+                Err(lines.join(" "))
+            }
+        }));
     }
 
     pub(super) fn bulk_off(&mut self) {
@@ -221,6 +389,18 @@ impl Launcher {
         };
         if let Some(why) = refusal {
             self.ui.mods.notice = Some(Err(why.to_string()));
+            return;
+        }
+        if self
+            .ui
+            .mods
+            .snapshot
+            .as_ref()
+            .is_some_and(|snap| snap.rows.switch_held.contains_key(&row.id))
+        {
+            if let Err(error) = self.queue_registry_install(row.id.clone(), vec![row.id.clone()]) {
+                self.ui.mods.notice = Some(Err(error));
+            }
             return;
         }
         self.run(Action::Update(vec![Included {
@@ -380,6 +560,174 @@ mod tests {
     use super::*;
     use std::sync::mpsc::channel;
     use sunrise_launcher_nbt::{self as nbt, Limits, Tag};
+
+    #[test]
+    fn enabling_dispatch_returns_before_a_held_manifest_lock_releases() {
+        use std::time::Duration;
+        const ACTOR: &str = "ENABLE_UNHELD_LOCK_ACTOR";
+        let Some(root) = std::env::var_os(ACTOR).map(PathBuf::from) else {
+            let root = tempfile::tempdir().unwrap();
+            assert!(std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "mods::actions::tests::enabling_dispatch_returns_before_a_held_manifest_lock_releases"])
+                .env(ACTOR, root.path())
+                .env("SUNRISE_HOME", root.path().join("game"))
+                .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+                .status().unwrap().success());
+            return;
+        };
+        let home = root.join("game");
+        let manifest = sunrise_launcher::browser::lock_home(&home).unwrap();
+        let identity = Identity::of(&home).unwrap();
+        let (returned, wait_return) = channel();
+        let (done, wait_done) = channel();
+        let selected = home.clone();
+        std::thread::spawn(move || {
+            dispatch_enable(
+                selected,
+                identity,
+                vec!["light".into()],
+                false,
+                move |result, _| done.send(result).unwrap(),
+            );
+            returned.send(()).unwrap();
+        });
+        wait_return
+            .recv_timeout(Duration::from_secs(5))
+            .expect("don't block the caller on profile or manifest admission");
+        assert!(matches!(
+            wait_done.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        assert!(!mod_list::is_enabled(&home, "light"));
+        drop(manifest);
+        let enabled = wait_done
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        assert_eq!(enabled.count, 1);
+        assert!(enabled.skipped.is_empty());
+        assert!(mod_list::is_enabled(&home, "light"));
+    }
+
+    #[test]
+    fn toggle_consent_returns_while_manifest_and_settings_are_locked() {
+        use crate::native_consent::{self, PendingConsent, Toggle};
+        use std::{fs, time::Duration};
+        use sunrise_launcher::browser::{installed::Entry, sunrise, Kind, SourceId};
+
+        const ACTOR: &str = "NATIVE_TOGGLE_LOCK_ACTOR";
+        let Some(root) = std::env::var_os(ACTOR).map(PathBuf::from) else {
+            let root = tempfile::tempdir().unwrap();
+            assert!(std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "mods::actions::tests::toggle_consent_returns_while_manifest_and_settings_are_locked"])
+                .env(ACTOR, root.path())
+                .env("SUNRISE_HOME", root.path().join("game"))
+                .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+                .status().unwrap().success());
+            return;
+        };
+        let home = root.join("game");
+        let manifest = sunrise_launcher::browser::lock_home(&home).unwrap();
+        let identity = Identity::of(&home).unwrap();
+        let data = root.join("launcher");
+        fs::create_dir_all(&data).unwrap();
+        let settings_path = data.join("settings.json");
+        let settings_before = br#"{"native_consent_revision":0,"unrelated":1}"#;
+        fs::write(&settings_path, settings_before).unwrap();
+        let settings_gate = fs::File::options()
+            .write(true)
+            .read(true)
+            .create_new(true)
+            .open(data.join(".settings.json.lock"))
+            .unwrap();
+        settings_gate.lock().unwrap();
+        let list = home.join("sunrise-mods.txt");
+        let list_before = b"mod.light:false\nmod.other:true\n";
+        fs::write(&list, list_before).unwrap();
+        let (returned, wait_return) = channel();
+        let (done, wait_done) = channel();
+        let selected = home.clone();
+        let caller = std::thread::spawn(move || {
+            let question = || {
+                Some(PendingConsent::Toggle(Toggle {
+                    entry: Entry {
+                        source: SourceId::Sunrise,
+                        project: "light".into(),
+                        slug: "light".into(),
+                        title: "Light".into(),
+                        kind: Kind::Mod,
+                        version: "1".into(),
+                        number: "1".into(),
+                        file: "sunrise-native-mods/light.smod".into(),
+                        checksum: String::new(),
+                        page: String::new(),
+                        dependency: false,
+                        verdict: None,
+                        install_hold: None,
+                    },
+                    home: selected.clone(),
+                    identity,
+                }))
+            };
+            let mut settings = backend::Settings::load();
+            for _ in ["Cancel", "Escape"] {
+                let mut pending = question();
+                assert!(native_consent::resolve(
+                    &mut pending,
+                    false,
+                    true,
+                    &mut settings,
+                    &selected
+                )
+                .unwrap()
+                .is_none());
+                assert!(pending.is_none());
+            }
+            let mut pending = question();
+            let action =
+                native_consent::resolve(&mut pending, true, true, &mut settings, &selected)
+                    .unwrap();
+            assert!(pending.is_none());
+            assert!(settings.native_mods_allowed_at.is_none());
+            let Some(PendingConsent::Toggle(toggle)) = action else {
+                panic!("Allow must dispatch this Toggle to the On worker");
+            };
+            let id = sunrise::mod_id(&toggle.entry).unwrap().to_owned();
+            dispatch_enable(
+                toggle.home,
+                toggle.identity,
+                vec![id],
+                true,
+                move |result, allowed_at| {
+                    done.send((result, allowed_at)).unwrap();
+                },
+            );
+            returned.send(()).unwrap();
+        });
+        wait_return
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the consent handler must not wait on either lock");
+        caller.join().unwrap();
+        assert_eq!(fs::read(&list).unwrap(), list_before);
+        assert_eq!(fs::read(&settings_path).unwrap(), settings_before);
+        drop(manifest);
+        assert!(matches!(
+            wait_done.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        assert!(!mod_list::is_enabled(&home, "light"));
+        drop(settings_gate);
+        let (result, allowed_at) = wait_done.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(result.unwrap().count, 1);
+        assert!(allowed_at.is_some());
+        let written: serde_json::Value =
+            serde_json::from_slice(&fs::read(settings_path).unwrap()).unwrap();
+        assert_eq!(written["native_mods_allowed_at"].as_u64(), allowed_at);
+        assert_eq!(written["native_consent_revision"], 1);
+        assert_eq!(written["unrelated"], 1);
+        assert!(mod_list::is_enabled(&home, "light"));
+        assert!(mod_list::is_enabled(&home, "other"));
+    }
 
     fn home_with_world(mod_id: &str) -> PathBuf {
         static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);

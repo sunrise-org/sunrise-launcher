@@ -266,7 +266,7 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
 #[test]
 fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() {
     use crate::profile_txn::Boundary;
-    use sunrise_launcher_smod::{manifest, mod_list};
+    use sunrise_launcher_smod::manifest;
     const CASE: &str = "managed_play::first::tests::receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts";
     const ID: [u8; 16] = [7; 16];
     let actor = |role| {
@@ -333,13 +333,33 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
     let build = backend::version_dir(BUILD);
     fs::write(build.join(".installed"), []).unwrap();
     fs::write(build.join(backend::CLIENT), b"local executable fixture").unwrap();
-    let kept = format!("{}/lantern.smod", mod_list::NATIVE_DIR);
-    fs::create_dir_all(home.join(mod_list::NATIVE_DIR)).unwrap();
-    let mod_path = home.join(&kept);
-    let package = manifest::Package::write_files(
-        &format!("id='lantern'\nname='Lantern'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n[native]\nsunrise='{}'\ngame='26.3'\n", manifest::API, "a".repeat(40)),
-        &[("Cargo.toml", b"[package]\nname='lantern'\nversion='1.0.0'"), ("src/lib.rs", b"")],
-    ).unwrap();
+    let root = if cut == "marker-after" {
+        HeldRoot::Content
+    } else {
+        HeldRoot::Native
+    };
+    fs::create_dir_all(home.join(root.directory())).unwrap();
+    let mod_path = home.join(root.directory()).join("lantern.smod");
+    let spec = format!(
+        "id='lantern'\nname='Lantern'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n",
+        manifest::API
+    );
+    let package = match root {
+        HeldRoot::Native => manifest::Package::write_files(
+            &format!(
+                "{spec}[native]\nsunrise='{}'\ngame='26.3'\n",
+                "a".repeat(40)
+            ),
+            &[
+                ("Cargo.toml", b"[package]\nname='lantern'\nversion='1.0.0'"),
+                ("src/lib.rs", b""),
+            ],
+        ),
+        HeldRoot::Content => {
+            manifest::Package::write_files(&spec, &[("data/lantern/fixture.json", b"{}")])
+        }
+    }
+    .unwrap();
     fs::write(&mod_path, &package).unwrap();
     let mut profile = Profile::open(&home, None).unwrap();
     let mut shown = profile
@@ -347,12 +367,13 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
         .unwrap()
         .commit(BUILD, &native_mods::Cancellation::default())
         .unwrap();
-    use crate::managed_play::{Held, HeldReason, HeldSource, Receipt};
+    use crate::managed_play::{Held, HeldReason, HeldRoot, HeldSource, Receipt};
     use sha2::{Digest, Sha256};
     let hold = Held::new(
         "lantern".into(),
+        "Lanterns".into(),
         Sha256::digest(&package).into(),
-        kept,
+        (root, "lantern.smod".into()),
         HeldSource::Local {
             version: "1.0.0".into(),
         },
@@ -362,25 +383,32 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
         },
     )
     .unwrap();
-    assert!(Held::new(
-        hold.id().into(),
-        *hold.digest(),
-        "sunrise-native-mods/CON.smod".into(),
-        hold.source().clone(),
-        hold.enabled_before(),
-        hold.reason().clone(),
-    )
-    .is_err());
+    assert_eq!(home.join(hold.path()), mod_path);
+    assert_eq!(hold.root(), root);
+    for root in [HeldRoot::Native, HeldRoot::Content] {
+        assert!(Held::new(
+            hold.id().into(),
+            hold.title().into(),
+            *hold.digest(),
+            (root, "CON.smod".into()),
+            hold.source().clone(),
+            hold.enabled_before(),
+            hold.reason().clone(),
+        )
+        .is_err());
+    }
     shown.receipts = vec![
         Receipt {
             id: ID,
             waiting_for_update: vec![hold.clone()],
+            report: None,
             removed: Vec::new(),
             acknowledged: false,
         },
         Receipt {
             id: [8; 16],
             waiting_for_update: Vec::new(),
+            report: None,
             removed: vec![("another".into(), "Another".into())],
             acknowledged: false,
         },
@@ -390,15 +418,10 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
     let seed: serde_json::Value = serde_json::from_slice(&before).unwrap();
     for (field, invalid) in [
         ("digest", serde_json::json!(vec![0; 16])),
-        (
-            "path",
-            serde_json::json!("sunrise-native-mods/../lantern.smod"),
-        ),
-        ("path", serde_json::json!("sunrise-native-mods/CON.smod")),
-        (
-            "path",
-            serde_json::json!("sunrise-native-mods/LANTER~1.smod"),
-        ),
+        ("root", serde_json::json!("another_root")),
+        ("leaf", serde_json::json!("../lantern.smod")),
+        ("leaf", serde_json::json!("CON.smod")),
+        ("leaf", serde_json::json!("LANTER~1.smod")),
         (
             "source",
             serde_json::json!({"kind":"other", "version":"1.0.0"}),
@@ -408,7 +431,8 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
             serde_json::json!({"kind":"no_fit", "build":"../somewhere"}),
         ),
         ("enabled_before", serde_json::json!("true")),
-        ("title", serde_json::json!("not authority")),
+        ("title", serde_json::json!("\n")),
+        ("unexpected", serde_json::json!("not authority")),
     ] {
         let mut invalid_pointer = seed.clone();
         invalid_pointer["receipts"][0]["waiting_for_update"][0][field] = invalid;
@@ -423,8 +447,12 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
     let second = &mut ambiguous["receipts"][1]["waiting_for_update"][0];
     second["id"] = serde_json::json!("different");
     assert!(Active::parse(&serde_json::to_vec(&ambiguous).unwrap()).is_err());
-    ambiguous["receipts"][1]["waiting_for_update"][0]["path"] =
-        serde_json::json!("sunrise-native-mods/Lantern.smod");
+    let second = &mut ambiguous["receipts"][1]["waiting_for_update"][0];
+    second["root"] = serde_json::json!(match root {
+        HeldRoot::Native => HeldRoot::Content,
+        HeldRoot::Content => HeldRoot::Native,
+    });
+    second["leaf"] = serde_json::json!("Lantern.smod");
     assert!(Active::parse(&serde_json::to_vec(&ambiguous).unwrap()).is_err());
     before.push(b'\n');
     fs::write(&pointer, &before).unwrap();
@@ -461,6 +489,199 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
     assert!(!profile.acknowledge_receipt(&shown, ID).unwrap());
     assert_eq!(fs::read(mod_path).unwrap(), package);
     assert_eq!(profile.active().unwrap(), Some(after));
+}
+
+#[test]
+fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
+    use crate::managed_play::{
+        build_changes_hint, digest_file, display_active, read_build_changes, Held, HeldReason,
+        HeldRoot, HeldSource, Receipt, ReceiptHint, ReceiptReport,
+    };
+    use crate::profile_txn::Boundary;
+    use std::collections::BTreeSet;
+    use sunrise_launcher_smod::{manifest, mod_list, Package};
+    const CASE: &str = "managed_play::first::tests::home_read_recovers_the_first_switch_receipt_after_a_killed_commit";
+    const ID: [u8; 16] = [6; 16];
+    let actor = |role| {
+        let mut actor = Command::new(std::env::current_exe().unwrap());
+        actor
+            .args(["--exact", CASE, "--nocapture"])
+            .env("SWITCH_RECEIPT_ACTOR", role);
+        actor
+    };
+    let Ok(role) = std::env::var("SWITCH_RECEIPT_ACTOR") else {
+        let scratch = tempfile::tempdir().unwrap();
+        let root = backend::plain(scratch.path().canonicalize().unwrap());
+        assert!(actor("scenario")
+            .env("SUNRISE_HOME", root.join("game"))
+            .env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .status()
+            .unwrap()
+            .success());
+        return;
+    };
+    let home = backend::game_home();
+    let ready = home.join("marker-ready");
+    let relative = Path::new(mod_list::DIR).join("fireflies.smod");
+    let package = |id, name, version| {
+        let manifest = format!(
+            "id='{id}'\nname='{name}'\nversion='{version}'\napi='{}'\ncapabilities=['registries']",
+            manifest::API
+        );
+        Package::write_files(&manifest, &[]).unwrap()
+    };
+    if role == "publish" {
+        let mut profile = Profile::open(&home, None).unwrap();
+        let _references = ReferencePublication::begin(&home).unwrap();
+        let stage = profile
+            .0
+            .reserve(Intent::Switch, BTreeSet::from([BUILD.into()]))
+            .unwrap();
+        let mut pointer = Active::capture(
+            BUILD,
+            BUILD,
+            &home,
+            inputs(&home, None).unwrap(),
+            Generation::First {
+                profile: [4; 16],
+                resources: Resources::capture(BUILD, &stage).unwrap(),
+                variant: None,
+            },
+        )
+        .unwrap();
+        let holds = vec![Held::new(
+            "fireflies".into(),
+            "Fireflies".into(),
+            digest_file(&home.join(&relative)).unwrap().unwrap(),
+            (HeldRoot::Content, "fireflies.smod".into()),
+            HeldSource::Registry {
+                project: "fireflies".into(),
+                version: "1.0".into(),
+            },
+            true,
+            HeldReason::NoFit {
+                build: BUILD.into(),
+            },
+        )
+        .unwrap()];
+        pointer.receipts.push(Receipt {
+            id: ID,
+            report: Some(ReceiptReport::new(Some(BUILD.into()), &holds)),
+            waiting_for_update: holds,
+            removed: vec![("Lamp".into(), "Taken down".into())],
+            acknowledged: false,
+        });
+        stage
+            .seal(serde_json::to_vec(&pointer).unwrap(), &[])
+            .unwrap()
+            .publish_observed(
+                || Ok(()),
+                |_, cut| {
+                    if cut == Boundary::DurableMarker {
+                        fs::write(&ready, []).unwrap();
+                        await_fixture(|| false);
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap();
+        panic!("publisher did not stop at the durable marker");
+    }
+    if role == "restart" {
+        assert_eq!(
+            build_changes_hint(&home).unwrap(),
+            Some(ReceiptHint::Recovery)
+        );
+        assert!(
+            display_active(&home).unwrap().is_none(),
+            "the repaint snapshot still sees the pre-Switch pointer"
+        );
+        let (_, active) = read_build_changes(&home).unwrap().unwrap();
+        let receipt = active.pending_changes().unwrap();
+        assert_eq!(receipt.id, ID);
+        assert_eq!(receipt.base(), Some(BUILD));
+        assert_eq!(receipt.removed[0].0, "Lamp");
+        assert_eq!(
+            receipt.held().collect::<Vec<_>>(),
+            [("Fireflies", true, false)]
+        );
+        assert!(!profile_txn::recovery_pending(&home).unwrap());
+
+        // Exercise the real same-base publication after the caller has checked a replacement.
+        // No test override is granted registry authority by this fixture.
+        let mut profile = Profile::open(&home, None).unwrap();
+        assert_eq!(
+            profile.enable_unheld(&["fireflies", "moths"]).unwrap(),
+            [(
+                "fireflies",
+                HeldReason::NoFit {
+                    build: BUILD.into()
+                }
+            )]
+        );
+        assert!(!crate::browser::mod_list::is_enabled(&home, "fireflies"));
+        assert!(crate::browser::mod_list::is_enabled(&home, "moths"));
+        let edit = profile
+            .begin_edit(|| panic!("the build is already committed"), |_| {}, &|_| {})
+            .unwrap();
+        let candidate = edit.candidate().unwrap();
+        let replacement = package("fireflies", "Fireflies", "2.0");
+        fs::write(candidate.path().join(&relative), &replacement).unwrap();
+        crate::browser::mod_list::set_enabled(candidate.path(), "fireflies", true).unwrap();
+        let cancellation = native_mods::Cancellation::default();
+        let proof = edit
+            .prove(
+                candidate.path(),
+                native_mods::Profile::Optimized,
+                &cancellation,
+                |_| {},
+                None,
+            )
+            .unwrap();
+        let updated = edit
+            .publish_install(
+                proof,
+                &cancellation,
+                &BTreeSet::from(["fireflies".into()]),
+                || Ok(()),
+            )
+            .unwrap();
+        assert_eq!(updated.holds().count(), 0);
+        assert_eq!(fs::read(home.join(relative)).unwrap(), replacement);
+        let original_report = updated.pending_changes().unwrap();
+        assert_eq!(original_report.id, ID);
+        assert_eq!(original_report.base(), Some(BUILD));
+        assert_eq!(
+            original_report.held().collect::<Vec<_>>(),
+            [("Fireflies", true, false)]
+        );
+        assert_eq!(original_report.removed, receipt.removed);
+        return;
+    }
+    assert_eq!(role, "scenario");
+    fs::create_dir_all(home.join(mod_list::DIR)).unwrap();
+    fs::write(
+        home.join(relative),
+        package("fireflies", "Fireflies", "1.0"),
+    )
+    .unwrap();
+    fs::write(
+        home.join(mod_list::DIR).join("moths.smod"),
+        package("moths", "Moths", "1.0"),
+    )
+    .unwrap();
+    let resources = backend::resources(BUILD);
+    fs::create_dir_all(&resources).unwrap();
+    fs::write(resources.join("sunrise-resources.json"), b"{}").unwrap();
+    let build = backend::version_dir(BUILD);
+    fs::write(build.join(".installed"), []).unwrap();
+    fs::write(build.join(backend::CLIENT), b"local executable fixture").unwrap();
+    let mut writer = Running(actor("publish").spawn().unwrap());
+    await_fixture(|| ready.is_file());
+    writer.0.kill().unwrap();
+    assert!(!writer.0.wait().unwrap().success());
+    assert!(actor("restart").status().unwrap().success());
 }
 
 #[cfg(unix)]

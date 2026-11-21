@@ -346,8 +346,14 @@ impl Launcher {
             return;
         };
         let target = self.profile_target(&instance);
-        let Some(tag) = target.filter(|tag| self.installed.contains(tag)).cloned() else {
-            let release = target.and_then(|tag| self.release_to_install(tag));
+        let Some(tag) = target
+            .as_ref()
+            .filter(|tag| self.installed.contains(tag))
+            .cloned()
+        else {
+            let release = target
+                .as_deref()
+                .and_then(|tag| self.release_to_install(tag));
             if let Some(release) = release {
                 self.ui.after_install = Some((intent, release.tag.clone()));
                 self.install(&release);

@@ -208,14 +208,7 @@ fn cli_first_play_uses_the_relay_and_keeps_the_same_build_for_an_already_open_mc
     rpc(1, "initialize", json!({}));
     let mut cli = Running(
         fixture
-            .launcher(&[
-                "play",
-                "--version",
-                BUILD,
-                "--world",
-                "Lantern",
-                "--creative",
-            ])
+            .launcher(&["play", "--world", "Lantern", "--creative"])
             .spawn()
             .unwrap(),
     );
@@ -252,7 +245,7 @@ fn cli_first_play_uses_the_relay_and_keeps_the_same_build_for_an_already_open_mc
         .output()
         .unwrap();
     assert!(!wrong.status.success());
-    assert!(String::from_utf8_lossy(&wrong.stderr).contains("not developer-other"));
+    assert!(String::from_utf8_lossy(&wrong.stderr).contains("unexpected argument '--version'"));
     assert_eq!(fixture.pointer(), committed);
 
     // Supply the listening socket only once the actual fixture process has put its
@@ -444,7 +437,7 @@ fn cli_persists_its_first_build_before_the_registry_replies() {
 
     let mut interrupted = Running(
         fixture
-            .launcher(&["play", "--version", BUILD])
+            .launcher(&["play"])
             .env("SUNRISE_MOD_INDEX", &pipe)
             .spawn()
             .unwrap(),

@@ -6,8 +6,8 @@ use super::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use sunrise_launcher::browser::{self, installed, mod_list, sunrise};
-use sunrise_launcher::native_status;
+use sunrise_launcher::browser::{installed, sunrise};
+use sunrise_launcher::{native_status, profile_txn::Identity};
 
 pub(crate) mod install;
 
@@ -181,43 +181,47 @@ impl Launcher {
         self.start_registry_queue() || changed
     }
 
-    /// Turns a Sunrise mod the browser installed on or off, as the game's Options > Mods does.
-    pub(super) fn mods_switch(&mut self, e: &installed::Entry) {
-        let home = self.mods.home();
-        // An update holds the folder: the window doesn't wait for it.
-        let Some(_lock) = browser::try_lock_home(&home) else {
-            self.mods.message = Some(Err(tr("Wait for the current operation to finish.").into()));
-            return;
-        };
+    /// Turns a Sunrise mod on after the worker admits its profile. A consent answer
+    /// can only act on the profile (and incarnation) that asked the question.
+    pub(super) fn enable_registry_mod(
+        &mut self,
+        e: &installed::Entry,
+        home: PathBuf,
+        approved: Option<Identity>,
+    ) {
         let Some(id) = sunrise::mod_id(e) else {
             return;
         };
-        let on = !mod_list::is_enabled(&home, id);
-        if on
-            && native_status::is_native_file(&e.file)
-            && self.settings.native_mods_allowed_at.is_none()
-        {
-            self.pending_consent = Some(PendingConsent::Toggle(e.clone()));
-            return;
-        }
         let index = sunrise::fetched_index();
         let title = index
             .as_ref()
             .and_then(|index| index.project(&e.project))
             .map_or(id, |project| &project.name);
-        let revoked = index.as_ref().and_then(|index| {
-            let hash = e.checksum.trim_start_matches("SHA-256:");
-            index.revoked(&e.project, hash)
-        });
-        self.mods.message = Some(match revoked.filter(|_| on) {
-            Some(revoked) => Err(format!("{title} was taken down: {}", revoked.reason)),
-            None => mod_list::set_enabled(&home, id, on).map(|()| {
-                format!(
-                    "{title} is {}. The game reads this when it starts.",
-                    if on { "on" } else { "off" }
-                )
-            }),
-        });
+        if let Some(revoked) = index
+            .as_ref()
+            .and_then(|index| index.revoked(&e.project, e.checksum.trim_start_matches("SHA-256:")))
+        {
+            self.mods.message = Some(Err(format!("{title} was taken down: {}", revoked.reason)));
+            return;
+        }
+        if let Some(identity) = approved {
+            self.enable_native_in(home, identity, id.into(), title.into());
+        } else if native_status::is_native_file(&e.file)
+            && self.settings.native_mods_allowed_at.is_none()
+        {
+            match Identity::of(&home) {
+                Ok(identity) => {
+                    self.pending_consent = Some(PendingConsent::Toggle(native_consent::Toggle {
+                        entry: e.clone(),
+                        home,
+                        identity,
+                    }));
+                }
+                Err(error) => self.mods.message = Some(Err(error)),
+            }
+        } else {
+            self.enable_one_in(home, id.into(), title.into());
+        }
     }
 }
 

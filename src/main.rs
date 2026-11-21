@@ -120,7 +120,6 @@ use theme::Theme;
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
     Play,
-    Versions,
     /// Mods, resource packs and modpacks (imported ones and the browser's).
     Mods,
     Servers,
@@ -139,11 +138,10 @@ impl Page {
 
     /// Every page, with its name and icon: the top bar shows all but Settings, which has its
     /// own button.
-    const ALL: [(Page, &'static str, &'static str); 5] = [
+    const ALL: [(Page, &'static str, &'static str); 4] = [
         (Page::Play, "Home", "home"),
         (Page::Mods, "Mods", "package"),
         (Page::Servers, "Servers", "server"),
-        (Page::Versions, "Versions", "archive"),
         (Page::Settings, "Settings", "sliders"),
     ];
 }
@@ -215,7 +213,6 @@ struct Launcher {
     self_update: SelfUpdate,
     /// The Sunrise version being installed as an update: whether it becomes the selected one is
     /// judged when it finishes.
-    update_install: Option<String>,
     /// The Sunrise version being installed because an instance was made or saved to play it: it
     /// becomes the launcher's version only when the launcher has none.
     instance_install: Option<String>,

@@ -1,21 +1,20 @@
 //! The three sheets: Resolve (a held update), Build consent and
 //! the game-build chooser. Everything here reads or acts through the existing workers:
 //!
-//! * **Resolve** reads [`native_mods::update_check`] (or the build's worlds stop, `native_worlds`)
-//!   and acts with [`Launcher::build_native_on`]; Stay writes nothing.
+//! * **Resolve** handles the same-base native build’s world stop; Stay writes nothing.
 //! * **Consent** is the real `pending_consent` and `native_consent::resolve`; the registry-crate
 //!   permission is the worker's own mid-build question (`Msg::NativeRegistryConsent`).
-//! * **Build** edits the selected instance's pin and channel with `instances::edit`.
+//! * **Build** edits the channel preference. Switch is the only route that changes a committed base.
 use super::*;
 use crate::frame::button;
 use crate::frame::Reach as _;
 use crate::paint::palette;
 use gpui::{rgb, MouseButton, MouseDownEvent};
 use native_consent::PendingConsent;
-use std::cell::RefCell;
 use std::sync::mpsc::Sender;
-use sunrise_launcher::native_mods::{Consent, UpdateCheck};
+use sunrise_launcher::native_mods::Consent;
 
+mod switching;
 mod versions;
 
 /// More Tab stops than any page has: how far [`Launcher::modal`] looks for the next one inside
@@ -34,6 +33,8 @@ pub(crate) enum Sheet {
     Worlds,
     /// One build to keep, picked from all of them (`versions`).
     Versions,
+    Switching,
+    BuildChanges,
     /// Who plays, under the account chip (`account_chip`).
     AccountMenu,
     Search,
@@ -53,16 +54,8 @@ pub(crate) enum WayOut {
     Newest(instances::Channel),
 }
 
-/// The update check for one instance and newer game, while it runs (`None`) and once it ended.
-struct Memo {
-    key: String,
-    result: Option<Result<UpdateCheck, String>>,
-}
-
 #[derive(Default)]
 pub(crate) struct SheetsState {
-    /// The explicit compatibility check's state; only a click on the Build sheet starts one.
-    update: RefCell<Option<Memo>>,
     /// Keyboard focus of the layer over the page, so keys never reach the page under it.
     focus: Option<FocusHandle>,
     /// What had the keyboard when that layer opened: it gets it back when the layer closes.
@@ -81,23 +74,7 @@ pub(crate) struct SheetsState {
     notice: String,
     way_out: Option<WayOut>,
     versions: versions::State,
-}
-
-/// The explicit native-mod check against the newer installed build.
-#[derive(Clone, Debug)]
-pub(crate) enum CheckState {
-    /// No newer build is installed, or no native mod is turned on: nothing to check.
-    None,
-    /// Native mods are not allowed yet, so nothing can be checked.
-    NeedsPermission(String),
-    Idle(String),
-    Pending(String),
-    Failed(String, String),
-    Done(UpdateCheck),
-}
-
-pub(super) fn check_key(home: &std::path::Path, to: &str) -> String {
-    format!("{}{to}", native_status::fingerprint(home, Some(to)))
+    pub(super) switching: switching::State,
 }
 
 /// A held update as the bottom bar and the Resolve sheet read it.
@@ -133,25 +110,6 @@ pub(crate) fn build_name(tag: &str) -> String {
     sunrise_launcher::nightly::date_of(tag)
         .map(sunrise_launcher::nightly::day)
         .unwrap_or_else(|| tag.to_owned())
-}
-
-impl Held {
-    fn of_check(check: UpdateCheck, plays: &str) -> Option<Self> {
-        // `update_summary` is one line when every mod fits and a head plus one line per mod that
-        // does not otherwise; a refusal or a world at stake is a hold as well. A fit is an offer
-        // (the old Build card's), not a hold.
-        let held = check.blocked || !check.worlds.is_empty() || check.summary.contains('\n');
-        held.then(|| Self {
-            to: build_name(&check.to),
-            plays: build_name(plays),
-            mods: check.off.iter().map(|(id, _)| id.clone()).collect(),
-            details: check.summary.lines().map(str::to_owned).collect(),
-            worlds: check.worlds,
-            blocked: check.blocked,
-            base: check.to,
-            stopped: false,
-        })
-    }
 }
 
 fn card() -> Div {
@@ -340,6 +298,9 @@ impl Launcher {
     /// built or changed by it: a pending permission is declined, a pending library question is
     /// answered no, a held update stays held.
     pub(crate) fn close_sheet(&mut self) {
+        if self.ui.sheet == Some(Sheet::Switching) {
+            self.cancel_switch();
+        }
         if let Some((_, reply)) = self.ui.sheets.registry.take() {
             let _ = reply.send(false);
         } else if self.pending_consent.is_some() {
@@ -364,126 +325,24 @@ impl Launcher {
         open
     }
 
-    /// The update the bar should call held, if there is one. It only *reads*: a build that stopped
-    /// for worlds (`native_worlds`), or the result of the check the player started from the Build
-    /// sheet ([`Self::check_native`]). It never runs a check itself, because a check stages
-    /// files into the real build folder.
+    /// A same-base native build can still stop for worlds outside of Switch.
     pub(crate) fn held_update(&self) -> Option<Held> {
-        self.held_real(|| match self.check_state() {
-            CheckState::Done(check) => Some(check),
-            _ => None,
-        })
-    }
-
-    /// The launch status uses the background snapshot's check key, not a new mod scan.
-    pub(crate) fn held_for_launch(&self, check_key: Option<&str>) -> Option<Held> {
-        self.held_real(|| {
-            self.settings.native_mods_allowed_at?;
-            let memo = self.ui.sheets.update.borrow();
-            let memo = memo
-                .as_ref()
-                .filter(|memo| Some(memo.key.as_str()) == check_key)?;
-            memo.result.as_ref()?.as_ref().ok().cloned()
-        })
-    }
-
-    fn held_real(&self, checked: impl FnOnce() -> Option<UpdateCheck>) -> Option<Held> {
         let instance = self.selected_instance()?;
-        let plays = self.version_of(instance)?.clone();
-        if let Some(stake) = self
+        let plays = self.version_of(instance)?;
+        let stake = self
             .native_worlds
             .as_ref()
-            .filter(|_| self.native_for.as_deref() == Some(instance.id.as_str()))
-        {
-            return Some(Held {
-                to: build_name(&stake.base),
-                plays: build_name(&plays),
-                mods: stake.mods.clone(),
-                details: stake.text.split("\n\n").map(str::to_owned).collect(),
-                worlds: stake.worlds.clone(),
-                blocked: false,
-                base: stake.base.clone(),
-                stopped: true,
-            });
-        }
-        Held::of_check(checked()?, &plays)
-    }
-
-    /// Where the selected setup's native-mod check against the newer installed build stands.
-    pub(crate) fn check_state(&self) -> CheckState {
-        let Some(instance) = self.selected_instance() else {
-            return CheckState::None;
-        };
-        let Some(plays) = self.version_of(instance) else {
-            return CheckState::None;
-        };
-        let Some(to) = native_mods::update_for(plays, &self.installed) else {
-            return CheckState::None;
-        };
-        if native_status::enabled(&instance.home).is_empty() {
-            return CheckState::None;
-        }
-        if self.settings.native_mods_allowed_at.is_none() {
-            return CheckState::NeedsPermission(to);
-        }
-        let key = check_key(&instance.home, &to);
-        match self
-            .ui
-            .sheets
-            .update
-            .borrow()
-            .as_ref()
-            .filter(|memo| memo.key == key)
-        {
-            None => CheckState::Idle(to),
-            Some(Memo { result: None, .. }) => CheckState::Pending(to),
-            Some(Memo {
-                result: Some(Err(e)),
-                ..
-            }) => CheckState::Failed(to, e.clone()),
-            Some(Memo {
-                result: Some(Ok(check)),
-                ..
-            }) => CheckState::Done(check.clone()),
-        }
-    }
-
-    /// The button's action: check the selected setup's native mods against the newer installed
-    /// build, once, on a worker, in the setup's own game folder. Nothing else calls it.
-    fn check_native(&mut self, cx: &mut Context<Self>) {
-        if self.native_step.is_some() {
-            return;
-        }
-        let (CheckState::Idle(to) | CheckState::Failed(to, _)) = self.check_state() else {
-            return;
-        };
-        let Some(home) = self.selected_instance().map(|i| i.home.clone()) else {
-            return;
-        };
-        let key = check_key(&home, &to);
-        *self.ui.sheets.update.borrow_mut() = Some(Memo {
-            key: key.clone(),
-            result: None,
-        });
-        let work = cx
-            .background_executor()
-            .spawn(async move { native_mods::update_check(&home, &to).map_err(String::from) });
-        cx.spawn(async move |this, cx| {
-            let result = work.await;
-            let _ = this.update(cx, |this, cx| {
-                let mut memo = this.ui.sheets.update.borrow_mut();
-                // A result for a state the game folder has left is dropped.
-                if memo.as_ref().is_some_and(|m| m.key == key) {
-                    *memo = Some(Memo {
-                        key,
-                        result: Some(result),
-                    });
-                }
-                drop(memo);
-                cx.notify();
-            });
+            .filter(|_| self.native_for.as_deref() == Some(instance.id.as_str()))?;
+        Some(Held {
+            to: build_name(&stake.base),
+            plays: build_name(plays),
+            mods: stake.mods.clone(),
+            details: stake.text.split("\n\n").map(str::to_owned).collect(),
+            worlds: stake.worlds.clone(),
+            blocked: false,
+            base: stake.base.clone(),
+            stopped: true,
         })
-        .detach();
     }
 
     /// Reads what has the keyboard, before this frame moves it: see [`Self::modal`].
@@ -558,13 +417,19 @@ impl Launcher {
         if self.pending_consent.is_some() {
             return Some(self.consent_sheet(cx));
         }
-        if self.mods.installs.question.is_some() {
-            return Some(self.registry_build_failed(cx));
+        use crate::mods_page::install::Decision;
+        if let Some((decision, _)) = &self.mods.installs.question {
+            return Some(match decision {
+                Decision::Build(failure) => self.registry_build_failed(failure, cx),
+                Decision::Resolve(question) => self.registry_resolve(question, cx),
+            });
         }
         match self.ui.sheet {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
             Some(Sheet::Versions) => Some(self.versions_sheet(cx)),
+            Some(Sheet::Switching) => Some(self.switch_sheet(cx)),
+            Some(Sheet::BuildChanges) => self.switch_receipt_sheet(cx),
             Some(Sheet::AccountMenu) => self.account_menu(cx),
             Some(Sheet::Search) => Some(self.command_search(cx)),
             Some(Sheet::RegistryPlay) => match self.registry_stage() {
@@ -620,13 +485,11 @@ impl Launcher {
         }
     }
 
-    fn registry_build_failed(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let (failure, _) = self
-            .mods
-            .installs
-            .question
-            .as_ref()
-            .expect("shown while the install waits");
+    fn registry_build_failed(
+        &self,
+        failure: &sunrise_launcher::browser::sunrise::BuildNotice,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let show = self.ui.sheets.details;
         let mut list = div()
             .id("registry-install-disposition")
@@ -742,6 +605,84 @@ impl Launcher {
             });
         })
         .detach();
+    }
+
+    fn registry_resolve(
+        &self,
+        question: &std::sync::Arc<sunrise_launcher::browser::sunrise::ResolveQuestion>,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        use crate::mods_page::install::Decision;
+        let consent = question.clone();
+        let count = question.blockers.len().to_string();
+        let names = crate::mods::names(&question.requested);
+        let body = div()
+            .flex()
+            .flex_col()
+            .child(title(trf(
+                "Installing {mods} would break {count} of your mods",
+                &[("mods", &names), ("count", &count)],
+            )))
+            .child(
+                div()
+                    .id("resolve-install-mods")
+                    .max_h(px(220.))
+                    .overflow_y_scroll()
+                    .flex()
+                    .flex_col()
+                    .gap(px(9.))
+                    .children(question.blockers.iter().map(|(mod_, reason)| {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child(mod_.clone()),
+                            )
+                            .child(muted(reason.clone()))
+                    }))
+                    .children(question.worlds.lines().into_iter().map(muted)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        button(
+                            "resolve-install-accept",
+                            if question.blockers.len() == 1 {
+                                tr("Install and turn off 1 mod").to_owned()
+                            } else {
+                                trf("Install and turn off {count} mods", &[("count", &count)])
+                            },
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if this
+                                .mods
+                                .installs
+                                .question
+                                .as_ref()
+                                .is_some_and(|(q, _)| matches!(q, Decision::Resolve(current) if std::sync::Arc::ptr_eq(current, &consent)))
+                            {
+                                if let Some((_, answer)) = this.mods.installs.question.take() {
+                                    let _ = answer.send(true);
+                                }
+                            }
+                            cx.notify();
+                        })),
+                    )
+                    .child(
+                        crate::frame::primary("resolve-install-stay", tr("Don't install"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.close_sheet();
+                                cx.notify();
+                            })),
+                    ),
+            );
+        frame("registry-install-conflict", 600., body, cx)
     }
 
     // ---- Resolve ----
@@ -994,7 +935,7 @@ impl Launcher {
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.native_error = None;
-                this.pin_build(None, channel, false);
+                this.set_build_channel(channel);
                 // The chooser opens under Home's build picker.
                 this.navigate(crate::frame::Page::Home);
                 this.open_sheet(Sheet::Build);
@@ -1197,7 +1138,7 @@ impl Launcher {
         frame("alt-consent", 760., body, cx)
     }
 
-    /// Allow: persist the permission, then run the one pending action. The old overlay's match.
+    /// Allow: consume the one pending action. A Toggle's worker saves its grant and enables it.
     fn allow_native_consent(&mut self) {
         let result = native_consent::resolve(
             &mut self.pending_consent,
@@ -1220,7 +1161,9 @@ impl Launcher {
                             self.native_consent_build.take().unwrap_or_default();
                         self.build_native_on(base, leave_out)
                     }
-                    PendingConsent::Toggle(entry) => self.mods_switch(&entry),
+                    PendingConsent::Toggle(toggle) => {
+                        self.enable_registry_mod(&toggle.entry, toggle.home, Some(toggle.identity));
+                    }
                     PendingConsent::Registry(_, reply) => {
                         let _ = reply.send(Ok(true));
                     }
@@ -1310,98 +1253,7 @@ impl Launcher {
     // ---- Game build ----
 
     /// The Build sheet's native-mod compatibility section: the explicit check and where it stands.
-    fn native_check_block(&mut self, cx: &mut Context<Self>) -> Option<Div> {
-        let state = self.check_state();
-        let block = |lines: Vec<Div>| {
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(8.))
-                .pt(px(10.))
-                .border_t_1()
-                .border_color(rgb(palette().divider))
-                .children(lines)
-        };
-        let check = |id: &'static str, label: &str, cx: &mut Context<Self>| {
-            button(id, tr(label)).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.check_native(cx);
-                cx.notify();
-            }))
-        };
-        Some(match state {
-            CheckState::None => return None,
-            CheckState::NeedsPermission(to) => block(vec![muted(trf(
-                "A newer build, {to}, is installed. Native mods need your permission before they can be checked against it.",
-                &[("to", &build_name(&to))],
-            ))
-            .text_size(px(tokens::SMALL))]),
-            CheckState::Idle(to) => block(vec![
-                muted(trf(
-                    "A newer build, {to}, is installed. Your native mods have not been checked against it.",
-                    &[("to", &build_name(&to))],
-                ))
-                .text_size(px(tokens::SMALL)),
-                div().child(check(
-                    "alt-check",
-                    "Check native mod compatibility",
-                    cx,
-                )),
-            ]),
-            CheckState::Pending(to) => block(vec![muted(trf(
-                "Checking your native mods against {to}…",
-                &[("to", &build_name(&to))],
-            ))
-            .text_size(px(tokens::SMALL))]),
-            CheckState::Failed(_, error) => block(vec![
-                div()
-                    .text_size(px(tokens::SMALL))
-                    .text_color(rgb(palette().danger))
-                    .child(error),
-                div().child(check("alt-check-again", "Check again", cx)),
-            ]),
-            CheckState::Done(done) => match Held::of_check(done.clone(), "") {
-                Some(_) => block(vec![
-                    muted(trf(
-                        "The update to {to} is on hold: some mods don't fit.",
-                        &[("to", &build_name(&done.to))],
-                    ))
-                    .text_size(px(tokens::SMALL)),
-                    div().child(
-                        button("alt-check-resolve", tr("Resolve…")).on_click(cx.listener(
-                            |this, _: &ClickEvent, _, cx| {
-                                this.open_sheet(Sheet::Resolve);
-                                cx.notify();
-                            },
-                        )),
-                    ),
-                ]),
-                None => {
-                    let base = done.to.clone();
-                    block(vec![
-                        muted(done.summary.clone()).text_size(px(tokens::SMALL)),
-                        div().child(
-                            button(
-                                "alt-check-build",
-                                trf("Build on {to}", &[("to", &build_name(&done.to))]),
-                            )
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.close_sheet();
-                                this.build_native_on(Some(base.clone()), false);
-                                cx.notify();
-                            })),
-                        ),
-                    ])
-                }
-            },
-        })
-    }
-
-    pub(crate) fn pin_build(
-        &mut self,
-        version: Option<String>,
-        channel: instances::Channel,
-        close_versions: bool,
-    ) {
+    pub(crate) fn set_build_channel(&mut self, channel: instances::Channel) {
         if self.launch_busy() || self.client.is_some() {
             self.ui.sheets.error = Some(tr("Wait for the current operation to finish.").into());
             return;
@@ -1410,7 +1262,6 @@ impl Launcher {
             return;
         };
         let (id, home) = (instance.id.clone(), instance.home.clone());
-        let plays = self.version_of(instance).cloned();
         self.pinning_build = true;
         self.ui.sheets.error = None;
         let tx = self.tx.clone();
@@ -1420,41 +1271,23 @@ impl Launcher {
                 let _lock = lock_home(&home).map_err(|error| error.to_string())?;
                 installed::recover_game_install(&home)
                     .map_err(|problem| problem.summary().to_owned())?;
-                // Recheck after recovery; never pin another build under native mods.
-                if let (Some(to), Some(plays)) = (&version, &plays) {
-                    if to != plays && !native_status::enabled(&home).is_empty() {
-                        return Err(tr("Check your native mods against that build first.").into());
-                    }
-                }
                 instances::edit(&id, |m| {
-                    m.version = version;
+                    m.version = None;
                     m.channel = Some(channel);
                 })?;
                 Ok(())
             };
             let result = publish();
-            let _ = tx.send(Msg::PinnedBuild {
-                home,
-                result,
-                close_versions,
-            });
+            let _ = tx.send(Msg::PinnedBuild { home, result });
         });
     }
 
-    pub(super) fn finish_build_pin(
-        &mut self,
-        home: &std::path::Path,
-        result: Result<(), String>,
-        close_versions: bool,
-    ) {
+    pub(super) fn finish_build_pin(&mut self, home: &std::path::Path, result: Result<(), String>) {
         self.pinning_build = false;
         if result.is_ok() {
             self.reload_instances();
         }
         if self.selected_instance().is_some_and(|i| i.home == home) {
-            if result.is_ok() && close_versions && self.ui.sheet == Some(Sheet::Versions) {
-                self.close_sheet();
-            }
             self.ui.sheets.error = result.err();
         }
     }
@@ -1479,20 +1312,10 @@ impl Launcher {
             None
         };
         let stable = self.stable_builds().next().is_some();
-        // A different build under native mods is never activated from here: those mods have to be
-        // checked against it first (the check button), and the build that follows protects worlds.
-        let has_native = !native_status::enabled(&instance.home).is_empty();
-        let nightly_target = self
-            .target_version(None, instances::Channel::Nightly)
-            .cloned();
-        let stable_target = self
-            .target_version(None, instances::Channel::Stable)
-            .cloned();
-        let gated = |target: &Option<String>| has_native && *target != plays;
         let follow_nightly = pinned.is_none() && instance.channel == instances::Channel::Nightly;
         let follow_stable = pinned.is_none() && instance.channel == instances::Channel::Stable;
-        let nightly_gated = !follow_nightly && gated(&nightly_target);
-        let stable_gated = stable && !follow_stable && gated(&stable_target);
+        let nightly_gated = instance.kind == instances::Kind::Pack;
+        let stable_gated = nightly_gated;
         let option = |id: &'static str, on: bool, head: String, sub: String| {
             div()
                 .id(id)
@@ -1542,7 +1365,7 @@ impl Launcher {
             })
             .when(!nightly_gated, |d| {
                 d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.pin_build(None, instances::Channel::Nightly, false);
+                    this.set_build_channel(instances::Channel::Nightly);
                     cx.notify();
                 }))
             }),
@@ -1566,7 +1389,7 @@ impl Launcher {
             })
             .when(!stable_off, |d| {
                 d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.pin_build(None, instances::Channel::Stable, false);
+                    this.set_build_channel(instances::Channel::Stable);
                     cx.notify();
                 }))
             }),
@@ -1588,16 +1411,6 @@ impl Launcher {
                 cx.notify();
             })),
         );
-        // Said once, and only when native mods stop a choice above; the check sits with it.
-        let native = self.native_check_block(cx).or_else(|| {
-            (nightly_gated || stable_gated).then(|| {
-                muted(tr(
-                    "Your native mods are made for the build you play. Another build needs them checked first.",
-                ))
-                .text_size(px(tokens::SMALL))
-                .px(px(10.))
-            })
-        });
         let extras = div()
             .flex()
             .items_start()
@@ -1640,7 +1453,6 @@ impl Launcher {
             )
             .children(status.map(muted))
             .child(list)
-            .children(native)
             .child(div().h(px(1.)).bg(rgb(palette().line)))
             .child(extras)
             .children(self.ui.sheets.error.clone().map(|e| {
@@ -1743,42 +1555,6 @@ fn consent_footer(note: &str, cancel: Stateful<Div>, go: Stateful<Div>) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn check(summary: String, worlds: &[&str], blocked: bool) -> UpdateCheck {
-        UpdateCheck {
-            to: "nightly-2026-11-17-abcdef0".into(),
-            summary,
-            worlds: worlds.iter().map(|w| w.to_string()).collect(),
-            blocked,
-            off: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn a_fit_is_an_offer_and_a_misfit_is_a_hold() {
-        let fits = native_mods::fit::update_summary("Nov 17", 2, &[]);
-        assert!(Held::of_check(check(fits, &[], false), "nightly-2026-11-14-0000000").is_none());
-        let off = [("jei".to_string(), "made for another game".to_string())];
-        let summary = native_mods::fit::update_summary("Nov 17", 2, &off);
-        let mut misfit = check(summary, &[], false);
-        misfit.off = off.to_vec();
-        let held = Held::of_check(misfit, "nightly-2026-11-14-0000000")
-            .expect("a mod that does not fit holds the update");
-        assert_eq!(
-            (held.to.as_str(), held.plays.as_str()),
-            ("Nov 17", "Nov 14")
-        );
-        assert_eq!(held.mods, ["jei"]);
-        assert!(held.details[1].starts_with("jei does not"));
-    }
-
-    #[test]
-    fn a_refusal_or_a_world_at_stake_holds_even_on_one_line() {
-        let refused = Held::of_check(check("one mod is refused".into(), &[], true), "x").unwrap();
-        assert!(refused.blocked);
-        let worlds = Held::of_check(check("Move?".into(), &["Harbor"], false), "x").unwrap();
-        assert_eq!(worlds.worlds, ["Harbor"]);
-    }
 
     #[test]
     fn dated_builds_read_as_a_day() {

@@ -507,6 +507,7 @@ pub fn fingerprint(home: &Path, version: Option<&str>) -> String {
         .flat_map(|p| [p.clone(), p.with_extension("origin.json")])
         .chain([
             home.join("mod-browser.json"),
+            home.join("mod-browser/active-build.json"),
             home.join(sunrise_launcher_smod::index::browser_state::PENDING),
         ])
     {

@@ -98,9 +98,10 @@ fn world_locks_span_live_publication_and_undo() {
         let mut before_first_rename = false;
         let mut after_pointer_rename = false;
         let settled_at_drop = Cell::new(false);
-        let result = edit.publish_observed(
+        let result = edit.publish_inner(
             proof,
             &cancellation,
+            (None, &BTreeSet::new()),
             || {
                 let locks = worlds::lock_reviewed(&reviewed)?;
                 assert_eq!(worlds::review_risk(&home, &sources)?, reviewed);
@@ -110,6 +111,7 @@ fn world_locks_span_live_publication_and_undo() {
                     settled_at_drop: &settled_at_drop,
                 })
             },
+            || Ok(()),
             |step, boundary| {
                 let refs = profile_txn::references(&home)?;
                 if step == 0 && boundary == Boundary::BeforeRename {

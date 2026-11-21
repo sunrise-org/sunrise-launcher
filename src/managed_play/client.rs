@@ -1,9 +1,5 @@
 //! Ordinary client Play keeps one admission on its worker through the actual spawn.
-use super::{
-    catalogue,
-    first::{assert_requested, game_lock},
-    unsettled, Active, FirstBuild, Profile,
-};
+use super::{catalogue, first::game_lock, unsettled, Active, FirstBuild, Profile};
 use crate::{
     account::{self, Accounts, NoOwner},
     backend::{self, installation::BoundVariant, RuntimeGuard},
@@ -60,7 +56,6 @@ pub struct Client<'a> {
     pub accepted_account: Option<&'a str>,
     /// An explicit command-line account still requires ownership in a developer build.
     pub explicit_account: bool,
-    pub requested_build: Option<&'a str>,
     pub piped: bool,
 }
 
@@ -200,7 +195,6 @@ impl Client<'_> {
         let mode = self.instance.native_profile;
         let native = |step| progress(Progress::Native(step));
         if let Some(old) = profile.active()? {
-            assert_requested(self.requested_build, old.base(), old.executable())?;
             check_build(old.base(), old.variant.as_deref())?;
             // Legacy writers still use the game lock, not profile admission. Keep
             // them out until refresh has staged the exact set we checked.
@@ -221,7 +215,7 @@ impl Client<'_> {
             return Ok((active, notices));
         }
 
-        let first = profile.begin_requested(self.requested_build, choose, |fraction| {
+        let first = profile.begin_first(choose, |fraction| {
             progress(Progress::Download(fraction));
         })?;
         check_build(first.base(), first.variant().as_ref())?;
@@ -248,16 +242,13 @@ mod tests;
 
 /// Resolve an ordinary headless first Play lazily. An existing committed or pending
 /// build bypasses the catalogue completely; an explicit first selection remains exact.
-pub fn headless_first(
-    instance: &instances::Instance,
-    requested: Option<&str>,
-) -> Result<FirstBuild, String> {
-    let installed = match instance.resolve_version(requested) {
+pub fn headless_first(instance: &instances::Instance) -> Result<FirstBuild, String> {
+    let installed = match instance.resolve_version(None) {
         Ok(tag) => return FirstBuild::installed(&tag),
         Err(error) => error,
     };
     let releases = backend::releases()?;
-    let release = if let Some(tag) = requested.or(instance.version.as_deref()) {
+    let release = if let Some(tag) = instance.version.as_deref() {
         releases
             .iter()
             .find(|release| release.tag == tag && release.asset.is_some())

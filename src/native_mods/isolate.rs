@@ -18,6 +18,8 @@ pub enum Why {
     Needs(String),
     /// It doesn't fit the build, or works on another build only: what the player reads about it.
     Unfit(String),
+    /// The package's uses evidence could not establish whether it fits.
+    Unproved(String),
     /// It was judged to fit the build, and its compile against it failed.
     DidNotBuild,
 }
@@ -156,6 +158,10 @@ impl LeftOut {
                 "{name} was left out of this build: {why}. It comes back when its author makes a version for this game.",
                 &[("name", &self.id), ("why", line)],
             ),
+            Why::Unproved(line) => trf(
+                "{name} was left out of this build: fit could not be verified ({why}).",
+                &[("name", &self.id), ("why", line)],
+            ),
             Why::DidNotBuild => super::fit::did_not_build(&self.id),
         }
     }
@@ -167,6 +173,7 @@ impl LeftOut {
             Why::Clash(other) => ("clash", Some(other)),
             Why::Needs(other) => ("needs", Some(other)),
             Why::Unfit(line) => ("unfit", Some(line)),
+            Why::Unproved(line) => ("unproved", Some(line)),
             Why::DidNotBuild => ("did-not-build", None),
         };
         let mut json =
@@ -187,6 +194,7 @@ impl LeftOut {
                 "clash" => Why::Clash(with()?),
                 "needs" => Why::Needs(with()?),
                 "unfit" => Why::Unfit(with()?),
+                "unproved" => Why::Unproved(with()?),
                 "did-not-build" => Why::DidNotBuild,
                 _ => Why::OtherVersion,
             },

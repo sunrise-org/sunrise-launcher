@@ -1477,15 +1477,20 @@ fn pipeline(
                 .zip(&declared)
                 .map(|(b, d)| (b, d.as_slice()))
                 .collect();
-            let unfit: Vec<LeftOut> = unusable
+            let omissions: Vec<LeftOut> = unusable
                 .iter()
                 .filter_map(|(id, verdict)| {
                     let bundle = mods.iter().find(|b| &b.manifest.id == id)?;
-                    let why = isolate::Why::Unfit(fit::line(id, verdict, &shown));
+                    let line = fit::line(id, verdict, &shown);
+                    let why = if matches!(verdict, fit::Verdict::NoList { .. }) {
+                        isolate::Why::Unproved(line)
+                    } else {
+                        isolate::Why::Unfit(line)
+                    };
                     Some(LeftOut::new(bundle, why).with_detail(fit::detail(verdict)))
                 })
                 .collect();
-            let left = isolate::with_dependents(&unfit, &pairs);
+            let left = isolate::with_dependents(&omissions, &pairs);
             if let Some(home) = options.worlds {
                 guard_worlds(home, &left, &shown, options.leave_out)?;
             }
@@ -1852,7 +1857,7 @@ fn isolated(
         // A mod whose own refusal is the error isn't said a second time before it.
         let labels: Vec<String> = skip
             .iter()
-            .filter(|left| !matches!(&left.why, isolate::Why::Unfit(line) if error.contains(line)))
+            .filter(|left| !matches!(&left.why, isolate::Why::Unfit(line) | isolate::Why::Unproved(line) if error.contains(line)))
             .map(LeftOut::label)
             .collect();
         Failed::Other(match labels.is_empty() {

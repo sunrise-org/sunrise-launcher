@@ -4,6 +4,7 @@ use std::{collections::VecDeque, path::Path, sync::Mutex};
 use sunrise_launcher::{
     browser::sunrise::{
         BuildNotice, InstallError, InstallHooks, InstallProgress, InstalledBatch, NativeQuestion,
+        ResolveQuestion,
     },
     managed_play::FirstBuild,
     profile_txn::Identity,
@@ -13,7 +14,7 @@ use sunrise_launcher::{
 pub(crate) struct Installs {
     running: Option<Running>,
     waiting: VecDeque<Request>,
-    pub(crate) question: Option<(BuildNotice, Sender<bool>)>,
+    pub(crate) question: Option<(Decision, Sender<bool>)>,
     outcomes: HashMap<(PathBuf, String), Outcome>,
     play: Option<(PathBuf, launcher_play::PlayIntent)>,
 }
@@ -40,10 +41,15 @@ struct RequestView {
     ids: Vec<String>,
 }
 
+pub(crate) enum Decision {
+    Build(BuildNotice),
+    Resolve(Arc<ResolveQuestion>),
+}
+
 pub(crate) enum Worker {
     Progress(InstallProgress),
     Native(NativeQuestion, Sender<Result<bool, String>>),
-    Build(BuildNotice, Sender<bool>),
+    Decide(Decision, Sender<bool>),
     Done(Result<InstalledBatch, InstallError>),
 }
 
@@ -129,7 +135,7 @@ impl Installs {
                     run.stage = step;
                 }
             }
-            Worker::Build(notice, reply) => {
+            Worker::Decide(notice, reply) => {
                 if let Some((_, old)) = self.question.replace((notice, reply)) {
                     let _ = old.send(false);
                 }
@@ -411,7 +417,7 @@ impl Launcher {
         if instance.kind == instances::Kind::Pack {
             return Err(tr("This pack controls which mods it installs.").into());
         }
-        let target = self.profile_target(&instance).cloned();
+        let target = self.profile_target(&instance);
         let release = target
             .as_deref()
             .and_then(|tag| self.release_to_install(tag));
@@ -449,7 +455,7 @@ impl Launcher {
         let tx = self.mods.tx.clone();
         let launcher = self.tx.clone();
         std::thread::spawn(move || {
-            let post = |event| tx.send(Event::Registry(event));
+            let post = |event| tx.send(Event::Registry(event)).is_ok();
             let result = sunrise::install_registry(
                 &request.profile,
                 request.identity,
@@ -479,7 +485,7 @@ impl Launcher {
                     },
                     native: &|question| {
                         let (reply, answer) = std::sync::mpsc::channel();
-                        if post(Worker::Native(question.clone(), reply)).is_err() {
+                        if !post(Worker::Native(question.clone(), reply)) {
                             return Ok(false);
                         }
                         answer.recv().unwrap_or(Ok(false))
@@ -493,9 +499,16 @@ impl Launcher {
                     }),
                     continue_after_failure: &|notice| {
                         let (reply, answer) = std::sync::mpsc::channel();
-                        post(Worker::Build(notice.clone(), reply)).is_ok()
+                        post(Worker::Decide(Decision::Build(notice.clone()), reply))
                             && answer.recv().unwrap_or(false)
                     },
+                    resolve: Some(&|question| {
+                        let (reply, answer) = std::sync::mpsc::channel();
+                        post(Worker::Decide(
+                            Decision::Resolve(Arc::new(question.clone())),
+                            reply,
+                        )) && answer.recv().unwrap_or(false)
+                    }),
                 },
             );
             let _ = post(Worker::Done(result));
@@ -661,7 +674,7 @@ mod tests {
             Err(error) => String::from(error),
         };
         assert!(
-            error.contains("profile was replaced while Install was waiting"),
+            error.contains("profile was replaced while the request was waiting"),
             "{error}"
         );
         assert!(!b.join(".install-txn.lock").exists());

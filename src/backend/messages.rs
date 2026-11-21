@@ -48,12 +48,21 @@ pub enum Msg {
         PathBuf,
         Result<(), crate::browser::installed::GameInstallProblem>,
     ),
-    /// The existing build picker changed the pin, or refused an unsettled game journal.
+    /// Saving a channel preference is separate from changing the committed build.
     PinnedBuild {
         home: PathBuf,
         result: Result<(), String>,
-        close_versions: bool,
     },
+    SwitchProgress(crate::browser::sunrise::InstallProgress),
+    SwitchQuestion(
+        Box<crate::browser::sunrise::SwitchQuestion>,
+        std::sync::mpsc::Sender<bool>,
+    ),
+    Switched(
+        PathBuf,
+        Box<Result<crate::browser::sunrise::Switched, String>>,
+    ),
+    ReceiptAcknowledged(PathBuf, Result<bool, String>),
     JarConsent {
         jars: Vec<sunrise_launcher_smod::manifest::JarRef>,
         reply: std::sync::mpsc::Sender<bool>,

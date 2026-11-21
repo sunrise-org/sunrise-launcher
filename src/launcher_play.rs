@@ -126,6 +126,10 @@ impl Launcher {
         let Some(tag) = self.selected().cloned() else {
             return;
         };
+        self.prepare_version(tag, from);
+    }
+
+    pub(crate) fn prepare_version(&mut self, tag: String, from: backend::MinecraftFrom) {
         sunrise_launcher::mojang::CANCEL.store(false, Ordering::Relaxed);
         let minecraft = self
             .settings
@@ -210,7 +214,7 @@ impl Launcher {
         intent: PlayIntent,
     ) {
         use sunrise_launcher::managed_play::{Client, FirstBuild, Progress};
-        let target = self.profile_target(&instance).cloned();
+        let target = self.profile_target(&instance);
         let release = target
             .as_deref()
             .and_then(|tag| self.release_to_install(tag));
@@ -240,7 +244,6 @@ impl Launcher {
                 instance: &instance,
                 accepted_account: intent.account.as_deref(),
                 explicit_account: false,
-                requested_build: None,
                 piped: true,
             }
             .start(

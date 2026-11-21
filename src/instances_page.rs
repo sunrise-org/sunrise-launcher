@@ -65,13 +65,33 @@ impl Launcher {
     }
 
     /// The profile's Play target, including a build Play will have to install first.
-    pub(super) fn profile_target<'a>(&'a self, instance: &'a Instance) -> Option<&'a String> {
+    pub(super) fn profile_target(&self, instance: &Instance) -> Option<String> {
+        if instance.kind != instances::Kind::Pack {
+            match sunrise_launcher::managed_play::display_active(&instance.home) {
+                Ok(Some(active)) => return Some(active.base().to_owned()),
+                Err(_) => return None, // A claimed or unsettled profile must not display a false pin.
+                Ok(None) => (),
+            }
+        }
         self.target_version(instance.version.as_ref(), instance.channel)
+            .cloned()
     }
 
-    /// The profile's Play target if it is installed.
+    /// The installed executable Play starts; Home's picker separately shows its base.
     pub(super) fn version_of(&self, instance: &Instance) -> Option<&String> {
-        let target = self.profile_target(instance)?;
+        let target = if instance.kind != instances::Kind::Pack {
+            match sunrise_launcher::managed_play::display_active(&instance.home).ok()? {
+                Some(active) => {
+                    return self
+                        .installed
+                        .iter()
+                        .find(|tag| tag.as_str() == active.executable())
+                }
+                None => self.target_version(instance.version.as_ref(), instance.channel)?,
+            }
+        } else {
+            self.target_version(instance.version.as_ref(), instance.channel)?
+        };
         self.installed.iter().find(|tag| *tag == target)
     }
 

@@ -115,6 +115,7 @@ struct InstalledRows {
     enabled: HashSet<String>,
     chosen: std::collections::BTreeMap<String, String>,
     local: Vec<model::Local>,
+    switch_held: std::collections::HashMap<String, sunrise_launcher::managed_play::HeldReason>,
 }
 
 #[derive(Debug)]
@@ -123,8 +124,12 @@ enum InstalledReadError {
     Other(String),
 }
 
+type InstalledRead = Result<Option<(InstalledRows, Option<String>)>, InstalledReadError>;
+
 impl InstalledRows {
-    fn read(home: &Path) -> Result<(Self, Option<String>), InstalledReadError> {
+    fn read(home: &Path) -> InstalledRead {
+        use sunrise_launcher::managed_play::{try_display_active, DisplayActiveError};
+
         // Resolve the hard game journal before the advisory or the visible rows.
         let _lock = sunrise_launcher::browser::lock_home(home)
             .map_err(|error| InstalledReadError::Other(error.to_string()))?;
@@ -136,15 +141,25 @@ impl InstalledRows {
         let local = read_local(home);
         let enabled = enabled_ids(home, &entries, &local);
         let chosen = sunrise::chosen(home);
-        Ok((
+        let switch_held = match try_display_active(home) {
+            Ok(active) => active
+                .iter()
+                .flat_map(|active| active.holds())
+                .map(|hold| (hold.id().to_owned(), hold.reason().clone()))
+                .collect(),
+            Err(DisplayActiveError::Publishing) => return Ok(None),
+            Err(DisplayActiveError::Read(error)) => return Err(InstalledReadError::Other(error)),
+        };
+        Ok(Some((
             Self {
                 entries,
                 enabled,
                 chosen,
                 local,
+                switch_held,
             },
             backup_notice,
-        ))
+        )))
     }
 }
 
@@ -166,16 +181,25 @@ impl std::ops::Deref for Snapshot {
 }
 
 impl Snapshot {
-    fn finish(&mut self, result: Result<(InstalledRows, Option<String>), InstalledReadError>) {
-        self.reading = false;
+    fn finish(&mut self, result: InstalledRead) -> bool {
+        self.reading = matches!(result, Ok(None));
         self.error = match result {
-            Ok((rows, backup_notice)) => {
+            Ok(Some((rows, backup_notice))) => {
                 self.rows = rows;
                 self.backup_notice = backup_notice;
                 None
             }
+            Ok(None) => {
+                self.key.clear(); // Publication was busy; ask again without publishing guessed rows.
+                None
+            }
             Err(error) => Some(error),
         };
+        self.ready()
+    }
+
+    fn ready(&self) -> bool {
+        !self.reading && self.error.is_none()
     }
 }
 
@@ -199,9 +223,12 @@ impl InstalledRefresh<'_> {
 
 enum Event {
     /// Installed rows read for the requested folder and fingerprint, off the window thread.
-    Local(
-        String,
-        Result<(InstalledRows, Option<String>), InstalledReadError>,
+    Local(String, InstalledRead),
+    Enabled(
+        PathBuf,
+        actions::EnableNotice,
+        Result<actions::EnabledMods, String>,
+        Option<u64>,
     ),
     Catalog(String, Result<(Vec<Card>, Vec<String>), String>),
     Page(u64, Result<Box<model::Page>, String>),
@@ -615,14 +642,15 @@ impl Launcher {
                 }
                 Event::Local(key, result) => {
                     if let Some(snap) = m.snapshot.as_mut().filter(|s| s.key == key) {
-                        let refreshed = result.is_ok();
-                        snap.finish(result);
-                        if refreshed {
+                        if snap.finish(result) {
                             let rows: HashSet<String> =
                                 self.rows().into_iter().map(|r| r.id).collect();
                             self.ui.mods.selection.retain(|id| rows.contains(id));
                         }
                     }
+                }
+                Event::Enabled(home, notice, result, allowed_at) => {
+                    self.enabled_mods(&home, notice, result, allowed_at);
                 }
                 Event::Page(request, page) => {
                     if let Some(open) = m.open.as_mut().filter(|o| o.request == request) {
@@ -703,7 +731,12 @@ impl Launcher {
             let (tx, worker_home, worker_key) =
                 (self.ui.mods.tx.clone(), home.clone(), key.clone());
             std::thread::spawn(move || {
-                let _ = tx.send(Event::Local(worker_key, InstalledRows::read(&worker_home)));
+                let result = InstalledRows::read(&worker_home);
+                if matches!(result, Ok(None)) {
+                    // Delay just the busy display retry, without holding any profile/cache lock.
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                let _ = tx.send(Event::Local(worker_key, result));
             });
             self.ui.mods.snapshot = Some(Snapshot {
                 key,
@@ -751,7 +784,7 @@ impl Launcher {
         Some(OpenScope {
             id: instance.id.clone(),
             home: instance.home.clone(),
-            target: self.profile_target(instance).cloned(),
+            target: self.profile_target(instance),
         })
     }
 
@@ -1118,6 +1151,57 @@ mod enabled_tests {
 #[cfg(test)]
 mod installed_refresh_tests {
     use super::*;
+
+    #[test]
+    fn busy_publication_keeps_the_settled_hold_and_disables_actions_until_refresh() {
+        use sunrise_launcher_smod::{
+            locks::{LockMode, Release},
+            runtime_leases::Registry,
+        };
+        const ACTOR: &str = "INSTALLED_BUSY_PUBLICATION_ACTOR";
+        let Some(root) = std::env::var_os(ACTOR).map(PathBuf::from) else {
+            let scratch = tempfile::tempdir().unwrap();
+            let root = scratch.path();
+            assert!(std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "mods::installed_refresh_tests::busy_publication_keeps_the_settled_hold_and_disables_actions_until_refresh"])
+                .env(ACTOR, root).env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
+                .status().unwrap().success());
+            return;
+        };
+        let home = root.join("game");
+        let registry = Registry::with_release(&backend::data_dir(), Release::Close).unwrap();
+        let publication = registry.publication(LockMode::Exclusive).unwrap();
+        let mut snapshot = Snapshot {
+            key: "viewed fingerprint".into(),
+            home: home.clone(),
+            rows: InstalledRows {
+                switch_held: std::collections::HashMap::from([(
+                    "ruby".into(),
+                    sunrise_launcher::managed_play::HeldReason::NoFit {
+                        build: "fixture".into(),
+                    },
+                )]),
+                ..Default::default()
+            },
+            reading: true,
+            error: None,
+            backup_notice: None,
+        };
+        assert!(!snapshot.finish(InstalledRows::read(&home)));
+        assert!(!snapshot.ready());
+        assert!(matches!(
+            InstalledRefresh::of(Some(&snapshot)),
+            InstalledRefresh::Reading
+        ));
+        assert!(snapshot.switch_held.contains_key("ruby"));
+        assert!(
+            snapshot.key.is_empty(),
+            "the same fingerprint must be reread"
+        );
+        drop(publication);
+        assert!(snapshot.finish(InstalledRows::read(&home)));
+        assert!(snapshot.ready());
+    }
 
     #[test]
     fn retry_after_a_game_journal_error_keeps_the_last_good_rows_until_success() {
