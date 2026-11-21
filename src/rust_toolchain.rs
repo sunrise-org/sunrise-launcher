@@ -623,23 +623,26 @@ fn save_archive(
     Ok(())
 }
 
+pub(crate) fn unsupported_host() -> String {
+    if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
+        crate::i18n::tr("Native mods are not supported by the Windows ARM64 launcher yet; its managed compiler is not available.").into()
+    } else {
+        crate::i18n::trf(
+            "Native mods need Rust, and the launcher has none for {os} {arch}.",
+            &[
+                ("os", std::env::consts::OS),
+                ("arch", std::env::consts::ARCH),
+            ],
+        )
+    }
+}
+
 /// Downloads, checks and unpacks the pinned toolchain (once); `progress` gets the fraction done.
 pub fn install(progress: impl Fn(f32)) -> Result<Toolchain, String> {
     if let Some(done) = installed() {
         return Ok(done);
     }
-    let host = host().ok_or_else(|| {
-        if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
-            crate::i18n::tr("Native mods are not supported by the Windows ARM64 launcher yet; its managed compiler is not available.")
-                .to_string()
-        } else {
-            format!(
-                "Native mods need Rust, and the launcher has none for {} {}.",
-                std::env::consts::OS,
-                std::env::consts::ARCH
-            )
-        }
-    })?;
+    let host = host().ok_or_else(unsupported_host)?;
     let dir = dir_for(host);
     let partial = root().join(format!(".{VERSION}-{}.partial", host.target));
     let _ = fs::remove_dir_all(&partial);

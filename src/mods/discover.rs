@@ -77,8 +77,6 @@ impl Launcher {
             .map(|s| s.entries.iter().map(|e| e.project.clone()).collect())
             .unwrap_or_default();
         let index = sunrise::known_index();
-        let adding = self.mods.busy.as_ref().map(|b| b.0.clone());
-        let native_allowed = self.settings.native_mods_allowed_at.is_some();
 
         // The filters: category and kind as dropdowns, fits my game, and the order.
         let fits = div()
@@ -253,6 +251,12 @@ impl Launcher {
                 .child(order),
         );
 
+        // Read readiness once for this frame, separately from the catalogue filter.
+        let game = self.mods_game();
+        let readiness = self.selected_instance().map(|instance| {
+            let base = self.version_of(instance).map(String::as_str);
+            sunrise::NativeInstallReadiness::for_profile(&instance.home, base, &game)
+        });
         // The cards.
         let mut grid = div()
             .grid()
@@ -272,47 +276,46 @@ impl Launcher {
                     .is_some_and(|c| model::collection::installed(c, &cards, &added)),
                 None => added.contains(&id),
             };
-            let working = adding.as_deref() == Some(id.as_str());
-            let note = card_data.fit.reason().filter(|_| !is_added);
-            let control = if is_added {
+            let working = self.registry_card_control(&id, |label| {
+                dim(crate::frame::button(("alt-add", n), label)).into_any_element()
+            });
+            let issue = self.registry_card_note(&id);
+            let unavailable = (!is_added && card_data.fit.fits() && card_data.make == Make::Native)
+                .then(|| readiness.as_ref()?.block(index.as_deref()?, &id, &game))
+                .flatten();
+            let note = unavailable
+                .clone()
+                .or_else(|| issue.clone())
+                .or_else(|| card_data.fit.reason().filter(|_| !is_added));
+            let control = if working.is_some() {
+                working
+            } else if is_added {
                 Some(added_mark())
-            } else if note.is_some() {
+            } else if !card_data.fit.fits() {
                 None
+            } else if unavailable.is_some() {
+                Some(dim(crate::frame::button(("alt-add", n), tr("Install"))).into_any_element())
             } else {
-                let needs_ok = card_data.make == Make::Native && !native_allowed;
-                let label = match (
-                    working,
-                    needs_ok || card_data.builds_locally && card_data.make == Make::Native,
-                ) {
-                    _ if card_data.members.is_some() => tr("Choose mods"),
-                    (true, _) => tr("Installing…"),
-                    (_, true) => tr("Install…"),
-                    _ => tr("Install"),
+                let label = if card_data.members.is_some() {
+                    tr("Choose mods").into()
+                } else {
+                    self.registry_install_label()
                 };
                 let b = crate::frame::button(("alt-add", n), label);
-                Some(match working {
-                    true => dim(b).into_any_element(),
-                    // A collection's button only opens its page, where the mods are picked.
-                    false if card_data.members.is_some() => {
-                        let id = id.clone();
-                        b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            cx.stop_propagation();
+                let id = id.clone();
+                let collection = card_data.members.is_some();
+                Some(
+                    b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        if collection {
                             this.mods_show_project(id.clone());
-                            cx.notify();
-                        }))
-                        .into_any_element()
-                    }
-                    false => {
-                        let id = id.clone();
-                        let name = card_data.name.clone();
-                        b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            cx.stop_propagation();
-                            this.add(id.clone(), name.clone());
-                            cx.notify();
-                        }))
-                        .into_any_element()
-                    }
-                })
+                        } else {
+                            this.add(id.clone());
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+                )
             };
             let mut facts = match card_data.members {
                 Some(count) => vec![
@@ -328,10 +331,17 @@ impl Launcher {
             if card_data.library {
                 facts.insert(1, badge(tr("Library")));
             }
+            if index
+                .as_ref()
+                .and_then(|index| index.project(&id))
+                .is_some_and(|project| project.key.is_none())
+            {
+                facts.insert(1, badge(tr("Unsigned")));
+            }
             if let Some(name) = &card_data.part_of {
                 facts.push(muted(trf("Part of {collection}", &[("collection", name)])));
             }
-            if card_data.builds_locally && card_data.fit.fits() {
+            if card_data.builds_locally && card_data.fit.fits() && unavailable.is_none() {
                 facts.push(muted(tr("Builds on this computer")));
             }
             let open = id.clone();

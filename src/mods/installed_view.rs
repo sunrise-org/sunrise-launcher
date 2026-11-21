@@ -583,33 +583,54 @@ impl Launcher {
             model::Tone::Success => palette().success,
             model::Tone::Muted => palette().muted,
         };
-        let status_cell: AnyElement = match (&cells.status, r.unfit.clone()) {
-            (Some(_), Some(unfit)) if cells.popover => {
-                self.unfit(n, &r, unfit, cx).into_any_element()
-            }
-            // A mod the last build could not build: its status opens that build's window
-            // again, where Details and the build log are.
-            (Some(said), _) if failed && said.label == tr("Failed") => {
-                status(said.icon, said.label.clone(), tone(said.tone))
-                    .id(("alt-row-failed", n))
-                    .reach()
-                    .min_w_0()
-                    .cursor_pointer()
-                    .hover(|s| s.text_color(c(palette().text)))
-                    .tooltip(crate::glass_ui::tip(said.tip.clone()))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.open_sheet(crate::sheets::Sheet::ModBuild);
-                        cx.stop_propagation();
-                        cx.notify();
-                    }))
-                    .into_any_element()
-            }
-            (Some(said), _) => status(said.icon, said.label.clone(), tone(said.tone))
-                .id(("alt-row-status", n))
+        let install_hold = r
+            .entry
+            .as_ref()
+            .and_then(|entry| entry.install_hold.as_ref())
+            .filter(|_| !r.on);
+        let status_cell: AnyElement = if let Some(hold) = install_hold {
+            let detail = hold.detail();
+            status("warning", hold.label(), palette().warning)
+                .id(("alt-row-install-hold", n))
+                .reach()
                 .min_w_0()
-                .tooltip(crate::glass_ui::tip(said.tip.clone()))
-                .into_any_element(),
-            (None, _) => div().into_any_element(),
+                .cursor_pointer()
+                .tooltip(crate::glass_ui::tip(tr("Show why")))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.open_notice(detail.clone(), None);
+                    cx.stop_propagation();
+                    cx.notify();
+                }))
+                .into_any_element()
+        } else {
+            match (&cells.status, r.unfit.clone()) {
+                (Some(_), Some(unfit)) if cells.popover => {
+                    self.unfit(n, &r, unfit, cx).into_any_element()
+                }
+                // A mod the last build could not build: its status opens that build's window
+                // again, where Details and the build log are.
+                (Some(said), _) if failed && said.label == tr("Failed") => {
+                    status(said.icon, said.label.clone(), tone(said.tone))
+                        .id(("alt-row-failed", n))
+                        .reach()
+                        .min_w_0()
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(c(palette().text)))
+                        .tooltip(crate::glass_ui::tip(said.tip.clone()))
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.open_sheet(crate::sheets::Sheet::ModBuild);
+                            cx.stop_propagation();
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                }
+                (Some(said), _) => status(said.icon, said.label.clone(), tone(said.tone))
+                    .id(("alt-row-status", n))
+                    .min_w_0()
+                    .tooltip(crate::glass_ui::tip(said.tip.clone()))
+                    .into_any_element(),
+                (None, _) => div().into_any_element(),
+            }
         };
         let action = cells.action.map(|action| {
             let (id, label) = match action {

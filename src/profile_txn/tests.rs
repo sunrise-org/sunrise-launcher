@@ -172,6 +172,36 @@ fn first_binding_and_signed_proof_survive_an_abandoned_prepare_and_pointer_undo(
 }
 
 #[test]
+fn candidate_targets_are_durable_before_sealing_and_rollback_retires_only_those_targets() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let mut owner = Admission::open(home, None).unwrap();
+    let first = owner
+        .bind_bootstrap(|| Ok(first_binding()), |_| Ok(()))
+        .unwrap();
+    let proven = owner
+        .prove_bootstrap(|_| Ok(serde_json::json!({"fixture": 1})))
+        .unwrap();
+    let stage = owner.resume_bootstrap().unwrap();
+    assert!(stage.retain_target("../untrusted").is_err());
+    stage.retain_target("staged-native-image").unwrap();
+    let mut pending = first.targets();
+    pending.insert("staged-native-image".into());
+    assert_eq!(references(home).unwrap().targets, pending);
+    let sealed = stage.seal(FIRST_POINTER.to_vec(), &[]).unwrap();
+    assert_eq!(references(home).unwrap().targets, pending);
+    assert!(sealed
+        .publish(|| Err::<(), _>("the index changed".into()))
+        .is_err());
+    assert_eq!(references(home).unwrap().targets, first.targets());
+    assert!(pointer_bytes(home).unwrap().is_none());
+    assert_eq!(
+        owner.prove_bootstrap(|_| panic!("kept proof")).unwrap(),
+        proven
+    );
+}
+
+#[test]
 fn reference_snapshot_reads_exact_old_and_new_pointers_and_refuses_unowned_bytes() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
@@ -505,7 +535,7 @@ fn journal_actor() {
         }
         _ => {}
     }
-    let mut owner = Admission::claim(&home, None).unwrap();
+    let mut owner = Admission::claim(&home, None, None).unwrap();
     match action.as_str() {
         "launcher-with-staged-worker" => {
             use crate::process::{leases::StagedChild, owned::Owned};

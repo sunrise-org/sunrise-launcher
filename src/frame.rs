@@ -277,7 +277,7 @@ impl Launcher {
     /// Also called for world and server destinations. Never send a destination through the
     /// legacy shortcuts, which skip some of the checks on the main Play action.
     pub(super) fn play_game(&mut self) {
-        if self.client.is_some() || self.launch_busy() {
+        if self.client.is_some() || (self.launch_busy() && !self.registry_accepts_play()) {
             return;
         }
         self.prepare_error = None;
@@ -303,9 +303,6 @@ impl Launcher {
 
     /// Continue the same accepted Play after a launch step; never recapture the account.
     pub(super) fn resume_play(&mut self, intent: launcher_play::PlayIntent) {
-        if self.client.is_some() || self.launch_busy() {
-            return;
-        }
         let Some(instance) = self
             .selected_instance()
             .filter(|i| i.id == intent.instance)
@@ -313,6 +310,13 @@ impl Launcher {
         else {
             return;
         };
+        if self.registry_accepts_play() {
+            self.defer_registry_play(&instance, intent);
+            return;
+        }
+        if self.client.is_some() || self.launch_busy() {
+            return;
+        }
         if instance.kind != instances::Kind::Pack {
             self.start_managed_client(instance, intent);
             return;

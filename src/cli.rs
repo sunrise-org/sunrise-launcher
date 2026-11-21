@@ -474,6 +474,9 @@ enum ModsCmd {
         everything: bool,
         #[arg(long, value_enum, default_value_t = SourceArg::Modrinth)]
         source: SourceArg,
+        /// Allow registry native code and the named build dependencies to run
+        #[arg(long)]
+        trust_native_code: bool,
     },
     /// Update what the browser installed (or one pack)
     Update {
@@ -2146,8 +2149,7 @@ fn servers(action: ServersCmd, as_json: bool) -> Result<(), String> {
     }
     Ok(())
 }
-/// Installs the native mods of `found` (a GitHub link, resolved) into the game folder `home`: the
-/// warning and the exact source link first, and nothing downloaded without `trust`.
+/// Commands for browser-installed content and registry mods in a selected profile.
 fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
     use sunrise_launcher::browser::{installed, sunrise, Kind, Query, SourceId};
     // What the browser installs goes into an instance's game folder.
@@ -2173,17 +2175,6 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
     let game = backend::played_version_id_by(instance.version.as_deref());
     let entry_json = |e: &installed::Entry| serde_json::to_value(e).unwrap_or_default();
     let line = |label: &str, f: f32| progress(label.to_string())(f);
-    let from_registry = installed::Installed::load(&home)
-        .entries
-        .iter()
-        .any(|e| e.source == SourceId::Sunrise);
-    if from_registry && sunrise::index().is_ok() {
-        if let Some(index) = sunrise::fetched_index() {
-            for said in sunrise::turn_off_revoked(&index, &home)? {
-                eprintln!("{said}");
-            }
-        }
-    }
     let on = matches!(action, ModsCmd::Enable { .. });
     match action {
         ModsCmd::List { .. } => {
@@ -2294,6 +2285,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             everything,
             source,
             world,
+            trust_native_code,
             ..
         } => {
             let source = source.get();
@@ -2346,6 +2338,66 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                         pack.mods.join(", ")
                     );
                     println!("Play it: sunrise-launcher modpack play {}", pack.id);
+                }
+                return Ok(());
+            }
+            if p.source == SourceId::Sunrise && p.kind == Kind::Mod {
+                if everything {
+                    return Err(tr("Registry mods must fit the profile's game build.").into());
+                }
+                let progress_line = progress(p.title.clone());
+                let installed = sunrise::install_registry(
+                    &instance,
+                    sunrise::install_target(&instance)?,
+                    || vec![p.id],
+                    || sunrise_launcher::managed_play::headless_first(&instance, None),
+                    sunrise::InstallHooks {
+                        progress: &|step| {
+                            if let sunrise::InstallProgress::Downloading(f) = step {
+                                progress_line(f);
+                            }
+                        },
+                        native: &|question| {
+                            if question.retry {
+                                return Err(trf(
+                                    "Checking a different version would also run native code from {mods}. No mods were installed. Run Install again only if you trust those mods.",
+                                    &[("mods", &question.names.join(", "))],
+                                ));
+                            }
+                            eprintln!(
+                                "{}",
+                                trf(
+                                    "These mods run native code: {mods}",
+                                    &[("mods", &question.names.join(", "))]
+                                )
+                            );
+                            if !trust_native_code {
+                                return Err(tr(
+                                    "Pass --trust-native-code only if you trust these mods.",
+                                )
+                                .into());
+                            }
+                            native_permission(true)?;
+                            Ok(true)
+                        },
+                        registry_crates: Some(&|inventory| {
+                            eprintln!("{}\n{}", inventory.label(), inventory.detail());
+                            trust_native_code
+                        }),
+                        continue_after_failure: &|_| false,
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+                let done = installed
+                    .added
+                    .iter()
+                    .chain(installed.updated.iter().map(|(_, entry)| entry));
+                if as_json {
+                    json(done.map(entry_json).collect());
+                } else {
+                    for e in done {
+                        println!("{} {}: {} ({})", e.title, e.number, e.file, e.checksum);
+                    }
                 }
                 return Ok(());
             }

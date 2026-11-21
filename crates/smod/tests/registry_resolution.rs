@@ -34,6 +34,38 @@ struct Removal {
 }
 
 #[test]
+fn whole_solver_exposes_the_template_and_keeps_the_registry_values_as_arguments() {
+    use sunrise_launcher_smod::index::{Index, resolve};
+    use sunrise_launcher_smod::manifest::Side;
+    let index = Index::parse(include_str!("index/index-v1.json")).unwrap();
+    let result = resolve::install_whole(
+        &index,
+        &[resolve::Request {
+            id: "coords_hud".into(),
+            version: Some("9.0.0".into()),
+        }],
+        &[],
+        "26.3",
+        Side::Both,
+        resolve::WholeOptions {
+            conflicts: &[],
+            native_fits: |_: &_, _: &_| true,
+            messages: |template, args| match template {
+                "requested {version}" => format!("pinned {}", args[0].1),
+                "{mod} ({requirements})" => format!("{}: {}", args[0].1, args[1].1),
+                "{mod}: no listed version satisfies all requirements" => {
+                    format!("not found: {}", args[0].1)
+                }
+                _ => panic!("unexpected template: {template}"),
+            },
+        },
+    );
+    assert!(
+        matches!(result, Err(resolve::WholeRefusal::Inconsistent(reason)) if reason == "not found: coords_hud: pinned 9.0.0")
+    );
+}
+
+#[test]
 fn registry_resolution_fixtures() {
     let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/registry-resolution");
     let mut fixtures: Vec<_> = std::fs::read_dir(folder)

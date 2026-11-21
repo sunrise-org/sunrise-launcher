@@ -128,7 +128,7 @@ impl Resources {
             .tempdir_in(&parent)
             .map_err(|error| at(&parent, error))?;
         let candidate = stage.path().join("resources");
-        copy_primary(source, &candidate, true, 0)?;
+        copy_tree(source, &candidate, true, 0)?;
         if artifact::tree(&candidate, true)? != Some(primary)
             || artifact::tree(source, true)? != Some(primary)
         {
@@ -170,7 +170,12 @@ fn key(digest: [u8; 32]) -> String {
     format!("{:x}", sha2::digest::Output::<Sha256>::from(digest))
 }
 
-fn copy_primary(source: &Path, dest: &Path, top: bool, depth: usize) -> Result<(), String> {
+pub(super) fn copy_tree(
+    source: &Path,
+    dest: &Path,
+    skip_accelerator: bool,
+    depth: usize,
+) -> Result<(), String> {
     if depth > 64 {
         return Err(setup_error(source));
     }
@@ -179,7 +184,7 @@ fn copy_primary(source: &Path, dest: &Path, top: bool, depth: usize) -> Result<(
     for entry in fs::read_dir(source).map_err(|e| at(source, e))? {
         let entry = entry.map_err(|e| at(source, e))?;
         let name = entry.file_name();
-        if top && generated_cache(&name) {
+        if skip_accelerator && generated_cache(&name) {
             continue;
         }
         let src = entry.path();
@@ -189,7 +194,7 @@ fn copy_primary(source: &Path, dest: &Path, top: bool, depth: usize) -> Result<(
             return Err(setup_error(&src));
         }
         if meta.is_dir() {
-            copy_primary(&src, &dst, false, depth + 1)?;
+            copy_tree(&src, &dst, false, depth + 1)?;
         } else if meta.is_file() {
             preparer::clone_or_copy(&src, &dst).map_err(|e| at(&dst, e))?;
         } else {

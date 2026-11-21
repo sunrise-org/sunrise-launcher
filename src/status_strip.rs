@@ -93,25 +93,27 @@ impl Launcher {
             palette().accent
         };
         // A download says how far it is in the label; its bar shows it too.
-        let bar = match view.main {
-            Main::Installing(progress) => Some(
-                div()
-                    .flex_none()
-                    .w(px(120.))
-                    .h(px(4.))
-                    .rounded(crate::tokens::r(crate::tokens::R_BAR))
-                    .bg(rgb(palette().line))
-                    .overflow_hidden()
-                    .child(
-                        div()
-                            .h(px(4.))
-                            .rounded(crate::tokens::r(crate::tokens::R_BAR))
-                            .bg(rgb(palette().accent))
-                            .w(relative(progress.clamp(0.03, 1.))),
-                    ),
-            ),
+        let fraction = match view.main {
+            Main::Installing(progress) => Some(progress),
+            Main::RegistryInstall(stage, _) => crate::mods_page::install::stage_fraction(stage),
             _ => None,
         };
+        let bar = fraction.map(|progress| {
+            div()
+                .flex_none()
+                .w(px(120.))
+                .h(px(4.))
+                .rounded(crate::tokens::r(crate::tokens::R_BAR))
+                .bg(rgb(palette().line))
+                .overflow_hidden()
+                .child(
+                    div()
+                        .h(px(4.))
+                        .rounded(crate::tokens::r(crate::tokens::R_BAR))
+                        .bg(rgb(palette().accent))
+                        .w(relative(progress.clamp(0.03, 1.))),
+                )
+        });
         Some(
             strip()
                 .child(div().flex_none().size(px(8.)).rounded_full().bg(rgb(mark)))

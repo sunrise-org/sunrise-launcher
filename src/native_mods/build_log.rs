@@ -1,8 +1,8 @@
 //! The native build's log and how its failures read: copied from the game's `sunrise-native-build` (tests/test_launcher_copies.py).
 use crate::i18n::{tr, trf};
 use std::fs;
-use std::io::Write;
-use std::path::PathBuf;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::{path::PathBuf, sync::Arc};
 
 /// The native build's folder, under the launcher's build folder.
 pub(crate) fn root() -> PathBuf {
@@ -12,6 +12,29 @@ pub(crate) fn root() -> PathBuf {
 /// The build's log, kept until the next build.
 pub fn log_path() -> PathBuf {
     root().join("build.log")
+}
+
+/// Snapshot the exact attempt while its lease excludes another writer. Keep the final
+/// 256 KiB if a very large build log would otherwise travel through the UI.
+pub(super) fn snapshot() -> Option<Arc<str>> {
+    const LIMIT: u64 = 256 << 10;
+    let mut file = fs::File::open(log_path()).ok()?;
+    let skip = file.metadata().ok()?.len().saturating_sub(LIMIT);
+    file.seek(SeekFrom::Start(skip)).ok()?;
+    let mut bytes = Vec::new();
+    file.take(LIMIT).read_to_end(&mut bytes).ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    Some(if skip == 0 {
+        Arc::from(text.as_ref())
+    } else {
+        Arc::from(format!(
+            "{}\n\n{text}",
+            tr("Earlier build output was omitted.")
+        ))
+    })
 }
 
 /// Makes the build log fresh for a new attempt; the error says why it couldn't, for the Build log page.

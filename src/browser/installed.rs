@@ -5,6 +5,7 @@
 //! checksum. Files the player put there themselves are never touched: the browser only replaces
 //! or removes what it lists.
 use super::{pick, safe_name, Kind, Project, Source, SourceId, Support, Version};
+use crate::i18n::{tr, trf};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -94,6 +95,46 @@ pub struct Entry {
     /// What a Sunrise mod's trust was when it was installed (`trust_label`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verdict: Option<String>,
+    /// A retained install's verified source stays off until the player can address this failure.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "launcher_install_hold"
+    )]
+    pub install_hold: Option<InstallHold>,
+}
+
+/// Why verified bytes are intentionally installed but off after a partial native install.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InstallHold {
+    Compile,
+    Needs { name: String },
+}
+
+impl InstallHold {
+    pub fn label(&self) -> String {
+        match self {
+            Self::Compile => tr("Installed, couldn't build").into(),
+            Self::Needs { name } => trf("Needs {mod}", &[("mod", name)]),
+        }
+    }
+
+    pub fn short_reason(&self) -> String {
+        match self {
+            Self::Compile => tr("Couldn't build").into(),
+            Self::Needs { .. } => self.label(),
+        }
+    }
+
+    pub fn detail(&self) -> String {
+        match self {
+            Self::Compile => tr("Its code couldn't build on your computer.").into(),
+            Self::Needs { name } => {
+                trf("It needs {mod} to be on and compatible.", &[("mod", name)])
+            }
+        }
+    }
 }
 
 /// Whether `file` names something inside one of the folders the browser installs into, made of
@@ -367,6 +408,7 @@ pub(super) fn put(
             // Asked for by the player once: it stays theirs.
             dependency: step.dependency && old.as_ref().is_none_or(|o| o.dependency),
             verdict: None,
+            install_hold: None,
         };
         debug_assert!(path.ends_with(name));
         installed

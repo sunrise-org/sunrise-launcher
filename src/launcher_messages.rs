@@ -38,11 +38,6 @@ impl Launcher {
                         sunrise_launcher::nightly::note_published(list);
                     }
                     self.releases = r.map_or_else(Load::Failed, Load::Ready);
-                    // Once the list is in (or failed), each instance resolves to the build it plays.
-                    if !self.mods.auto_updated {
-                        self.mods.auto_updated = true;
-                        self.mods_auto_update();
-                    }
                 }
                 Msg::Links(links) => self.links = links,
                 // The page reads is_prepared when drawn; `changed` redraws it.

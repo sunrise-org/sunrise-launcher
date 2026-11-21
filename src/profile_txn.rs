@@ -24,15 +24,15 @@ const BOOTSTRAP_VERSION: u64 = 1;
 
 /// Moving a managed profile can change its path but never the filesystem identity of a
 /// directory referenced by an in-flight transaction.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Identity {
+pub struct Identity {
     volume: u64,
     inode: u64,
 }
 
 impl Identity {
-    fn of(path: &Path) -> Result<Self, String> {
+    pub fn of(path: &Path) -> Result<Self, String> {
         if !fs::symlink_metadata(path).is_ok_and(|m| regular(&m) && m.is_dir()) {
             return Err(at(path, unsettled()));
         }
@@ -111,17 +111,40 @@ impl Admission {
         external_owner: Option<&Path>,
         fence: impl FnOnce() -> Result<G, String>,
     ) -> Result<Self, String> {
-        let lease = Self::claim(home, external_owner)?;
+        Self::open_fenced_for(home, external_owner, None, fence)
+    }
+
+    pub(crate) fn open_fenced_for<G>(
+        home: &Path,
+        external_owner: Option<&Path>,
+        expected: Option<Identity>,
+        fence: impl FnOnce() -> Result<G, String>,
+    ) -> Result<Self, String> {
+        let lease = Self::claim(home, external_owner, expected)?;
         let _fence = fence()?;
         lease.recover()?;
         Ok(lease)
     }
 
-    fn claim(home: &Path, external_owner: Option<&Path>) -> Result<Self, String> {
+    fn claim(
+        home: &Path,
+        external_owner: Option<&Path>,
+        expected: Option<Identity>,
+    ) -> Result<Self, String> {
         let gate = external_owner
             .map(Path::to_path_buf)
             .unwrap_or_else(|| home.join(".install-txn.lock"));
-        let identity = Identity::of(home)?;
+        let changed = || {
+            crate::i18n::tr(
+                "This profile was replaced while Install was waiting. Nothing was installed.",
+            )
+            .to_owned()
+        };
+        let identity = match expected {
+            Some(expected) if Identity::of(home).ok() == Some(expected) => expected,
+            Some(_) => return Err(changed()),
+            None => Identity::of(home)?,
+        };
         match fs::symlink_metadata(&gate) {
             Ok(meta) if regular(&meta) && meta.is_file() => (),
             Err(e) if e.kind() == io::ErrorKind::NotFound => (),
@@ -152,8 +175,12 @@ impl Admission {
             Err(fs::TryLockError::WouldBlock) => return Err(busy()),
             Err(fs::TryLockError::Error(e)) => return Err(at(&gate, e)),
         }
-        if Identity::of(home)? != identity {
-            return Err(unsettled());
+        if Identity::of(home).ok() != Some(identity) {
+            return Err(if expected.is_some() {
+                changed()
+            } else {
+                unsettled()
+            });
         }
         Ok(Self {
             home: home.into(),
@@ -189,6 +216,13 @@ impl Admission {
             return Err(unsettled());
         }
         self.stage(Record::new(self.identity, intent, targets, None))
+    }
+
+    pub(crate) fn has_bootstrap(&self) -> Result<bool, String> {
+        match read(&self.home)? {
+            Some(record) => record.pending_bootstrap().map(|_| true),
+            None => Ok(false),
+        }
     }
 
     /// Resolve first Play once. A pending binding, with its exact inputs and proof, wins
@@ -647,6 +681,35 @@ impl<'a> Staging<'a> {
         self.lease.handoff()
     }
 
+    /// The journal may have acquired candidate references since this stage was opened,
+    /// but any other change means the stage no longer authorizes this operation.
+    fn live_record(&self) -> Result<Record, String> {
+        let home = self.lease.home();
+        let mut live = read(home)?.ok_or_else(unsettled)?;
+        if !self.record.targets.is_subset(&live.targets) {
+            return Err(unsettled());
+        }
+        let targets = std::mem::replace(&mut live.targets, self.record.targets.clone());
+        if live.digest()? != self.record.digest()? {
+            return Err(unsettled());
+        }
+        live.targets = targets;
+        live.operation()?.stage.verify(home)?;
+        Ok(live)
+    }
+
+    /// Hold the cache publication lock. Protect a candidate tag before it can be used
+    /// or published in the build cache, including while the profile pointer still names the old build.
+    pub(crate) fn retain_target(&self, tag: &str) -> Result<(), String> {
+        let home = self.lease.home();
+        let mut live = self.live_record()?;
+        if live.targets.insert(tag.to_owned()) {
+            live.verify_home(home)?;
+            write(home, &live)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn seal_pointer_replacing(
         self,
         previous: &[u8],
@@ -665,12 +728,12 @@ impl<'a> Staging<'a> {
         pointer_bytes: Vec<u8>,
         files: &[(PathBuf, Option<PathBuf>)],
     ) -> Result<Sealed<'a>, String> {
+        self.record = self.live_record()?;
         let home = self.lease.home();
         let stage = &self.path;
-        self.record.verify_home(home)?;
-        self.record.operation()?.stage.verify(home)?;
+        let record = &mut self.record;
         let pointer = home.join(POINTER);
-        let before = self.record.operation()?.before;
+        let before = record.operation()?.before;
         if Image::at(&pointer)? != before {
             return Err(at(&pointer, unsettled()));
         }
@@ -741,10 +804,10 @@ impl<'a> Staging<'a> {
                 after,
             });
         }
-        plan.validate(self.record.operation()?)?;
-        self.record.operation.as_mut().ok_or_else(unsettled)?.ready = Some(plan);
-        progress::Slots::create(stage, self.record.digest()?).map_err(|e| at(stage, e))?;
-        write(home, &self.record)?;
+        plan.validate(record.operation()?)?;
+        record.operation.as_mut().ok_or_else(unsettled)?.ready = Some(plan);
+        progress::Slots::create(stage, record.digest()?).map_err(|e| at(stage, e))?;
+        write(home, record)?;
         Ok(Sealed(self))
     }
 }
@@ -903,7 +966,7 @@ impl Record {
                 let mut pending = Self::new(
                     self.home,
                     Intent::Install,
-                    self.targets.clone(),
+                    bootstrap.targets(),
                     Some(bootstrap.clone()),
                 );
                 pending.retirement = Some(self.operation()?.stage.clone());
@@ -948,7 +1011,11 @@ impl Record {
         if let Some(binding) = &self.bootstrap {
             if !matches!(self.intent, Intent::Install)
                 || binding.version != BOOTSTRAP_VERSION
-                || binding.targets() != self.targets
+                || if self.operation.is_some() {
+                    !binding.targets().is_subset(&self.targets)
+                } else {
+                    binding.targets() != self.targets
+                }
                 || self
                     .operation
                     .as_ref()

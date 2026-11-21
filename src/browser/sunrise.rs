@@ -143,6 +143,75 @@ pub fn fits_game(version: &index::Version, game: &str) -> bool {
     version.game == game && version.capabilities.unknown().is_empty()
 }
 
+/// Install-only evidence. A missing local record or a different published revision is not a
+/// refusal: the worker checks the verified archives and SDK. Construction reads no network.
+pub struct NativeInstallReadiness {
+    host_block: Option<String>,
+    developer_revision: Option<String>,
+}
+
+impl NativeInstallReadiness {
+    pub fn for_profile(home: &Path, selected_base: Option<&str>, catalogue_game: &str) -> Self {
+        // Install uses the committed base, not a newly offered release. If the journal
+        // is unsettled or a first attempt is already bound, only host-wide facts are known.
+        let references = crate::profile_txn::references(home).ok();
+        let active = references
+            .as_ref()
+            .and_then(|refs| refs.pointer.as_deref())
+            .and_then(|bytes| crate::managed_play::Active::parse(bytes).ok());
+        let base = active
+            .as_ref()
+            .map(crate::managed_play::Active::base)
+            .or_else(|| {
+                references
+                    .as_ref()
+                    .filter(|refs| refs.pointer.is_none() && refs.targets.is_empty())?;
+                selected_base
+            });
+        let about = base.and_then(crate::native_mods::about);
+        let origin = about.as_ref().map(|about| about.base.as_str()).or(base);
+        let developer_revision = origin
+            .filter(|tag| {
+                crate::developer_install::is_developer(tag)
+                    && crate::backend::game_version(tag) == catalogue_game
+            })
+            .and_then(|tag| match about.as_ref() {
+                Some(about) => Some(about.sunrise.clone()),
+                None => crate::developer_install::revision(tag).ok(),
+            });
+        Self {
+            host_block: crate::native_mods::known_host_block(origin),
+            developer_revision,
+        }
+    }
+
+    pub fn block(&self, index: &Index, id: &str, game: &str) -> Option<String> {
+        let project = index
+            .project(id)
+            .filter(|p| p.kind == index::Kind::NativeMod)?;
+        index.installable(project, game)?;
+        if let Some(reason) = &self.host_block {
+            return Some(reason.clone());
+        }
+        let revision = self.developer_revision.as_deref()?;
+        let all_mismatch = project
+            .versions
+            .iter()
+            .filter(|v| fits_game(v, game) && index.revoked(id, &v.file.sha256).is_none())
+            .all(|v| {
+                v.api
+                    .strip_prefix("native-1/")
+                    .and_then(|api| api.split('/').next())
+                    .filter(|pin| pin.len() == 40 && pin.bytes().all(|b| b.is_ascii_hexdigit()))
+                    .is_some_and(|pin| pin != revision)
+            });
+        all_mismatch.then(|| {
+            tr("No listed native version matches this local developer game's exact revision.")
+                .into()
+        })
+    }
+}
+
 /// Plans every one of `ids` together, once, and refuses the whole set with the planner's reason
 /// if any of them can't be installed with the others: nothing is downloaded before that.
 pub fn check_set(
@@ -158,19 +227,21 @@ pub fn check_set(
             version: None,
         })
         .collect();
-    let plan = index::resolve::install(
+    let plan = index::resolve::install_with_messages(
         index,
         &requests,
         held,
         game,
         sunrise_launcher_smod::manifest::Side::Both,
         |_, v| fits_game(v, game),
+        trf,
     );
     for id in ids {
         if let Some(index::resolve::RequestResult::Refused { reason }) = plan.requested.get(id) {
             let name = index.project(id).map_or(id.as_str(), |p| p.name.as_str());
-            return Err(format!(
-                "{name} can't be installed with the others: {reason}"
+            return Err(trf(
+                "{name} can't be installed with the others: {reason}",
+                &[("name", name), ("reason", reason)],
             ));
         }
     }
@@ -528,7 +599,7 @@ pub fn trust_and_capabilities(
     });
     if p.kind == index::Kind::NativeMod {
         lines.push(
-            tr("Native code: it is built into the game and runs with full access to your computer. Its source was reviewed before it was listed").to_string(),
+            tr("Native code: it is built into the game and runs with full access to your computer.").to_string(),
         );
         if let Some(v) = p.versions.iter().find(|v| v.game == game) {
             let pin = v.api.split('/').nth(1).unwrap_or_default();
@@ -1398,6 +1469,7 @@ impl Install<'_> {
             page: project.page.clone(),
             dependency: false,
             verdict: Some(trust_label(trust).into()),
+            install_hold: None,
         };
         Ok((entry, Some((path, facts)), unreadable))
     }
@@ -1536,5 +1608,10 @@ fn check_baked_revocations(
 pub mod auto;
 mod dependencies;
 pub mod pack;
+mod registry_install;
+pub use registry_install::{
+    install_registry, install_target, BuildNotice, InstallError, InstallHooks, InstallProgress,
+    InstalledBatch, NativeQuestion,
+};
 #[cfg(test)]
 mod tests;

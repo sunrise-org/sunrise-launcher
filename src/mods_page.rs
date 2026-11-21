@@ -6,14 +6,13 @@ use super::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use sunrise_launcher::browser::{
-    self, installed, mod_list, sunrise, Kind as PackKind, Project, SourceId,
-};
+use sunrise_launcher::browser::{self, installed, mod_list, sunrise};
 use sunrise_launcher::native_status;
 
+pub(crate) mod install;
+
 pub(super) enum Event {
-    Progress(String, f32),
-    Done(Result<String, String>),
+    Registry(install::Worker),
     /// What the automatic updates did (`sunrise::auto`).
     AutoUpdated(Vec<String>),
     /// A project page's part, an image or a filter's values (`mods_project`).
@@ -23,9 +22,6 @@ pub(super) enum Event {
 pub(super) struct Mods {
     focus: FocusHandle,
     pub(super) focused: bool,
-    everything: bool,
-    /// The Minecraft version Sunrise plays, read again with each search ([`browser::game`]).
-    pub(super) game: String,
     results_list: cull::Cull,
     installed_list: cull::Cull,
     pub(super) report_list: cull::Cull,
@@ -33,20 +29,10 @@ pub(super) struct Mods {
     /// The registry native mods' versions the player picked on their Versions tab, by id
     /// (`sunrise::chosen`), read with `installed`.
     pub(super) chosen: std::collections::BTreeMap<String, String>,
-    /// The build the page's Minecraft version was last worked out for (the selected instance's).
-    game_for: Option<(Option<String>, Option<String>)>,
-    /// Whether the start's auto-update ran: it waits for the release list.
-    pub(super) auto_updated: bool,
     /// The game folder the browser installs into and lists: the selected instance's.
     home: ModsHome,
-    /// Its worlds (folder, name), the last played first, and the one data packs go into.
-    worlds: Vec<(PathBuf, String)>,
-    world: Option<PathBuf>,
-    /// The project being installed, and the line and fraction of its download.
-    pub(super) busy: Option<(String, String, f32)>,
+    pub(crate) installs: install::Installs,
     pub(super) message: Option<Result<String, String>>,
-    pub(super) updates: HashMap<(SourceId, String), String>,
-    /// An install awaiting explicit native-code consent, before any download.
     /// The selected instance's native build state, the mods it would build again
     /// (`native_status::unbuilt`), and the `native_status::fingerprint` they were read for: read
     /// again only when that changes.
@@ -84,11 +70,6 @@ impl ModsHome {
 }
 
 impl Mods {
-    /// The saved settings changed (a save, or its retry): the builds the search follows are worked out again.
-    pub(super) fn settings_saved(&mut self) {
-        self.game_for = None;
-    }
-
     pub(super) fn reset_lists(&self) {
         self.results_list.reset();
         self.installed_list.reset();
@@ -123,23 +104,16 @@ impl Mods {
         Self {
             focus: cx.focus_handle().tab_index(0).tab_stop(true),
             focused: false,
-            everything: false,
-            game: browser::game(),
             results_list: cull::Cull::default(),
             installed_list: cull::Cull::default(),
             report_list: cull::Cull::default(),
             installed: Vec::new(),
             chosen: Default::default(),
-            game_for: None,
-            auto_updated: false,
             home: ModsHome::default(),
-            worlds: Vec::new(),
-            world: None,
-            busy: None,
+            installs: install::Installs::default(),
             message: None,
             native_state: Default::default(),
             unbuilt: None,
-            updates: HashMap::new(),
             browse: Default::default(),
             tx,
             rx,
@@ -161,21 +135,18 @@ impl Launcher {
             changed = true;
             let m = &mut self.mods;
             match event {
-                Event::Progress(line, f) => {
-                    if let Some(busy) = &mut m.busy {
-                        busy.1 = line;
-                        busy.2 = f;
-                    }
+                Event::Registry(install::Worker::Native(question, reply)) => {
+                    self.reset_install_question_sheet();
+                    self.pending_consent = Some(PendingConsent::Registry(question, reply));
                 }
-                Event::Done(result) => {
-                    done = true;
-                    m.busy = None;
-                    if let Ok(said) = &result {
-                        crate::glass_toast::say(said.clone());
+                Event::Registry(event) => {
+                    if m.installs.handle(event) {
+                        done = true;
+                        m.reload_installed();
+                        m.installed_list.reset();
+                    } else if m.installs.question.is_some() {
+                        self.reset_install_question_sheet();
                     }
-                    m.message = Some(result);
-                    m.reload_installed();
-                    m.installed_list.reset();
                 }
                 Event::Loaded(l) => loaded.push(l),
                 Event::AutoUpdated(lines) => {
@@ -194,29 +165,20 @@ impl Launcher {
         for l in loaded {
             self.mods_loaded(l);
         }
-        changed
-    }
-
-    /// At start: recover interrupted updates, then update every Sunrise instance's registry
-    /// content when enabled ([`auto_update`]), reading the selected instance's list again after.
-    pub(super) fn mods_auto_update(&mut self) {
-        let enabled = self.settings.auto_updates_mods();
-        let list: Vec<AutoTarget> = self
-            .instances
-            .list
-            .iter()
-            .map(|i| AutoTarget {
-                instance: i.clone(),
-                game: self.game_of(i),
-            })
-            .collect();
-        let tx = self.mods.tx.clone();
-        std::thread::spawn(move || {
-            let lines = auto_update(&list, enabled);
-            if !lines.is_empty() {
-                let _ = tx.send(Event::AutoUpdated(lines));
+        if done {
+            if self.ui.sheet == Some(crate::sheets::Sheet::RegistryPlay) {
+                self.ui.sheet = None;
             }
-        });
+            if let Some((home, intent)) = self.mods.installs.take_play() {
+                if self
+                    .selected_instance()
+                    .is_some_and(|i| i.home == home && i.id == intent.instance)
+                {
+                    self.resume_play(intent);
+                }
+            }
+        }
+        self.start_registry_queue() || changed
     }
 
     /// Turns a Sunrise mod the browser installed on or off, as the game's Options > Mods does.
@@ -255,194 +217,6 @@ impl Launcher {
                     if on { "on" } else { "off" }
                 )
             }),
-        });
-    }
-
-    /// Installs (or updates) a project on a thread: a pack into its folder, a modpack into
-    /// Modpacks. `known` is the project when the page has it; else it is asked for first. `shown`
-    /// is the name the page or card that asks shows for it, which the native-code question
-    /// repeats; the id stays what is installed.
-    pub(super) fn mods_install(
-        &mut self,
-        source: SourceId,
-        id: String,
-        known: Option<Project>,
-        shown: Option<String>,
-    ) {
-        if self.mods.busy.is_some() {
-            return;
-        }
-        // The first native mod: the trust notice, before anything is installed.
-        let first_native = source == SourceId::Sunrise
-            && self.settings.native_mods_allowed_at.is_none()
-            && sunrise::is_native_mod(&id);
-        if first_native {
-            self.pending_consent = Some(PendingConsent::Install(source, id, known, shown));
-            self.content_scroll
-                .handle
-                .set_offset(gpui::point(px(0.), px(0.)));
-            return;
-        }
-        self.mods.message = None;
-        self.mods.busy = Some((id.clone(), format!("Asking {}…", source.label()), 0.));
-        self.mods.updates.remove(&(source, id.clone()));
-        let everything =
-            self.mods.everything || self.mods.browse.filters.other_version(&self.mods.game);
-        let tx = self.mods.tx.clone();
-        let home = self.mods.home();
-        let game = self.mods_game();
-        let instance = self
-            .selected_instance()
-            .map_or_else(|| "Sunrise".to_string(), |i| i.name.clone());
-        let world = self.mods.world.clone().and_then(|path| {
-            let (_, name) = self.mods.worlds.iter().find(|(p, _)| *p == path)?;
-            Some((path, name.clone()))
-        });
-        std::thread::spawn(move || {
-            let last = std::cell::Cell::new(-1);
-            let progress = |line: &str, f: f32| {
-                let pct = (f * 100.) as i32;
-                if last.replace(pct) != pct {
-                    let _ = tx.send(Event::Progress(line.to_string(), f));
-                }
-            };
-            let result = (|| -> Result<String, String> {
-                let source = browser::source(source);
-                let p = match known {
-                    Some(p) => p,
-                    None => source.project(&id)?,
-                };
-                if p.kind == PackKind::DataPack {
-                    let (world, name) = world.ok_or_else(|| {
-                        tr("Pick the world the data pack goes into first.").to_string()
-                    })?;
-                    let done = installed::install_datapack(
-                        &*source,
-                        &p,
-                        everything,
-                        &world,
-                        &game,
-                        &|f| progress(&p.title, f),
-                    )?;
-                    return Ok(trf(
-                        "Put {pack} {version} in {world}'s data packs, checksum checked: the \
-                             game turns it on when the world opens. {coverage}",
-                        &[
-                            ("pack", &p.title),
-                            ("version", &done.number),
-                            ("world", &name),
-                            ("coverage", &done.coverage.summary()),
-                        ],
-                    ));
-                }
-                if p.kind == PackKind::Modpack && p.source == SourceId::Sunrise {
-                    let pack = sunrise::pack::install(&p.id, &progress)?;
-                    if let Some(url) = &p.icon {
-                        sunrise_launcher::instances::adopt_icon(
-                            &sunrise::pack::home(&pack.work),
-                            url,
-                        );
-                    }
-                    return Ok(trf(
-                        "Installed {pack} {version} as its own profile with {mods}, each \
-                             checked. Play it from the list above.",
-                        &[
-                            ("pack", &pack.name),
-                            ("version", &pack.version),
-                            ("mods", &pack.mods.join(", ")),
-                        ],
-                    ));
-                }
-                let done = installed::install(&*source, &p, everything, &home, &game, &progress)?;
-                if p.source == SourceId::Sunrise && p.kind == PackKind::Mod {
-                    let names = done.into_iter().map(|e| e.title).collect::<Vec<_>>();
-                    return Ok(trf(
-                        "Installed {mods}.",
-                        &[("mods", &crate::mods::names(&names))],
-                    ));
-                }
-                let names: Vec<String> = done
-                    .iter()
-                    .map(|e| format!("{} {}", e.title, e.number))
-                    .collect();
-                let mods = names.join(", ");
-                if done.iter().any(|e| native_status::is_native_file(&e.file)) {
-                    return Ok(trf(
-                        "Installed {mods} into {instance}. Build to play with it.",
-                        &[("mods", &mods), ("instance", &instance)],
-                    ));
-                }
-                Ok(trf(
-                    "Installed {mods}, checksums checked. Turn it on in the game: Options \
-                         > Resource Packs.",
-                    &[("mods", &mods)],
-                ))
-            })();
-            let _ = tx.send(Event::Done(result));
-        });
-    }
-}
-
-impl Launcher {
-    /// A collection's one Install: the registry mods `ids` planned together, then installed one
-    /// after another, each with what it needs, as the mod page's Install does one. A failure
-    /// stops the rest and names the mod; the ones before it stay installed. `shown` is the
-    /// collection's name.
-    pub(super) fn mods_install_many(&mut self, ids: Vec<String>, shown: String) {
-        if self.mods.busy.is_some() || ids.is_empty() {
-            return;
-        }
-        if crate::mods::needs_consent(
-            &ids,
-            self.settings.native_mods_allowed_at.is_some(),
-            sunrise::is_native_mod,
-        ) {
-            self.pending_consent = Some(PendingConsent::Collection(ids, shown));
-            self.content_scroll
-                .handle
-                .set_offset(gpui::point(px(0.), px(0.)));
-            return;
-        }
-        self.mods.message = None;
-        self.mods.busy = Some((
-            shown.clone(),
-            tr("Asking the Sunrise registry…").to_string(),
-            0.,
-        ));
-        let (tx, home, game) = (self.mods.tx.clone(), self.mods.home(), self.mods_game());
-        std::thread::spawn(move || {
-            let result = (|| -> Result<String, String> {
-                // The whole set is planned once first: a conflict between picks refuses all of
-                // them before anything downloads. Each is then installed with what it needs.
-                let index = sunrise::fetched_index().ok_or_else(|| {
-                    tr("Connect to the Sunrise registry before installing a mod and its dependencies.")
-                        .to_string()
-                })?;
-                let held = sunrise::held_mods(&installed::Installed::load(&home).entries);
-                sunrise::check_set(&index, &ids, &held, &game)?;
-                let source = browser::source(SourceId::Sunrise);
-                let total = ids.len() as f32;
-                let mut names = crate::mods::run_in_order(&ids, |i, id| {
-                    let p = source.project(id)?;
-                    let progress = |line: &str, f: f32| {
-                        let _ = tx.send(Event::Progress(line.to_string(), (i as f32 + f) / total));
-                    };
-                    installed::install(&*source, &p, false, &home, &game, &progress)
-                        .map(|done| done.into_iter().map(|e| e.title).collect())
-                        .map_err(|why| {
-                            trf(
-                                "{mod} didn't install: {why}",
-                                &[("mod", &p.title), ("why", &why)],
-                            )
-                        })
-                })?;
-                names.dedup();
-                Ok(trf(
-                    "Installed {mods}.",
-                    &[("mods", &crate::mods::names(&names))],
-                ))
-            })();
-            let _ = tx.send(Event::Done(result));
         });
     }
 }

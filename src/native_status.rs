@@ -740,6 +740,7 @@ mod tests {
                 page: String::new(),
                 dependency: false,
                 verdict: None,
+                install_hold: None,
             }],
         }
         .save(&home)

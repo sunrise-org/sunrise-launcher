@@ -260,9 +260,6 @@ impl Launcher {
     /// Keeps the current choices in memory if writing fails; every page offers the same retry.
     pub(crate) fn save_settings(&mut self) -> bool {
         self.settings_save_error = self.settings.save().err();
-        if self.settings_save_error.is_none() {
-            self.mods.settings_saved();
-        }
         self.settings_save_error.is_none()
     }
 

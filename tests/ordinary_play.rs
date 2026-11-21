@@ -15,6 +15,9 @@ use std::{
 };
 use sunrise_launcher_smod::{manifest, mod_list};
 
+#[path = "ordinary_play/install.rs"]
+mod install;
+
 const BUILD: &str = "developer-local";
 
 struct Fixture {

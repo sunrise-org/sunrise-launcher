@@ -41,6 +41,64 @@ fn put(index: &Index, local: bool, home: &Path) -> Result<Vec<installed::Entry>,
 }
 
 #[test]
+fn native_install_readiness_changes_the_action_without_changing_catalogue_fit() {
+    let mut index = sample();
+    let project = index
+        .projects
+        .iter_mut()
+        .find(|p| p.id == "coords_hud")
+        .unwrap();
+    project.kind = index::Kind::NativeMod;
+    let local = "a".repeat(40);
+    let other = "b".repeat(40);
+    project.versions[0].api = format!("native-1/{other}");
+    let id = "coords_hud";
+    let catalogue_fits = || fits_game(&index.project(id).unwrap().versions[0], GAME);
+    assert!(catalogue_fits());
+    let published = NativeInstallReadiness {
+        host_block: None,
+        developer_revision: None,
+    };
+    assert!(published.block(&index, id, GAME).is_none());
+    let host = NativeInstallReadiness {
+        host_block: Some("No managed host".into()),
+        developer_revision: None,
+    };
+    assert_eq!(
+        host.block(&index, id, GAME).as_deref(),
+        Some("No managed host")
+    );
+    assert!(host.block(&index, id, "another game").is_none());
+    let developer = NativeInstallReadiness {
+        host_block: None,
+        developer_revision: Some(local.clone()),
+    };
+    assert!(developer.block(&index, id, GAME).is_some());
+    assert!(catalogue_fits());
+
+    let project = index.projects.iter_mut().find(|p| p.id == id).unwrap();
+    let mut older = project.versions[0].clone();
+    older.version = "0.1.0".into();
+    older.api = format!("native-1/{local}");
+    project.versions.push(older);
+    assert!(
+        developer.block(&index, id, GAME).is_none(),
+        "an older archive may work"
+    );
+    index
+        .projects
+        .iter_mut()
+        .find(|p| p.id == id)
+        .unwrap()
+        .versions[1]
+        .api = "unrecognized".into();
+    assert!(
+        developer.block(&index, id, GAME).is_none(),
+        "unrecognized pins belong to the worker"
+    );
+}
+
+#[test]
 fn only_the_builtin_reply_can_prove_a_published_id_and_archive_hash() {
     assert!(official_endpoint(INDEX_URL, false));
     assert!(!official_endpoint(INDEX_URL, true));

@@ -1177,34 +1177,6 @@ fn install_is_given_only_the_ticked_mods_not_yet_installed_and_stops_at_the_firs
         ["pig"],
         "not cow (installed), owl (unticked) or lib (a library)"
     );
-
-    let ids: Vec<String> = ["a", "b", "c"].map(str::to_owned).to_vec();
-    let mut seen = Vec::new();
-    let said = collection::run_in_order(&ids, |i, id| {
-        seen.push((i, id.to_owned()));
-        match id {
-            "b" => Err("b didn't install".into()),
-            _ => Ok(vec![id.to_uppercase()]),
-        }
-    });
-    assert_eq!(said, Err("b didn't install".into()));
-    assert_eq!(
-        seen,
-        [(0, "a".to_owned()), (1, "b".to_owned())],
-        "c is never tried"
-    );
-    assert_eq!(
-        collection::run_in_order(&ids, |_, id| Ok(vec![id.into()])).unwrap(),
-        ["a", "b", "c"]
-    );
-
-    let native = |id: &str| id == "b";
-    assert!(collection::needs_consent(&ids, false, native));
-    assert!(
-        !collection::needs_consent(&ids, true, native),
-        "once allowed, never asked"
-    );
-    assert!(!collection::needs_consent(&ids[..1], false, native));
 }
 
 #[test]

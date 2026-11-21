@@ -7,6 +7,7 @@
 //! the sign-in, install, prepare, build and trust gates.
 use super::*;
 use crate::sheets::{Sheet, WayOut};
+use sunrise_launcher::browser::sunrise::InstallProgress;
 
 /// What the launcher knows that Play depends on.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -21,6 +22,8 @@ pub(crate) struct Facts {
     pub step: Option<backend::PlayStep>,
     /// Mods are being added, removed or updated.
     pub mutating: bool,
+    pub registry: Option<InstallProgress>,
+    pub registry_accepts_play: bool,
     /// The game runs.
     pub running: bool,
     /// An account is selected, or the developer's offline Play is on.
@@ -56,6 +59,7 @@ pub(crate) enum Main {
     /// Starting, and the step it is at before the game opens.
     Step(backend::PlayStep),
     ChangingMods,
+    RegistryInstall(InstallProgress, bool),
     /// The game runs: the button stops it.
     Stop,
     SignIn,
@@ -217,6 +221,8 @@ impl Facts {
             Main::Building
         } else if self.starting {
             self.step.map_or(Main::Starting, Main::Step)
+        } else if let Some(stage) = self.registry {
+            Main::RegistryInstall(stage, self.registry_accepts_play && self.signed_in)
         } else if self.mutating {
             Main::ChangingMods
         } else if self.running {
@@ -288,7 +294,10 @@ impl Facts {
             (said.is_none() && !self.building && self.mods_off > 0).then_some(self.mods_off);
         View {
             main,
-            enabled: location_allows_action(self.located, busy) && main != Main::SignIn,
+            enabled: location_allows_action(
+                self.located,
+                busy && !matches!(main, Main::RegistryInstall(_, true)),
+            ) && main != Main::SignIn,
             said,
             failed,
             act,
@@ -315,6 +324,7 @@ impl Main {
             Main::Step(backend::PlayStep::Native) => tr("Building mods…").into(),
             Main::Step(backend::PlayStep::SignIn) => tr("Signing in…").into(),
             Main::ChangingMods => tr("Changing mods…").into(),
+            Main::RegistryInstall(stage, _) => crate::mods_page::install::stage_label(stage).into(),
             Main::Stop => tr("Stop game").into(),
             // Signed out, Play stays where it is and can't be pressed; signing in is the account
             // chip's job.
@@ -326,7 +336,11 @@ impl Main {
 
     /// Why Play can't be pressed, said only as its tooltip: no line is added to the page.
     pub(crate) fn tooltip(self) -> Option<SharedString> {
-        matches!(self, Main::SignIn).then(|| tr("Sign in to play").into())
+        match self {
+            Main::SignIn => Some(tr("Sign in to play").into()),
+            Main::RegistryInstall(_, true) => Some(tr("Play when the install is ready").into()),
+            _ => None,
+        }
     }
 
     /// Something Play waits for, as the strip says it off Home.
@@ -339,6 +353,7 @@ impl Main {
                 | Main::Starting
                 | Main::Step(_)
                 | Main::ChangingMods
+                | Main::RegistryInstall(..)
         )
     }
 }
@@ -423,6 +438,8 @@ impl Launcher {
             starting: self.starting_client.is_some() || self.play_admission.is_some(),
             step: self.play_step,
             mutating: self.mutating() || self.pinning_build,
+            registry: self.registry_stage(),
+            registry_accepts_play: self.registry_accepts_play(),
             running: self.client.is_some(),
             ..Facts::default()
         }

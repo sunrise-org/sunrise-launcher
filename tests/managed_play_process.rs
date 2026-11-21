@@ -22,7 +22,6 @@ fn main() {
     let mut args = std::env::args_os().skip(1);
     if let Some(mode) = args.next() {
         match mode.to_str() {
-            #[cfg(windows)]
             Some("--launch-api") => {
                 println!(r#"{{"options":[{{"name":"--developer-single-player"}}]}}"#);
                 return;
@@ -57,11 +56,15 @@ fn main() {
             scenario("different-status");
             scenario("early-wrapper");
             scenario("failed");
+            registry::ordinary_install();
             #[cfg(windows)]
             ordinary_cli();
         }
     }
 }
+
+#[path = "managed_play_process/registry.rs"]
+mod registry;
 
 fn scenario(mode: &str) {
     let root = tempfile::tempdir().unwrap();
@@ -603,7 +606,7 @@ fn game() {
     await_event(|| home.join("game-stop").is_file());
     if matches!(
         std::env::var(MODE).as_deref(),
-        Ok("different-status" | "early-wrapper" | "ordinary-cli")
+        Ok("different-status" | "early-wrapper" | "ordinary-cli" | "registry-install")
     ) {
         use std::io::Write as _;
         println!("{FINAL_STDOUT}");

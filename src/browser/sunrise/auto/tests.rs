@@ -82,6 +82,7 @@ fn entry(version: &str) -> installed::Entry {
         page: String::new(),
         dependency: false,
         verdict: None,
+        install_hold: None,
     }
 }
 

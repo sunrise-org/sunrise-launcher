@@ -805,6 +805,7 @@ Install a pack or a Sunrise mod and what it needs into a profile, by its id or s
 - `--instance`: The profile (default: the selected one)
 - `--everything`: Allow a version made for another Minecraft version
 - `--source` (modrinth, sunrise)
+- `--trust-native-code`: Allow registry native code and the named build dependencies to run
 
 MCP: `mods_install`.
 

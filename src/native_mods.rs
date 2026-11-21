@@ -145,6 +145,23 @@ fn platform_for_game(base: &str) -> Result<BuildPlatform, String> {
     windows_build_platform(machine, host.target)
 }
 
+/// Only a known host or game-machine mismatch; missing or unreadable game files are not a verdict.
+pub(crate) fn known_host_block(base: Option<&str>) -> Option<String> {
+    let host = match rust_toolchain::host() {
+        Some(host) => host,
+        None => return Some(rust_toolchain::unsupported_host()),
+    };
+    if let Some(error) = backend::native_mod_architecture_error() {
+        return Some(error);
+    }
+    if cfg!(windows) {
+        let base = base?;
+        let machine = pe_machine(&backend::version_dir(base).join(backend::CLIENT)).ok()?;
+        return windows_build_platform(machine, host.target).err();
+    }
+    None
+}
+
 fn windows_build_platform(machine: u16, host_target: &str) -> Result<BuildPlatform, String> {
     let target = rust_toolchain::windows_target_for_machine(machine).ok_or_else(|| {
         architecture_mismatch(&format!("PE machine 0x{machine:04x}"), "x64 or ARM64")
@@ -948,6 +965,7 @@ pub enum Failed {
         left: Vec<LeftOut>,
         error: String,
         compiling: bool,
+        log: Option<std::sync::Arc<str>>,
     },
     /// The folder holds no native mod to build.
     Nothing,
@@ -1002,6 +1020,8 @@ struct BuildOptions<'a> {
     /// The player chose to build without the mods that worlds were saved with.
     leave_out: bool,
     staging: Option<&'a crate::profile_txn::Staging<'a>>,
+    /// The complete candidate profile, including its staged content and selection.
+    exact_home: Option<&'a Path>,
 }
 
 /// Mods saved into worlds that a build would switch off ([`Failed::Worlds`]): what the player
@@ -1315,7 +1335,9 @@ fn pipeline(
     // Native sources live beside the instance's sunrise-mods directory. Read
     // its policy before compiling, but never use dispatch overrides to stage
     // an incomplete or reversed Cargo library graph.
-    let instance = folder.parent().unwrap_or_else(|| Path::new("."));
+    let instance = options
+        .exact_home
+        .unwrap_or_else(|| folder.parent().unwrap_or_else(|| Path::new(".")));
     let overrides =
         dependencies::Overrides::read(&instance.join(sunrise_launcher_smod::mod_list::DIR))?;
     let settings = sunrise_launcher_smod::mod_list::ModList::load(instance);
@@ -1363,6 +1385,30 @@ fn pipeline(
     // made for it exactly. Any other build tests each mod made for another build (SDK design §10).
     let sdk = if developer {
         if let Some(list) = mismatch(&mods, &revision) {
+            if options.exact_home.is_some() {
+                let error = trf(
+                    "Made for other Sunrise versions: {mods}; rebuild against this game.",
+                    &[("mods", &list)],
+                );
+                // A local developer checkout has no alternate surface to compare. An
+                // exact revision mismatch is a proved no-fit, not a failed SDK request.
+                let unfit: Vec<_> = mods
+                    .iter()
+                    .filter(|mod_| mod_.native().sunrise != revision)
+                    .map(|mod_| LeftOut::new(mod_, isolate::Why::Unfit(error.clone())))
+                    .collect();
+                let pairs: Vec<_> = mods
+                    .iter()
+                    .zip(&declared)
+                    .map(|(bundle, dependencies)| (bundle, dependencies.as_slice()))
+                    .collect();
+                return Err(Failed::Mods {
+                    left: isolate::with_dependents(&unfit, &pairs),
+                    error,
+                    compiling: false,
+                    log: None,
+                });
+            }
             return Err(mismatch_error(&list).into());
         }
         None
@@ -1447,6 +1493,7 @@ fn pipeline(
                 left,
                 error: texts.join("\n\n"),
                 compiling: false,
+                log: None,
             });
         }
     }
@@ -1472,8 +1519,17 @@ fn pipeline(
     let shown = sdk
         .as_ref()
         .map_or_else(|| sdk_cache::shown(&revision, None), |sdk| sdk.shown());
-    let blame = |e: String| -> Failed {
-        let going = compile_omissions(&e, &fitted, &mods, &declared);
+    let blame = |failure: tool::Failure| -> Failed {
+        let going = match failure.blame.as_ref() {
+            Some(tool::Blame {
+                mod_id,
+                kind: tool::BlameKind::Compile,
+            }) if options.exact_home.is_some() || fitted.contains(mod_id) => {
+                compile_omissions(mod_id, &mods, &declared)
+            }
+            _ => Vec::new(),
+        };
+        let e = blamed_text(failure);
         let Some(failed) = going.first() else {
             return Failed::Other(e);
         };
@@ -1482,10 +1538,19 @@ fn pipeline(
                 return stop;
             }
         }
+        let reason = if options.exact_home.is_some() {
+            trf(
+                "Couldn't compile {mod} for this game.",
+                &[("mod", &failed.id)],
+            )
+        } else {
+            fit::did_not_build(&failed.id)
+        };
         Failed::Mods {
-            error: format!("{}\n\n{e}", fit::did_not_build(&failed.id)),
+            error: format!("{reason}\n\n{e}"),
             left: going,
             compiling: true,
+            log: options.exact_home.and_then(|_| build_log::snapshot()),
         }
     };
     let mixins = mixins::for_key(&mixins_pins, |r| {
@@ -1502,6 +1567,10 @@ fn pipeline(
         developer_key.as_deref().or(platform.cache_key()),
         &requested,
     )?;
+    if let Some(stage) = options.staging {
+        let _publication = crate::run_leases::installation().map_err(cache_error)?;
+        stage.retain_target(&version)?;
+    }
     let exists = target.directory(&version).join(".installed").is_file();
     // The steps around the mods' compile, timed like each command (`run_checked`), so the log
     // accounts for the whole build.
@@ -1695,7 +1764,7 @@ fn pipeline(
         );
         // Don't turn a stopped tool into an attributed compile failure.
         cancellation.check()?;
-        let built = built.map_err(|failure| blame(blamed_text(failure)))?;
+        let built = built.map_err(blame)?;
         let libraries = workspace
             .verify_outputs(
                 &built,
@@ -1714,7 +1783,7 @@ fn pipeline(
             "Native mods route: {route}.",
             &[("route", built.route.name())],
         ))
-        .map_err(blame)?;
+        .map_err(Failed::Other)?;
         // The whole step; the tool's own build and the function replacement have their lines.
         append_log(&trf(
             "Mods compiled against the prebuilt game in {seconds} s",
@@ -1723,7 +1792,7 @@ fn pipeline(
                 &format!("{:.1}", compiling.elapsed().as_secs_f64()),
             )],
         ))
-        .map_err(blame)?;
+        .map_err(Failed::Other)?;
         cancellation.check()?;
         progress(Step::Install);
         let installing = std::time::Instant::now();
@@ -1749,16 +1818,11 @@ fn pipeline(
 /// The fitted mod identified by the compiler diagnostic, and every required dependent that
 /// would be missing its library. The same reasons guard worlds, drive retries and reach the player.
 fn compile_omissions(
-    error: &str,
-    fitted: &[String],
+    blamed_id: &str,
     mods: &[Bundle],
     declared: &[Vec<dependencies::Dependency>],
 ) -> Vec<LeftOut> {
-    let Some(bundle) = fitted.iter().find_map(|id| {
-        mods.iter().find(|bundle| {
-            &bundle.manifest.id == id && error.contains(&build_log::failed(&compiling_mod(id)))
-        })
-    }) else {
+    let Some(bundle) = mods.iter().find(|bundle| bundle.manifest.id == blamed_id) else {
         return Vec::new();
     };
     let pairs = mods
@@ -1809,6 +1873,7 @@ fn isolated(
                 left,
                 error,
                 compiling,
+                ..
             }) => {
                 compiles += usize::from(compiling);
                 let new: Vec<LeftOut> = left
@@ -1834,6 +1899,7 @@ fn isolated(
                     left: skip,
                     error: last,
                     compiling: false,
+                    log: None,
                 })
             }
             Err(Failed::NoConsent) => return Err(Failed::NoConsent),
@@ -1954,6 +2020,7 @@ pub(crate) fn build_exact_client(
                     cancellation: cancellation.clone(),
                     staging: Some(staging),
                     registry_consent,
+                    exact_home: Some(home),
                     ..BuildOptions::default()
                 },
                 &progress,
@@ -2600,6 +2667,7 @@ mod tests {
                         }],
                         error: "compiler failure".into(),
                         compiling: true,
+                        log: None,
                     });
                 }
                 assert_eq!(skip[0].id, "broken");
@@ -2896,6 +2964,7 @@ mod tests {
                     left: vec![unfit.clone()],
                     error: "jei doesn't fit this game.".into(),
                     compiling: false,
+                    log: None,
                 }),
                 _ => Err(Failed::Nothing),
             },
@@ -2943,9 +3012,10 @@ mod tests {
                 }
                 let error = build_log::failed(&compiling_mod("lib"));
                 Err(Failed::Mods {
-                    left: compile_omissions(&error, &["lib".into()], &bundles, &deps),
+                    left: compile_omissions("lib", &bundles, &deps),
                     error,
                     compiling: true,
+                    log: None,
                 })
             },
             &|step| {
@@ -3001,6 +3071,7 @@ mod tests {
                     }],
                     error: "compiler failure".into(),
                     compiling: true,
+                    log: None,
                 })
             },
             &|_| {},
