@@ -285,10 +285,13 @@ impl Launcher {
         self.play_registry_notices.clear();
         self.crash = None;
         self.install_error = None;
-        let Some(instance) = self.selected_instance().map(|i| i.id.clone()) else {
+        let Some(instance) = self.selected_instance().cloned() else {
             return;
         };
-        let intent = launcher_play::PlayIntent::new(instance, self.accounts.selected());
+        if self.refuse_pack_play(instance.kind) {
+            return;
+        }
+        let intent = launcher_play::PlayIntent::new(instance.id, self.accounts.selected());
         if intent.account.is_none() && !sunrise_launcher::developer_offline::selected() {
             let destination = self.quick_play.take();
             let invite = self.joining.take();
@@ -310,6 +313,9 @@ impl Launcher {
         else {
             return;
         };
+        if self.refuse_pack_play(instance.kind) {
+            return;
+        }
         if self.registry_accepts_play() {
             self.defer_registry_play(&instance, intent);
             return;
@@ -317,17 +323,17 @@ impl Launcher {
         if self.client.is_some() || self.launch_busy() {
             return;
         }
-        if instance.kind != instances::Kind::Pack {
-            self.start_managed_client(instance, intent);
-            return;
+        self.start_managed_client(instance, intent);
+    }
+
+    fn refuse_pack_play(&mut self, kind: instances::Kind) -> bool {
+        if kind != instances::Kind::Pack {
+            return false;
         }
-        let home = instance.home;
-        self.play_admission = Some(intent);
-        let tx = self.tx.clone();
-        std::thread::spawn(move || {
-            let result = sunrise_launcher::browser::installed::recover_game_install(&home);
-            let _ = tx.send(Msg::PlayAdmission(home, result));
-        });
+        self.client_error = Some(sunrise_launcher::browser::sunrise::pack::play_unavailable());
+        self.quick_play = None;
+        self.joining = None;
+        true
     }
 
     pub(super) fn play_after_journal_check(

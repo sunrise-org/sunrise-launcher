@@ -52,7 +52,7 @@ impl Launcher {
                         .into_iter()
                         .find(|i| i.work == work)
                         .map(|i| i.id);
-                    let applied = sunrise_launcher::browser::sunrise::pack::apply(&mut cmd, &work);
+                    let applied = Err(sunrise_launcher::browser::sunrise::pack::play_unavailable());
                     (applied, id)
                 }
                 None => {

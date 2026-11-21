@@ -105,8 +105,9 @@ The opening, then Play ([clip](docs/opening.webm)):
   registry. Modrinth is searched for those packs only: Java mods and Java modpacks are not
   offered. Install puts a file in the game folder only after its checksum matches; installed
   packs show their source and checksum, with Update, **Update all** and Remove
-  ([docs/mod-browser.md](../docs/mod-browser.md)). A modpack from the registry is installed as an
-  instance of its own and played from its profile (`sunrise-launcher modpack list|play|remove`).
+  ([docs/mod-browser.md](../docs/mod-browser.md)). `sunrise-launcher modpack list` still shows
+  installed Sunrise modpacks. Installing, updating, playing and removing them is paused; their
+  files are unchanged.
 - **Servers**: host a world for friends with buttons. **Create a server** asks for a name, a world
   (a new one, with an optional seed, or a copy of one of your single-player worlds), the game mode,
   difficulty, most players, who can join (friends only, the default, or anyone with the address)
@@ -426,11 +427,11 @@ and don't set `%ERRORLEVEL%` / `$LASTEXITCODE`. Scripts that need the exit code 
     sunrise-launcher multiplayer [list] [--instance <name>]   the servers in an instance's Multiplayer list
     sunrise-launcher multiplayer add <address> [--name <name>] | remove <server>
     sunrise-launcher modpack [list]                 the installed Sunrise modpacks
-    sunrise-launcher modpack play <pack> [--version <tag>]                 play it as its own profile
-    sunrise-launcher modpack remove <pack>
+    sunrise-launcher modpack play <pack> [--version <tag>]   temporarily unavailable
+    sunrise-launcher modpack remove <pack>                   temporarily unavailable
     sunrise-launcher mods [list]                    what the mod browser installed (docs/mod-browser.md)
     sunrise-launcher mods search <text> [--kind resource|shader|datapack|mod|modpack] [--everything] [--source modrinth]
-    sunrise-launcher mods install <id or slug>      checksum checked, with what it needs; a Sunrise modpack is installed as an instance
+    sunrise-launcher mods install <id or slug>      checksum checked, with what it needs; Sunrise modpacks are paused
     sunrise-launcher mods update [<pack>] [--check]
     sunrise-launcher mods remove <pack>
     sunrise-launcher servers [list]                 the servers hosted from the launcher, and whether they run

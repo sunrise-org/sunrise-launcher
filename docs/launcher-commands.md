@@ -750,7 +750,7 @@ MCP: `modpack_list`.
 
 ## `sunrise-launcher modpack play`
 
-Play a Sunrise modpack as its own profile.
+Playing Sunrise modpacks is temporarily unavailable.
 
     sunrise-launcher modpack play <PACK>
 
@@ -762,7 +762,7 @@ MCP: `modpack_play`.
 
 ## `sunrise-launcher modpack remove`
 
-Remove a Sunrise modpack and the profile's saves.
+Removing Sunrise modpacks is temporarily unavailable.
 
     sunrise-launcher modpack remove <PACK>
 
@@ -796,7 +796,7 @@ MCP: `mods_search`.
 
 ## `sunrise-launcher mods install`
 
-Install a pack or a Sunrise mod and what it needs into a profile, by its id or slug (checksums checked); a Sunrise modpack is installed as a profile of its own; a data pack goes into the world `--world` names.
+Install a pack or a Sunrise mod and what it needs into a profile, by its id or slug (checksums checked); a data pack goes into the world `--world` names. Installing and updating Sunrise modpacks is temporarily unavailable.
 
     sunrise-launcher mods install <PROJECT>
 

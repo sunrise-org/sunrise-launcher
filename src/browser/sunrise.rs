@@ -186,38 +186,53 @@ pub fn github_stars(id: &str) -> Option<u64> {
 /// The index: the one fetched in the last ten minutes, else fetched again (and kept in the game
 /// folder), else the copy kept last time.
 pub fn index() -> Result<Arc<Index>, String> {
+    with_index(|index| Ok((index.clone(), true)))
+}
+
+// Publish the shared result only after the caller has accepted it. In particular, a
+// refused legacy Pack install must not refresh the file under the game folder.
+fn with_index<T>(
+    accept: impl FnOnce(&Arc<Index>) -> Result<(T, bool), String>,
+) -> Result<T, String> {
     let at = location();
     if at.is_empty() {
         return Err("The Sunrise mod registry is not available yet.".into());
     }
-    if let Some(loaded) = LOADED.lock().unwrap().as_ref() {
+    let kept = LOADED.lock().unwrap();
+    if let Some(loaded) = kept.as_ref() {
         if loaded.at.elapsed() < FRESH {
-            return Ok(loaded.index.clone());
+            let index = loaded.index.clone();
+            drop(kept);
+            return accept(&index).map(|(value, _)| value);
         }
     }
+    drop(kept);
     let cache = crate::backend::game_home().join(CACHE);
     let local = !at.starts_with("https://");
-    let loaded = load(fetch_index(&at, local), &cache, local)?;
-    let index = loaded.index.clone();
+    let (loaded, text) = load(fetch_index(&at, local), &cache, local)?;
+    let (value, remember) = accept(&loaded.index)?;
+    if !remember {
+        return Ok(value);
+    }
+    if let Some(text) = text {
+        if let Some(dir) = cache.parent() {
+            let _ = fs::create_dir_all(dir);
+        }
+        let _ = fs::write(cache, text);
+    }
     *LOADED.lock().unwrap() = Some(loaded);
-    Ok(index)
+    Ok(value)
 }
 
-/// What [`index`] keeps: the registry's answer `fetched` (written to `cache` for next time), else
-/// the copy in `cache`, marked as not the registry's own answer.
+/// The registry's verified answer and its original text, or an offline disk copy that
+/// carries no live authority and should not be written back.
 fn load(
     fetched: Result<(Index, String), String>,
     cache: &Path,
     local: bool,
-) -> Result<Loaded, String> {
-    let (index, fetched) = match fetched {
-        Ok((index, text)) => {
-            if let Some(dir) = cache.parent() {
-                let _ = fs::create_dir_all(dir);
-            }
-            let _ = fs::write(cache, text);
-            (index, !local)
-        }
+) -> Result<(Loaded, Option<String>), String> {
+    let (index, text) = match fetched {
+        Ok((index, text)) => (index, Some(text)),
         Err(e) => {
             let kept = fs::read_to_string(cache).map_err(|_| e.clone())?;
             let index = match local {
@@ -225,32 +240,54 @@ fn load(
                 false => Index::parse(&kept),
             }
             .map_err(|_| e)?;
-            (index, false)
+            (index, None)
         }
     };
-    Ok(Loaded {
-        at: Instant::now(),
-        index: Arc::new(index),
-        fetched,
-    })
+    Ok((
+        Loaded {
+            at: Instant::now(),
+            index: Arc::new(index),
+            fetched: !local && text.is_some(),
+        },
+        text,
+    ))
 }
 
 fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
     use std::io::Read;
-    if local {
+    // The process fixture can count requests without a public server or signing key.
+    // Never allow this transport in a release, through a proxy, or across a redirect.
+    let loopback = cfg!(debug_assertions)
+        && local
+        && url::Url::parse(at).is_ok_and(|url| {
+            url.scheme() == "http"
+                && url.host_str() == Some("127.0.0.1")
+                && url.port().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+        });
+    if local && !loopback {
         let text = fs::read_to_string(at).map_err(|e| format!("{at}: {e}"))?;
         return Ok((Index::parse_local(&text)?, text));
     }
-    let spec = crate::proxy::spec_for(at);
-    let agent = crate::net::keep("sunrise-index", spec.as_deref(), |proxy| {
-        let builder = ureq::AgentBuilder::new()
-            .https_only(true)
-            .timeout(Duration::from_secs(10));
-        match proxy {
-            Some(proxy) => builder.proxy(proxy).build(),
-            None => builder.build(),
-        }
-    });
+    let agent = if loopback {
+        ureq::AgentBuilder::new()
+            .try_proxy_from_env(false)
+            .redirects(0)
+            .timeout(Duration::from_secs(2))
+            .build()
+    } else {
+        let spec = crate::proxy::spec_for(at);
+        crate::net::keep("sunrise-index", spec.as_deref(), |proxy| {
+            let builder = ureq::AgentBuilder::new()
+                .https_only(true)
+                .timeout(Duration::from_secs(10));
+            match proxy {
+                Some(proxy) => builder.proxy(proxy).build(),
+                None => builder.build(),
+            }
+        })
+    };
     let response = agent.get(at).call().map_err(|e| match e {
         ureq::Error::Status(code, _) => format!("The mod registry answered {code}."),
         ureq::Error::Transport(t) => format!("The mod registry can't be reached: {t}"),
@@ -264,7 +301,12 @@ fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
     if text.len() as u64 > MAX_INDEX {
         return Err("The mod registry index is too large.".into());
     }
-    Ok((Index::parse(&text)?, text))
+    let index = if local {
+        Index::parse_local(&text)?
+    } else {
+        Index::parse(&text)?
+    };
+    Ok((index, text))
 }
 
 /// A project's ratings: 1 to 5 stars, their mean and how many.
@@ -756,6 +798,32 @@ fn gallery_of(p: &index::Project) -> Vec<super::details::Image> {
         .collect()
 }
 
+/// Decline the old live publisher before remembering its index. Other content can reuse
+/// that same answer for version choice and downloads; managed mod installs prove their own set.
+pub fn install_project(id: &str) -> Result<Project, String> {
+    with_index(|index| {
+        let project = registry_project(index, id)?;
+        if project.kind == Kind::Modpack {
+            return Err(pack::install_unavailable());
+        }
+        let reuse = project.kind != Kind::Mod;
+        Ok((project, reuse))
+    })
+}
+
+fn registry_project(catalogue: &Index, id: &str) -> Result<Project, String> {
+    let p = catalogue
+        .project(id)
+        .ok_or_else(|| format!("{id} isn't in Sunrise's registry."))?;
+    project_of(catalogue, p, &super::game()).ok_or_else(|| {
+        format!(
+            "{} is a {} in Sunrise's registry: this launcher can't install those yet.",
+            p.name,
+            p.kind.name()
+        )
+    })
+}
+
 /// The registry as a browser source.
 pub struct Registry;
 
@@ -771,17 +839,7 @@ impl Source for Registry {
     }
 
     fn project(&self, id: &str) -> Result<Project, String> {
-        let index = index()?;
-        let p = index
-            .project(id)
-            .ok_or_else(|| format!("{id} isn't in Sunrise's registry."))?;
-        project_of(&index, p, &super::game()).ok_or_else(|| {
-            format!(
-                "{} is a {} in Sunrise's registry: this launcher can't install those yet.",
-                p.name,
-                p.kind.name()
-            )
-        })
+        registry_project(&*index()?, id)
     }
 
     fn versions(&self, project: &Project) -> Result<Vec<Version>, String> {
@@ -944,7 +1002,7 @@ fn relative(kind: Kind, id: &str, file_name: &str) -> Result<String, String> {
         Kind::Mod => Ok(format!("{}/{id}.smod", mod_list::MODS_DIR)),
         Kind::ResourcePack => Ok(format!("resourcepacks/{file_name}")),
         Kind::Shader => Ok(format!("shaderpacks/{file_name}")),
-        Kind::Modpack => Err("A modpack installs as its own profile (pack::install).".into()),
+        Kind::Modpack => Err(pack::install_unavailable()),
         Kind::DataPack => Err("A data pack goes into a world (fetch_datapack).".into()),
     }
 }

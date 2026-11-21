@@ -184,7 +184,7 @@ enum DataCmd {
 enum ModpackCmd {
     /// The installed Sunrise modpacks (the default)
     List,
-    /// Play a Sunrise modpack as its own profile
+    /// Playing Sunrise modpacks is temporarily unavailable
     Play {
         pack: String,
         /// Allow missing original Java asset/data jars to be downloaded from Modrinth
@@ -193,7 +193,7 @@ enum ModpackCmd {
         #[arg(long)]
         version: Option<String>,
     },
-    /// Remove a Sunrise modpack and the profile's saves
+    /// Removing Sunrise modpacks is temporarily unavailable
     Remove { pack: String },
 }
 
@@ -459,8 +459,8 @@ enum ModsCmd {
         instance: Option<String>,
     },
     /// Install a pack or a Sunrise mod and what it needs into a profile, by its id or slug
-    /// (checksums checked); a Sunrise modpack is installed as a profile of its own; a data pack
-    /// goes into the world `--world` names
+    /// (checksums checked); a data pack goes into the world `--world` names. Installing and
+    /// updating Sunrise modpacks is temporarily unavailable
     Install {
         project: String,
         /// Install the project's data pack into this world of the profile (its name or folder)
@@ -869,7 +869,7 @@ enum Cmd {
         #[command(subcommand)]
         action: Option<MultiplayerCmd>,
     },
-    /// Sunrise modpacks from the registry: list them, play one as its own profile, or remove it
+    /// Sunrise modpacks from the registry: list installed packs
     Modpack {
         #[command(subcommand)]
         action: Option<ModpackCmd>,
@@ -1397,10 +1397,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             arg,
             account,
         } => {
-            let instance = match instance {
-                Some(name) => instances::find(&name)?,
-                None => instances::selection()?,
-            };
+            let instance = instances::for_play(instance.as_deref())?;
             use sunrise_launcher::{jars, managed_play};
             let accounts = Accounts::load();
             let account = account
@@ -1432,24 +1429,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             };
             let jar_permission = jars::Permission::headless(allow_jar_downloads);
             let vars = instance.vars();
-            let (started, played) = if instance.kind == instances::Kind::Pack {
-                let tag = instance.resolve_version(version.as_deref())?;
-                let mut cmd = backend::client_as(&tag, account.map(|a| a.uuid.as_str()))?;
-                instances::apply(&mut cmd, &instance)?;
-                add_arguments(&mut cmd)?;
-                cmd.envs(vars.iter().map(|(k, v)| (k, v)));
-                for notice in sunrise_launcher::browser::sunrise::before_play(
-                    &mut cmd,
-                    &tag,
-                    &instance.launch,
-                )? {
-                    eprintln!("{notice}");
-                }
-                jars::prepare_launch(&mut cmd, &instance.launch, jar_permission)
-                    .map_err(|error| error.to_string())?;
-                let command = sunrise_launcher::launch::wrap(cmd, &instance.launch)?;
-                (std::time::Instant::now(), attached(command))
-            } else {
+            let (started, played) = {
                 let start = managed_play::Client {
                     instance: &instance,
                     accepted_account: selected.map(|a| a.uuid.as_str()),
@@ -2152,6 +2132,15 @@ fn servers(action: ServersCmd, as_json: bool) -> Result<(), String> {
 /// Commands for browser-installed content and registry mods in a selected profile.
 fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
     use sunrise_launcher::browser::{installed, sunrise, Kind, Query, SourceId};
+    // The pause is about the registry project, regardless of the requested destination.
+    let registry_project = match &action {
+        ModsCmd::Install {
+            project,
+            source: SourceArg::Sunrise,
+            ..
+        } => Some(sunrise::install_project(project)?),
+        _ => None,
+    };
     // What the browser installs goes into an instance's game folder.
     let instance = match &action {
         ModsCmd::List { instance }
@@ -2289,7 +2278,10 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             ..
         } => {
             let source = source.get();
-            let p = source.project(&project)?;
+            let p = match registry_project {
+                Some(found) => found,
+                None => source.project(&project)?,
+            };
             if let Some(world) = world {
                 let world = sunrise_launcher::worlds::find(&home, &world)?;
                 let done = installed::install_datapack(
@@ -2323,23 +2315,6 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     "{} is a data pack: say which world with --world.",
                     p.title
                 ));
-            }
-            if p.kind == Kind::Modpack && p.source == SourceId::Sunrise {
-                let pack = sunrise::pack::install(&p.id, &line)?;
-                if as_json {
-                    json(
-                        serde_json::json!({"pack": pack.id, "version": pack.version, "mods": pack.mods, "home": sunrise::pack::home(&pack.work)}),
-                    );
-                } else {
-                    println!(
-                        "{} {} is installed as its own profile, with {}.",
-                        pack.name,
-                        pack.version,
-                        pack.mods.join(", ")
-                    );
-                    println!("Play it: sunrise-launcher modpack play {}", pack.id);
-                }
-                return Ok(());
             }
             if p.source == SourceId::Sunrise && p.kind == Kind::Mod {
                 if everything {
@@ -3100,19 +3075,11 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
 
 fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
     use sunrise_launcher::browser::sunrise;
-    let work = |pack: &str| {
-        let work = sunrise::pack::packs_dir().join(pack);
-        if sunrise::pack::is_pack(&work) {
-            Ok(work)
-        } else {
-            Err(format!("{pack} isn't an installed modpack."))
-        }
-    };
     match action {
         ModpackCmd::List => {
             let registry = sunrise::pack::list();
             if registry.is_empty() && !as_json {
-                println!("No modpack installed yet: sunrise-launcher mods install <modpack> --source sunrise");
+                println!("{}", tr("No Sunrise modpacks are installed."));
             }
             for p in &registry {
                 if as_json {
@@ -3130,27 +3097,8 @@ fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
                 }
             }
         }
-        ModpackCmd::Play {
-            pack,
-            version,
-            allow_jar_downloads,
-        } => {
-            let tag = backend::resolve_version(version.as_deref())?;
-            let mut cmd = backend::client(&tag)?;
-            sunrise::pack::apply(&mut cmd, &work(&pack)?)?;
-            let launch = Default::default();
-            for notice in sunrise::before_play(&mut cmd, &tag, &launch)? {
-                eprintln!("{notice}");
-            }
-            sunrise_launcher::jars::prepare_launch(
-                &mut cmd,
-                &launch,
-                sunrise_launcher::jars::Permission::headless(allow_jar_downloads),
-            )
-            .map_err(|error| error.to_string())?;
-            return attached(cmd);
-        }
-        ModpackCmd::Remove { pack } => sunrise::pack::remove(&work(&pack)?)?,
+        ModpackCmd::Play { .. } => return Err(sunrise::pack::play_unavailable()),
+        ModpackCmd::Remove { .. } => return Err(sunrise::pack::remove_unavailable()),
     }
     Ok(0)
 }

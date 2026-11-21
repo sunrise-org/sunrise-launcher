@@ -396,6 +396,10 @@ pub fn list() -> Vec<Instance> {
 }
 
 fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
+    list_profiles(game_home, data, true)
+}
+
+fn list_profiles(game_home: &Path, data: &Path, prune_missing: bool) -> Vec<Instance> {
     let mut store = Store::load(data);
     let mut found = vec![(
         DEFAULT.to_string(),
@@ -414,7 +418,7 @@ fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
     own.sort();
     // An own instance whose folder is gone (deleted outside the launcher) is forgotten, so a new
     // one of that name starts clean. Only when the folder of instances itself can be read.
-    if game_home.join(OWN).is_dir() {
+    if prune_missing && game_home.join(OWN).is_dir() {
         let before = store.instances.len();
         store
             .instances
@@ -515,7 +519,10 @@ fn delete_in(
     query: &str,
     trash: &dyn Fn(&Path) -> Result<(), String>,
 ) -> Result<Instance, String> {
-    let instance = find_in(&list_in(game_home, data), query)?;
+    let instance = find_in(&list_profiles(game_home, data, false), query)?;
+    if instance.kind == Kind::Pack {
+        return Err(registry_pack::remove_unavailable());
+    }
     if instance.kind == Kind::Default {
         return Err(format!(
             "{} is the game's own folder: it can't be deleted.",
@@ -529,6 +536,19 @@ fn delete_in(
         store.save(data)?;
     }
     Ok(instance)
+}
+
+/// Resolve headless Play without repairing unrelated profile metadata on a refused request.
+pub fn for_play(query: Option<&str>) -> Result<Instance, String> {
+    let all = list_profiles(&backend::game_home(), &backend::data_dir(), false);
+    let found = match query {
+        Some(name) => find_in(&all, name),
+        None => selection_in(&all, backend::Settings::load().instance.as_deref()),
+    }?;
+    if found.kind == Kind::Pack {
+        return Err(registry_pack::play_unavailable());
+    }
+    Ok(found)
 }
 
 /// The instance Play starts: the one picked in the launcher, else Sunrise.
@@ -941,7 +961,7 @@ pub fn apply(cmd: &mut Command, instance: &Instance) -> Result<(), String> {
             cmd.current_dir(&instance.home)
                 .env("SUNRISE_HOME", &instance.home);
         }
-        Kind::Pack => registry_pack::apply(cmd, &instance.work)?,
+        Kind::Pack => return Err(registry_pack::play_unavailable()),
     }
     follow_player(&backend::game_home(), &instance.home);
     Ok(())

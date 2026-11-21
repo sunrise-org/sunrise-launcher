@@ -884,7 +884,8 @@ fn installs_combined_native_content_as_one_smod() {
     let cache = home.join(CACHE);
     fs::create_dir_all(cache.parent().unwrap()).unwrap();
     fs::write(&cache, serde_json::to_string(&forged).unwrap()).unwrap();
-    let kept = load(Err("offline".into()), &cache, false).unwrap();
+    let (kept, fetched) = load(Err("offline".into()), &cache, false).unwrap();
+    assert!(fetched.is_none());
     assert_eq!(
         named(&kept.index),
         as_registry,
@@ -898,7 +899,8 @@ fn installs_combined_native_content_as_one_smod() {
     );
     // The registry's own answer is asked, and does not list that file.
     let text = serde_json::to_string(&index).unwrap();
-    let answered = load(Ok((index, text)), &cache, false).unwrap();
+    let (answered, fetched) = load(Ok((index, text.clone())), &cache, false).unwrap();
+    assert_eq!(fetched.as_deref(), Some(text.as_str()));
     let checked = crate::native_status::build_inputs(&home, answered.fetched().as_deref());
     assert_eq!(
         checked[0].registry,
@@ -967,7 +969,7 @@ fn registry_play_warns_for_disk_cache_and_turns_off_only_from_a_live_index() {
     let text = fs::read_to_string(fixtures().join("index-v1.json")).unwrap();
     fs::create_dir_all(cache.parent().unwrap()).unwrap();
     fs::write(&cache, &text).unwrap();
-    let offline = load(Err("offline".into()), &cache, false).unwrap();
+    let (offline, _) = load(Err("offline".into()), &cache, false).unwrap();
     assert!(offline.index.project("coords_hud").is_some());
     assert!(offline.fetched().is_none());
     assert_eq!(
@@ -984,7 +986,7 @@ fn registry_play_warns_for_disk_cache_and_turns_off_only_from_a_live_index() {
         date: String::new(),
     });
     let text = serde_json::to_string(&index).unwrap();
-    let local = load(Ok((index.clone(), text.clone())), &cache, true).unwrap();
+    let (local, _) = load(Ok((index.clone(), text.clone())), &cache, true).unwrap();
     assert!(local.fetched().is_none());
     assert_eq!(
         check_before_play(home, &[], || local.fetched()).unwrap(),
@@ -992,7 +994,7 @@ fn registry_play_warns_for_disk_cache_and_turns_off_only_from_a_live_index() {
     );
     assert!(mod_list::is_enabled(home, "coords_hud"));
 
-    let live = load(Ok((index, text)), &cache, false).unwrap();
+    let (live, _) = load(Ok((index, text)), &cache, false).unwrap();
     assert!(live.fetched().is_some());
     assert_eq!(
         check_before_play(home, &[], || live.fetched()).unwrap(),
@@ -1319,7 +1321,7 @@ fn registry_play_refuses_a_taken_down_mod_baked_into_a_build() {
     }];
     let loaded = |index: Index| {
         let text = serde_json::to_string(&index).unwrap();
-        load(Ok((index, text)), &cache, false).unwrap().fetched()
+        load(Ok((index, text)), &cache, false).unwrap().0.fetched()
     };
     // Even if the installed-list entry and the enable flag are already gone, the build holds it.
     let error = check_before_play(home, &built, || loaded(index.clone())).unwrap_err();
