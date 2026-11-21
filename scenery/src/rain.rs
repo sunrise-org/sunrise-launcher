@@ -37,7 +37,13 @@ pub struct Rain {
     keep: Keep,
     /// A frame is asked for: the rain is falling.
     falling: bool,
+    /// A power-saving frame is waited for (see [`SAVING_FRAME`]).
+    queued: bool,
 }
+
+/// How often rain falls while the system saves power: the window draws at the display's rate
+/// then too, and rain would otherwise draw on every refresh for as long as it is shown.
+const SAVING_FRAME: std::time::Duration = std::time::Duration::from_millis(33);
 
 impl Default for Rain {
     fn default() -> Self {
@@ -53,6 +59,7 @@ impl Rain {
             accent: 0xb48cff,
             keep: Keep::default(),
             falling: false,
+            queued: false,
         }
     }
 
@@ -88,14 +95,26 @@ fn color(c: u32) -> Hsla {
 }
 
 impl Render for Rain {
-    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.on {
             return div();
         }
         let still = motion() == Motion::Still;
         self.falling = !still && window.is_window_active();
         if self.falling {
-            window.request_animation_frame();
+            if cx.power_mode() != gpui::PowerMode::LowPower {
+                window.request_animation_frame();
+            } else if !self.queued {
+                self.queued = true;
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(SAVING_FRAME).await;
+                    let _ = this.update(cx, |this, cx| {
+                        this.queued = false;
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
         }
         // Still: the drops are drawn where they are at a fixed moment, a picture of rain.
         let t = if still {

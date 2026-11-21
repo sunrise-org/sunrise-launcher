@@ -493,6 +493,7 @@ impl Launcher {
             self.settings.reduced_graphics(),
         );
         cx.set_reduce_motion(crate::motion::still());
+        crate::motion::note_power(cx);
         let size = window.viewport_size();
         self.window_width = f32::from(size.width);
         self.window_height = f32::from(size.height);

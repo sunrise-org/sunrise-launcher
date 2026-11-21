@@ -12,18 +12,23 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use sunrise_launcher::browser::images;
 
-/// How long growing and shrinking take, on the launcher's curve for things that move.
+/// How long growing and shrinking take, and on what curve. Not [`MOVE`]'s: its long-tailed
+/// ease-out spends a quarter of a tile-to-window trip in the first frame and looks done by the
+/// sixth, so the picture jumped ~150 px a frame and read as a low frame rate. Easing in and out
+/// spreads the trip over every frame (at most ~85 px a frame at 60 Hz).
+///
+/// [`MOVE`]: sunrise_launcher_theme::MOVE
 const GROW: sunrise_launcher_theme::Motion = sunrise_launcher_theme::Motion {
     name: "grow",
-    ms: 280,
-    curve: sunrise_launcher_theme::MOVE.curve,
+    ms: 320,
+    curve: sunrise_launcher_theme::QUICK.curve,
 };
 /// How far a click on the enlarged picture zooms in, and how long that takes.
 const ZOOM: f32 = 2.5;
 const ZOOMING: sunrise_launcher_theme::Motion = sunrise_launcher_theme::Motion {
     name: "zoom",
-    ms: 220,
-    curve: sunrise_launcher_theme::MOVE.curve,
+    ms: 260,
+    curve: sunrise_launcher_theme::QUICK.curve,
 };
 /// The room kept free around the picture: the title bar above, the arrows beside it, the count
 /// below.

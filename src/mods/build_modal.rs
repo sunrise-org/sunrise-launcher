@@ -319,9 +319,11 @@ impl Launcher {
             glyph
                 .with_animation(
                     ElementId::named_usize("build-line-now", n),
-                    Animation::new(Duration::from_millis(1200))
-                        .repeat()
-                        .with_easing(gpui::ease_in_out),
+                    crate::motion::endless(
+                        Animation::new(Duration::from_millis(1200))
+                            .repeat()
+                            .with_easing(gpui::ease_in_out),
+                    ),
                     |g, t| g.opacity(0.45 + 0.55 * (1. - (2. * t - 1.).abs())),
                 )
                 .into_any_element()

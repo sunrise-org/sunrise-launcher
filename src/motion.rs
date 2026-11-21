@@ -30,6 +30,31 @@ pub fn still() -> bool {
     crate::clock::motion() == crate::clock::Motion::Still
 }
 
+thread_local! {
+    /// The system's power-saver profile is on, as the frame being built saw it.
+    static SAVING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Notes whether the system saves power, once a frame, for [`endless`].
+pub fn note_power(cx: &gpui::App) {
+    SAVING.set(cx.power_mode() == gpui::PowerMode::LowPower);
+}
+
+/// The most an endless animation (a shuttle, a pulse) draws a second while the system saves
+/// power. The window itself draws at the display's rate even then, so a picture growing or a
+/// page arriving stays smooth; only what would otherwise draw for as long as it is shown is
+/// held back.
+const SAVING_FPS: f32 = 30.;
+
+/// A repeating animation, held to [`SAVING_FPS`] while the system saves power.
+pub fn endless(animation: Animation) -> Animation {
+    if SAVING.get() {
+        animation.with_max_fps(SAVING_FPS)
+    } else {
+        animation
+    }
+}
+
 /// `motion` as GPUI plays it: its length on its own curve; at its end from the first frame under
 /// reduced motion.
 pub fn eased(motion: tokens::Motion) -> Animation {

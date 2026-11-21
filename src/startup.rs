@@ -156,6 +156,13 @@ fn run_launcher() {
                     } else {
                         WindowOptions::default().inactive_frame_interval
                     },
+                    // GPUI also draws at most every 33 ms under the system's power-saver profile,
+                    // which a 60 Hz panel rounds up to every third refresh: ~21 fps, so every
+                    // animation (a picture growing out of its tile most of all) stuttered. The
+                    // window only draws while something moves, so a transition at the display's
+                    // rate costs little; what moves for as long as it is shown (a shuttle, a
+                    // pulse, rain) holds itself back instead (`motion::endless`).
+                    low_power_frame_interval: None,
                     ..Default::default()
                 },
                 |window, cx| cx.new(|cx| crate::window_root::Shell::new(window, cx)),

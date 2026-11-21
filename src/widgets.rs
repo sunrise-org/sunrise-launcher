@@ -535,9 +535,11 @@ pub(crate) fn progress_bar(fraction: Option<(f32, f32)>, t: &Theme) -> Div {
         None => track.child(
             bar.w(relative(0.3)).with_animation(
                 "shuttle",
-                Animation::new(Duration::from_millis(1600))
-                    .repeat()
-                    .with_easing(gpui::ease_in_out),
+                motion::endless(
+                    Animation::new(Duration::from_millis(1600))
+                        .repeat()
+                        .with_easing(gpui::ease_in_out),
+                ),
                 |d, p| d.left(relative(-0.3 + 1.3 * p)),
             ),
         ),
