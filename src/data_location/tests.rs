@@ -352,6 +352,22 @@ fn shared_lock_blocks_migration_until_all_readers_release() {
     f.migrated(&roots);
 }
 
+#[test]
+fn move_refuses_a_writer_already_registered_inside_a_source_root() {
+    let f = Fixture::new("build");
+    let game = f.source.game.join("another-launcher-home");
+    let registry = root_leases::Registry::open().unwrap();
+    let writer = registry.acquire(&[&game], false).unwrap();
+    assert!(f
+        .refuse(&f.target())
+        .contains("another launcher is using or moving this data"));
+    assert!(!f.target().exists());
+    assert!(!game.exists(), "a claim must not create the data root");
+    drop(writer);
+    let moved = migrate(&f.source, &f.target(), &f.bootstrap, |_| {}).unwrap();
+    f.migrated(&moved);
+}
+
 #[cfg(windows)]
 #[test]
 fn pointer_commit_failure_keeps_old_pointer_and_retries() {

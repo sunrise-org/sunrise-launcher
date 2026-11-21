@@ -12,6 +12,7 @@ pub use client::{headless_first, Client, Progress, StartError, Started};
 pub use first::{FirstAttempt, FirstBuild, Profile};
 use inputs::inputs;
 pub use inputs::{scan_packages, ScannedPackage};
+pub(crate) use roots::remap_relocated_root;
 
 /// Called only within the cache publication fence immediately before detaching a build.
 pub(crate) fn authorize_cache_removal(tag: &str) -> Result<(), crate::native_cache::Error> {
@@ -34,14 +35,24 @@ pub struct ReferencePublication {
 
 impl ReferencePublication {
     pub fn begin(home: &Path) -> Result<Self, String> {
+        Self::begin_at(
+            &crate::backend::data_dir(),
+            &crate::backend::game_home(),
+            home,
+        )
+    }
+
+    pub(crate) fn begin_at(cache: &Path, game: &Path, home: &Path) -> Result<Self, String> {
         use sunrise_launcher_smod::{
             locks::{LockMode, Release},
             runtime_leases::Registry,
         };
-        let fence = Registry::with_release(&crate::backend::data_dir(), Release::Close)
+        // This guard is never handed off. Release it explicitly even if an unrelated
+        // concurrent fork still has a transient copy of the file descriptor.
+        let fence = Registry::with_release(cache, Release::Unlock)
             .and_then(|registry| registry.publication(LockMode::Exclusive))
             .map_err(|e| native_mods::cache_error(e.into()))?;
-        roots::register(home)?;
+        roots::register(cache, game, home)?;
         Ok(Self { _fence: fence })
     }
 }

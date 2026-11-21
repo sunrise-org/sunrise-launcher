@@ -48,12 +48,9 @@ impl Launcher {
             // A pack's Play button plays that pack; Play plays the selected instance.
             let (profile, run) = match self.starting_pack.take() {
                 Some(work) => {
-                    let id = instances::list()
-                        .into_iter()
-                        .find(|i| i.work == work)
-                        .map(|i| i.id);
+                    let instance = instances::list().into_iter().find(|i| i.work == work);
                     let applied = sunrise_launcher::browser::sunrise::pack::apply(&mut cmd, &work);
-                    (applied, id)
+                    (applied, instance)
                 }
                 None => {
                     let Some(instance) = instances::list()
@@ -69,7 +66,7 @@ impl Launcher {
                         account::discard_launch_session(session_file);
                         return;
                     };
-                    (instances::apply(&mut cmd, &instance), Some(instance.id))
+                    (instances::apply(&mut cmd, &instance), Some(instance))
                 }
             };
             if let Err(e) = profile {
@@ -88,18 +85,18 @@ impl Launcher {
             backend::append_game_args(&mut cmd);
             // Last, around every argument: the instance's pre-launch command,
             // wrapper and variables.
-            let instance = run
-                .as_ref()
-                .and_then(|id| instances::list().into_iter().find(|i| &i.id == id));
-            self.client_vars = instance.as_ref().map(|i| i.vars()).unwrap_or_default();
-            cmd.envs(self.client_vars.iter().map(|(k, v)| (k, v)));
-            let launch = instance.map(|i| i.launch).unwrap_or_default();
+            let launch = if let Some(instance) = &run {
+                cmd.envs(instance.vars());
+                instance.launch.clone()
+            } else {
+                Default::default()
+            };
             self.starting_client = Some(tag.clone());
             jar_launch::client(
                 cmd,
                 tag,
                 launch,
-                run,
+                run.map(Box::new),
                 intent.account,
                 session_file,
                 self.tx.clone(),

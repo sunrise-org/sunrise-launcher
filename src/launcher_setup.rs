@@ -192,7 +192,6 @@ impl Launcher {
             joining: None,
             quick_play: None,
             client_run: None,
-            client_vars: Vec::new(),
             collection: collection::Collection::load(),
             playing: None,
             tx,

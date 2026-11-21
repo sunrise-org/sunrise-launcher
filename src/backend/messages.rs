@@ -43,6 +43,8 @@ pub enum Msg {
         instance: Box<crate::instances::Instance>,
         result: Box<Result<crate::managed_play::Started, crate::managed_play::StartError>>,
     },
+    /// The exit worker has tried to save the completed profile's play time.
+    PlayRecorded,
     /// The worker checked the game's journal for the selected profile before Play changed it.
     PlayAdmission(
         PathBuf,
@@ -59,7 +61,7 @@ pub enum Msg {
         reply: std::sync::mpsc::Sender<bool>,
     },
     JarClient {
-        run: Option<String>,
+        run: Option<Box<crate::instances::Instance>>,
         account: Option<String>,
         session_file: Option<PathBuf>,
         registry_notices: Vec<String>,

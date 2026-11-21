@@ -208,7 +208,25 @@ fn owner() {
     });
     let resources = backend::resources(BUILD);
     fs::create_dir_all(&resources).unwrap();
-    fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+    let actor = std::env::current_exe().unwrap();
+    // Every proof hashes the whole image. Hundreds of MiB of unused DWARF in the Linux
+    // test binary put repeated proofs near the deadline without testing any game behavior.
+    if cfg!(target_os = "linux") {
+        let status = Command::new("strip")
+            .args(["--strip-debug", "-o"])
+            .arg(&executable)
+            .arg(&actor)
+            .status();
+        match status {
+            Ok(status) => assert!(status.success(), "stripping the fixture: {status}"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::copy(&actor, &executable).unwrap();
+            }
+            Err(error) => panic!("stripping the fixture: {error}"),
+        }
+    } else {
+        fs::copy(&actor, &executable).unwrap();
+    }
     fs::write(executable.with_file_name(".installed"), []).unwrap();
     fs::write(resources.join("sunrise-resources.json"), b"{}").unwrap();
     let mut profile = Profile::open(&home, None).unwrap();

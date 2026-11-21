@@ -45,22 +45,25 @@ fn run_launcher() {
         );
         std::process::exit(1);
     }
+    if let Some(code) = sunrise_launcher::relocation::run_worker() {
+        std::process::exit(code);
+    }
+    // A broken pointer may open Settings with Retry/Use the default folder; failing to
+    // acquire the lease is different. Never run a writer while Move owns the data roots.
+    if let Err(error) = sunrise_launcher::data_location::startup() {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
     // Windowless Windows installer commands, including the new binary's notice refresh, never
     // reach the CLI parser (so neither the MCP tools nor the completions list them).
     #[cfg(windows)]
     if let Some(code) = sunrise_launcher::installer::run_quiet() {
         std::process::exit(code);
     }
-    if let Some(code) = sunrise_launcher::relocation::run_worker() {
-        std::process::exit(code);
+    // Do not copy earlier launchers' data into fallback roots for a broken configured location.
+    if sunrise_launcher::data_location::startup_error().is_none() {
+        sunrise_launcher::carry_over::at_start();
     }
-    // A Sunrise build's first start copies the settings, accounts and instances of the launcher
-    // before it into its own folders, before anything reads them.
-    sunrise_launcher::carry_over::at_start();
-    // A broken location must still open a window: startup() falls back to the default
-    // folders and records the error, which Settings shows with Retry and Use the default folder.
-    // It keeps the migration lease for the life of the process.
-    let _location_error = sunrise_launcher::data_location::startup();
     perf::process_started();
     backend::exe_path();
     if let Some(code) = sunrise_launcher::update_handoff::run() {

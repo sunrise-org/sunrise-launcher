@@ -7,12 +7,14 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Mutex,
+        Mutex, OnceLock,
     },
     time::{Duration, Instant},
 };
 
 type Result<T> = std::result::Result<T, String>;
+
+mod root_leases;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -67,12 +69,17 @@ fn has_override() -> bool {
     overridden("SUNRISE_LAUNCHER_HOME") || overridden("SUNRISE_HOME")
 }
 
-/// Roots resolved once per process. `retry` clears it so a repaired location is read again.
+/// Roots resolved once per process. A repaired pointer takes effect after restart.
 static LOCATION: Mutex<Option<Result<Option<Roots>>>> = Mutex::new(None);
 /// A startup failure falls back to the default folders, so a window can still open.
 static FORCE_DEFAULT: AtomicBool = AtomicBool::new(false);
 static STARTUP_ERROR: Mutex<Option<String>> = Mutex::new(None);
-static STARTUP_LEASE: Mutex<Option<MigrationLease>> = Mutex::new(None);
+static STARTUP_LEASES: Mutex<Option<[MigrationLease; 3]>> = Mutex::new(None);
+static ADMITTED_BUILD: OnceLock<PathBuf> = OnceLock::new();
+
+pub(crate) fn admitted_build_root() -> Option<&'static Path> {
+    ADMITTED_BUILD.get().map(PathBuf::as_path)
+}
 
 fn location() -> std::sync::MutexGuard<'static, Option<Result<Option<Roots>>>> {
     LOCATION
@@ -126,26 +133,28 @@ pub fn validate() -> Result<()> {
     configured_roots().map(|_| ())
 }
 
-/// Run before any launcher path is used. A broken location never ends the process: it is
-/// recorded for Settings, and the default folders stand in until the player retries or keeps
-/// them. The returned text is also [`startup_error`].
-pub fn startup() -> Option<String> {
-    let mut problems = Vec::new();
-    if let Err(error) = configured_roots() {
+/// Acquire the shared location lease before reading the pointer or dispatching anything that
+/// can write. A broken pointer can still open Settings on default roots while holding that lease.
+pub fn startup() -> Result<()> {
+    let pointer = acquire_lock_at(&bootstrap_path()?)?;
+    let problem = configured_roots().err().map(|error| {
         FORCE_DEFAULT.store(true, Ordering::Release);
-        problems.push(open_error(&error));
-    }
-    match acquire_startup_lock() {
-        Ok(lease) => {
-            *STARTUP_LEASE
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = lease;
-        }
-        Err(error) => problems.push(error),
-    }
-    let error = (!problems.is_empty()).then(|| problems.join("\n"));
-    remember_startup_error(error.clone());
-    error
+        open_error(&error)
+    });
+    let registry = root_leases::Registry::open()?;
+    let data = registry.acquire(
+        &[&crate::backend::data_dir(), &crate::backend::game_home()],
+        false,
+    )?;
+    // A Windows cache fallback can create its directory; admit the candidate first.
+    let (build, build_lease) =
+        crate::backend::admit_build_dir(|path| registry.acquire(&[path], false))?;
+    let _ = ADMITTED_BUILD.set(build);
+    *STARTUP_LEASES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some([pointer, data, build_lease]);
+    remember_startup_error(problem);
+    Ok(())
 }
 
 pub fn startup_error() -> Option<String> {
@@ -158,26 +167,7 @@ pub fn startup_error() -> Option<String> {
 /// Try the configured location again. Success requires a restart: paths already resolved to
 /// the default folders are not switched under a running window.
 pub fn retry() -> Result<()> {
-    FORCE_DEFAULT.store(false, Ordering::Release);
-    *location() = None;
-    if let Err(error) = configured_roots() {
-        FORCE_DEFAULT.store(true, Ordering::Release);
-        remember_startup_error(Some(error.clone()));
-        return Err(error);
-    }
-    match acquire_startup_lock() {
-        Ok(lease) => {
-            *STARTUP_LEASE
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = lease;
-        }
-        Err(error) => {
-            remember_startup_error(Some(error.clone()));
-            return Err(error);
-        }
-    }
-    remember_startup_error(None);
-    Ok(())
+    resolve_at(&bootstrap_path()?).map(|_| ())
 }
 
 /// The error `startup` would report for one bootstrap; the UI opens with it instead of
@@ -200,9 +190,6 @@ fn use_default_at(bootstrap: &Path) -> Result<()> {
         }
         fs::rename(bootstrap, &backup).map_err(|e| problem(bootstrap, e))?;
     }
-    FORCE_DEFAULT.store(true, Ordering::Release);
-    *location() = Some(Ok(None));
-    remember_startup_error(None);
     Ok(())
 }
 
@@ -255,16 +242,6 @@ impl Drop for MigrationLease {
     }
 }
 
-/// Hold until process exit. Workers must enter before acquiring this shared lease.
-/// Override-based isolated runs do not touch the user's bootstrap lock.
-pub fn acquire_startup_lock() -> Result<Option<MigrationLease>> {
-    if overridden("SUNRISE_LAUNCHER_HOME") && overridden("SUNRISE_HOME") {
-        Ok(None)
-    } else {
-        acquire_lock_at(&bootstrap_path()?).map(Some)
-    }
-}
-
 pub fn acquire_lock_at(bootstrap: &Path) -> Result<MigrationLease> {
     lock_at(bootstrap, false)
 }
@@ -275,23 +252,43 @@ fn lock_at(bootstrap: &Path, exclusive: bool) -> Result<MigrationLease> {
         .parent()
         .ok_or("Bootstrap needs a parent folder")?;
     fs::create_dir_all(parent).map_err(|e| problem(parent, e))?;
-    let path = parent.join("migration.lock");
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&path)
-        .map_err(|e| problem(&path, e))?;
+    lock_file(&parent.join("migration.lock"), exclusive)
+}
+
+fn open_lock_file(path: &Path) -> Result<File> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() && !crate::native_cache::linked(&meta) => (),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+        Err(e) => return Err(problem(path, e)),
+        _ => return Err(problem(path, crate::i18n::tr("Not a regular lock file"))),
+    }
+    let mut open = OpenOptions::new();
+    open.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        open.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+        open.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
+    }
+    open.open(path).map_err(|e| problem(path, e))
+}
+
+fn lock_file(path: &Path, exclusive: bool) -> Result<MigrationLease> {
+    let file = open_lock_file(path)?;
     let result = if exclusive {
         file.try_lock()
     } else {
         file.try_lock_shared()
     };
-    result.map_err(|e| {
-        format!(
-            "Cannot lock {}: {e}; close other launchers and stop games/builds before retrying",
-            path.display()
+    result.map_err(|error| {
+        crate::i18n::trf(
+            "Cannot lock {path}: {error}; close other launchers and stop games/builds before retrying",
+            &[("path", &path.to_string_lossy()), ("error", &error.to_string())],
         )
     })?;
     Ok(MigrationLease(file))
@@ -378,6 +375,15 @@ fn migrate_locked(
             ));
         }
     }
+    let destination = layout(&source, &target);
+    tool_safe(&destination.build)?;
+    let registry = root_leases::Registry::open()?;
+    // Reserve both sides by containment before checking the target or settling the source.
+    // No independent launcher may publish into our destination while it is staged.
+    let _roots = registry.acquire(
+        &[&source.launcher, &source.game, &source.build, &target],
+        true,
+    )?;
     if target.exists()
         && (!target.is_dir()
             || fs::read_dir(&target)
@@ -390,24 +396,41 @@ fn migrate_locked(
             target.display()
         ));
     }
-    let destination = layout(&source, &target);
-    tool_safe(&destination.build)?;
+    // Canonical spellings are only for excluding controls from the copied tree. Commit
+    // to the caller's bootstrap, and report that same path if replacement is refused.
+    let mut controls = [
+        bootstrap.to_owned(),
+        bootstrap.with_file_name("migration.lock"),
+        bootstrap.with_file_name("location.json.new"),
+    ]
+    .iter()
+    .map(|path| pointer_path(path))
+    .collect::<Result<Vec<_>>>()?;
+    controls.push(registry.path().to_owned());
+    // Both pointer and source leases cover recovery and the entire snapshot/commit.
+    crate::relocation::admit_idle_profiles(&source)?;
+    progress("Copying and verifying launcher data");
     fs::create_dir_all(&target).map_err(|e| problem(&target, e))?;
     let stage = target.join(".relocation-staging");
     let staged = layout(&source, &stage);
     let result = (|| {
         private_dir(&stage)?;
-        progress("Copying and verifying launcher data");
-        copy_tree(&source.launcher, &staged.launcher, bootstrap, &mut progress)?;
+        copy_tree(&source.launcher, &staged.launcher, &controls, &mut progress)?;
         progress("Copying and verifying game data");
-        copy_tree(&source.game, &staged.game, bootstrap, &mut progress)?;
+        copy_tree(&source.game, &staged.game, &controls, &mut progress)?;
         if !within(&source.build, &source.launcher) {
             progress("Copying and verifying build data");
-            copy_tree(&source.build, &staged.build, bootstrap, &mut progress)?;
+            copy_tree(&source.build, &staged.build, &controls, &mut progress)?;
         } else if !staged.build.exists() {
             fs::create_dir_all(&staged.build).map_err(|e| problem(&staged.build, e))?;
         }
         prepare(&staged, &destination)?;
+        crate::managed_play::remap_relocated_root(
+            &staged.launcher,
+            &source.game,
+            &staged.game,
+            &destination.game,
+        )?;
         for name in ["launcher", "game", "build"] {
             let from = stage.join(name);
             if from.exists() {
@@ -486,6 +509,10 @@ fn overlaps(a: &Path, b: &Path) -> bool {
     within(a, b) || within(b, a)
 }
 
+fn same_path(a: &Path, b: &Path) -> bool {
+    within(a, b) && within(b, a)
+}
+
 /// Canonicalize existing ancestors, reject links/junctions and ambiguous relative components.
 fn checked_path(path: &Path) -> Result<PathBuf> {
     if !path.is_absolute() || path.components().any(|c| matches!(c, Component::ParentDir)) {
@@ -530,11 +557,27 @@ fn plain_drive(path: PathBuf) -> PathBuf {
     path
 }
 
+/// Resolve a real data path without making a virgin folder. Legacy environment overrides
+/// also accept relative paths and existing links; their claim must follow the resolved root.
+pub(crate) fn canonical_data_path(path: &Path) -> Result<PathBuf> {
+    fs::canonicalize(path).map(plain_drive).or_else(|_| {
+        pointer_path(&std::path::absolute(path).map_err(|error| problem(path, error))?)
+    })
+}
+
 /// The pointer and its lock sit in the platform config folder, which may be a link (a
 /// dotfiles-managed `~/.config`, Silverblue's `/home`): unlike the data roots, they are never
 /// copied, so a link on the way is followed, not refused. Refusing it would report a broken
 /// data folder at every start to players who never moved their data.
 fn pointer_path(path: &Path) -> Result<PathBuf> {
+    let (existing, missing) = resolved_prefix(path)?;
+    Ok(missing
+        .iter()
+        .rev()
+        .fold(existing, |path, part| path.join(part)))
+}
+
+fn resolved_prefix(path: &Path) -> Result<(PathBuf, Vec<std::ffi::OsString>)> {
     if !path.is_absolute() || path.components().any(|c| matches!(c, Component::ParentDir)) {
         return Err(format!(
             "Use an absolute path without '..': {}",
@@ -545,11 +588,14 @@ fn pointer_path(path: &Path) -> Result<PathBuf> {
     let mut rest = Vec::new();
     loop {
         match fs::canonicalize(existing) {
-            Ok(real) => {
-                let real = plain_drive(real);
-                return Ok(rest.iter().rev().fold(real, |path, part| path.join(part)));
+            Ok(real) => return Ok((plain_drive(real), rest)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                match fs::symlink_metadata(existing) {
+                    Ok(_) => return Err(problem(existing, e)), // Not missing: a dangling link.
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                    Err(error) => return Err(problem(existing, error)),
+                }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(problem(existing, e)),
         }
         match (existing.parent(), existing.file_name()) {
@@ -557,7 +603,7 @@ fn pointer_path(path: &Path) -> Result<PathBuf> {
                 rest.push(name.to_os_string());
                 existing = parent;
             }
-            _ => return Ok(path.to_path_buf()),
+            _ => return Err(problem(existing, std::io::ErrorKind::NotFound)),
         }
     }
 }
@@ -619,7 +665,7 @@ fn new_file(path: &Path) -> Result<File> {
 pub(crate) fn copy_tree(
     source: &Path,
     dest: &Path,
-    bootstrap: &Path,
+    controls: &[PathBuf],
     progress: &mut impl FnMut(&str),
 ) -> Result<()> {
     let meta = match fs::symlink_metadata(source) {
@@ -634,18 +680,10 @@ pub(crate) fn copy_tree(
         for entry in fs::read_dir(source).map_err(|e| problem(source, e))? {
             let entry = entry.map_err(|e| problem(source, e))?;
             let path = entry.path();
-            let controls = [
-                bootstrap.to_path_buf(),
-                bootstrap.with_file_name("migration.lock"),
-                bootstrap.with_file_name("location.json.new"),
-            ];
-            if controls
-                .iter()
-                .any(|p| pointer_path(p).is_ok_and(|p| within(&path, &p) && within(&p, &path)))
-            {
+            if controls.iter().any(|p| same_path(p, &path)) {
                 continue;
             }
-            copy_tree(&path, &dest.join(entry.file_name()), bootstrap, progress)?;
+            copy_tree(&path, &dest.join(entry.file_name()), controls, progress)?;
         }
         fs::set_permissions(dest, meta.permissions()).map_err(|e| problem(dest, e))?;
         sync_dir(dest)?;

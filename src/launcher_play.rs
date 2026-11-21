@@ -538,6 +538,7 @@ mod tests {
             kind: instances::Kind::Default,
             work: home.into(),
             home: home.into(),
+            incarnation: None,
             icon: None,
             group: None,
             version: None,

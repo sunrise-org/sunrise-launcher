@@ -112,6 +112,7 @@ mod tests {
             kind: InstanceKind::Own,
             work: Default::default(),
             home: Default::default(),
+            incarnation: None,
             icon: None,
             group: None,
             version: None,

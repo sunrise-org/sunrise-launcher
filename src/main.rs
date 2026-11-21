@@ -371,9 +371,7 @@ struct Launcher {
     /// Where the next start goes at once: `--world <folder>` or `--server <address>`.
     quick_play: Option<(&'static str, String)>,
     /// The instance the running game plays and when it started: its play time grows on exit.
-    client_run: Option<(String, Instant)>,
-    /// The running game's instance variables, for its post-exit command.
-    client_vars: sunrise_launcher::launch::Vars,
+    client_run: Option<(instances::Instance, Instant)>,
     /// Settings' Game arguments field: the line, whether it has focus, and its focus handle.
     args_input: line_edit::LineEdit,
     args_focused: bool,

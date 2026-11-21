@@ -12,8 +12,8 @@ use sunrise_launcher::instances::{self, Icon, Instance, Kind as InstanceKind};
 /// text fields `Field::InstanceName` and `Field::InstanceGroup`.
 pub(super) struct InstanceDialog {
     pub(super) editing: Option<String>,
-    /// A new instance copies the selected one's worlds, options and packs.
-    pub(super) copy: bool,
+    /// The selected source and build shown when copying its worlds, options and packs.
+    pub(super) copy: Option<instances::CopyPreview>,
     pub(super) icon: Option<Icon>,
     /// A picture chosen since it opened (None in it: the instance's is removed on Save).
     pub(super) picture: Option<Option<instance_icons::Chosen>>,
@@ -159,18 +159,13 @@ impl Launcher {
             }
         };
         if let Some(why) = self.profile_copy_lock() {
-            if let Some(d) = self.instances.dialog.as_mut().filter(|d| d.copy) {
+            if let Some(d) = self.instances.dialog.as_mut().filter(|d| d.copy.is_some()) {
                 d.error = Some(why.into());
                 return;
             }
         }
-        let selected = self.selected_instance().map(|i| i.id.clone());
         let name = self.servers.value(Field::InstanceName).trim().to_string();
         let group = Some(self.servers.value(Field::InstanceGroup).to_string());
-        // A Sunrise version picked but not installed downloads once the instance is saved.
-        let download = self
-            .draft_sunrise()
-            .and_then(|tag| self.release_to_install(&tag));
         let Some(d) = self.instances.dialog.as_mut().filter(|d| !d.busy) else {
             return;
         };
@@ -182,7 +177,7 @@ impl Launcher {
             .map(|p| p.as_ref().map(|c| c.png.clone()));
         let editing = d.editing.clone();
         let edited = editing.is_some();
-        let copy = selected.filter(|_| d.copy);
+        let copy = d.copy.clone();
         // The picture choice this save keeps: once kept, it is no longer an unsaved edit.
         let sent_picture = picture.clone();
         let Some(d) = self.instances.dialog.as_mut() else {
@@ -203,10 +198,11 @@ impl Launcher {
                 m.channel = Some(channel);
             };
             let Some(id) = editing else {
-                // A new profile is made whole or not at all: a failure leaves none to retry over.
+                // Carry the selected folder's identity into the worker rather than looking it
+                // up again by slug after another launcher might have replaced it.
                 return instances::create_with(
                     &called,
-                    copy.as_deref(),
+                    copy.as_ref(),
                     picture.as_ref().map(Option::as_deref),
                     choose,
                 );
@@ -248,8 +244,9 @@ impl Launcher {
                             (true, Some(d)) => d.busy = false,
                             _ => this.instances.dialog = None,
                         }
-                        // Play shows the download's progress; Versions shows it too.
-                        if let Some(release) = download {
+                        // Download the saved target, not a draft choice a bound copy replaced.
+                        this.installed = backend::installed();
+                        if let Some(release) = this.profile_creation_download(&instance) {
                             this.install_for_instance(release);
                         }
                         if matches!(instance.kind, InstanceKind::Default | InstanceKind::Own) {

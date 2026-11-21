@@ -1429,7 +1429,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             };
             let jar_permission = jars::Permission::headless(allow_jar_downloads);
             let vars = instance.vars();
-            let (started, played) = if instance.kind == instances::Kind::Pack {
+            let (started, played, finished) = if instance.kind == instances::Kind::Pack {
                 let tag = instance.resolve_version(version.as_deref())?;
                 let mut cmd = backend::client_as(&tag, account.map(|a| a.uuid.as_str()))?;
                 instances::apply(&mut cmd, &instance)?;
@@ -1445,7 +1445,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 jars::prepare_launch(&mut cmd, &instance.launch, jar_permission)
                     .map_err(|error| error.to_string())?;
                 let command = sunrise_launcher::launch::wrap(cmd, &instance.launch)?;
-                (std::time::Instant::now(), attached(command))
+                (std::time::Instant::now(), attached(command), Some(instance))
             } else {
                 let start = managed_play::Client {
                     instance: &instance,
@@ -1490,12 +1490,18 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                     .wait()
                     .map_err(sunrise_launcher::process::child::unconfirmed_exit)?;
                 game.runtime.game_exited();
-                (started, attached_status(status))
+                (started, attached_status(status), Some(game.instance))
             };
-            if let Err(e) = instances::record_play(&instance.id, started.elapsed()) {
-                eprintln!("Play time not saved: {e}");
+            if let Some(finished) = finished {
+                if let Err(error) = instances::finish_play(&finished, started.elapsed(), || {
+                    after_exit(&finished, &vars)
+                }) {
+                    eprintln!(
+                        "{}",
+                        crate::trf("Play time not saved: {error}", &[("error", &error)])
+                    );
+                }
             }
-            after_exit(&instance, &vars);
             return played;
         }
         Cmd::Server {
@@ -2299,7 +2305,8 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             let source = source.get();
             let p = source.project(&project)?;
             if let Some(world) = world {
-                let world = sunrise_launcher::worlds::find(&home, &world)?;
+                let profile = sunrise_launcher::managed_play::Profile::open_selected(&instance)?;
+                let world = sunrise_launcher::worlds::find(profile.home(), &world)?;
                 let done = installed::install_datapack(
                     &*source,
                     &p,
@@ -2953,12 +2960,11 @@ fn multiplayer(action: MultiplayerCmd, as_json: bool) -> Result<(), String> {
 fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
     use sunrise_launcher::datapacks;
     use sunrise_launcher::worlds::{self, World};
-    let home = |instance: Option<String>| -> Result<PathBuf, String> {
-        Ok(match instance {
-            Some(name) => instances::find(&name)?.home,
-            None => instances::selection()?.home,
-        })
+    let profile = |instance: Option<String>| match instance {
+        Some(name) => instances::find(&name),
+        None => instances::selection(),
     };
+    let home = |instance| profile(instance).map(|profile| profile.home);
     let value = |w: &World| {
         let millis = w
             .last_played
@@ -2988,25 +2994,24 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
             }
         }
         WorldsCmd::Backup { world, instance } => {
-            let home = home(instance)?;
-            let zip = worlds::backup(&home, &worlds::find(&home, &world)?)?;
+            let profile =
+                sunrise_launcher::managed_play::Profile::open_selected(&profile(instance)?)?;
+            let home = profile.home();
+            let zip = worlds::backup(home, &worlds::find(home, &world)?)?;
             match as_json {
                 true => json(serde_json::json!({ "backup": zip })),
                 false => println!("{}", zip.display()),
             }
         }
         WorldsCmd::Copy { world, instance } => {
-            let home = home(instance)?;
-            let copy = worlds::copy(&worlds::find(&home, &world)?)?;
+            let copy = worlds::copy(&profile(instance)?, &world)?;
             match as_json {
                 true => json(value(&copy)),
                 false => println!("Copied to {} ({})", copy.name, copy.folder),
             }
         }
         WorldsCmd::Delete { world, instance } => {
-            let home = home(instance)?;
-            let w = worlds::find(&home, &world)?;
-            worlds::delete(&w)?;
+            let w = worlds::delete(&profile(instance)?, &world)?;
             println!("{} is in the trash.", w.name);
         }
         WorldsCmd::DatapackList { world, instance } => {
@@ -3032,7 +3037,9 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
             file,
             instance,
         } => {
-            let w = worlds::find(&home(instance)?, &world)?;
+            let profile =
+                sunrise_launcher::managed_play::Profile::open_selected(&profile(instance)?)?;
+            let w = worlds::find(profile.home(), &world)?;
             let p = datapacks::add(&w.path, &file)?;
             println!(
                 "Added {} to {}: the game turns it on when the world opens.",
@@ -3044,7 +3051,9 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
             pack,
             instance,
         } => {
-            let w = worlds::find(&home(instance)?, &world)?;
+            let profile =
+                sunrise_launcher::managed_play::Profile::open_selected(&profile(instance)?)?;
+            let w = worlds::find(profile.home(), &world)?;
             let p = datapacks::find(&w.path, &pack)?;
             datapacks::remove(&w.path, &p)?;
             println!("{} is in the trash.", p.file);

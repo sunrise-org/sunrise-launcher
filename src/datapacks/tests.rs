@@ -188,6 +188,7 @@ fn a_data_pack_without_a_description_is_not_listed() {
 fn a_data_pack_without_a_description_is_refused_before_it_is_copied() {
     let root = scratch("no-description-add");
     let world = root.join("saves/W");
+    fs::create_dir_all(&world).unwrap();
     let drops = root.join("drops");
     for (name, meta) in [("Bare.zip", r#"{"pack":{}}"#), ("Empty.zip", "{}")] {
         zip_file(

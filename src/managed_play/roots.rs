@@ -59,9 +59,8 @@ fn read(cache: &Path) -> Result<BTreeMap<PathBuf, Identity>, String> {
 
 /// Register a true managed home before it has any pending or visible reference. Hold the
 /// installation publication fence. The caller already holds the individual profile gate.
-pub(super) fn register(profile: &Path) -> Result<(), String> {
-    let game_home = crate::backend::game_home();
-    let root = game_home.canonicalize().map_err(|e| at(&game_home, e))?;
+pub(super) fn register(cache: &Path, game_home: &Path, profile: &Path) -> Result<(), String> {
+    let root = game_home.canonicalize().map_err(|e| at(game_home, e))?;
     let profile = profile.canonicalize().map_err(|e| at(profile, e))?;
     let relative = profile.strip_prefix(&root).map_err(|e| at(&profile, e))?;
     let parts: Vec<_> = relative.iter().collect();
@@ -71,7 +70,7 @@ pub(super) fn register(profile: &Path) -> Result<(), String> {
         [collection, _, home] if *collection == "sunrise-packs" && *home == "home" => (),
         _ => return Err(at(&profile, unsettled())),
     }
-    register_root(&crate::backend::data_dir(), root)
+    register_root(cache, root)
 }
 
 fn register_root(cache: &Path, root: PathBuf) -> Result<(), String> {
@@ -83,6 +82,41 @@ fn register_root(cache: &Path, root: PathBuf) -> Result<(), String> {
         None => (),
     }
     roots.insert(root, id);
+    save(cache, roots)
+}
+
+/// The new cache must know the identity that survives the final staged directory rename.
+pub(crate) fn remap_relocated_root(
+    staged_cache: &Path,
+    source_game: &Path,
+    staged_game: &Path,
+    final_game: &Path,
+) -> Result<(), String> {
+    let mut roots = read(staged_cache)?;
+    let old = match source_game.canonicalize() {
+        Ok(path) => path,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(at(source_game, error)),
+    };
+    let Some(id) = roots.remove(&old) else {
+        return Ok(());
+    };
+    let parent = final_game
+        .parent()
+        .expect("relocated game is inside the chosen folder");
+    let new = parent.canonicalize().map_err(|e| at(parent, e))?.join(
+        final_game
+            .file_name()
+            .expect("relocated game directory name"),
+    );
+    if Identity::of(&old)? != id || roots.contains_key(&new) {
+        return Err(at(&old, unsettled()));
+    }
+    roots.insert(new, Identity::of(staged_game)?);
+    save(staged_cache, roots)
+}
+
+fn save(cache: &Path, roots: BTreeMap<PathBuf, Identity>) -> Result<(), String> {
     let path = cache.join(FILE);
     let bytes = serde_json::to_vec(&Roster {
         version: 1,

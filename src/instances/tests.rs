@@ -438,6 +438,232 @@ fn deleted_instances_go_to_the_trash_and_are_forgotten() {
     fs::remove_dir_all(&root).unwrap();
 }
 
+#[test]
+fn a_profile_lookup_pairs_its_old_row_with_its_old_directory() {
+    let root = scratch("lookup-snapshot");
+    let (game, cache, trash) = (root.join("game"), root.join("cache"), root.join("trash"));
+    let old = create_in(&game, &cache, "Castle!", None).unwrap();
+    let snapshot = list_with_snapshot(&game, &cache, || {
+        // Pause after reading the old row, before opening any profile directory. This is
+        // the exact lock held across the competing Delete and Create directory renames.
+        let competitor = fs::File::options()
+            .read(true)
+            .write(true)
+            .open(cache.join(".instances.lock"))
+            .unwrap();
+        assert!(matches!(
+            competitor.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+    });
+    let selected = find_in(&snapshot, "Castle!").unwrap();
+    assert_eq!(selected.incarnation, old.incarnation);
+    delete_in(&game, &cache, "Castle!", &|path| {
+        fs::rename(path, &trash).map_err(|e| e.to_string())
+    })
+    .unwrap();
+    let replacement = create_in(&game, &cache, "Castle?", None).unwrap();
+    assert_eq!(selected.id, replacement.id);
+    assert_ne!(selected.incarnation, replacement.incarnation);
+    put(
+        &replacement.home.join("saves/keep/level.dat"),
+        "replacement",
+    );
+    assert_eq!(
+        delete_selected(&game, &cache, selected, &|_| panic!(
+            "replacement reached Trash"
+        ))
+        .unwrap_err(),
+        lifecycle::changed()
+    );
+    assert_eq!(
+        fs::read_to_string(replacement.home.join("saves/keep/level.dat")).unwrap(),
+        "replacement"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_delayed_play_completion_never_records_time_or_runs_a_hook_for_a_replacement() {
+    let root = scratch("delayed-exit");
+    let (game, cache, trash) = (root.join("game"), root.join("cache"), root.join("trash"));
+    let accepted = create_in(&game, &cache, "Rocket!", None).unwrap();
+    let elapsed = Duration::from_secs(73);
+    // Model a delivered exit using the same completion routine as the GUI and CLI. The hook
+    // also asserts it runs while the accepted profile is still admitted.
+    finish_play_in(&game, &cache, &accepted, elapsed, || {
+        assert!(ManagedProfile::open_instance(&game, &cache, &accepted).is_err());
+        put(&accepted.home.join("owned-hook"), "old profile");
+    })
+    .unwrap();
+    assert_eq!(
+        find_in(&list_in(&game, &cache), &accepted.id)
+            .unwrap()
+            .played,
+        elapsed
+    );
+    delete_in(&game, &cache, &accepted.id, &|dir| {
+        fs::rename(dir, &trash).map_err(|e| e.to_string())
+    })
+    .unwrap();
+    let replacement = create_in(&game, &cache, "Rocket?", None).unwrap();
+    assert_eq!(accepted.id, replacement.id);
+    assert_ne!(accepted.incarnation, replacement.incarnation);
+    let before = fs::read(cache.join(FILE)).unwrap();
+    let result = finish_play_in(&game, &cache, &accepted, elapsed, || {
+        panic!("the detached run's hook reached a replacement profile");
+    });
+    assert_eq!(result.unwrap_err(), lifecycle::changed());
+    assert_eq!(fs::read(cache.join(FILE)).unwrap(), before);
+    assert_eq!(
+        find_in(&list_in(&game, &cache), &replacement.id)
+            .unwrap()
+            .played,
+        Duration::ZERO
+    );
+    assert!(!replacement.home.join("owned-hook").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_delayed_delete_does_not_admit_a_replacement_at_the_same_slug() {
+    let root = scratch("delete-old-incarnation");
+    let (game, cache, trash) = (root.join("game"), root.join("cache"), root.join("trash"));
+    let selected = create_in(&game, &cache, "Survival", None).unwrap();
+    let owner = ManagedProfile::open_instance(&game, &cache, &selected).unwrap();
+    assert!(delete_in(&game, &cache, "survival", &|_| panic!(
+        "live profile reached Trash"
+    ))
+    .unwrap_err()
+    .contains("in use"));
+    drop(owner);
+    delete_in(&game, &cache, "survival", &|p| {
+        crate::desktop_seams::to_folder(p, &trash)
+    })
+    .unwrap();
+    let replacement = create_in(&game, &cache, "Survival", None).unwrap();
+    put(
+        &replacement.home.join("saves/New/level.dat"),
+        "a different world",
+    );
+    assert_ne!(selected.incarnation, replacement.incarnation);
+    let error = delete_selected(&game, &cache, selected, &|_| {
+        panic!("stale Delete reached Trash")
+    })
+    .unwrap_err();
+    assert!(error.contains("changed since you reviewed"), "{error}");
+    assert_eq!(
+        fs::read(replacement.home.join("saves/New/level.dat")).unwrap(),
+        b"a different world"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_replacement_detached_after_admission_is_restored_without_overwriting() {
+    for name_reused in [false, true] {
+        let root = scratch("replacement-at-detach");
+        let (game, cache) = (root.join("game"), root.join("cache"));
+        let selected = create_in(&game, &cache, "Survival!", None).unwrap();
+        let visible = selected.home.clone();
+        let displaced = root.join("displaced");
+        put(&visible.join("original"), "first profile");
+        let before = fs::read(cache.join(FILE)).unwrap();
+        let mut retained = None;
+        let error = delete_selected_at(
+            &game,
+            &cache,
+            selected,
+            |from, to| {
+                fs::rename(from, &displaced)?;
+                put(&from.join("saves/Mine/level.dat"), "late replacement");
+                durable::move_new_directory(from, to)?;
+                if name_reused {
+                    put(&from.join("new-occupant"), "third profile");
+                }
+                retained = Some(to.to_owned());
+                Ok(())
+            },
+            &|_| panic!("late replacement reached Trash"),
+        )
+        .unwrap_err();
+        let retained = retained.unwrap();
+        let replacement = if name_reused {
+            assert!(error.contains(&*retained.to_string_lossy()), "{error}");
+            assert_eq!(
+                fs::read(visible.join("new-occupant")).unwrap(),
+                b"third profile"
+            );
+            retained
+        } else {
+            assert_eq!(error, lifecycle::changed());
+            assert!(!retained.parent().unwrap().exists());
+            visible
+        };
+        assert_eq!(
+            fs::read(replacement.join("saves/Mine/level.dat")).unwrap(),
+            b"late replacement"
+        );
+        assert_eq!(
+            fs::read(displaced.join("original")).unwrap(),
+            b"first profile"
+        );
+        assert_eq!(fs::read(cache.join(FILE)).unwrap(), before);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn profile_snapshot_refuses_a_busy_world_created_after_enumeration() {
+    for existing_saves in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("game");
+        let saves = home.join("saves");
+        fs::create_dir(&home).unwrap();
+        if existing_saves {
+            put(&saves.join("Old/level.dat"), "already there");
+        }
+        let claims = crate::worlds::SavedWorlds::claim(&saves).unwrap();
+        let late = saves.join("Late");
+        put(&late.join("level.dat"), "game is still writing this world");
+        let game = fs::File::create(late.join(crate::worlds::LOCK)).unwrap();
+        game.try_lock().unwrap();
+        let stage = root.path().join("private");
+        let error = copy_home(&home, &stage, &claims).unwrap_err();
+        assert!(error.to_string().contains("World Late changed"), "{error}");
+        assert!(!stage.join("saves/Late/level.dat").exists());
+        assert_eq!(
+            fs::read(late.join("level.dat")).unwrap(),
+            b"game is still writing this world"
+        );
+    }
+}
+
+#[test]
+fn a_trash_failure_preserves_the_whole_detached_profile() {
+    let root = scratch("failed-trash");
+    let (game, cache) = (root.join("game"), root.join("cache"));
+    let selected = create_in(&game, &cache, "Survival", None).unwrap();
+    put(
+        &selected.home.join("saves/Mine/level.dat"),
+        "keep this world",
+    );
+    let kept = std::cell::OnceCell::new();
+    let error = delete_in(&game, &cache, "survival", &|path| {
+        kept.set(path.to_owned()).unwrap();
+        Err("trash unavailable".into())
+    })
+    .unwrap_err();
+    assert!(error.contains("trash unavailable"));
+    assert!(!selected.home.exists());
+    assert_eq!(
+        fs::read(kept.get().unwrap().join("saves/Mine/level.dat")).unwrap(),
+        b"keep this world"
+    );
+    assert!(create_in(&game, &cache, "Survival", None).is_ok());
+    fs::remove_dir_all(root).unwrap();
+}
+
 /// A chosen picture is kept scaled to 128 pixels in the instance's folder; removing it moves it
 /// to the trash; a file that isn't an image is refused.
 #[test]
@@ -617,6 +843,213 @@ fn a_creation_that_fails_leaves_no_instance_and_the_name_free() {
 }
 
 #[test]
+fn a_kill_after_copy_visibility_keeps_the_exact_copy_and_recovers_its_choices() {
+    use crate::managed_play::{Active, FirstBuild, Held, HeldReason, HeldSource};
+    use sha2::{Digest as _, Sha256};
+    use std::{process::Command, time::Instant};
+    use sunrise_launcher_smod::{manifest, mod_list};
+    const TEST: &str = "instances::tests::a_kill_after_copy_visibility_keeps_the_exact_copy_and_recovers_its_choices";
+    const ROLE: &str = "SUNRISE_COPY_TEST_ROLE";
+    const BUILD: &str = "v0.1.7";
+    const POINTER: &str = "mod-browser/active-build.json";
+    const ENABLED: &str = sunrise_launcher_smod::mod_list::FILE;
+    let Ok(role) = std::env::var(ROLE) else {
+        let root = tempfile::tempdir().unwrap();
+        let game = root.path().join("game");
+        let cache = root.path().join("launcher");
+        let actor = |role| {
+            let mut cmd = Command::new(std::env::current_exe().unwrap());
+            cmd.args(["--exact", TEST, "--nocapture"])
+                .env(ROLE, role)
+                .env("SUNRISE_HOME", &game)
+                .env("SUNRISE_LAUNCHER_HOME", &cache)
+                .env("XDG_CONFIG_HOME", root.path().join("config"));
+            cmd
+        };
+        assert!(actor("input").status().unwrap().success());
+        let mut copy = actor("copy").spawn().unwrap();
+        let ready = root.path().join("visible");
+        let until = Instant::now() + Duration::from_secs(10);
+        while !ready.is_file() {
+            if copy.try_wait().unwrap().is_some() || Instant::now() > until {
+                let _ = copy.kill();
+                let _ = copy.wait();
+                panic!("copy did not reach visibility");
+            }
+            std::thread::sleep(Duration::from_millis(15));
+        }
+        copy.kill().unwrap();
+        assert!(!copy.wait().unwrap().success());
+        let source = game.join("instances/source");
+        let visible = game.join("instances/new-copy");
+        assert!(!Store::read(&cache)
+            .unwrap()
+            .instances
+            .contains_key("new-copy"));
+        assert_eq!(
+            fs::read(visible.join(ENABLED)).unwrap(),
+            fs::read(source.join(ENABLED)).unwrap()
+        );
+        assert_eq!(
+            fs::read(visible.join("saves/Mine/level.dat")).unwrap(),
+            b"copied world"
+        );
+        let pointer = |home: &Path| {
+            serde_json::from_slice::<serde_json::Value>(&fs::read(home.join(POINTER)).unwrap())
+                .unwrap()
+        };
+        let old = pointer(&source);
+        let new = pointer(&visible);
+        for field in ["base", "executable", "inputs", "resources"] {
+            assert_eq!(new[field], old[field], "{field}");
+        }
+        assert_eq!(old["receipts"].as_array().unwrap().len(), 1);
+        assert_eq!(new["receipts"], serde_json::json!([]));
+        assert_eq!(new["generation"], 1);
+        assert_ne!(new["profile"], old["profile"]);
+        let recovered = find_in(&list_in(&game, &cache), "new-copy").unwrap();
+        assert_eq!(recovered.group.as_deref(), Some("Kept after exit"));
+        assert_eq!(recovered.version.as_deref(), Some(BUILD));
+        assert!(Store::read(&cache)
+            .unwrap()
+            .instances
+            .contains_key("new-copy"));
+
+        let source_roots = crate::data_location::Roots {
+            launcher: cache.clone(),
+            game: game.clone(),
+            build: cache.join("native-build"),
+        };
+        let relocated = crate::data_location::migrate(
+            &source_roots,
+            &root.path().join("new-location"),
+            &root.path().join("location.json"),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(pointer(&relocated.game.join("instances/source")), old);
+        assert_eq!(pointer(&relocated.game.join("instances/new-copy")), new);
+        assert!(
+            source.join(POINTER).is_file(),
+            "original data remains the backup"
+        );
+        let roster: serde_json::Value = serde_json::from_slice(
+            &fs::read(relocated.launcher.join("profile-artifact-roots.json")).unwrap(),
+        )
+        .unwrap();
+        let entries = roster["roots"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0][0],
+            serde_json::to_value(relocated.game.canonicalize().unwrap()).unwrap()
+        );
+        drop(
+            ReferencePublication::begin_at(&relocated.launcher, &relocated.game, &relocated.game)
+                .unwrap(),
+        );
+        return;
+    };
+    let game = backend::game_home();
+    let cache = backend::data_dir();
+    match role.as_str() {
+        "input" => {
+            let source = create_in(&game, &cache, "Source", None).unwrap();
+            let preview = CopyPreview::read(&source).unwrap();
+            assert_eq!(preview.base(), None);
+            let folder = backend::version_dir(BUILD);
+            let resources = backend::resources(BUILD);
+            fs::create_dir_all(&resources).unwrap();
+            fs::write(resources.join("sunrise-resources.json"), b"{}").unwrap();
+            fs::write(folder.join(".installed"), []).unwrap();
+            fs::write(folder.join(backend::CLIENT), "fixture client").unwrap();
+            put(&source.home.join(ENABLED), "\n");
+            put(&source.home.join("saves/Mine/level.dat"), "copied world");
+            let kept = format!("{}/example.smod", mod_list::NATIVE_DIR);
+            let package = manifest::Package::write_files(
+                &format!("id='example'\nname='Example'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n[native]\nsunrise='{}'\ngame='26.3'\n", manifest::API, "a".repeat(40)),
+                &[("Cargo.toml", b"[package]\nname='example'\nversion='1.0.0'"), ("src/lib.rs", b"")],
+            ).unwrap();
+            fs::create_dir_all(source.home.join(mod_list::NATIVE_DIR)).unwrap();
+            fs::write(source.home.join(&kept), &package).unwrap();
+            let held = Held::new(
+                "example".into(),
+                Sha256::digest(&package).into(),
+                kept,
+                HeldSource::Local {
+                    version: "1.0.0".into(),
+                },
+                true,
+                HeldReason::NoFit {
+                    build: BUILD.into(),
+                },
+            )
+            .unwrap();
+            let mut managed = ManagedProfile::open_instance(&game, &cache, &source).unwrap();
+            let first = managed
+                .begin_first(|| FirstBuild::installed(BUILD), |_| {})
+                .unwrap();
+            first.prepare(&|_| {}).unwrap();
+            let cancellation = crate::native_mods::Cancellation::default();
+            let image = first
+                .exact_image(
+                    crate::native_mods::Profile::Optimized,
+                    &cancellation,
+                    |_| {},
+                    None,
+                )
+                .unwrap();
+            let active = first.commit(&image, &cancellation).unwrap();
+            active.verify_artifacts().unwrap();
+            let mut exact = serde_json::to_value(active).unwrap();
+            let receipt = [7u8; 16];
+            exact["receipts"] = serde_json::json!([{
+                "id": receipt, "waiting_for_update": [held], "removed": [], "acknowledged": false,
+            }]);
+            let bytes = serde_json::to_vec(&exact).unwrap();
+            Active::parse(&bytes).unwrap();
+            durable::replace(&source.home, &source.home.join(POINTER), &bytes).unwrap();
+            drop(managed);
+            let stale = create_with_publish(
+                &game,
+                &cache,
+                "Old Preview",
+                Some(CopyFrom::Preview(&preview)),
+                None,
+                |_| {},
+                |_| panic!("a changed binding was published"),
+            );
+            assert_eq!(stale.unwrap_err(), lifecycle::changed());
+            assert!(!game.join("instances/old-preview").exists());
+        }
+        "copy" => {
+            let source = find_in(&list_in(&game, &cache), "source").unwrap();
+            let preview = CopyPreview::read(&source).unwrap();
+            assert_eq!(preview.base(), Some(BUILD));
+            create_with_publish(
+                &game,
+                &cache,
+                "New Copy",
+                Some(CopyFrom::Preview(&preview)),
+                None,
+                |meta| {
+                    meta.group = Some("Kept after exit".into());
+                    meta.version = Some("not-the-copied-build".into());
+                },
+                |visible| {
+                    assert!(visible.join(POINTER).is_file());
+                    fs::write(game.with_file_name("visible"), []).unwrap();
+                    loop {
+                        std::thread::park();
+                    }
+                },
+            )
+            .unwrap();
+        }
+        _ => panic!("unknown copy fixture role"),
+    }
+}
+
+#[test]
 fn creation_does_not_reuse_or_remove_another_attempts_temporary_paths() {
     let root = scratch("creation-owns-only-its-stage");
     let (home, data) = (root.join("home"), root.join("data"));
@@ -641,7 +1074,8 @@ fn creation_does_not_reuse_or_remove_another_attempts_temporary_paths() {
         "somebody else's choices"
     );
     assert_eq!(fs::read_dir(home.join(STAGING)).unwrap().count(), 1);
-    assert_eq!(fs::read_dir(&data).unwrap().count(), 2);
+    assert!(data.join(FILE).is_file());
+    assert!(data.join(".instances.lock").is_file());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -670,16 +1104,43 @@ fn creation_refuses_linked_staging_and_destination_parents() {
 }
 
 #[test]
+fn same_name_profiles_cannot_erase_the_winning_copy() {
+    let root = scratch("competing-profile-names");
+    let (game, cache) = (root.join("game"), root.join("cache"));
+    fs::create_dir(&game).unwrap();
+    let cutoff = std::sync::Barrier::new(2);
+    let attempt = |icon| {
+        create_whole_in(&game, &cache, "One name", None, Some(Some(icon)), |_| {
+            cutoff.wait();
+        })
+    };
+    let (left, right) = std::thread::scope(|scope| {
+        let left = scope.spawn(|| attempt(b"first candidate"));
+        let right = attempt(b"second candidate");
+        (left.join().unwrap(), right)
+    });
+    let (winner, picture): (_, &[u8]) = match (left, right) {
+        (Ok(profile), Err(_)) => (profile, b"first candidate"),
+        (Err(_), Ok(profile)) => (profile, b"second candidate"),
+        outcomes => panic!("expected one winning publication: {outcomes:?}"),
+    };
+    assert_eq!(winner.id, "one-name");
+    assert_eq!(fs::read(winner.home.join(PICTURE)).unwrap(), picture);
+    assert_eq!(fs::read_dir(game.join(OWN)).unwrap().count(), 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn profile_publication_does_not_replace_an_empty_destination() {
     let root = scratch("creation-no-clobber");
     let (source, dest) = (root.join("source"), root.join("dest"));
     put(&source.join("options.txt"), "new");
     fs::create_dir(&dest).unwrap();
-    assert!(publish_new_folder(&source, &dest).is_err());
+    assert!(durable::move_new_directory(&source, &dest).is_err());
     assert!(source.join("options.txt").is_file());
     assert!(fs::read_dir(&dest).unwrap().next().is_none());
     fs::remove_dir(dest).unwrap();
-    assert!(publish_new_folder(&source, &root.join("dest")).is_ok());
+    assert!(durable::move_new_directory(&source, &root.join("dest")).is_ok());
     fs::remove_dir_all(root).unwrap();
 }
 

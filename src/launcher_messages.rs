@@ -118,9 +118,8 @@ impl Launcher {
                                 self.owner = Some(true);
                             }
                             self.installed = backend::installed();
-                            self.client_vars = instance.vars();
-                            self.client_home = Some(instance.home);
-                            self.client_run = Some((instance.id, Instant::now()));
+                            self.client_home = Some(game.instance.home.clone());
+                            self.client_run = Some((game.instance, Instant::now()));
                             self.client = Some(backend::monitor_game(
                                 game.child,
                                 self.tx.clone(),
@@ -153,6 +152,7 @@ impl Launcher {
                         }
                     }
                 }
+                Msg::PlayRecorded => self.reload_instances(),
                 Msg::PlayAdmission(home, result) => {
                     let Some(intent) = self.play_admission.take() else {
                         continue;
@@ -210,7 +210,7 @@ impl Launcher {
                     match started {
                         Ok(r) => {
                             self.client = Some(r);
-                            self.client_run = run.map(|id| (id, Instant::now()));
+                            self.client_run = run.map(|instance| (*instance, Instant::now()));
                             // Do not hide or minimize the window when the registry has
                             // something the player needs to see about this run.
                             if self.play_registry_notices.is_empty() {
@@ -483,7 +483,6 @@ impl Launcher {
                     self.client = None;
                     self.client_run = None;
                     self.client_started = None;
-                    self.client_vars.clear();
                     self.come_back(cx);
                     self.client_error = Some(error);
                 }
@@ -528,25 +527,37 @@ impl Launcher {
                             self.multiplayer.stale();
                             self.screenshots.stale();
                             self.game_packs.stale();
-                            let vars = std::mem::take(&mut self.client_vars);
                             let mut other_profile = None;
-                            if let Some((id, started)) = self.client_run.take() {
-                                if let Err(e) = instances::record_play(&id, started.elapsed()) {
-                                    eprintln!("Play time not saved: {e}");
+                            if let Some((played, started)) = self.client_run.take() {
+                                if self.selected_instance().is_some_and(|selected| {
+                                    selected.id != played.id
+                                        || selected.incarnation != played.incarnation
+                                }) {
+                                    other_profile = Some(played.name.clone());
                                 }
-                                if let Some(i) = instances::list().into_iter().find(|i| i.id == id)
-                                {
-                                    if self
-                                        .selected_instance()
-                                        .is_some_and(|selected| selected.id != id)
+                                let tx = self.tx.clone();
+                                let elapsed = started.elapsed();
+                                std::thread::spawn(move || {
+                                    if let Err(error) =
+                                        instances::finish_play(&played, elapsed, || {
+                                            let _ = tx.send(Msg::PlayRecorded);
+                                            sunrise_launcher::launch::run_after_exit(
+                                                &played.launch,
+                                                &played.home,
+                                                &played.vars(),
+                                            );
+                                        })
                                     {
-                                        other_profile = Some(i.name);
+                                        eprintln!(
+                                            "{}",
+                                            trf(
+                                                "Play time not saved: {error}",
+                                                &[("error", &error)]
+                                            )
+                                        );
+                                        let _ = tx.send(Msg::PlayRecorded);
                                     }
-                                    sunrise_launcher::launch::run_after_exit(
-                                        &i.launch, &i.home, &vars,
-                                    );
-                                }
-                                self.reload_instances();
+                                });
                             }
                             // The run's own game folder: an instance's or a pack's keeps its reports.
                             let home = self.client_home.clone().unwrap_or_else(backend::game_home);

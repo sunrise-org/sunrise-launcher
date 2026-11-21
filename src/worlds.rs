@@ -2,6 +2,8 @@
 //! up, copying and deleting them. Backups are made as vanilla's Make Backup makes them
 //! (`LevelStorageAccess.makeWorldBackup`): `backups/<yyyy-MM-dd_HH-mm-ss>_<folder>.zip` in the
 //! game folder, every file under `<folder>/` but the world's `session.lock`.
+use crate::profile_txn::Identity;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -9,12 +11,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sunrise_launcher_nbt::{self as nbt, Limits, Tag};
 
 /// The lock a running game holds on a world; vanilla's backups leave it out.
-const LOCK: &str = "session.lock";
+pub(crate) const LOCK: &str = "session.lock";
 /// The latest `LastPlayed` kept: the end of year 9999, in milliseconds. A later time does not fit a
 /// Windows `SystemTime`, and adding it panics.
 const MAX_LAST_PLAYED_MILLIS: u64 = 253_402_300_799_000;
 
-struct WorldLock(fs::File);
+pub(crate) struct WorldLock(fs::File);
 
 impl Drop for WorldLock {
     fn drop(&mut self) {
@@ -26,14 +28,95 @@ impl Drop for WorldLock {
 
 /// Hold the same exclusive lock as the game until a filesystem operation finishes.
 fn lock_world(world: &World) -> Result<WorldLock, String> {
+    lock_saved_dir(&world.path)
+}
+
+pub(crate) fn lock_saved_dir(world: &Path) -> Result<WorldLock, String> {
+    let error = |e: &dyn std::fmt::Display| {
+        crate::i18n::trf(
+            "Could not lock world {world}: {error}",
+            &[
+                (
+                    "world",
+                    &world.file_name().unwrap_or_default().to_string_lossy(),
+                ),
+                ("error", &e.to_string()),
+            ],
+        )
+    };
+    let parent = world
+        .parent()
+        .ok_or_else(|| error(&std::io::ErrorKind::InvalidInput))?;
+    for dir in [parent, world] {
+        let folder = fs::symlink_metadata(dir).map_err(|e| error(&e))?;
+        if !folder.is_dir() || crate::native_cache::linked(&folder) {
+            return Err(error(&std::io::ErrorKind::InvalidInput));
+        }
+    }
+    let path = world.join(LOCK);
+    match fs::symlink_metadata(&path) {
+        Ok(meta) if meta.is_file() && !crate::native_cache::linked(&meta) => (),
+        Ok(_) => return Err(error(&std::io::ErrorKind::InvalidInput)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+        Err(e) => return Err(error(&e)),
+    }
     let lock = fs::File::options()
         .write(true)
         .create(true)
         .truncate(false)
-        .open(world.path.join(LOCK))
-        .map_err(|e| e.to_string())?;
-    lock.try_lock().map_err(|e| e.to_string())?;
+        .open(path)
+        .map_err(|e| error(&e))?;
+    lock.try_lock().map_err(|e| error(&e))?;
     Ok(WorldLock(lock))
+}
+
+/// Each world in a profile snapshot must be the directory whose session lock we hold.
+pub(crate) struct SavedWorlds(BTreeMap<PathBuf, (Identity, WorldLock)>);
+
+impl SavedWorlds {
+    pub(crate) fn claim(saves: &Path) -> Result<Self, String> {
+        let mut claims = BTreeMap::new();
+        let entries = match fs::symlink_metadata(saves) {
+            Ok(meta) if meta.is_dir() && !crate::native_cache::linked(&meta) => fs::read_dir(saves),
+            Ok(_) => Err(std::io::ErrorKind::InvalidInput.into()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self(claims)),
+            Err(e) => Err(e),
+        }
+        .map_err(|e| e.to_string())?;
+        for entry in entries {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            if fs::symlink_metadata(&path)
+                .map_err(|e| e.to_string())?
+                .is_dir()
+            {
+                let identity = Identity::of(&path)?;
+                let lock = lock_saved_dir(&path)?;
+                claims.insert(path, (identity, lock));
+            }
+        }
+        Ok(Self(claims))
+    }
+
+    pub(crate) fn verify(&self, world: &Path) -> std::io::Result<()> {
+        if self
+            .0
+            .get(world)
+            .is_some_and(|(identity, _)| Identity::of(world).ok() == Some(*identity))
+        {
+            return Ok(());
+        }
+        Err(std::io::Error::other(crate::i18n::trf(
+            "World {world} changed while copying. Close the game and try again.",
+            &[(
+                "world",
+                &world.file_name().unwrap_or_default().to_string_lossy(),
+            )],
+        )))
+    }
+
+    pub(crate) fn verify_all(&self) -> std::io::Result<()> {
+        self.0.keys().try_for_each(|path| self.verify(path))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -380,28 +463,74 @@ fn backup_at(
 
 /// Copies the world into a new folder of the same `saves/`, named "<name> (1)", "<name> (2)"...
 /// and gives the copy that name in its level.dat so the game's list tells them apart.
-pub fn copy(world: &World) -> Result<World, String> {
-    let _lock = lock_world(world)?;
-    let saves = world.path.parent().ok_or("A world folder has a parent")?;
-    let folder = free_name(saves, &world.name, "", 1);
-    let to = saves.join(&folder);
-    let made = copy_dir(&world.path, &to).and_then(|()| rename_level(&to, &folder));
-    if let Err(e) = made {
-        let _ = fs::remove_dir_all(&to);
-        return Err(format!("Could not copy {}: {e}", world.name));
+pub fn copy(instance: &crate::instances::Instance, query: &str) -> Result<World, String> {
+    let profile = crate::managed_play::Profile::open_selected(instance)?;
+    copy_admitted(profile, query, |_| {})
+}
+
+fn copy_admitted(
+    profile: crate::managed_play::Profile,
+    query: &str,
+    before_publish: impl FnOnce(&Path),
+) -> Result<World, String> {
+    use crate::profile_txn::durable;
+    let home = profile.home();
+    let world = find(home, query)?;
+    let saves = home.join("saves");
+    let error = |e: std::io::Error| {
+        crate::i18n::trf(
+            "Could not copy {world}: {error}",
+            &[("world", &world.name), ("error", &e.to_string())],
+        )
+    };
+    for path in [&saves, &world.path] {
+        let meta = fs::symlink_metadata(path).map_err(error)?;
+        if !meta.is_dir() || crate::native_cache::linked(&meta) {
+            return Err(error(std::io::ErrorKind::InvalidData.into()));
+        }
     }
-    read(&to).ok_or_else(|| format!("{} has no level.dat", to.display()))
+    let _lock = lock_world(&world)?;
+    let folder = free_name(&saves, &world.name, "", 1);
+    let to = saves.join(&folder);
+    let stage = tempfile::Builder::new()
+        .prefix(".world-copy-")
+        .tempdir_in(&saves)
+        .map_err(error)?;
+    let candidate = stage.path().join("world");
+    copy_dir(&world.path, &candidate)
+        .and_then(|()| rename_level(&candidate, &folder))
+        .and_then(|()| durable::flush_tree(&candidate))
+        .map_err(error)?;
+    before_publish(&to);
+    durable::move_new_directory(&candidate, &to).map_err(error)?;
+    read(&to).ok_or_else(|| {
+        crate::i18n::trf(
+            "{folder} has no level.dat",
+            &[("folder", &to.to_string_lossy())],
+        )
+    })
 }
 
 fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(to)?;
-    for e in fs::read_dir(from)? {
-        let e = e?;
-        let target = to.join(e.file_name());
-        if e.file_type()?.is_dir() {
-            copy_dir(&e.path(), &target)?;
-        } else if e.file_name() != LOCK {
-            fs::copy(e.path(), target)?;
+    fs::create_dir(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name == LOCK {
+            continue;
+        }
+        let path = entry.path();
+        let meta = fs::symlink_metadata(&path)?;
+        if crate::native_cache::linked(&meta) {
+            return Err(std::io::ErrorKind::InvalidData.into());
+        }
+        let target = to.join(name);
+        if meta.is_dir() {
+            copy_dir(&path, &target)?;
+        } else if meta.is_file() {
+            fs::copy(&path, target)?;
+        } else {
+            return Err(std::io::ErrorKind::InvalidData.into());
         }
     }
     Ok(())
@@ -431,7 +560,14 @@ fn rename_level(world: &Path, name: &str) -> std::io::Result<()> {
 }
 
 /// Moves the world to the system's trash, where the player can still get it back.
-pub fn delete(world: &World) -> Result<(), String> {
+pub fn delete(instance: &crate::instances::Instance, query: &str) -> Result<World, String> {
+    let profile = crate::managed_play::Profile::open_selected(instance)?;
+    let world = find(profile.home(), query)?;
+    delete_world(&world)?;
+    Ok(world)
+}
+
+fn delete_world(world: &World) -> Result<(), String> {
     let lock = lock_world(world)?;
     // Match server deletion: Windows cannot move the folder with this handle open.
     // If the game opens it after the probe, its handle prevents the move instead.

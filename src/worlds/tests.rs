@@ -36,6 +36,14 @@ fn name(n: &str) -> Tag {
     Tag::String(n.into())
 }
 
+fn admitted(home: &Path) -> Result<crate::managed_play::Profile, String> {
+    crate::managed_play::Profile::open_at(home, &home.join("test-cache"), home)
+}
+
+fn copy_in(home: &Path, world: &str) -> Result<World, String> {
+    copy_admitted(admitted(home)?, world, |_| {})
+}
+
 #[test]
 fn active_worlds_cannot_be_backed_up_copied_or_deleted() {
     let home = scratch("active-lock");
@@ -48,8 +56,8 @@ fn active_worlds_cannot_be_backed_up_copied_or_deleted() {
     game.try_lock().unwrap();
 
     assert!(backup(&home, &w).is_err());
-    assert!(copy(&w).is_err());
-    assert!(delete(&w).is_err());
+    assert!(copy_in(&home, "Active").is_err());
+    assert!(delete_world(&w).is_err());
     assert!(!home.join("backups").exists());
     assert!(!home.join("saves/Active (1)").exists());
     assert_eq!(fs::read(dir.join("region/r.0.0.mca")).unwrap(), [7u8; 1000]);
@@ -59,7 +67,7 @@ fn active_worlds_cannot_be_backed_up_copied_or_deleted() {
     game.unlock().unwrap();
     drop(game);
     assert!(backup(&home, &w).unwrap().is_file());
-    assert!(copy(&w).unwrap().path.is_dir());
+    assert!(copy_in(&home, "Active").unwrap().path.is_dir());
     fs::remove_dir_all(home).unwrap();
 }
 
@@ -162,7 +170,7 @@ fn a_copy_gets_the_next_free_name_in_its_folder_and_level_dat() {
         vec![("LevelName", name("Base")), ("GameType", Tag::Int(1))],
     );
     let base = find(&home, "Base").unwrap();
-    let copy1 = copy(&base).unwrap();
+    let copy1 = copy_in(&home, "Base").unwrap();
     assert_eq!(copy1.folder, "Base (1)");
     assert_eq!(copy1.name, "Base (1)");
     assert_eq!(copy1.mode, "Creative");
@@ -171,19 +179,39 @@ fn a_copy_gets_the_next_free_name_in_its_folder_and_level_dat() {
         fs::read(copy1.path.join("region/r.0.0.mca")).unwrap(),
         [7u8; 1000]
     );
-    assert_eq!(copy(&base).unwrap().folder, "Base (2)");
+    assert_eq!(copy_in(&home, "Base").unwrap().folder, "Base (2)");
     // The original is untouched.
     assert_eq!(find(&home, "Base").unwrap(), base);
     // A name that can't be a folder name is made safe.
     assert_eq!(free_name(&home, "a/b: c?", "", 0), "a_b_ c_");
     // A world whose folder isn't its name: the copy still gets a new name.
     world(&home, "f", vec![("LevelName", name("Named"))]);
-    let named = copy(&find(&home, "f").unwrap()).unwrap();
+    let named = copy_in(&home, "f").unwrap();
     assert_eq!(
         (named.folder.as_str(), named.name.as_str()),
         ("Named (1)", "Named (1)")
     );
     fs::remove_dir_all(&home).unwrap();
+}
+
+#[test]
+fn same_name_world_copies_cannot_reuse_or_erase_a_destination() {
+    let home = scratch("world-copy-contention");
+    world(&home, "one", vec![("LevelName", name("Shared"))]);
+    world(&home, "two", vec![("LevelName", name("Shared"))]);
+    let loss = copy_admitted(admitted(&home).unwrap(), "one", |destination| {
+        assert!(copy_in(&home, "two").is_err());
+        fs::create_dir(destination).unwrap();
+        fs::write(destination.join("winner"), b"do not delete").unwrap();
+    });
+    assert!(loss.is_err());
+    assert_eq!(
+        fs::read(home.join("saves/Shared (1)/winner")).unwrap(),
+        b"do not delete"
+    );
+    let second = copy_in(&home, "two").unwrap();
+    assert_eq!(second.folder, "Shared (2)");
+    fs::remove_dir_all(home).unwrap();
 }
 
 #[test]

@@ -43,6 +43,7 @@ fn maker(root: &Path) -> impl Fn(&str) -> Result<Instance, String> + '_ {
             kind: instances::Kind::Own,
             work: home.clone(),
             home,
+            incarnation: None,
             icon: None,
             group: None,
             version: None,

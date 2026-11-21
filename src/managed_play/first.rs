@@ -142,26 +142,121 @@ impl Bound {
 
 pub struct Profile(Admission);
 
+fn check_identity(
+    actual: profile_txn::Identity,
+    expected: profile_txn::Identity,
+) -> Result<(), String> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(crate::instances::lifecycle::changed())
+    }
+}
+
 impl Profile {
     /// Acquire profile, then game manifest, then cache publication. Cache scans never
     /// take either profile lock. Keep the same admission through the game handoff.
     pub fn open(home: &Path, external_owner: Option<&Path>) -> Result<Self, String> {
-        Self::open_checked(home, external_owner).map_err(Into::into)
+        let expected = profile_txn::Identity::of(home)?;
+        Self::open_using(
+            &backend::game_home(),
+            &backend::data_dir(),
+            home,
+            external_owner,
+            |actual| check_identity(actual, expected),
+        )
+        .map_err(Into::into)
     }
 
-    pub(super) fn open_checked(
+    pub(crate) fn open_at(game: &Path, cache: &Path, home: &Path) -> Result<Self, String> {
+        let expected = profile_txn::Identity::of(home)?;
+        Self::open_using(game, cache, home, None, |actual| {
+            check_identity(actual, expected)
+        })
+        .map_err(Into::into)
+    }
+
+    /// Admit a previously selected profile before a launcher operation touches its files.
+    pub fn open_selected(instance: &crate::instances::Instance) -> Result<Self, String> {
+        Self::open_instance(&backend::game_home(), &backend::data_dir(), instance)
+            .map_err(Into::into)
+    }
+
+    pub(crate) fn open_instance(
+        game: &Path,
+        cache: &Path,
+        instance: &crate::instances::Instance,
+    ) -> Result<Self, super::client::StartError> {
+        use crate::instances::{lifecycle::changed, Kind};
+        let expected = match instance.incarnation {
+            Some(id) => id,
+            None if instance.kind == Kind::Default => {
+                crate::instances::Incarnation::of(&instance.work, &instance.home)?
+            }
+            None => return Err(changed().into()),
+        };
+        Self::open_using(game, cache, &instance.home, None, |actual| {
+            expected.check(instance, actual)
+        })
+    }
+
+    fn open_using(
+        game: &Path,
+        cache: &Path,
         home: &Path,
         external_owner: Option<&Path>,
+        selected: impl FnOnce(profile_txn::Identity) -> Result<(), String>,
     ) -> Result<Self, super::client::StartError> {
-        let profile = Admission::open_fenced(home, external_owner, || {
-            let manifest = game_lock(home)?;
-            let references = ReferencePublication::begin(home)?;
-            Ok((manifest, references))
-        })?;
+        let owner = crate::instances::lifecycle::owner_file(game, home)?;
+        let profile =
+            Admission::open_fenced(home, owner.as_deref().or(external_owner), |actual| {
+                selected(actual)?;
+                let manifest = game_lock(home)?;
+                let references = ReferencePublication::begin_at(cache, game, home)?;
+                Ok((manifest, references))
+            })?;
         let _manifest = game_lock(home)?;
         crate::browser::installed::recover_game_install(home)
             .map_err(super::client::StartError::Journal)?;
         Ok(Self(profile))
+    }
+
+    pub(super) fn admitted_instance(
+        &self,
+        instance: &crate::instances::Instance,
+    ) -> crate::instances::Instance {
+        instance.after_admission(self.0.identity())
+    }
+
+    pub(crate) fn lock_inputs(&self) -> Result<HomeLockGuard, String> {
+        game_lock(self.home())
+    }
+
+    pub(crate) fn has_pending_bootstrap(&self) -> Result<bool, String> {
+        // Admission already settled any completed or abandoned file operation.
+        Ok(!profile_txn::references(self.home())?.targets.is_empty())
+    }
+
+    pub(crate) fn stage_copy(
+        &self,
+        mut active: Active,
+        destination: &Path,
+    ) -> Result<Active, String> {
+        active.verify_artifacts()?;
+        if inputs(self.home(), None)? != active.inputs
+            || inputs(destination, None)? != active.inputs
+        {
+            return Err(unsettled());
+        }
+        getrandom::fill(&mut active.profile).map_err(|e| e.to_string())?;
+        if active.profile == [0; 16] {
+            return Err(unsettled());
+        }
+        active.generation = 1;
+        active.receipts.clear();
+        let bytes = serde_json::to_vec(&active).map_err(|e| e.to_string())?;
+        profile_txn::write_copy_pointer(destination, &bytes)?;
+        Ok(active)
     }
 
     pub fn home(&self) -> &Path {

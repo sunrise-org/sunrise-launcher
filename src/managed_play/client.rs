@@ -65,6 +65,7 @@ pub struct Client<'a> {
 }
 
 pub struct Started {
+    pub instance: instances::Instance,
     pub child: Child,
     pub runtime: RuntimeGuard,
     pub executable: String,
@@ -94,7 +95,9 @@ impl Client<'_> {
             std::fs::create_dir_all(&self.instance.home)
                 .map_err(|error| super::at(&self.instance.home, error))?;
         }
-        let mut profile = Profile::open_checked(&self.instance.home, None)?;
+        let mut profile =
+            Profile::open_instance(&backend::game_home(), &backend::data_dir(), self.instance)?;
+        let instance = profile.admitted_instance(self.instance);
         let cancellation = native_mods::Cancellation::default();
         let check_build = |tag: &str, variant: Option<&BoundVariant>| {
             if self.accepted_account.is_none() && !developer_offline::enabled(tag) {
@@ -170,6 +173,7 @@ impl Client<'_> {
             Ok((child, mut runtime)) => {
                 runtime.managed_session = session_file;
                 Ok(Started {
+                    instance,
                     child,
                     runtime,
                     executable: tag.into(),

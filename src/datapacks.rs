@@ -97,6 +97,7 @@ fn check(file: &Path) -> Result<(), String> {
 /// the next time the world opens (or on `/reload`).
 pub fn add(world: &Path, file: &Path) -> Result<DataPack, String> {
     check(file)?;
+    let _claim = crate::worlds::lock_saved_dir(world)?;
     let dir = world.join("datapacks");
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let name = file.file_name().ok_or("A pack file has a name")?;
@@ -155,6 +156,7 @@ pub fn find(world: &Path, query: &str) -> Result<DataPack, String> {
 
 /// Moves the data pack to the system's trash and forgets it in `datapacks.json`.
 pub fn remove(world: &Path, pack: &DataPack) -> Result<(), String> {
+    let _claim = crate::worlds::lock_saved_dir(world)?;
     crate::desktop_seams::to_trash(&pack.path)
         .map_err(|e| format!("Could not move {} to the trash: {e}", pack.file))?;
     forget(world, &pack.file)

@@ -2354,6 +2354,7 @@ mod tests {
             kind: instances::Kind::Own,
             work: PathBuf::new(),
             home: PathBuf::new(),
+            incarnation: None,
             icon: None,
             group: None,
             version: None,

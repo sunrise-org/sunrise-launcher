@@ -928,24 +928,54 @@ fn tool_safe(path: &Path) -> bool {
 /// link (horizon-mixins refuses one, and macOS's /tmp is one). On Windows, when the resolved
 /// path isn't [`tool_safe`], [`windows_build_dir`] names the same folder a way MinGW-w64 can open.
 pub fn build_dir() -> PathBuf {
+    if let Some(root) = crate::data_location::admitted_build_root() {
+        return root.to_owned();
+    }
+    resolve_build_dir(true, |_| Ok(()))
+        .expect("unconditional build admission")
+        .0
+}
+
+pub(crate) fn admit_build_dir<T>(
+    admit: impl FnMut(&Path) -> Result<T, String>,
+) -> Result<(PathBuf, T), String> {
+    resolve_build_dir(true, admit)
+}
+
+/// The offline worker must not create a cache directory before acquiring Move's claims.
+pub(crate) fn relocation_build_dir() -> PathBuf {
+    resolve_build_dir(false, |_| Ok(()))
+        .expect("read-only build path lookup")
+        .0
+}
+
+fn resolve_build_dir<T>(
+    #[cfg_attr(not(windows), allow(unused_variables))] provision: bool,
+    mut admit: impl FnMut(&Path) -> Result<T, String>,
+) -> Result<(PathBuf, T), String> {
     // Tests keep it inside their scratch launcher folder (`data_dir`).
     if !cfg!(test) && std::env::var_os("SUNRISE_LAUNCHER_HOME").is_none_or(|p| p.is_empty()) {
         // A location that does not open stands in as the default folders, as
         // `data_location::startup` makes it for the window: never a panic here.
         if let Ok(Some(roots)) = crate::data_location::configured_roots() {
-            return roots.build;
+            let lease = admit(&roots.build)?;
+            return Ok((roots.build, lease));
         }
     }
     let data = data_dir();
-    let _ = fs::create_dir_all(&data);
-    let real = data.canonicalize().map(plain).unwrap_or(data);
+    // Resolve existing ancestors without creating a root before first-start carry-over.
+    let real = crate::data_location::canonical_data_path(&data).unwrap_or(data);
     if tool_safe(&real) {
-        return real;
+        let lease = admit(&real)?;
+        return Ok((real, lease));
     }
     #[cfg(windows)]
-    return windows_build_dir(&real);
+    return windows_build_dir(&real, provision, admit);
     #[cfg(not(windows))]
-    real
+    {
+        let lease = admit(&real)?;
+        Ok((real, lease))
+    }
 }
 
 /// [`build_dir`] when `real` isn't [`tool_safe`]: [`ascii_build_dir`], a real folder of
@@ -957,25 +987,40 @@ pub fn build_dir() -> PathBuf {
 /// directory" on `C:/Users/\xca\xe8…`). A folder whose real name is ASCII stays ASCII however a
 /// tool resolves it.
 #[cfg(windows)]
-fn windows_build_dir(real: &Path) -> PathBuf {
+fn windows_build_dir<T>(
+    real: &Path,
+    provision: bool,
+    mut admit: impl FnMut(&Path) -> Result<T, String>,
+) -> Result<(PathBuf, T), String> {
     let dir = ascii_build_dir(real, std::env::var_os("ProgramData").map(PathBuf::from));
     // ProgramData is writable by every account, so the folder may be another account's: its
     // `bin` and `cargo\config.toml` would run as this player. Only a folder made here, or owned
     // by this account, is used.
     // The parent is made with `create_dir_all` (ProgramData may be missing); only the final
     // component is made with `create_dir`, which fails on a folder that already exists.
-    let claim = |dir: &Path| {
-        if let Some(parent) = dir.parent() {
+    for candidate in build_dir_candidates(&dir) {
+        if candidate.is_dir() && owned_by_this_account(&candidate) {
+            let lease = admit(&candidate)?;
+            return Ok((candidate, lease));
+        }
+        if !provision || candidate.exists() {
+            continue;
+        }
+        let lease = admit(&candidate)?;
+        if let Some(parent) = candidate.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        fs::create_dir(dir).is_ok() || owned_by_this_account(dir)
-    };
-    if let Some(dir) = first_claimed_dir(&dir, claim) {
-        return dir;
+        if fs::create_dir(&candidate).is_ok()
+            || (candidate.is_dir() && owned_by_this_account(&candidate))
+        {
+            return Ok((candidate, lease));
+        }
     }
     // Never an unclaimed folder: the short name of the data folder, else a folder of this
     // process's own in the temporary folder.
-    build_fallback(short_path(real), std::process::id(), &std::env::temp_dir())
+    let path = build_fallback(short_path(real), std::process::id(), &std::env::temp_dir());
+    let lease = admit(&path)?;
+    Ok((path, lease))
 }
 
 /// The build folder when no numbered name could be claimed: `short` if it is [`tool_safe`],
@@ -987,18 +1032,15 @@ fn build_fallback(short: Option<PathBuf>, pid: u32, temp: &Path) -> PathBuf {
         .unwrap_or_else(|| temp.join(format!("sunrise-launcher-{pid}")))
 }
 
-/// `base`, else `base-2`, `base-3`… (up to `base-9`): the first one `claim` takes, which makes
-/// the folder or finds it to be the caller's own. A folder someone else made is passed over.
-#[cfg_attr(not(windows), allow(dead_code))]
-fn first_claimed_dir(base: &Path, claim: impl Fn(&Path) -> bool) -> Option<PathBuf> {
-    let name = base.file_name()?.to_os_string();
-    std::iter::once(base.to_path_buf())
-        .chain((2..=9).map(|n| {
-            let mut next = name.clone();
-            next.push(format!("-{n}"));
-            base.with_file_name(next)
-        }))
-        .find(|dir| claim(dir))
+/// `base`, else `base-2`, `base-3`… (up to `base-9`).
+#[cfg(any(windows, test))]
+fn build_dir_candidates(base: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+    let name = base.file_name().expect("cache base name").to_os_string();
+    std::iter::once(base.to_path_buf()).chain((2..=9).map(move |n| {
+        let mut next = name.clone();
+        next.push(format!("-{n}"));
+        base.with_file_name(next)
+    }))
 }
 
 /// Whether the folder `path` is owned by the account this process runs as: the owner a folder
@@ -4901,19 +4943,17 @@ mod tests {
     }
 
     #[test]
-    fn a_build_folder_made_by_another_account_is_passed_over() {
+    fn build_folder_candidates_try_the_base_then_the_numbered_alternatives() {
         let base = Path::new("C:/ProgramData/sunrise-launcher-1a2b3c4d");
-        // The first two are taken by another account; the third is free.
-        let claimed = first_claimed_dir(base, |dir| {
-            let name = dir.file_name().unwrap().to_str().unwrap();
-            name.ends_with("-3")
-        });
-        assert_eq!(
-            claimed,
-            Some(PathBuf::from("C:/ProgramData/sunrise-launcher-1a2b3c4d-3"))
-        );
-        assert_eq!(first_claimed_dir(base, |_| true), Some(base.to_path_buf()));
-        assert_eq!(first_claimed_dir(base, |_| false), None);
+        let mut candidates = build_dir_candidates(base);
+        assert_eq!(candidates.next(), Some(base.to_path_buf()));
+        for n in 2..=9 {
+            assert_eq!(
+                candidates.next(),
+                Some(base.with_file_name(format!("sunrise-launcher-1a2b3c4d-{n}")))
+            );
+        }
+        assert_eq!(candidates.next(), None);
     }
 
     #[test]

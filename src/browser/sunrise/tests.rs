@@ -758,6 +758,7 @@ fn a_registry_data_pack_is_checked_then_goes_into_a_world() {
         fetch_datapack_from(&index, true, &p, &dir.join("dl"), GAME, &|_| {}).unwrap();
     assert_eq!(number, "1.0.0");
     let world = dir.join("world");
+    fs::create_dir(&world).unwrap();
     let pack = crate::datapacks::add(&world, &zip).unwrap();
     assert!(world.join("datapacks").join(&pack.file).is_file());
 

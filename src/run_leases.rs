@@ -431,9 +431,13 @@ fn spawn_program(command: &mut Command) -> std::io::Result<std::process::Child> 
 
 /// Publish stable tree lock inodes before completing a newly installed unit.
 pub(crate) fn publish(path: &Path) -> Result<(), Error> {
+    publish_at(path, &crate::backend::data_dir())
+}
+
+pub(crate) fn publish_at(path: &Path, data: &Path) -> Result<(), Error> {
     let path = path.canonicalize()?;
-    let registry = Registry::open()?;
-    let data = crate::backend::data_dir().canonicalize()?;
+    let registry = Registry::at(data)?;
+    let data = data.canonicalize()?;
     if !path.starts_with(&data) {
         return Ok(());
     }

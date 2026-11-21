@@ -291,8 +291,9 @@ impl Launcher {
         let tx = self.mods.tx.clone();
         let home = self.mods.home();
         let game = self.mods_game();
-        let instance = self
-            .selected_instance()
+        let selected = self.selected_instance().cloned();
+        let instance = selected
+            .as_ref()
             .map_or_else(|| "Sunrise".to_string(), |i| i.name.clone());
         let world = self.mods.world.clone().and_then(|path| {
             let (_, name) = self.mods.worlds.iter().find(|(p, _)| *p == path)?;
@@ -316,6 +317,13 @@ impl Launcher {
                     let (world, name) = world.ok_or_else(|| {
                         tr("Pick the world the data pack goes into first.").to_string()
                     })?;
+                    let selected = selected
+                        .as_ref()
+                        .ok_or_else(|| tr("Select a Sunrise profile first."))?;
+                    let profile = sunrise_launcher::managed_play::Profile::open_selected(selected)?;
+                    if world.parent() != Some(profile.home().join("saves").as_path()) {
+                        return Err(tr("That world is no longer in this profile.").into());
+                    }
                     let done = installed::install_datapack(
                         &*source,
                         &p,

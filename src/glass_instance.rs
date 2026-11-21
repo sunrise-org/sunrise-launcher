@@ -8,18 +8,15 @@ use super::*;
 use sunrise_launcher::instances::Channel;
 
 impl Launcher {
-    /// The Sunrise version an instance plays: the one it keeps, else the one it follows.
-    pub(super) fn draft_sunrise(&self) -> Option<String> {
-        let d = self.instances.dialog.as_ref()?;
-        d.pin.clone().or_else(|| self.followed_version(d.channel))
-    }
-
-    /// Create installs the newest Stable build. Nightly uses the same target as Play.
-    fn followed_version(&self, channel: Channel) -> Option<String> {
-        match self.followed_channel(channel) {
-            Channel::Stable => self.stable_builds().next().map(|b| b.tag.clone()),
-            Channel::Nightly => self.target_version(None, Channel::Nightly).cloned(),
-        }
+    /// A successful creation can queue its saved build, not the former dialog draft.
+    pub(super) fn profile_creation_download(&self, saved: &instances::Instance) -> Option<Release> {
+        let tag = creation_target(
+            saved.version.as_ref(),
+            saved.channel,
+            self.game_releases(),
+            self.launcher_version(),
+        )?;
+        self.release_to_install(tag)
     }
 
     pub(super) fn target_version<'a>(
@@ -69,6 +66,23 @@ impl Launcher {
             .flatten()
             .cloned()
     }
+}
+
+/// Keep the saved pin; with no pin, Create uses the newest build for the followed channel.
+fn creation_target<'a>(
+    pin: Option<&'a String>,
+    channel: Channel,
+    releases: &'a [Release],
+    launcher_version: Option<&'a String>,
+) -> Option<&'a String> {
+    pin.or_else(|| {
+        channel
+            .following(releases)
+            .builds(releases)
+            .next()
+            .map(|release| &release.tag)
+            .or(launcher_version)
+    })
 }
 
 /// Pick one tag for both the Home picker and Play. A pin is never replaced by another
@@ -157,6 +171,22 @@ pub(crate) fn native_base(tag: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn creation_download_uses_the_saved_copy_pin_instead_of_follow_latest() {
+        let saved = "nightly-2026-11-16-aaaaaaa".to_owned();
+        let newest = "nightly-2026-11-20-bbbbbbb";
+        let releases = [release(newest, true, true), release(&saved, true, true)];
+        assert_eq!(
+            creation_target(Some(&saved), Channel::Nightly, &releases, None),
+            Some(&saved)
+        );
+        // An unbound copy or empty creation can still follow the newest build.
+        assert_eq!(
+            creation_target(None, Channel::Nightly, &releases, None).map(String::as_str),
+            Some(newest)
+        );
+    }
 
     #[test]
     fn nightly_follows_the_newest_download_for_this_platform_then_falls_back_offline() {
