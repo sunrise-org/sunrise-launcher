@@ -118,12 +118,12 @@ use sunrise_launcher::{build_import, identity};
 use theme::Theme;
 
 #[derive(Clone, Copy, PartialEq)]
+/// The older page field (`Launcher::page`), which `go` sets and a few page-entry checks read.
+/// The window draws `frame::Page` (`ui.page`) instead: navigate with `Launcher::navigate`.
 enum Page {
     Play,
-    Versions,
     /// Mods, resource packs and modpacks (imported ones and the browser's).
     Mods,
-    Servers,
     Settings,
 }
 
@@ -136,16 +136,6 @@ impl Page {
             sunrise_launcher::data_location::startup_error().is_some(),
         )
     }
-
-    /// Every page, with its name and icon: the top bar shows all but Settings, which has its
-    /// own button.
-    const ALL: [(Page, &'static str, &'static str); 5] = [
-        (Page::Play, "Home", "home"),
-        (Page::Mods, "Mods", "package"),
-        (Page::Servers, "Servers", "server"),
-        (Page::Versions, "Versions", "archive"),
-        (Page::Settings, "Settings", "sliders"),
-    ];
 }
 
 /// The launcher's own update, as the footer and Settings show it.

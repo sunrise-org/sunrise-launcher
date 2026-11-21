@@ -199,6 +199,31 @@ impl Launcher {
         frame("alt-versions", 560., body, cx)
     }
 
+    /// `sunrise-launcher benchmark`: scrolls the Versions list a little on every frame, back to
+    /// the top at the bottom, so the frame times measure scrolling. The list scrolls inside
+    /// itself once it has more builds than fit; a short one leaves the page to scroll.
+    pub(crate) fn bench_scroll(&mut self, window: &mut Window) {
+        let list = self
+            .ui
+            .sheets
+            .versions
+            .scroll
+            .0
+            .borrow()
+            .base_handle
+            .clone();
+        let page = crate::frame::scrolls("versions-page");
+        if let Some(handle) = [list, page].into_iter().find(|h| h.max_offset().y > px(0.)) {
+            let mut offset = handle.offset();
+            offset.y -= px(24.);
+            if -offset.y > handle.max_offset().y {
+                offset.y = px(0.);
+            }
+            handle.set_offset(offset);
+        }
+        window.request_animation_frame();
+    }
+
     pub(crate) fn versions_page(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         self.versions_content(false, cx)
             .id("versions-page")

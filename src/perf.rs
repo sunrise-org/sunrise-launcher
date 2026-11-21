@@ -21,6 +21,9 @@ pub fn process_started() -> Instant {
     *STARTED.get_or_init(Instant::now)
 }
 
+/// Frames further apart than this are the UI resting, not UI frame times.
+const IDLE_GAP: Duration = Duration::from_millis(250);
+
 pub use sunrise_launcher::backend::GAME_FIRST_FRAME;
 
 pub struct Perf {
@@ -45,6 +48,16 @@ struct Machine {
     hardware: Hardware,
     power: Option<String>,
     load_average: Option<f64>,
+}
+
+impl Machine {
+    fn detect() -> Self {
+        Self {
+            hardware: Hardware::detect(),
+            power: sunrise_bench::power_source().map(str::to_owned),
+            load_average: sunrise_bench::load_average(),
+        }
+    }
 }
 
 impl Perf {
@@ -95,6 +108,28 @@ impl Perf {
 
     pub fn record_since(&mut self, name: &str, since: Instant) {
         self.record(name, since.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    /// A frame is being drawn. The first one records the start time and starts the machine
+    /// probes, off the UI thread; later ones record the time since the last frame, unless the UI
+    /// was resting in between ([`IDLE_GAP`]). True for the first frame.
+    pub fn frame(&mut self) -> bool {
+        let now = Instant::now();
+        let first = self.first_frame.is_none();
+        if first {
+            self.first_frame = Some(now);
+            self.record_since("launcher.start_ms", process_started());
+            let (sender, receiver) = std::sync::mpsc::channel();
+            self.hardware = Some(receiver);
+            std::thread::spawn(move || {
+                // The window may close before the optional report details finish.
+                let _ = sender.send(Machine::detect());
+            });
+        } else if let Some(gap) = self.last_frame.map(|t| now - t).filter(|g| *g < IDLE_GAP) {
+            self.ui_frames.push(gap.as_secs_f32() * 1000.0);
+        }
+        self.last_frame = Some(now);
+        first
     }
 
     /// The window has drawn its first frame a while ago and none since `quiet`: nothing moves,
@@ -218,9 +253,9 @@ pub fn draws(window: &gpui::Window) -> serde_json::Value {
 /// What a window started by `sunrise-launcher benchmark` does next (`Launcher::drain`).
 pub enum Step {
     Wait,
-    /// Show this page (an index into `Page::ALL`, wrapping).
+    /// Show this page (an index into `frame::Page::BENCH`, wrapping).
     Go(usize),
-    /// Show the longest list (Versions) and scroll it on every frame while [`Bench::scrolling`].
+    /// Show the Versions list and scroll it on every frame while [`Bench::scrolling`].
     Scroll,
     Quit,
 }
@@ -263,6 +298,11 @@ impl Bench {
             scroll: None,
             idle_cpu: None,
         })
+    }
+
+    /// Between [`Step::Scroll`] and the end of scrolling: the frame scrolls on every frame.
+    pub fn scrolling(&self) -> bool {
+        matches!(self.scroll, Some((_, _, None)))
     }
 
     pub fn tick(&mut self, perf: &Perf) -> Step {
@@ -487,6 +527,43 @@ mod tests {
         assert_eq!(perf.report.hardware.os, std::env::consts::OS);
         assert!(perf.report.hardware.cpu.is_none());
         assert!(perf.report.conditions.power.is_none());
+    }
+
+    #[test]
+    fn a_benchmark_switches_pages_then_scrolls_on_every_frame_then_stops() {
+        let mut perf = Perf::new("test");
+        perf.keep_local_log(false);
+        let mut bench = Bench {
+            out: PathBuf::new(),
+            began: None,
+            page: 0,
+            switched: None,
+            scroll: None,
+            idle_cpu: None,
+        };
+        assert!(
+            matches!(bench.tick(&perf), Step::Wait),
+            "no frame drawn yet"
+        );
+        assert!(perf.frame(), "the window's first frame");
+        assert!(perf.first_frame.is_some() && !perf.frame());
+        assert!(matches!(bench.tick(&perf), Step::Go(1)));
+        assert!(!bench.scrolling(), "switching pages, not scrolling");
+
+        bench.began = Some(Instant::now() - SWITCHING);
+        assert!(matches!(bench.tick(&perf), Step::Scroll));
+        assert!(
+            bench.scrolling(),
+            "the frame scrolls on every frame from here"
+        );
+        assert!(matches!(bench.tick(&perf), Step::Wait));
+        assert!(bench.scrolling());
+
+        if let Some((at, _, _)) = &mut bench.scroll {
+            *at = Instant::now() - SCROLLING;
+        }
+        assert!(matches!(bench.tick(&perf), Step::Wait));
+        assert!(!bench.scrolling(), "scrolling ends after its few seconds");
     }
 
     #[test]

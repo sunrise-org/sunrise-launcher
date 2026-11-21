@@ -15,13 +15,16 @@ impl Launcher {
             self.perf.draws = cx.update_window(window, |_, w, _| perf::draws(w)).ok();
         }
         match self.bench.as_mut().map(|b| b.tick(&self.perf)) {
+            // Through the page the frame draws (`navigate`, as a click on a tab does): `go` sets
+            // the older `page` field, which nothing on screen reads, so the benchmark measured a
+            // window that never changed.
             Some(perf::Step::Go(page)) => {
-                let pages: Vec<Page> = Page::ALL.iter().map(|p| p.0).collect();
-                self.go(pages[page % pages.len()]);
+                let pages = crate::frame::Page::BENCH;
+                self.navigate(pages[page % pages.len()]);
                 changed = true;
             }
             Some(perf::Step::Scroll) => {
-                self.go(Page::Versions);
+                self.navigate(crate::frame::Page::Versions);
                 changed = true;
             }
             Some(perf::Step::Quit) => cx.quit(),
