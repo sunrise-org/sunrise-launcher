@@ -66,6 +66,100 @@ fn whole_solver_exposes_the_template_and_keeps_the_registry_values_as_arguments(
 }
 
 #[test]
+fn bulk_update_keeps_exact_unfit_roots_and_does_not_downgrade_dependencies() {
+    use sunrise_launcher_smod::index::{Dependency, Kind, Project, Version};
+    let mut index = Index::parse(include_str!("index/index-v1.json")).unwrap();
+    let template = index.project("coords_hud").unwrap().clone();
+    let project = |id: &str, kind: Kind, versions: &[&str]| Project {
+        id: id.into(),
+        kind,
+        versions: versions
+            .iter()
+            .map(|version| Version {
+                version: (*version).into(),
+                dependencies: Some(Vec::new()),
+                ..template.versions[0].clone()
+            })
+            .collect(),
+        ..template.clone()
+    };
+    index.projects = vec![
+        project(
+            "native",
+            Kind::NativeMod,
+            &["1.0.0", "2.0.0", "3.0.0", "4.0.0"],
+        ),
+        project("sibling", Kind::Mod, &["1.0.0", "2.0.0"]),
+        project("library", Kind::Mod, &["1.0.0", "2.0.0"]),
+    ];
+    let installed = [
+        ("native", "2.0.0"),
+        ("sibling", "1.0.0"),
+        ("library", "2.0.0"),
+    ]
+    .map(|(id, version)| InstalledMod {
+        id: id.into(),
+        version: version.into(),
+        sha256: Some(template.versions[0].file.sha256.clone()),
+    });
+    let minimum = installed
+        .iter()
+        .map(|m| (m.id.clone(), m.version.parse().unwrap()))
+        .collect::<BTreeMap<_, semver::Version>>();
+    let above = BTreeMap::from([
+        ("native".into(), minimum["native"].clone()),
+        ("sibling".into(), minimum["sibling"].clone()),
+    ]);
+    let bulk = |index: &Index, allow_intermediate: bool| {
+        resolve::update_whole(
+            index,
+            resolve::UpdateTargets {
+                above: &above,
+                minimum: &minimum,
+                retain_unfit: true,
+            },
+            &installed,
+            "26.3",
+            Side::Both,
+            resolve::WholeOptions {
+                conflicts: &[],
+                native_fits: |_: &Project, v: &Version| match v.version.as_str() {
+                    "4.0.0" => false,
+                    "3.0.0" => allow_intermediate,
+                    _ => true,
+                },
+                messages: |text, _| text.to_owned(),
+            },
+        )
+    };
+    let plan = bulk(&index, false).unwrap();
+    assert_eq!(plan.update.len(), 1);
+    assert_eq!(plan.update[0].id, "sibling");
+    let plan = bulk(&index, true).unwrap();
+    assert_eq!(plan.update.len(), 2);
+    assert_eq!(
+        (&*plan.update[0].id, &*plan.update[0].to),
+        ("native", "3.0.0")
+    );
+
+    for id in ["native", "library"] {
+        index.projects[1].versions[1].dependencies = Some(vec![Dependency {
+            id: id.into(),
+            version: "=1.0.0".into(),
+            optional: false,
+            side: None,
+        }]);
+        assert!(
+            matches!(
+                bulk(&index, false),
+                Err(resolve::WholeRefusal::Inconsistent(_))
+            ),
+            "must not downgrade {id}"
+        );
+    }
+}
+
+#[test]
 fn registry_resolution_fixtures() {
     let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/registry-resolution");
     let mut fixtures: Vec<_> = std::fs::read_dir(folder)

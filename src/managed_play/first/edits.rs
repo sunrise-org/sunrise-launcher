@@ -109,6 +109,10 @@ impl Edit<'_> {
         }
     }
 
+    pub(crate) fn held(&self, id: &str) -> Option<&crate::managed_play::Held> {
+        self.active_basis()?.holds().find(|held| held.id() == id)
+    }
+
     /// A first edit has no committed comparison base; it cannot clear save risk.
     pub(crate) fn active_basis(&self) -> Option<&Active> {
         match &self.basis {
@@ -207,15 +211,17 @@ impl Edit<'_> {
         self,
         proof: CandidateImage,
         cancellation: &native_mods::Cancellation,
+        retire_holds: &BTreeSet<String>,
         authorize: impl FnOnce() -> Result<G, String>,
     ) -> Result<Active, String> {
-        self.publish_observed(proof, cancellation, authorize, |_, _| Ok(()))
+        self.publish_observed(proof, cancellation, retire_holds, authorize, |_, _| Ok(()))
     }
 
     fn publish_observed<G>(
         self,
         proof: CandidateImage,
         cancellation: &native_mods::Cancellation,
+        retire_holds: &BTreeSet<String>,
         authorize: impl FnOnce() -> Result<G, String>,
         observe: impl FnMut(usize, profile_txn::Boundary) -> Result<(), String>,
     ) -> Result<Active, String> {
@@ -229,7 +235,7 @@ impl Edit<'_> {
         if inputs(&self.home, None)? != self.before {
             return Err(unsettled());
         }
-        let (active, stage) = match self.basis {
+        let (mut active, stage) = match self.basis {
             Basis::Active(old, stage) => {
                 old.verify_artifacts()?;
                 let active = Active::capture(
@@ -258,6 +264,13 @@ impl Edit<'_> {
                 (active, first.stage)
             }
         };
+        active.receipts.retain_mut(|receipt| {
+            receipt
+                .waiting_for_update
+                .retain(|held| !retire_holds.contains(held.id()));
+            !receipt.waiting_for_update.is_empty()
+                || (!receipt.acknowledged && !receipt.removed.is_empty())
+        });
         let files = changed_files(&self.home, &proof.candidate)?;
         let pointer = serde_json::to_vec(&active).map_err(|e| e.to_string())?;
         // The journal drops the cutoff guard before the first live rename. Save locks

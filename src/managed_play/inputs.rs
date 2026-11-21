@@ -72,7 +72,7 @@ pub fn scan_packages(home: &Path) -> Result<Vec<ScannedPackage>, String> {
 
 /// Hash actual input nodes (not a display manifest), including opaque entries in the mod roots.
 /// `repaired` is a browser-row postimage to be published in the same exact journal.
-pub(super) fn inputs(home: &Path, repaired: Option<&[u8]>) -> Result<[u8; 32], String> {
+pub(crate) fn inputs(home: &Path, repaired: Option<&[u8]>) -> Result<[u8; 32], String> {
     require_dir(home)?;
     let mut hash = Sha256::new();
     let browser = home.join("mod-browser");

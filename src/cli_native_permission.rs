@@ -1,4 +1,5 @@
 use super::*;
+use sunrise_launcher::browser::sunrise;
 
 pub(super) fn native_permission(trust: bool) -> Result<(), String> {
     if trust {
@@ -7,39 +8,107 @@ pub(super) fn native_permission(trust: bool) -> Result<(), String> {
     native_mods::require_consent().map_err(String::from)
 }
 
-pub(super) fn github_native(
-    home: &Path,
-    found: &github_mods::Resolved,
-    only: Option<&str>,
-    all: bool,
-    trust: bool,
+pub(super) struct GithubInstall<'a> {
+    pub instance: &'a instances::Instance,
+    pub found: &'a github_mods::Resolved,
+    pub only: Option<&'a str>,
+    pub all: bool,
+    pub update: bool,
+    pub trust: bool,
+    pub confirm_world_loss: bool,
+}
+
+pub(super) fn github_native(request: GithubInstall<'_>) -> Result<(), String> {
+    github_native_from(request, github_mods::fetch)
+}
+
+fn github_native_from(
+    request: GithubInstall<'_>,
+    fetch: impl FnOnce(&github_mods::Resolved) -> Result<Vec<github_mods::Packed>, String>,
 ) -> Result<(), String> {
+    let GithubInstall {
+        instance,
+        found,
+        only,
+        all,
+        update,
+        trust,
+        confirm_world_loss,
+    } = request;
+    if instance.kind == instances::Kind::Pack {
+        return Err(tr("This pack controls which mods it installs.").into());
+    }
+    let identity = sunrise::install_target(instance)?;
     println!("{}", found.label());
     println!("Source, to read: {}", found.source_url());
     eprintln!("{}", github_mods::WARNING);
     native_permission(trust)?;
-    let mods = github_mods::fetch(found)?;
-    let chosen = github_mods::choose(&mods, only, all);
-    let done = chosen.and_then(|chosen| {
+    let mods = fetch(found)?;
+    let done = github_mods::choose(&mods, only, all).and_then(|chosen| {
         chosen
             .into_iter()
-            .map(|p| github_mods::install(home, found, p))
+            .map(|p| {
+                let target = instance
+                    .home
+                    .join(native_mods::INSTALLED)
+                    .join(format!("{}.smod", p.id));
+                let replace = update
+                    || match std::fs::symlink_metadata(&target) {
+                        Ok(_) => true,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                        Err(error) => return Err(format!("{}: {error}", target.display())),
+                    };
+                if !replace {
+                    return github_mods::install(&instance.home, found, p)
+                        .map(|origin| (false, origin));
+                }
+                sunrise::update_github(
+                    instance,
+                    identity,
+                    found,
+                    p,
+                    || sunrise_launcher::managed_play::headless_first(instance, None),
+                    sunrise::InstallHooks {
+                        progress: &|_| {},
+                        native: &|_| {
+                            native_mods::require_consent()
+                                .map(|_| true)
+                                .map_err(String::from)
+                        },
+                        registry_crates: Some(&registry_consent),
+                        continue_after_failure: &|_| false,
+                    },
+                    &|impact| approve_mod_change(impact, confirm_world_loss),
+                )
+                .map(|origin| (true, origin))
+                .map_err(|error| match error {
+                    sunrise::InstallError::Cancelled => tr("Nothing was updated.").into(),
+                    e => e.to_string(),
+                })
+            })
             .collect::<Result<Vec<_>, _>>()
     });
     github_mods::discard(found);
     let done = done?;
-    for o in done {
+    for (updated, o) in &done {
         println!(
-            "Installed {} {} from GitHub ({}), sha256 {}.",
+            "{} {} {} from GitHub ({}), sha256 {}.",
+            if *updated { "Updated" } else { "Installed" },
             o.id,
             o.version,
             o.label(),
             o.sha256
         );
     }
-    println!("Build it next: sunrise-launcher native-build --trust-native-code");
+    if done.iter().any(|(updated, _)| !*updated) {
+        println!("Build it next: sunrise-launcher native-build --trust-native-code");
+    }
     Ok(())
 }
+
+#[cfg(all(unix, test))]
+#[path = "cli_native_permission/tests.rs"]
+mod tests;
 
 pub(super) fn registry_consent(inventory: &native_mods::Consent) -> bool {
     eprintln!("{}\n{}", inventory.label(), inventory.detail());

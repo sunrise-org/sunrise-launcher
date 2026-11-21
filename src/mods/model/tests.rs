@@ -49,6 +49,7 @@ const B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
 static NO_PINS: std::sync::LazyLock<std::collections::BTreeMap<String, String>> =
     std::sync::LazyLock::new(Default::default);
+static NO_UNFIT_UPDATES: BTreeSet<String> = BTreeSet::new();
 
 fn world<'a>(
     index: &'a Index,
@@ -59,6 +60,7 @@ fn world<'a>(
     World {
         index: Some(index),
         game: GAME,
+        unfit_updates: &NO_UNFIT_UPDATES,
         enabled,
         unbuilt,
         native_allowed: allowed,
@@ -171,17 +173,55 @@ fn an_update_is_only_ever_forward_to_what_fits() {
         vec![],
     );
     let p = idx.project("zoom").unwrap();
-    assert_eq!(newer(&idx, p, "2.0.0", GAME), Some("3.0.0".into()));
-    assert_eq!(newer(&idx, p, "3.0.0", GAME), None);
     assert_eq!(
-        newer(&idx, p, "0.9.0", GAME),
+        newer(&idx, p, "2.0.0", GAME, &NO_UNFIT_UPDATES),
+        Some("3.0.0".into())
+    );
+    assert_eq!(newer(&idx, p, "3.0.0", GAME, &NO_UNFIT_UPDATES), None);
+    assert_eq!(
+        newer(&idx, p, "0.9.0", GAME, &NO_UNFIT_UPDATES),
         None,
         "a version the index doesn't list is left alone"
     );
     assert_eq!(
-        newer(&idx, p, "2.0.0", "25.1"),
+        newer_for_hold(&idx, p, "0.9.0", GAME, &NO_UNFIT_UPDATES),
+        Some("3.0.0".into()),
+        "a typed hold can offer a reviewed replacement for a delisted older archive"
+    );
+    assert_eq!(
+        newer(&idx, p, "2.0.0", "25.1", &NO_UNFIT_UPDATES),
         None,
         "nothing for another build"
+    );
+}
+
+#[test]
+fn known_unfit_archives_are_not_offered_as_updates() {
+    let idx = index(
+        vec![project(
+            "zoom",
+            "native-mod",
+            &[("3.0.0", GAME, B), ("2.0.0", GAME, A), ("1.0.0", GAME, A)],
+            serde_json::json!({}),
+        )],
+        vec![],
+    );
+    let on = HashSet::from(["zoom".to_owned()]);
+    let unbuilt = HashSet::new();
+    let known = BTreeSet::from([B.to_owned()]);
+    let w = World {
+        unfit_updates: &known,
+        ..world(&idx, &on, &unbuilt, true)
+    };
+    let latest = rows(&[entry("zoom", "2.0.0", true, A)], &w).remove(0);
+    assert!(latest.on);
+    assert!(latest.update.is_none() && !bulk_updatable(&latest));
+    let older = rows(&[entry("zoom", "1.0.0", true, A)], &w).remove(0);
+    assert_eq!(older.update.as_deref(), Some("2.0.0"));
+    assert!(bulk_updatable(&older));
+    assert_eq!(
+        newer_for_hold(&idx, idx.project("zoom").unwrap(), "0.9.0", GAME, &known).as_deref(),
+        Some("2.0.0")
     );
 }
 
@@ -341,81 +381,46 @@ fn filters_narrow_the_shown_rows_and_never_reorder_them() {
 }
 
 #[test]
-fn update_all_covers_the_whole_pack_and_names_what_it_leaves_out() {
+fn update_all_includes_off_and_native_rows_but_not_a_player_pin() {
     let (idx, entries) = pack();
     let none = HashSet::new();
-    let on: HashSet<String> = ["zoom", "bad", "deep"].map(String::from).into();
-    let r = rows(&entries, &world(&idx, &on, &none, false));
-    let plan = plan_updates(&r, false);
-    let ids: Vec<&str> = plan.included.iter().map(|i| i.id.as_str()).collect();
-    assert_eq!(
-        ids,
-        ["bad", "zoom"],
-        "a taken-down mod is updated to a file that wasn't"
-    );
-    assert_eq!(plan.skipped.len(), 1, "{:?}", plan.skipped);
-    assert!(plan
-        .skipped
-        .iter()
-        .any(|(t, why)| t == "DEEP" && why.contains("native")));
-    let with = plan_updates(&r, true);
-    assert!(with.included.iter().any(|i| i.id == "deep" && i.native));
-    assert!(with.skipped.is_empty());
-
-    // A version the player chose is never moved by a batch.
-    let pins = std::collections::BTreeMap::from([("zoom".to_string(), "1.0.0".to_string())]);
-    let w = World {
-        chosen: &pins,
-        ..world(&idx, &on, &none, true)
-    };
-    let pinned = plan_updates(&rows(&entries, &w), true);
-    assert!(pinned.included.iter().all(|i| i.id != "zoom"));
-    assert!(pinned.skipped.iter().any(|(t, _)| t == "ZOOM"));
-}
-
-#[test]
-fn a_mod_that_is_off_is_in_the_plan() {
-    let (idx, entries) = pack();
     let on: HashSet<String> = ["zoom".to_string()].into();
-    let none = HashSet::new();
-    let r = rows(&entries, &world(&idx, &on, &none, true));
-    assert!(r
+    let unpinned = world(&idx, &on, &none, false);
+    let offered = rows(&entries, &unpinned);
+    let updates = offered
         .iter()
-        .any(|r| r.id == "bad" && !r.on && r.update.is_some()));
-    let plan = plan_updates(&r, true);
-    let mut ids: Vec<&str> = plan.included.iter().map(|i| i.id.as_str()).collect();
-    ids.sort();
-    assert_eq!(ids, ["bad", "deep", "zoom"]);
-    assert!(plan.skipped.is_empty(), "{:?}", plan.skipped);
+        .filter(|r| bulk_updatable(r))
+        .map(|r| r.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(updates, ["bad", "deep", "zoom"]);
+    assert!(offered
+        .iter()
+        .any(|r| r.id == "bad" && !r.on && bulk_updatable(r)));
+
+    let pins = std::collections::BTreeMap::from([("zoom".into(), "1.0.0".into())]);
+    let pinned = rows(
+        &entries,
+        &World {
+            chosen: &pins,
+            ..unpinned
+        },
+    );
+    assert!(pinned
+        .iter()
+        .any(|r| r.id == "zoom" && r.update.is_some() && !bulk_updatable(r)));
 }
 
 #[test]
-fn the_update_button_counts_only_what_the_plan_includes() {
-    let (idx, entries) = pack();
-    let on: HashSet<String> = ["zoom", "bad", "deep"].map(String::from).into();
-    let none = HashSet::new();
-    let r = rows(&entries, &world(&idx, &on, &none, false));
-    // "deep" is native and not allowed: it is left out, so the button counts two, not three.
-    assert_eq!(r.iter().filter(|r| r.update.is_some()).count(), 3);
-    assert_eq!(update_all_button(&r, false), Some(2));
-    assert_eq!(update_all_button(&r, true), Some(3));
-    // Nothing the plan can update: no button at all, not "Update 0 mods".
-    let only_deep: Vec<Row> = r.into_iter().filter(|r| r.id == "deep").collect();
-    assert_eq!(update_all_button(&only_deep, false), None);
-    assert_eq!(update_all_button(&[], true), None);
-}
-
-#[test]
-fn a_skipped_native_row_says_why() {
+fn a_native_update_can_request_consent() {
     let (idx, entries) = pack();
     let on: HashSet<String> = ["deep"].map(String::from).into();
     let none = HashSet::new();
     let r = rows(&entries, &world(&idx, &on, &none, false));
     let deep = r.iter().find(|r| r.id == "deep").unwrap();
     let tip = cells(deep, None, None, false).status.unwrap().tip;
-    assert!(tip.contains("native code: allow it first"), "{tip}");
+    assert!(tip.contains("may ask you to allow native code"), "{tip}");
     let tip = cells(deep, None, None, true).status.unwrap().tip;
-    assert!(!tip.contains("allow it first"), "{tip}");
+    assert!(!tip.contains("may ask you to allow native code"), "{tip}");
 }
 
 #[test]
@@ -430,12 +435,12 @@ fn a_row_the_plan_cannot_update_says_why() {
     };
     let r = rows(&entries, &w);
     let zoom = r.iter().find(|r| r.id == "zoom").unwrap();
-    assert!(update_refusal(zoom, true).is_some_and(|w| w.contains("you chose")));
+    assert!(!bulk_updatable(zoom));
     let tip = cells(zoom, None, None, true)
         .status
         .expect("says something")
         .tip;
-    assert!(tip.contains("you chose its version"), "{tip}");
+    assert!(tip.contains("You chose its version"), "{tip}");
 }
 
 #[test]
@@ -479,10 +484,7 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
     assert_eq!((content.title.as_str(), content.on), ("By Hand", true));
     assert_eq!((content.make, &content.need), (None, &None));
     assert!(content.local.is_some() && content.entry.is_none());
-    assert!(plan_updates(&r, true)
-        .included
-        .iter()
-        .all(|i| i.id != "mine"));
+    assert!(!bulk_updatable(mine));
 }
 
 #[test]
@@ -510,6 +512,7 @@ fn turning_on_a_local_native_file_exposes_permission_then_build() {
             &World {
                 index: None,
                 game: GAME,
+                unfit_updates: &NO_UNFIT_UPDATES,
                 enabled: &enabled,
                 unbuilt: &unbuilt,
                 native_allowed: allowed,
@@ -544,41 +547,6 @@ fn turning_on_skips_what_is_taken_down_or_needs_permission() {
     let (ok, held) = turn_on_plan(&all, true);
     assert_eq!(ok.len(), 3);
     assert_eq!(held.len(), 1, "taken down stays held even with permission");
-}
-
-#[test]
-fn removing_a_mod_names_what_still_needs_it() {
-    let mut idx = index(
-        vec![
-            project("lib", "mod", &[("1.0.0", GAME, A)], serde_json::json!({})),
-            project(
-                "uses_lib",
-                "mod",
-                &[("1.0.0", GAME, B)],
-                serde_json::json!({}),
-            ),
-        ],
-        vec![],
-    );
-    idx.projects[1].versions[0].requires = vec![index::Requirement {
-        id: "lib".into(),
-        version: "1.0.0".into(),
-        sha256: A.into(),
-    }];
-    let entries = vec![
-        entry("lib", "1.0.0", false, A),
-        entry("uses_lib", "1.0.0", false, B),
-    ];
-    let none = HashSet::new();
-    let r = rows(&entries, &world(&idx, &none, &none, true));
-    let removing: HashSet<String> = ["lib".to_string()].into();
-    assert_eq!(
-        dependents(&r, &removing, Some(&idx)),
-        [("USES_LIB".to_string(), vec!["LIB".to_string()])]
-    );
-    let both: HashSet<String> = ["lib", "uses_lib"].map(String::from).into();
-    assert!(dependents(&r, &both, Some(&idx)).is_empty());
-    assert!(dependents(&r, &removing, None).is_empty());
 }
 
 #[test]

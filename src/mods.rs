@@ -25,7 +25,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use sunrise_launcher::browser::{
     installed::{self, Entry},
-    mod_list, sunrise, Source, SourceId,
+    mod_list, sunrise, SourceId,
 };
 
 mod actions;
@@ -63,13 +63,6 @@ enum Catalog {
     Loading,
     Ready(Vec<Card>, Vec<String>),
     Failed(String),
-}
-
-/// A batch the player asked for and has to confirm: named, counted, nothing started yet.
-enum Confirm {
-    /// (mod id, project id, title)
-    Remove(Vec<(String, String, String)>),
-    Update(model::UpdatePlan),
 }
 
 #[derive(PartialEq, Eq)]
@@ -115,6 +108,12 @@ struct InstalledRows {
     enabled: HashSet<String>,
     chosen: std::collections::BTreeMap<String, String>,
     local: Vec<model::Local>,
+    managed: Option<Box<ManagedRows>>,
+}
+
+struct ManagedRows {
+    active: sunrise_launcher::managed_play::Active,
+    unbuilt: HashSet<String>,
 }
 
 #[derive(Debug)]
@@ -136,12 +135,23 @@ impl InstalledRows {
         let local = read_local(home);
         let enabled = enabled_ids(home, &entries, &local);
         let chosen = sunrise::chosen(home);
+        let managed = sunrise_launcher::managed_play::Active::read_pointer(home)
+            .map_err(InstalledReadError::Other)?
+            .map(|active| {
+                let built = native_status::built(active.executable());
+                let unbuilt =
+                    native_status::unbuilt(&native_status::enabled(home), built.as_deref())
+                        .into_iter()
+                        .collect();
+                Box::new(ManagedRows { active, unbuilt })
+            });
         Ok((
             Self {
                 entries,
                 enabled,
                 chosen,
                 local,
+                managed,
             },
             backup_notice,
         ))
@@ -261,9 +271,6 @@ pub(crate) struct ModsState {
     selection: BTreeSet<String>,
     /// The row last clicked, for Shift-click ranges (an index into the visible rows).
     anchor: Option<usize>,
-    confirm: Option<Confirm>,
-    /// The folder the open confirmation was made for.
-    reviewed_home: Option<PathBuf>,
     snapshot: Option<Snapshot>,
     open: Option<Open>,
     page_request: u64,
@@ -332,8 +339,6 @@ impl Default for ModsState {
             data: Default::default(),
             selection: BTreeSet::new(),
             anchor: None,
-            confirm: None,
-            reviewed_home: None,
             snapshot: None,
             open: None,
             page_request: 0,
@@ -557,7 +562,6 @@ impl Launcher {
         }
         m.selection.clear();
         m.anchor = None;
-        m.confirm = None;
         m.menu = None;
         m.reveal = None;
         self.game_packs.confirm_remove = None;
@@ -682,8 +686,6 @@ impl Launcher {
         if moved {
             // Another setup: nothing reviewed or selected for the old one carries over.
             let m = &mut self.ui.mods;
-            m.confirm = None;
-            m.reviewed_home = None;
             m.selection.clear();
             m.anchor = None;
             m.errors.clear();
@@ -810,31 +812,48 @@ impl Launcher {
         let Some(snap) = &self.ui.mods.snapshot else {
             return Vec::new();
         };
-        let unbuilt: HashSet<String> = match !snap.rows.local.is_empty()
+        let unbuilt: HashSet<String> = if let Some(managed) = &snap.rows.managed {
+            managed.unbuilt.clone()
+        } else if !snap.rows.local.is_empty()
             || snap
                 .rows
                 .entries
                 .iter()
                 .any(|e| native_status::is_native_file(&e.file))
         {
-            true => {
-                self.native_mod_unbuilt("");
-                self.mods
-                    .native_state
-                    .borrow()
-                    .as_ref()
-                    .map(|(_, _, ids)| ids.iter().cloned().collect())
-                    .unwrap_or_default()
-            }
-            false => HashSet::new(),
+            self.native_mod_unbuilt("");
+            self.mods
+                .native_state
+                .borrow()
+                .as_ref()
+                .map(|(_, _, ids)| ids.iter().cloned().collect())
+                .unwrap_or_default()
+        } else {
+            HashSet::new()
         };
         let index = sunrise::fetched_index();
-        let game = self.mods_game();
+        let game = snap.rows.managed.as_ref().map_or_else(
+            || self.mods_game(),
+            |managed| sunrise_launcher::backend::game_version(managed.active.base()),
+        );
+        let unfit_updates = snap
+            .rows
+            .managed
+            .as_ref()
+            .map_or_else(BTreeSet::new, |managed| {
+                sunrise::known_unfit_updates(managed.active.base())
+            });
+        let local_offers = if cfg!(debug_assertions) && sunrise::local() {
+            sunrise::known_index()
+        } else {
+            None
+        };
         let mut rows = model::rows(
             &snap.rows.entries,
             &model::World {
                 index: index.as_deref(),
                 game: &game,
+                unfit_updates: &unfit_updates,
                 enabled: &snap.rows.enabled,
                 unbuilt: &unbuilt,
                 native_allowed: self.settings.native_mods_allowed_at.is_some(),
@@ -842,8 +861,49 @@ impl Launcher {
                 local: &snap.rows.local,
             },
         );
+        let mut regroup = false;
+        for row in &mut rows {
+            let held = snap
+                .rows
+                .managed
+                .as_ref()
+                .and_then(|managed| managed.active.holds().find(|held| held.id() == row.id));
+            if let Some(held) = held {
+                let sunrise_launcher::managed_play::HeldReason::NoFit { build } = held.reason();
+                row.held_for = Some(crate::sheets::build_name(build));
+                row.on = false;
+                if !matches!(row.need, Some(model::Need::TakenDown(_))) {
+                    row.need = None;
+                }
+                regroup = true;
+            }
+            // An unsigned developer catalogue can offer an action, not vouch for an archive.
+            if let Some((offers, project)) =
+                local_offers.as_ref().or(index.as_ref()).and_then(|offers| {
+                    row.entry.as_ref().and_then(|entry| {
+                        offers
+                            .project(&entry.project)
+                            .map(|project| (offers, project))
+                    })
+                })
+            {
+                if local_offers.is_some() {
+                    row.title.clone_from(&project.name);
+                    row.update = model::newer(offers, project, &row.version, &game, &unfit_updates);
+                    regroup = true;
+                }
+                if held.is_some() {
+                    row.update =
+                        model::newer_for_hold(offers, project, &row.version, &game, &unfit_updates);
+                }
+            }
+        }
         // A mod the game was made without isn't waiting for a build: it waits for its author.
-        let left = self.native_left_out();
+        let left = if snap.rows.managed.is_none() {
+            self.native_left_out()
+        } else {
+            Vec::new()
+        };
         if !left.is_empty() {
             let on = self
                 .selected_instance()
@@ -851,7 +911,9 @@ impl Launcher {
                 .map(|tag| crate::sheets::build_name(tag))
                 .unwrap_or_default();
             model::mark_left_out(&mut rows, &left, &on, crate::sheets::build_name);
-            // A row that no longer needs the player moves out of that group.
+            regroup = true;
+        }
+        if regroup {
             model::sort(&mut rows);
         }
         rows
@@ -865,7 +927,7 @@ impl Launcher {
     /// Whether a mod change is in progress (mine or the shared install's), for the shared Play
     /// and setup gates. Reads only the Mods busy flags, never the launch state.
     pub(super) fn mutating(&self) -> bool {
-        self.ui.mods.busy.is_some() || self.registry_stage().is_some()
+        self.ui.mods.busy.is_some() || self.registry_stage().is_some() || self.github.busy()
     }
 
     /// Build… on a row: the one native build path, which asks for permission first. The player

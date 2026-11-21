@@ -818,6 +818,7 @@ Update what the browser installed (or one pack).
 - `PROJECT`
 - `--check`: Only say what is newer
 - `--instance`: The profile (default: the selected one)
+- `--confirm-world-loss`: Allow reviewed mod changes that could remove saved-world content
 
 MCP: `mods_update`.
 
@@ -832,12 +833,13 @@ Install a native mod from a GitHub link (docs/modding/src/how-to/native-mods.md,
 - `--all`: Install every mod the link holds
 - `--instance`: The profile (default: the selected one)
 - `--trust-native-code`: Allow native code for this install (remembered; revoke in Settings, Storage)
+- `--confirm-world-loss`: Allow a replacement that could remove saved-world content when adding an already installed mod
 
 MCP: none: the player's switch.
 
 ## `sunrise-launcher mods update-github`
 
-Look for newer versions of the native mods installed from GitHub (the latest release, or the default branch's head for a mod installed from a commit), and install them.
+Check native mods from GitHub, and update those installed from a release with a matching record.
 
     sunrise-launcher mods update-github [ID]
 
@@ -845,17 +847,23 @@ Look for newer versions of the native mods installed from GitHub (the latest rel
 - `--check`: Only say what is newer
 - `--instance`: The profile (default: the selected one)
 - `--trust-native-code`: Allow native code for this install (remembered; revoke in Settings, Storage)
+- `--confirm-world-loss`: Allow a reviewed update that could remove saved-world content
+
+Before replacement, Sunrise verifies the installed archive against its recorded GitHub asset and shows its path and SHA-256. A commit install can still be checked with --check; to replace it, remove it explicitly and add the new version.
 
 MCP: none: the player's switch.
 
 ## `sunrise-launcher mods remove`
 
-Remove a pack the browser installed.
+Remove an installed mod archive or a pack the browser installed.
 
     sunrise-launcher mods remove <PROJECT>
 
-- `PROJECT`
+- `PROJECT`: An installed mod ID or a project the browser installed
 - `--instance`: The profile (default: the selected one)
+- `--confirm-world-loss`: Allow removal even if it could remove content from a saved world
+
+For a mod archive, the review names its exact file and SHA-256 before removal, and any mods that need it are turned off rather than deleted.
 
 MCP: `mods_remove`, needs `confirm: true`.
 

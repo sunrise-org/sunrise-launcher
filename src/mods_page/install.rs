@@ -3,7 +3,8 @@ use super::*;
 use std::{collections::VecDeque, path::Path, sync::Mutex};
 use sunrise_launcher::{
     browser::sunrise::{
-        BuildNotice, InstallError, InstallHooks, InstallProgress, InstalledBatch, NativeQuestion,
+        BuildNotice, ChangeImpact, InstallError, InstallHooks, InstallProgress, InstalledBatch,
+        NativeQuestion,
     },
     managed_play::FirstBuild,
     profile_txn::Identity,
@@ -14,6 +15,7 @@ pub(crate) struct Installs {
     running: Option<Running>,
     waiting: VecDeque<Request>,
     pub(crate) question: Option<(BuildNotice, Sender<bool>)>,
+    pub(crate) world: Option<(WorldQuestion, Sender<bool>)>,
     outcomes: HashMap<(PathBuf, String), Outcome>,
     play: Option<(PathBuf, launcher_play::PlayIntent)>,
 }
@@ -35,15 +37,30 @@ struct Request {
     view: RequestView,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Kind {
+    Install,
+    Update,
+    UpdateAll,
+    Remove,
+}
+
 struct RequestView {
+    kind: Kind,
     card: String,
     ids: Vec<String>,
+}
+
+pub(crate) struct WorldQuestion {
+    pub(crate) removal: bool,
+    pub(crate) detail: String,
 }
 
 pub(crate) enum Worker {
     Progress(InstallProgress),
     Native(NativeQuestion, Sender<Result<bool, String>>),
     Build(BuildNotice, Sender<bool>),
+    World(WorldQuestion, Sender<bool>),
     Done(Result<InstalledBatch, InstallError>),
 }
 
@@ -93,6 +110,8 @@ impl Installs {
                 && run.identity == request.identity
                 && run.target == request.target
                 && run.profile.native_profile == request.profile.native_profile
+                && request.view.kind == Kind::Install
+                && run.requests[0].kind == Kind::Install
             {
                 if run
                     .requests
@@ -115,10 +134,23 @@ impl Installs {
                 && q.identity == request.identity
                 && q.target == request.target
                 && q.profile.native_profile == request.profile.native_profile
+                && q.view.kind == request.view.kind
                 && q.view.card == request.view.card
                 && q.view.ids == request.view.ids
         }) {
             self.waiting.push_back(request);
+        }
+    }
+
+    pub(super) fn mutation_failure(&self, event: &Worker) -> Option<String> {
+        if self.running.as_ref()?.requests[0].kind == Kind::Install {
+            return None;
+        }
+        match event {
+            Worker::Done(Err(error)) if !matches!(error, InstallError::Cancelled) => {
+                Some(error.to_string())
+            }
+            _ => None,
         }
     }
 
@@ -131,6 +163,11 @@ impl Installs {
             }
             Worker::Build(notice, reply) => {
                 if let Some((_, old)) = self.question.replace((notice, reply)) {
+                    let _ = old.send(false);
+                }
+            }
+            Worker::World(impact, reply) => {
+                if let Some((_, old)) = self.world.replace((impact, reply)) {
                     let _ = old.send(false);
                 }
             }
@@ -395,10 +432,22 @@ impl Launcher {
         card: String,
         ids: Vec<String>,
     ) -> Result<(), String> {
+        self.queue_registry_change(Kind::Install, card, ids)
+    }
+
+    pub(crate) fn queue_registry_change(
+        &mut self,
+        kind: Kind,
+        card: String,
+        ids: Vec<String>,
+    ) -> Result<(), String> {
         if ids.is_empty() {
             return Ok(());
         }
-        if self.accounts.selected().is_none() && !sunrise_launcher::developer_offline::selected() {
+        if kind == Kind::Install
+            && self.accounts.selected().is_none()
+            && !sunrise_launcher::developer_offline::selected()
+        {
             return Err(tr("Installs after you sign in").into());
         }
         if let Some(why) = self.mods_locked() {
@@ -420,7 +469,7 @@ impl Launcher {
             profile: instance,
             target,
             release,
-            view: RequestView { card, ids },
+            view: RequestView { kind, card, ids },
         });
         self.start_registry_queue();
         Ok(())
@@ -431,13 +480,18 @@ impl Launcher {
             || self.mutating()
             || self.pending_consent.is_some()
             || self.mods.installs.question.is_some()
+            || self.mods.installs.world.is_some()
         {
             return false;
         }
         let Some(request) = self.mods.installs.waiting.pop_front() else {
             return false;
         };
-        let batch = Arc::new(Mutex::new(Some(request.view.ids.clone())));
+        let batch = Arc::new(Mutex::new(
+            (request.view.kind == Kind::Install).then(|| request.view.ids.clone()),
+        ));
+        let kind = request.view.kind;
+        let ids = request.view.ids.clone();
         self.mods.installs.running = Some(Running {
             profile: request.profile.clone(),
             identity: request.identity,
@@ -450,54 +504,87 @@ impl Launcher {
         let launcher = self.tx.clone();
         std::thread::spawn(move || {
             let post = |event| tx.send(Event::Registry(event));
-            let result = sunrise::install_registry(
-                &request.profile,
-                request.identity,
-                || {
-                    batch
-                        .lock()
-                        .expect("registry batch")
-                        .take()
-                        .expect("sealed once")
+            let choose = || {
+                if let Some(tag) = request
+                    .target
+                    .as_deref()
+                    .filter(|tag| backend::installed().iter().any(|local| local == tag))
+                {
+                    FirstBuild::installed(tag)
+                } else if let Some(release) = request.release {
+                    FirstBuild::download(&release)
+                } else {
+                    Err(backend::no_version_installed())
+                }
+            };
+            let hooks = InstallHooks {
+                progress: &|step| {
+                    let _ = post(Worker::Progress(step));
                 },
-                || {
-                    if let Some(tag) = request
-                        .target
-                        .as_deref()
-                        .filter(|tag| backend::installed().iter().any(|local| local == tag))
-                    {
-                        FirstBuild::installed(tag)
-                    } else if let Some(release) = request.release {
-                        FirstBuild::download(&release)
-                    } else {
-                        Err(backend::no_version_installed())
+                native: &|question| {
+                    let (reply, answer) = std::sync::mpsc::channel();
+                    if post(Worker::Native(question.clone(), reply)).is_err() {
+                        return Ok(false);
                     }
+                    answer.recv().unwrap_or(Ok(false))
                 },
-                InstallHooks {
-                    progress: &|step| {
-                        let _ = post(Worker::Progress(step));
-                    },
-                    native: &|question| {
-                        let (reply, answer) = std::sync::mpsc::channel();
-                        if post(Worker::Native(question.clone(), reply)).is_err() {
-                            return Ok(false);
-                        }
-                        answer.recv().unwrap_or(Ok(false))
-                    },
-                    registry_crates: Some(&|consent| {
-                        let (reply, answer) = std::sync::mpsc::channel();
-                        launcher
-                            .send(Msg::NativeRegistryConsent(consent.clone(), reply))
-                            .is_ok()
-                            && answer.recv().unwrap_or(false)
-                    }),
-                    continue_after_failure: &|notice| {
-                        let (reply, answer) = std::sync::mpsc::channel();
-                        post(Worker::Build(notice.clone(), reply)).is_ok()
-                            && answer.recv().unwrap_or(false)
-                    },
+                registry_crates: Some(&|consent| {
+                    let (reply, answer) = std::sync::mpsc::channel();
+                    launcher
+                        .send(Msg::NativeRegistryConsent(consent.clone(), reply))
+                        .is_ok()
+                        && answer.recv().unwrap_or(false)
+                }),
+                continue_after_failure: &|notice| {
+                    let (reply, answer) = std::sync::mpsc::channel();
+                    post(Worker::Build(notice.clone(), reply)).is_ok()
+                        && answer.recv().unwrap_or(false)
                 },
-            );
+            };
+            let approve = |impact: &ChangeImpact| {
+                let (reply, answer) = std::sync::mpsc::channel();
+                let question = WorldQuestion {
+                    removal: impact.is_removal(),
+                    detail: impact.detail(),
+                };
+                post(Worker::World(question, reply)).is_ok() && answer.recv().unwrap_or(false)
+            };
+            let result = match kind {
+                Kind::Install => sunrise::install_registry(
+                    &request.profile,
+                    request.identity,
+                    || {
+                        batch
+                            .lock()
+                            .expect("registry batch")
+                            .take()
+                            .expect("sealed once")
+                    },
+                    choose,
+                    hooks,
+                ),
+                Kind::Update | Kind::UpdateAll => sunrise::update_registry(
+                    &request.profile,
+                    request.identity,
+                    if kind == Kind::Update {
+                        sunrise::UpdateRequest::Strict(ids)
+                    } else {
+                        sunrise::UpdateRequest::Bulk(ids)
+                    },
+                    choose,
+                    hooks,
+                    &approve,
+                ),
+                Kind::Remove => sunrise::remove_mods(
+                    &request.profile,
+                    request.identity,
+                    &ids,
+                    choose,
+                    hooks,
+                    &approve,
+                )
+                .map(|_| InstalledBatch::default()),
+            };
             let _ = post(Worker::Done(result));
         });
         true
@@ -517,7 +604,8 @@ pub(crate) fn stage_label(step: InstallProgress) -> String {
             &[("size", &sunrise_launcher::storage::format_bytes(total))],
         ),
         InstallProgress::Building(_) => tr("Building").into(),
-        InstallProgress::Publishing => tr("Finishing install…").into(),
+        InstallProgress::Publishing => tr("Finishing…").into(),
+        InstallProgress::Reviewing => tr("Review changes…").into(),
     }
 }
 
@@ -567,6 +655,7 @@ mod tests {
             target: Some(target.into()),
             release: None,
             view: RequestView {
+                kind: Kind::Install,
                 card: id.into(),
                 ids: vec![id.into()],
             },

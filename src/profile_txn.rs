@@ -17,7 +17,7 @@ use std::{
 
 const RECORD: &str = "mod-browser/install-txn.json";
 const RETIRED: &str = "mod-browser/install-txn.retired.json";
-const POINTER: &str = "mod-browser/active-build.json";
+pub(crate) const POINTER: &str = "mod-browser/active-build.json";
 const STAGE_PREFIX: &str = ".install-txn-";
 const VERSION: u64 = 2;
 const BOOTSTRAP_VERSION: u64 = 1;

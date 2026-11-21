@@ -16,21 +16,19 @@ impl PlayIntent {
     }
 }
 
-/// Registry update reports are notices, not an authorization step in Play.
+/// An older update ledger is advisory, never an authorization step or updater in Play.
 fn continue_after_assets(
     tag: &str,
     accepted: Option<&str>,
-    auto: Option<mods_page::AutoTarget>,
-    auto_enabled: bool,
+    legacy_home: Option<&std::path::Path>,
     tx: &std::sync::mpsc::Sender<Msg>,
     mods_tx: &std::sync::mpsc::Sender<mods_page::Event>,
 ) {
-    if let Some(auto) = auto {
-        backend::play_step("updating registry mods");
+    if let Some(home) = legacy_home {
+        backend::play_step("checking the legacy mod backup ledger");
         let _ = tx.send(Msg::PlayStep(backend::PlayStep::Mods));
-        let lines = mods_page::auto_update(&[auto], auto_enabled);
-        if !lines.is_empty() {
-            let _ = mods_tx.send(mods_page::Event::AutoUpdated(lines));
+        if let Err(notice) = sunrise_launcher::browser::sunrise::auto::recover(home) {
+            let _ = mods_tx.send(mods_page::Event::LegacyBackupNotice(notice));
         }
     }
     backend::play_step("reading the sign-in");
@@ -331,25 +329,27 @@ impl Launcher {
         let accepted = intent.account.clone();
         self.play_pressed = Some(Instant::now());
         let tx = self.tx.clone();
-        let auto = self
+        let legacy_home = self
             .instances
             .list
             .iter()
-            .find(|i| i.id == intent.instance)
+            .find(|i| i.id == intent.instance && i.kind != instances::Kind::Pack)
             .filter(|_| self.starting_pack.is_none())
-            .map(|i| mods_page::AutoTarget {
-                instance: i.clone(),
-                game: backend::played_version_id_by(Some(&tag)),
-            });
+            .map(|i| i.home.clone());
         let mods_tx = self.mods.tx.clone();
-        let auto_enabled = self.settings.auto_updates_mods();
         self.starting_play = Some(intent);
         std::thread::spawn(move || {
             // One line per step: a terminal run shows where Play stops (#12179).
             backend::play_step("checking the game's assets");
             let _ = tx.send(Msg::PlayStep(backend::PlayStep::Assets));
             backend::complete_assets(&tag);
-            continue_after_assets(&tag, accepted.as_deref(), auto, auto_enabled, &tx, &mods_tx);
+            continue_after_assets(
+                &tag,
+                accepted.as_deref(),
+                legacy_home.as_deref(),
+                &tx,
+                &mods_tx,
+            );
         });
     }
 
@@ -532,36 +532,11 @@ mod tests {
         .unwrap();
         let game_journal = home.join("mod-browser/install-journal.json");
         std::fs::write(&game_journal, b"separate journal").unwrap();
-        let instance = instances::Instance {
-            id: "sunrise".into(),
-            name: "Sunrise".into(),
-            kind: instances::Kind::Default,
-            work: home.into(),
-            home: home.into(),
-            icon: None,
-            group: None,
-            version: None,
-            channel: Default::default(),
-            native_profile: Default::default(),
-            played: Default::default(),
-            last_played: None,
-            launch: Default::default(),
-        };
         let (tx, events) = std::sync::mpsc::channel();
         let (mods_tx, notices) = std::sync::mpsc::channel();
-        continue_after_assets(
-            "v0.0.0-legacy-fixture",
-            None,
-            Some(mods_page::AutoTarget {
-                instance,
-                game: "1.21.11".into(),
-            }),
-            false,
-            &tx,
-            &mods_tx,
-        );
+        continue_after_assets("v0.0.0-legacy-fixture", None, Some(home), &tx, &mods_tx);
         assert!(
-            matches!(notices.try_recv().unwrap(), mods_page::Event::AutoUpdated(lines) if lines[0].contains("You can still play"))
+            matches!(notices.try_recv().unwrap(), mods_page::Event::LegacyBackupNotice(notice) if notice.contains("You can still play"))
         );
         assert!(matches!(
             events.try_recv().unwrap(),

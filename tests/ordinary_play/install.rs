@@ -3,6 +3,8 @@ use super::*;
 use std::collections::BTreeMap;
 use sunrise_launcher_smod::{index, Package};
 
+#[path = "install/mutations.rs"]
+mod mutations;
 #[path = "install/native_retry.rs"]
 mod native_retry;
 

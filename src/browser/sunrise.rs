@@ -1073,40 +1073,58 @@ fn relative(kind: Kind, id: &str, file_name: &str) -> Result<String, String> {
     }
 }
 
-/// Installs a registry project into the game folder `home`: its newest version for this game that
-/// the game the player runs can load, downloaded into `mod-browser/downloads/`, checked against
-/// the index, then moved into place. A mod is `sunrise-mods/<id>.smod`, turned on in
-/// `sunrise-mods.txt`.
-pub fn install(
+/// Resolves the pack against the same index used to choose and publish its version.
+fn pack_project<'a>(index: &'a Index, id: &str, kind: Kind) -> Result<&'a index::Project, String> {
+    let project = index
+        .project(id)
+        .ok_or_else(|| format!("{id} isn't in Sunrise's registry."))?;
+    if kind.folder().is_none() || kind_of(&project.kind) != Some(kind) {
+        return Err(format!(
+            "{id} isn't a pack of the expected kind in Sunrise's registry."
+        ));
+    }
+    Ok(project)
+}
+
+/// Installs a registry pack. The caller holds the home lock; this route never installs mods.
+pub(super) fn install_pack(
     project: &Project,
     home: &Path,
     game: &str,
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<installed::Entry>, String> {
     let index = index()?;
-    let index = if index
-        .project(&project.id)
-        .is_some_and(|p| matches!(p.kind, index::Kind::Mod | index::Kind::NativeMod))
-    {
-        fetched_index().ok_or_else(|| {
-            tr("Connect to the Sunrise registry before installing a mod and its dependencies.")
-                .to_string()
-        })?
-    } else {
-        index
+    let p = pack_project(&index, &project.id, project.kind)?;
+    let v = newest(&index, p, game)?;
+    install_version(&index, local(), p, v, home, progress).map(|e| vec![e])
+}
+
+/// Checks or publishes a registry pack update under the caller's lock.
+pub(super) fn update_pack(
+    entry: &installed::Entry,
+    home: &Path,
+    game: &str,
+    check: bool,
+    progress: &dyn Fn(&str, f32),
+) -> Result<installed::PackUpdate, String> {
+    use installed::PackUpdate;
+    let index = index()?;
+    let p = pack_project(&index, &entry.project, entry.kind)?;
+    let Some(v) = index
+        .installable(p, game)
+        .filter(|v| v.version != entry.version)
+    else {
+        return Ok(PackUpdate::Current);
     };
-    install_from(
-        &index,
-        local(),
-        project,
-        home,
-        game,
-        crate::backend::Settings::load()
-            .native_mods_allowed_at
-            .is_some(),
-        true,
-        progress,
-    )
+    if check {
+        installed::pack_path(
+            home,
+            entry.kind,
+            &relative(entry.kind, &p.id, &v.file.name)?,
+        )?;
+        return Ok(PackUpdate::Available(v.version.clone()));
+    }
+    install_version(&index, local(), p, v, home, progress).map(|e| PackUpdate::Updated(vec![e]))
 }
 
 /// Updates an installed native mod to its newest file. A mod that is off (`turn_on` false) stays
@@ -1136,7 +1154,7 @@ pub fn update_native(
     )
 }
 
-/// [`install`] from a trusted `index`.
+/// Installs from a trusted `index`.
 #[allow(clippy::too_many_arguments)]
 fn install_from(
     index: &Index,
@@ -1265,8 +1283,17 @@ fn install_version_guarded(
         home,
         progress,
     };
-    let (entry, file, unreadable) =
-        install.prepare(p, v, &list, &claims, &home.join("mod-browser/downloads"))?;
+    // Pack downloads don't use a pre-existing staging directory or partial file.
+    let pack_stage = kind_of(&p.kind)
+        .is_some_and(|kind| kind.folder().is_some())
+        .then(|| tempfile::tempdir_in(home))
+        .transpose()
+        .map_err(|e| e.to_string())?;
+    let downloads = home.join("mod-browser/downloads");
+    let stage = pack_stage
+        .as_ref()
+        .map_or(downloads.as_path(), |dir| dir.path());
+    let (entry, file, unreadable) = install.prepare(p, v, &list, &claims, stage)?;
     let Some((path, _)) = file else {
         return Ok(entry);
     };
@@ -1387,6 +1414,12 @@ impl Install<'_> {
             false => relative(project.kind, &p.id, &v.file.name)?,
         };
         let old = list.find(SourceId::Sunrise, &p.id).cloned();
+        if project.kind.folder().is_some() {
+            installed::pack_path(self.home, project.kind, &relative)?;
+            if let Some(row) = &old {
+                installed::old_pack_path(self.home, row, project.kind)?;
+            }
+        }
         let previous = old
             .as_ref()
             .filter(|old| old.version != v.version)
@@ -1610,8 +1643,9 @@ mod dependencies;
 pub mod pack;
 mod registry_install;
 pub use registry_install::{
-    install_registry, install_target, BuildNotice, InstallError, InstallHooks, InstallProgress,
-    InstalledBatch, NativeQuestion,
+    check_activation, install_registry, install_target, known_unfit_updates, remove_mods,
+    update_github, update_registry, BuildNotice, ChangeImpact, InstallError, InstallHooks,
+    InstallProgress, InstalledBatch, NativeQuestion, UpdateRequest,
 };
 #[cfg(test)]
 mod tests;

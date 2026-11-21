@@ -508,6 +508,7 @@ pub fn fingerprint(home: &Path, version: Option<&str>) -> String {
         .chain([
             home.join("mod-browser.json"),
             home.join(sunrise_launcher_smod::index::browser_state::PENDING),
+            home.join(crate::profile_txn::POINTER),
         ])
     {
         let meta = fs::symlink_metadata(&path).ok();

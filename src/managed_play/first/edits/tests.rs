@@ -101,6 +101,7 @@ fn world_locks_span_live_publication_and_undo() {
         let result = edit.publish_observed(
             proof,
             &cancellation,
+            &BTreeSet::new(),
             || {
                 let locks = worlds::lock_reviewed(&reviewed)?;
                 assert_eq!(worlds::review_risk(&home, &sources)?, reviewed);

@@ -609,6 +609,7 @@ pub(super) fn game_lock(home: &Path) -> Result<HomeLockGuard, String> {
 }
 
 mod edits;
+pub(crate) use edits::{CandidateImage, Edit};
 
 #[cfg(test)]
 mod tests;

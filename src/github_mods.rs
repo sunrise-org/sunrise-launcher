@@ -338,6 +338,10 @@ impl Origin {
         source_url(&self.owner, &self.repo, &self.commit)
     }
 
+    pub(crate) fn is_release_asset(&self) -> bool {
+        self.tag.as_deref().is_some_and(ref_ok) && self.asset.as_deref().is_some_and(asset_name)
+    }
+
     /// What its update is read from: the latest release for a mod from a release, the default
     /// branch's head for one from a commit.
     pub fn follows(&self) -> Link {
@@ -369,6 +373,42 @@ pub struct Packed {
     pub version: String,
     pub file: PathBuf,
     pub sha256: String,
+    release: Option<(Resolved, Origin)>,
+}
+
+impl Packed {
+    fn origin(&self, found: &Resolved) -> Origin {
+        Origin {
+            id: self.id.clone(),
+            version: self.version.clone(),
+            owner: found.owner.clone(),
+            repo: found.repo.clone(),
+            tag: found.asset.as_ref().and(found.tag.clone()),
+            commit: found.commit.clone(),
+            asset: found.asset.as_ref().map(|a| a.name.clone()),
+            sha256: self.sha256.clone(),
+        }
+    }
+
+    pub(crate) fn release_origin(&self, found: &Resolved) -> Option<&Origin> {
+        let (source, origin) = self.release.as_ref()?;
+        (source == found
+            && self.id == origin.id
+            && self.version == origin.version
+            && self.sha256 == origin.sha256)
+            .then_some(origin)
+    }
+
+    pub(crate) fn copy_verified(&self, dest: &Path) -> Result<(), String> {
+        fs::copy(&self.file, dest).map_err(|e| format!("{}: {e}", dest.display()))?;
+        if sunrise_launcher_smod::index::sha256_file(dest)? != self.sha256 {
+            return Err(trf(
+                "The downloaded package for {mod} changed. Fetch it again.",
+                &[("mod", &self.id)],
+            ));
+        }
+        Ok(())
+    }
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -383,8 +423,19 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 /// Reads `bytes` as `.smod`, with the registry's checks, into a file `Packed` names.
-fn checked(bytes: &[u8], dir: &Path) -> Result<Packed, String> {
+fn checked(bytes: &[u8], dir: &Path, asset: Option<&Asset>) -> Result<Packed, String> {
     let sum = sha256(bytes);
+    if let Some(asset) = asset.filter(|asset| {
+        asset
+            .sha256
+            .as_ref()
+            .is_some_and(|expected| *expected != sum)
+    }) {
+        return Err(format!(
+            "{} does not match the checksum GitHub lists for it.",
+            asset.name
+        ));
+    }
     fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let file = dir.join(format!("{}.smod", &sum[..16]));
     fs::write(&file, bytes).map_err(|e| format!("{}: {e}", file.display()))?;
@@ -400,6 +451,7 @@ fn checked(bytes: &[u8], dir: &Path) -> Result<Packed, String> {
         version: facts.version.expect("native bundle has a version"),
         file,
         sha256: sum,
+        release: None,
     })
 }
 
@@ -449,28 +501,63 @@ fn download(url: &str) -> Result<Vec<u8>, String> {
         .take(MAX_ASSET + 1)
         .read_to_end(&mut body)
         .map_err(|e| format!("Download interrupted: {e}"))?;
-    if body.len() as u64 > MAX_ASSET {
-        return Err("The file is bigger than 64 MiB: not a native mod bundle.".into());
-    }
     Ok(body)
+}
+
+fn asset_name(name: &str) -> bool {
+    name.ends_with(".smod") && !name.contains(['/', '\\']) && !name.chars().any(char::is_control)
 }
 
 /// Downloads what `found` names and checks it: the release's `.smod` (its SHA-256 compared with
 /// GitHub's when it reports one), else the mods of the commit's archive, each packed. A repository
 /// of several mods gives several `Packed`. Nothing is installed.
 pub fn fetch(found: &Resolved) -> Result<Vec<Packed>, String> {
+    fetch_with(found, download)
+}
+
+/// Like [`fetch`], with an injected transfer for the release asset. Source archives use
+/// the ordinary codeload path. The release URL, size, checksum and bundle checks are unchanged.
+pub fn fetch_with(
+    found: &Resolved,
+    download_release: impl FnOnce(&str) -> Result<Vec<u8>, String>,
+) -> Result<Vec<Packed>, String> {
+    if !plain(&found.owner)
+        || !plain(&found.repo)
+        || !sunrise_launcher_smod::manifest::revision(&found.commit)
+    {
+        return Err(tr("Couldn't verify the resolved GitHub repository and commit.").into());
+    }
     let dir = scratch(&found.commit);
     if let Some(asset) = &found.asset {
-        let bytes = download(&asset.url)?;
-        if let Some(expected) = &asset.sha256 {
-            if sha256(&bytes) != *expected {
-                return Err(format!(
-                    "{} does not match the checksum GitHub lists for it.",
-                    asset.name
-                ));
-            }
+        let prefix = format!("/{}/{}/releases/download/", found.owner, found.repo);
+        let from_release = url::Url::parse(&asset.url).is_ok_and(|url| {
+            url.scheme() == "https"
+                && url.host_str() == Some("github.com")
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.port().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none()
+                && url
+                    .path()
+                    .split_at_checked(prefix.len())
+                    .is_some_and(|(head, tail)| {
+                        head.eq_ignore_ascii_case(&prefix)
+                            && tail
+                                .rsplit_once('/')
+                                .is_some_and(|(tag, name)| !tag.is_empty() && !name.is_empty())
+                    })
+        });
+        if !from_release || !asset_name(&asset.name) || !found.tag.as_deref().is_some_and(ref_ok) {
+            return Err(tr("Couldn't verify the GitHub release asset.").into());
         }
-        return Ok(vec![checked(&bytes, &dir)?]);
+        let bytes = download_release(&asset.url)?;
+        if bytes.len() as u64 > MAX_ASSET {
+            return Err("The file is bigger than 64 MiB: not a native mod bundle.".into());
+        }
+        let mut packed = checked(&bytes, &dir, Some(asset))?;
+        packed.release = Some((found.clone(), packed.origin(found)));
+        return Ok(vec![packed]);
     }
     let url = format!(
         "https://codeload.github.com/{}/{}/tar.gz/{}",
@@ -486,7 +573,7 @@ pub fn fetch(found: &Resolved) -> Result<Vec<Packed>, String> {
     }
     let packed: Result<Vec<Packed>, String> = mods
         .iter()
-        .map(|m| checked(&pack(m)?, &dir).map_err(|e| format!("{}: {e}", m.manifest.id)))
+        .map(|m| checked(&pack(m)?, &dir, None).map_err(|e| format!("{}: {e}", m.manifest.id)))
         .collect();
     let _ = fs::remove_dir_all(dir.join("source"));
     packed
@@ -567,7 +654,7 @@ fn ids(found: &[Packed]) -> String {
         .join(", ")
 }
 
-fn origin_path(home: &Path, id: &str) -> PathBuf {
+pub(crate) fn origin_path(home: &Path, id: &str) -> PathBuf {
     home.join(INSTALLED).join(format!("{id}.origin.json"))
 }
 
@@ -590,40 +677,73 @@ pub fn origins(home: &Path) -> Vec<Origin> {
     found
 }
 
-/// Installs `packed` (from `found`) into the game folder `home`, turns it on and records where
-/// it came from. A mod from the registry or the player's own is never replaced; one from GitHub
-/// is (that is how it updates).
+/// Adds a fresh mod and turns it on. Replacing an installed archive requires the profile's
+/// staged GitHub Update; this path never clobbers a file, even an orphaned origin sidecar.
 pub fn install(home: &Path, found: &Resolved, packed: &Packed) -> Result<Origin, String> {
-    let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
-    let target = home.join(INSTALLED).join(format!("{}.smod", packed.id));
-    if target.exists() && origin(home, &packed.id).is_none() {
-        return Err(format!(
-            "{} is already installed and not from GitHub: remove it first.",
-            packed.id
-        ));
+    use sunrise_launcher_smod::index::{browser_state, valid_id};
+    let id = &packed.id;
+    if !valid_id(id) {
+        return Err(tr("Couldn't verify the GitHub package ID.").into());
     }
-    fs::create_dir_all(home.join(INSTALLED)).map_err(|e| e.to_string())?;
-    fs::copy(&packed.file, &target).map_err(|e| format!("{}: {e}", target.display()))?;
-    let record = Origin {
-        id: packed.id.clone(),
-        version: packed.version.clone(),
-        owner: found.owner.clone(),
-        repo: found.repo.clone(),
-        tag: found.asset.as_ref().and(found.tag.clone()),
-        commit: found.commit.clone(),
-        asset: found.asset.as_ref().map(|a| a.name.clone()),
-        sha256: packed.sha256.clone(),
+    let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
+    let relative = format!("{INSTALLED}/{id}.smod");
+    let target = home.join(&relative);
+    let sidecar = origin_path(home, id);
+    let collision = || {
+        trf(
+        "{mod} already has an installed file or origin. Use Update for a GitHub release or remove the existing mod first.",
+        &[("mod", id)],
+    )
     };
-    let text = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
-    let path = origin_path(home, &packed.id);
-    fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
-    mod_list::set_enabled(home, &packed.id, true)?;
+    for path in [&target, &sidecar] {
+        match fs::symlink_metadata(path) {
+            Ok(_) => return Err(collision()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(format!("{}: {e}", path.display())),
+        }
+    }
+    let claims = browser_state::Installed::read(home).map_err(|e| e.details(trf))?;
+    if claims.single(id).map_err(|e| e.render(trf))?.is_some()
+        || crate::managed_play::scan_packages(home)?
+            .iter()
+            .any(|p| p.manifest.id == *id)
+    {
+        return Err(collision());
+    }
+    claims
+        .check_other_claims(home, id, &relative)
+        .map_err(|e| e.render(trf))?;
+    let root = home.join(INSTALLED);
+    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    let archive = tempfile::NamedTempFile::new_in(&root).map_err(|e| e.to_string())?;
+    packed.copy_verified(archive.path())?;
+    let record = if found.asset.is_some() {
+        packed
+            .release_origin(found)
+            .cloned()
+            .ok_or_else(|| tr("Couldn't verify the GitHub release asset.").to_owned())?
+    } else {
+        packed.origin(found)
+    };
+    let mut receipt = tempfile::NamedTempFile::new_in(&root).map_err(|e| e.to_string())?;
+    serde_json::to_writer_pretty(receipt.as_file_mut(), &record).map_err(|e| e.to_string())?;
+    archive
+        .persist_noclobber(&target)
+        .map_err(|e| e.error.to_string())?;
+    receipt.persist_noclobber(&sidecar).map_err(|e| {
+        trf(
+            "The new archive was kept, but its GitHub origin could not be recorded: {error}",
+            &[("error", &e.error.to_string())],
+        )
+    })?;
+    mod_list::set_enabled(home, id, true)?;
     let _ = fs::remove_file(&packed.file);
     Ok(record)
 }
 
-/// Removes mod `id` installed from GitHub; false when it wasn't.
-pub fn remove(home: &Path, id: &str) -> Result<bool, String> {
+/// Tests of the legacy import format; production removals use the profile journal.
+#[cfg(test)]
+fn remove(home: &Path, id: &str) -> Result<bool, String> {
     let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
     if origin(home, id).is_none() {
         return Ok(false);

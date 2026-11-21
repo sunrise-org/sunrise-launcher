@@ -241,6 +241,11 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
             id: file.id,
         }
     }));
+    if let Ok(Some(active)) = sunrise_launcher::managed_play::Active::read_pointer(home) {
+        // A Switch hold is shown in Installed, not as a Home mod or in its off count.
+        let held: HashSet<_> = active.holds().map(|hold| hold.id()).collect();
+        mods.retain(|item| !held.contains(item.id.as_str()));
+    }
     mods.sort_by_key(|item| item.name.to_lowercase());
     let pack = |pack: packs::Pack| Item {
         kind: Kind::of(pack.kind),

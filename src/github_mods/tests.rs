@@ -164,6 +164,26 @@ fn an_asset_from_another_host_is_ignored() {
 }
 
 #[test]
+fn release_transfer_refuses_foreign_urls_and_bad_checksums() {
+    let mut found = Resolved {
+        owner: "acme".into(),
+        repo: "zoom".into(),
+        tag: Some("v1".into()),
+        commit: SHA.into(),
+        asset: Some(Asset {
+            name: "zoom.smod".into(),
+            url: "https://github.com/acme/other/releases/download/v1/zoom.smod".into(),
+            sha256: Some("0".repeat(64)),
+        }),
+    };
+    assert!(fetch_with(&found, |_| panic!("foreign URL must not be fetched")).is_err());
+    found.asset.as_mut().unwrap().url =
+        "https://github.com/acme/zoom/releases/download/v1/zoom.smod".into();
+    let error = fetch_with(&found, |_| Ok(b"wrong archive".to_vec())).unwrap_err();
+    assert!(error.contains("does not match the checksum"), "{error}");
+}
+
+#[test]
 fn no_release_resolves_the_default_branch_to_a_commit() {
     let api = recorded(vec![
         ("repos/acme/zoom", json!({ "default_branch": "dev/main" })),
@@ -274,7 +294,7 @@ fn a_mod_folder_packs_into_a_bundle_the_registry_checks_accept() {
     let bundle = &find_mods(&root).unwrap()[0];
     let bytes = pack(bundle).unwrap();
     assert_eq!(bytes, pack(bundle).unwrap(), "the same files pack the same");
-    let packed = checked(&bytes, &tree("pack-output")).unwrap();
+    let packed = checked(&bytes, &tree("pack-output"), None).unwrap();
     assert_eq!(
         (packed.id.as_str(), packed.version.as_str()),
         ("zoom", "0.1.0")
@@ -313,7 +333,7 @@ fn a_flat_smod_keeps_its_pins_and_ships_only_selected_files() {
         bundle.manifest.native.as_ref().unwrap().mixins.as_deref(),
         Some(SHA2)
     );
-    let packed = checked(&pack(bundle).unwrap(), &tree("unpacked-out")).unwrap();
+    let packed = checked(&pack(bundle).unwrap(), &tree("unpacked-out"), None).unwrap();
     let read = sunrise_launcher_smod::index::native::Bundle::read(&packed.file).unwrap();
     assert_eq!(read.manifest.id, "zoom");
     assert!(read.files.contains_key("assets/zoom/lang/en_us.json"));
@@ -326,7 +346,7 @@ fn a_flat_smod_keeps_its_pins_and_ships_only_selected_files() {
     assert!(pack(bundle).is_err());
     fs::remove_dir_all(root.join("assets/minecraft")).unwrap();
     write(&root.join("evil.exe"), "MZ");
-    let again = checked(&pack(bundle).unwrap(), &tree("unpacked-out2")).unwrap();
+    let again = checked(&pack(bundle).unwrap(), &tree("unpacked-out2"), None).unwrap();
     assert_eq!(again.sha256, packed.sha256);
     write(&root.join("horizon-mixin.toml"), "[mod]\nid='zoom'\n");
     assert!(find_mods(&root).is_err());
@@ -339,6 +359,7 @@ fn packed(id: &str) -> Packed {
         version: "0.1.0".into(),
         file: PathBuf::new(),
         sha256: String::new(),
+        release: None,
     }
 }
 
@@ -359,7 +380,7 @@ fn installing_records_the_origin_and_updates_follow_releases_or_the_head() {
     let source = tree("install-src");
     project(&source, "zoom", SHA);
     let bytes = pack(&find_mods(&source).unwrap()[0]).unwrap();
-    let ready = checked(&bytes, &source.join("out")).unwrap();
+    let ready = checked(&bytes, &source.join("out"), None).unwrap();
     let found = Resolved {
         owner: "acme".into(),
         repo: "zoom".into(),
@@ -403,7 +424,32 @@ fn installing_records_the_origin_and_updates_follow_releases_or_the_head() {
             ..found
         }
     ));
-    // A file that isn't from GitHub is never replaced.
+    // A GitHub origin is not authorization for raw overwrite or for adding a duplicate
+    // under the canonical filename when the same ID is already installed under an alias.
+    let target = home.join(INSTALLED).join("zoom.smod");
+    let replacement = checked(&bytes, &source.join("out"), None).unwrap();
+    assert!(install(&home, &newer, &replacement).is_err());
+    assert_eq!(fs::read(&target).unwrap(), bytes);
+    assert_eq!(self::origin(&home, "zoom"), Some(origin));
+    let alias = home.join(INSTALLED).join("renamed.smod");
+    fs::rename(&target, &alias).unwrap();
+    let receipt = origin_path(&home, "zoom");
+    let receipt_bytes = fs::read(&receipt).unwrap();
+    assert!(
+        install(&home, &newer, &replacement).is_err(),
+        "orphan origin"
+    );
+    fs::remove_file(&receipt).unwrap();
+    assert!(
+        install(&home, &newer, &replacement).is_err(),
+        "same ID, other file"
+    );
+    assert!(!target.exists());
+    assert_eq!(fs::read(&alias).unwrap(), bytes);
+    fs::rename(&alias, &target).unwrap();
+    fs::write(receipt, receipt_bytes).unwrap();
+
+    // A file that isn't from GitHub is never replaced either.
     write(&home.join(INSTALLED).join("keys.smod"), "x");
     let other = Packed {
         id: "keys".into(),
@@ -411,7 +457,7 @@ fn installing_records_the_origin_and_updates_follow_releases_or_the_head() {
     };
     assert!(install(&home, &newer, &other)
         .unwrap_err()
-        .contains("not from GitHub"));
+        .contains("already has an installed file"));
     assert!(remove(&home, "zoom").unwrap());
     assert!(!remove(&home, "zoom").unwrap());
     assert!(!home.join(INSTALLED).join("zoom.smod").exists());

@@ -301,6 +301,7 @@ impl Launcher {
         self.ui.sheets.registry.is_some()
             || self.pending_consent.is_some()
             || self.mods.installs.question.is_some()
+            || self.mods.installs.world.is_some()
             || self.owner_screen_open
             || self.instances.dialog.is_some()
             || (self.ui.page == crate::frame::Page::Hosting && self.servers.create.is_some())
@@ -344,7 +345,14 @@ impl Launcher {
             let _ = reply.send(false);
         } else if self.pending_consent.is_some() {
             self.cancel_native_consent();
-        } else if let Some((_, reply)) = self.mods.installs.question.take() {
+        } else if let Some(reply) = self
+            .mods
+            .installs
+            .question
+            .take()
+            .map(|(_, reply)| reply)
+            .or_else(|| self.mods.installs.world.take().map(|(_, reply)| reply))
+        {
             let _ = reply.send(false);
         }
         self.ui.sheet = None;
@@ -357,6 +365,7 @@ impl Launcher {
         let open = self.ui.sheets.registry.is_some()
             || self.pending_consent.is_some()
             || self.mods.installs.question.is_some()
+            || self.mods.installs.world.is_some()
             || self.ui.sheet.is_some();
         if open {
             self.close_sheet();
@@ -560,6 +569,47 @@ impl Launcher {
         }
         if self.mods.installs.question.is_some() {
             return Some(self.registry_build_failed(cx));
+        }
+        if let Some((impact, _)) = &self.mods.installs.world {
+            let (heading, action) = if impact.removal {
+                (tr("Remove mods?"), tr("Remove"))
+            } else {
+                (tr("Update mods?"), tr("Update"))
+            };
+            let body =
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(title(heading.into()))
+                    .child(
+                        div()
+                            .id("registry-impact-text")
+                            .max_h(px(310.))
+                            .overflow_y_scroll()
+                            .child(crate::selectable::selectable(impact.detail.clone())),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap(px(8.))
+                            .child(
+                                crate::frame::primary("cancel-registry-change", tr("Cancel"))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.close_sheet();
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(button("approve-registry-change", action).on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    if let Some((_, answer)) = this.mods.installs.world.take() {
+                                        let _ = answer.send(true);
+                                    }
+                                    cx.notify();
+                                }),
+                            )),
+                    );
+            return Some(frame("registry-world-impact", 690., body, cx));
         }
         match self.ui.sheet {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),

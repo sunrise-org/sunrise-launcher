@@ -14,7 +14,7 @@ pub(crate) mod install;
 pub(super) enum Event {
     Registry(install::Worker),
     /// What the automatic updates did (`sunrise::auto`).
-    AutoUpdated(Vec<String>),
+    LegacyBackupNotice(String),
     /// A project page's part, an image or a filter's values (`mods_project`).
     Loaded(super::mods_project::Loaded),
 }
@@ -140,21 +140,20 @@ impl Launcher {
                     self.pending_consent = Some(PendingConsent::Registry(question, reply));
                 }
                 Event::Registry(event) => {
+                    if let Some(error) = m.installs.mutation_failure(&event) {
+                        m.message = Some(Err(error));
+                    }
                     if m.installs.handle(event) {
                         done = true;
                         m.reload_installed();
                         m.installed_list.reset();
-                    } else if m.installs.question.is_some() {
+                    } else if m.installs.question.is_some() || m.installs.world.is_some() {
                         self.reset_install_question_sheet();
                     }
                 }
                 Event::Loaded(l) => loaded.push(l),
-                Event::AutoUpdated(lines) => {
-                    if !lines.is_empty() {
-                        m.message = Some(Ok(lines.join("\n")));
-                        m.reload_installed();
-                        m.installed_list.reset();
-                    }
+                Event::LegacyBackupNotice(notice) => {
+                    m.message = Some(Ok(notice));
                 }
             }
         }
@@ -194,6 +193,16 @@ impl Launcher {
         };
         let on = !mod_list::is_enabled(&home, id);
         if on
+            && self
+                .selected_instance()
+                .is_some_and(|i| i.kind != instances::Kind::Pack)
+        {
+            if let Err(reason) = sunrise::check_activation(&home, &[id]) {
+                self.mods.message = Some(Err(reason));
+                return;
+            }
+        }
+        if on
             && native_status::is_native_file(&e.file)
             && self.settings.native_mods_allowed_at.is_none()
         {
@@ -219,33 +228,6 @@ impl Launcher {
             }),
         });
     }
-}
-
-/// An instance whose registry projects may update.
-pub(super) struct AutoTarget {
-    pub(super) instance: instances::Instance,
-    /// The Minecraft version its own build plays ([`Launcher::game_of`]).
-    pub(super) game: String,
-}
-
-/// Updates the registry projects of `targets`: Sunrise's own instances only, never a modpack's
-/// profile, whose pack pins its mods. Returns what happened for the page's notice.
-pub(super) fn auto_update(targets: &[AutoTarget], enabled: bool) -> Vec<String> {
-    let mut lines = Vec::new();
-    for t in targets {
-        let i = &t.instance;
-        if i.id.starts_with("pack:") {
-            continue;
-        }
-        let ctx = sunrise::auto::Context {
-            in_pack: sunrise::auto::in_pack(&i.home),
-            game: &t.game,
-        };
-        if let Some(report) = sunrise::auto::run(&i.home, &ctx, enabled, &|_, _| {}) {
-            lines.extend(report.lines());
-        }
-    }
-    lines
 }
 
 #[cfg(test)]
