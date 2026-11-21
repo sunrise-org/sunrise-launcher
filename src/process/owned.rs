@@ -83,6 +83,16 @@ impl Owned {
         CHILDREN.spawn(command)
     }
 
+    /// Start a piped staged child on the caller's already-admitted profile. The caller
+    /// waits for the worker's exit proof before touching or sealing its candidate output.
+    pub fn spawn_staged(
+        command: Command,
+        gate: super::leases::ProfileHandoff<'_>,
+        role: super::leases::StagedChild,
+    ) -> io::Result<Self> {
+        Ok(CHILDREN.track(gate.spawn(command, role)?))
+    }
+
     #[cfg(windows)]
     pub(crate) fn spawn_compiler(command: &Command) -> io::Result<Self> {
         Ok(CHILDREN.track(super::leases::spawn_compiler(command)?))

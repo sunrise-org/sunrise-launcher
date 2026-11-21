@@ -45,6 +45,8 @@ pub mod pictures;
 pub mod preparer;
 pub mod private_window;
 pub mod process;
+#[doc(hidden)] // Internal launcher contracts, exposed to the integration harness.
+pub mod profile_txn;
 pub mod proxy;
 pub mod relocation;
 mod run_leases;

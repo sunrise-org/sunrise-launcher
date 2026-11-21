@@ -772,7 +772,7 @@ fn creation_parent(root: &Path, name: &str) -> std::io::Result<PathBuf> {
 }
 
 /// Publish atomically without replacing another attempt's folder, even if it is empty.
-fn publish_new_folder(from: &Path, to: &Path) -> std::io::Result<()> {
+pub(crate) fn publish_new_folder(from: &Path, to: &Path) -> std::io::Result<()> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         use std::ffi::CString;

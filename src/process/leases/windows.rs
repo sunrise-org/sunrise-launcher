@@ -286,6 +286,7 @@ pub(super) struct Start<'a> {
     pub directory: Option<&'a Path>,
     pub streams: Option<[HANDLE; 3]>,
     pub runtime_root: Option<&'a Path>,
+    pub profile: Option<&'a File>,
     pub breakaway: bool,
     pub attached: bool,
     pub compiler: bool,
@@ -324,6 +325,7 @@ pub(super) fn spawn_exact(
     let mut roots: Vec<_> = files.iter().map(|file| file.as_raw_handle()).collect();
     roots.sort_unstable_by_key(|h| *h as usize);
     roots.dedup();
+    let runtime_end = 3 + roots.len();
     // SAFETY: Win32 calls borrow valid stdio/file handles; duplicates are owned immediately.
     unsafe {
         let own = GetCurrentProcess();
@@ -335,7 +337,11 @@ pub(super) fn spawn_exact(
             ]
         });
         let mut inherited = Vec::new();
-        for source in stdio.into_iter().chain(roots) {
+        for source in stdio
+            .into_iter()
+            .chain(roots)
+            .chain(start.profile.map(AsRawHandle::as_raw_handle))
+        {
             let source = if source.is_null() || source == INVALID_HANDLE_VALUE {
                 nul.as_raw_handle()
             } else {
@@ -357,7 +363,7 @@ pub(super) fn spawn_exact(
             inherited.push(OwnedHandle::from_raw_handle(duplicate));
         }
         let handles: Vec<_> = inherited.iter().map(AsRawHandle::as_raw_handle).collect();
-        let numbers = handles[3..]
+        let numbers = handles[3..runtime_end]
             .iter()
             .map(|h| (*h as usize).to_string())
             .collect::<Vec<_>>()

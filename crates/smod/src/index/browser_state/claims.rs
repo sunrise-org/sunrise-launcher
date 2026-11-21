@@ -120,9 +120,14 @@ fn portable(name: &str) -> bool {
         }
 }
 
+/// A component whose spelling has a known ASCII-folded key before it exists.
+pub fn portable_ascii_component(name: &str) -> bool {
+    name.is_ascii() && !name.contains('~') && portable(name)
+}
+
 fn folded(name: &OsStr) -> Option<String> {
     name.to_str()
-        .filter(|s| s.is_ascii() && !s.contains('~') && portable(s))
+        .filter(|name| portable_ascii_component(name))
         .map(str::to_ascii_lowercase)
 }
 
