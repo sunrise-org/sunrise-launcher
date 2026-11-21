@@ -97,6 +97,62 @@ impl Launcher {
                         self.play_step = Some(step);
                     }
                 }
+                Msg::ManagedClient { instance, result } => {
+                    use sunrise_launcher::managed_play::StartError;
+                    self.starting_client = None;
+                    self.play_step = None;
+                    self.accounts = Accounts::load();
+                    self.load_auth_statuses(false);
+                    match *result {
+                        Ok(game) => {
+                            self.client_error = game.notice;
+                            self.play_registry_notices = game.registry_notices;
+                            for notice in &self.play_registry_notices {
+                                console_page::keep_line(
+                                    &mut self.prepare_log,
+                                    &mut self.log_revision,
+                                    notice.clone(),
+                                );
+                            }
+                            if game.owner {
+                                self.owner = Some(true);
+                            }
+                            self.installed = backend::installed();
+                            self.client_vars = instance.vars();
+                            self.client_home = Some(instance.home);
+                            self.client_run = Some((instance.id, Instant::now()));
+                            self.client = Some(backend::monitor_game(
+                                game.child,
+                                self.tx.clone(),
+                                game.runtime,
+                            ));
+                            if self.play_registry_notices.is_empty() {
+                                self.step_aside(cx);
+                            }
+                        }
+                        Err(StartError::Journal(problem)) => {
+                            self.play_install_recovery = Some((instance.home, problem.details()));
+                        }
+                        Err(StartError::Account(refused)) => {
+                            if refused.keyring.is_none() {
+                                self.owner = Some(false);
+                                self.owner_screen_open = true;
+                            }
+                            self.client_error = Some(refused.in_window());
+                        }
+                        Err(StartError::Native(native_mods::Failed::NoConsent)) => {
+                            self.request_native_build_consent();
+                        }
+                        Err(StartError::Native(error)) => {
+                            self.native_for = Some(instance.id);
+                            self.native_failed(error.to_string(), &[]);
+                        }
+                        Err(StartError::Hook(error)) => self.client_error = Some(error.to_string()),
+                        Err(StartError::UnknownSpawn(error) | StartError::Other(error)) => {
+                            self.client_error = Some(error);
+                        }
+                    }
+                }
                 Msg::PlayAdmission(home, result) => {
                     let Some(intent) = self.play_admission.take() else {
                         continue;
@@ -422,6 +478,14 @@ impl Launcher {
                             line,
                         );
                     }
+                }
+                Msg::ClientObservationLost(error) => {
+                    self.client = None;
+                    self.client_run = None;
+                    self.client_started = None;
+                    self.client_vars.clear();
+                    self.come_back(cx);
+                    self.client_error = Some(error);
                 }
                 Msg::Exit(job, result) => {
                     // A preparation (or a build) ended: the disk may have changed under the pages.

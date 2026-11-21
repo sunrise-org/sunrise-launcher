@@ -1,11 +1,12 @@
 //! Everything that is not UI: GitHub, installs, resource preparation, the game's processes and
 //! updates. The GUI, the CLI and the MCP server all go through this module. Functions here
 //! block; the GUI runs them on threads and reads their messages.
+use crate::process::child::Child;
 use crate::{account, mojang, sources};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
@@ -139,10 +140,10 @@ impl GameArchitecture {
     }
 }
 
-const GAME_BUILD_ARCHITECTURE: &str = ".sunrise-game-architecture.json";
+pub(crate) const GAME_BUILD_ARCHITECTURE: &str = ".sunrise-game-architecture.json";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-struct InstalledGameArchitecture {
+pub(crate) struct InstalledGameArchitecture {
     /// The architecture requested when this version was installed.
     requested: GameArchitecture,
     /// The archive's actual architecture (x64 may be the safe ARM64 fallback).
@@ -332,17 +333,6 @@ fn architecture_for_pe_machine(machine: u16) -> Option<GameArchitecture> {
     }
 }
 
-fn installation_matches_game_architecture(tag: &str, settings: &Settings) -> bool {
-    if !can_choose_game_architecture() {
-        return true;
-    }
-    let Some(target) = selected_game_architecture(settings) else {
-        return true;
-    };
-    installed_game_architecture(tag)
-        .is_some_and(|installed| installed_architecture_matches(target, installed))
-}
-
 fn installed_architecture_matches(
     target: GameArchitecture,
     installed: InstalledGameArchitecture,
@@ -404,17 +394,36 @@ pub(crate) fn native_mod_architecture_error() -> Option<String> {
 
 /// Refuse to launch an explicit game architecture until this version has been installed for it.
 pub fn game_architecture_launch_error(tag: &str) -> Option<String> {
+    managed_game_architecture_launch_error(tag, None)
+}
+
+pub(crate) fn managed_game_architecture_launch_error(
+    tag: &str,
+    variant: Option<&installation::BoundVariant>,
+) -> Option<String> {
     if !can_choose_game_architecture() {
         return None;
     }
     let settings = Settings::load();
-    if settings.game_architecture == GameArchitecture::Auto
-        || installation_matches_game_architecture(tag, &settings)
-    {
+    if settings.game_architecture == GameArchitecture::Auto {
         return None;
     }
-    let target = selected_game_architecture(&settings)?;
-    let installed = installed_game_architecture(tag).map(|a| a.binary);
+    check_game_architecture(tag, variant, selected_game_architecture(&settings)?)
+}
+
+pub(crate) fn check_game_architecture(
+    tag: &str,
+    variant: Option<&installation::BoundVariant>,
+    target: GameArchitecture,
+) -> Option<String> {
+    let installed = match variant {
+        Some(variant) => variant.architecture(),
+        None => installed_game_architecture(tag),
+    };
+    if installed.is_some_and(|installed| installed_architecture_matches(target, installed)) {
+        return None;
+    }
+    let installed = installed.map(|a| a.binary);
     let label = |arch| match arch {
         GameArchitecture::X64 => "x64".to_owned(),
         GameArchitecture::Arm64 => "ARM64".to_owned(),
@@ -1083,7 +1092,7 @@ fn short_path(path: &Path) -> Option<PathBuf> {
     (got != 0 && got < need).then(|| PathBuf::from(std::ffi::OsString::from_wide(&buf[..got])))
 }
 
-fn versions_dir() -> PathBuf {
+pub(crate) fn versions_dir() -> PathBuf {
     data_dir().join("versions")
 }
 
@@ -1124,16 +1133,6 @@ pub(crate) fn fetch_small(url: &str) -> Result<Option<Vec<u8>>, String> {
         .read_to_end(&mut body)
         .map_err(|e| format!("Download interrupted: {e}"))?;
     Ok(Some(body))
-}
-
-/// The SHA-256 the release's signed checksums give for `asset`, or why it must not be installed.
-fn signed_digest(tag: &str, asset: &str) -> Result<String, String> {
-    crate::signed::digest(
-        tag,
-        asset,
-        &sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO),
-        fetch_small,
-    )
 }
 
 /// Downloads `url` into `to`; the file is kept only if its SHA-256 is `sha256`, the signed (or
@@ -1220,88 +1219,33 @@ fn unpack(archive: &Path, url: &str, to: &Path) -> Result<(), String> {
 /// Downloads one release, checks it against its signed checksums and unpacks it; `progress` gets
 /// the fraction done.
 pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<(), String> {
-    let tag = release.tag.as_str();
-    let settings = Settings::load();
-    let assets = game_assets_for(
-        std::env::consts::OS,
-        native_windows_architecture(),
-        std::env::consts::ARCH,
-        settings.game_architecture,
-    );
-    let (asset, fallback) = assets.map_or((ASSET, GAME_FALLBACK), |(asset, fallback)| {
-        (Some(asset), fallback)
-    });
-    let asset = asset_installed(release, asset, fallback).ok_or_else(|| {
-        crate::i18n::trf(
-            "{tag} has no build for the selected game architecture.",
-            &[("tag", tag)],
-        )
-        .to_string()
-    })?;
-    let sha256 = match &release.nightly {
-        // Signed for its own version (SHA256SUMS.v2.sig), which its title names and it installs as;
-        // served under its own GitHub tag. A title that doesn't parse strictly is refused: nothing
-        // signs GitHub's publication time.
-        Some(github_tag) => {
-            let version = crate::signed::title_version(github_tag, &release.name)
-                .filter(|v| *v == release.tag)
-                .ok_or_else(|| {
-                    crate::i18n::trf(
-                        "This Nightly's title ({title}) doesn't name its date and commit as Sunrise \
-                         signs them, so it can't be checked: it was not installed.",
-                        &[("title", &format!("{:?}", release.name))],
-                    )
-                })?;
-            crate::signed::build_digest(
-                github_tag,
-                &version,
-                asset,
-                &sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO),
-                fetch_small,
-            )?
-        }
-        None if is_game_tag(tag) => signed_digest(tag, asset)?,
-        None => return Err(format!("{tag} is not a Sunrise release.")),
-    };
-    install_as(
-        release,
-        tag,
-        &sha256,
-        selected_game_architecture(&settings),
-        progress,
-    )?;
-    // An older build publishes no release file; `played` then reads its research-lock.json.
-    let source = release.nightly.as_deref().unwrap_or(tag);
-    let bytes = fetch_small(&crate::signed::asset_url(source, RELEASE_FILE));
-    if let (Ok(Some(bytes)), Ok(sha256)) = (bytes, release_file_digest(release, source)) {
-        let _ = keep_release_file(&version_dir(tag), &bytes, &sha256);
-    }
-    Ok(())
+    let download = installation::GameDownload::select(release)?;
+    let proof = download.prove(&release.tag)?;
+    download.install(&release.tag, &proof, progress)
 }
 
 /// The build's facts a launcher reads first (docs/api/release-file.md), signed beside its archives.
 const RELEASE_FILE: &str = "sunrise-release.json";
-
-/// [`RELEASE_FILE`]'s signed digest in `release`, published under the GitHub tag `source`.
-fn release_file_digest(release: &Release, source: &str) -> Result<String, String> {
-    match &release.nightly {
-        Some(_) => crate::signed::build_digest(
-            source,
-            &release.tag,
-            RELEASE_FILE,
-            &sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO),
-            fetch_small,
-        ),
-        None => signed_digest(source, RELEASE_FILE),
-    }
-}
 
 /// Keeps `bytes` as the installed build's [`RELEASE_FILE`] in `dir` when they are the signed `sha256`'s.
 fn keep_release_file(dir: &Path, bytes: &[u8], sha256: &str) -> Result<(), String> {
     if sunrise_launcher_release_verify::sha256_hex(bytes) != sha256 {
         return Err(format!("{RELEASE_FILE}: not the signed file"));
     }
-    fs::write(dir.join(RELEASE_FILE), bytes).map_err(|e| format!("{RELEASE_FILE}: {e}"))
+    let file = dir.join(RELEASE_FILE);
+    match fs::File::create_new(&file) {
+        Ok(mut file) => file.write_all(bytes),
+        Err(error)
+            if error.kind() == std::io::ErrorKind::AlreadyExists
+                && fs::symlink_metadata(&file)
+                    .is_ok_and(|meta| meta.is_file() && !crate::native_cache::linked(&meta))
+                && fs::read(&file).is_ok_and(|existing| existing == bytes) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+    .map_err(|e| format!("{RELEASE_FILE}: {e}"))
 }
 
 /// The asset `release` installs from: the fallback when [`game_releases_with`] took it (its file
@@ -1329,23 +1273,17 @@ pub use developer_play::client_as;
 
 /// Downloads `release`'s archive for this platform, checks it against `sha256` (its signed
 /// checksum), and unpacks it as the installed version `tag`.
-mod installation;
-pub(crate) use installation::install_as;
+pub(crate) mod installation;
 
 pub fn remove(tag: &str) -> Result<(), String> {
-    // A native build's base keeps its prepared data, so it stays while one is installed.
-    if let Some(build) = installed()
-        .into_iter()
-        .find(|version| crate::native_mods::about(version).is_some_and(|about| about.base == tag))
-    {
-        return Err(crate::i18n::trf(
-            "This version supplies resources to native build {build}. Remove that build first.",
-            &[("build", &build)],
-        ));
-    }
+    remove_observed(tag, || {})
+}
+
+pub(crate) fn remove_observed(tag: &str, selected: impl FnOnce()) -> Result<(), String> {
     let dir = version_dir(tag);
-    crate::cache_cleanup::delete_version(&dir, !in_use(tag))
-        .map_err(crate::native_mods::cache_error)?;
+    let idle = !in_use(tag);
+    selected();
+    crate::cache_cleanup::delete_version(&dir, idle).map_err(crate::native_mods::cache_error)?;
     forget_prepared();
     Ok(())
 }
@@ -1827,6 +1765,9 @@ fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
         if game_version_at(&source) != version {
             continue;
         }
+        let Ok(_source) = prepare_lock_at(&source, &other) else {
+            continue;
+        };
         let from = resources_at(&source);
         let Some(manifest) = read_json(&from.join(RESOURCES_MANIFEST)) else {
             continue;
@@ -1859,15 +1800,35 @@ fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
     None
 }
 
+/// A first Play already owns the preparation lock. Reuse compatible resources but leave
+/// preparer children to the staged path; they must retain its profile admission.
+pub(crate) fn reuse_prepared_for_play(tag: &str) {
+    let versions = versions_dir();
+    reuse_prepared(&versions, tag);
+    complete_reports(&versions, tag);
+    forget_prepared();
+}
+
 /// What an install does once its folder is in place (an imported build's too, `build_import`):
 /// another installed version's resources if it has none, whatever its resources lack, then its
 /// data file.
 pub(crate) fn reuse_prepared_for(tag: &str) {
     let about = crate::native_mods::about(tag);
     let tag = about.as_ref().map_or(tag, |about| about.base.as_str());
-    reuse_prepared(&versions_dir(), tag);
-    complete_assets(tag);
+    let Ok(preparation) = prepare_lock(tag) else {
+        return;
+    };
+    let versions = versions_dir();
+    reuse_prepared(&versions, tag);
+    complete_assets_in(
+        &versions,
+        tag,
+        minecraft_folders,
+        &|line| eprintln!("{line}"),
+        Some(&preparation.handoff(None)),
+    );
     forget_prepared();
+    drop(preparation);
     let (root, resources) = (version_dir(tag), resources(tag));
     let spawned = std::thread::Builder::new()
         .name("Prepared data file".into())
@@ -1889,8 +1850,13 @@ fn write_data_file(root: &Path, resources: &Path) -> Result<(), String> {
     if !prepared_at(resources) || resources.join(crate::preparer::DATA_FILE).exists() {
         return Ok(());
     }
+    let version = root.file_name().unwrap_or_default().to_string_lossy();
+    let preparation = prepare_lock_at(root, &version)?;
     match crate::preparer::binary(root) {
-        Some(binary) => crate::preparer::data_file(&binary, root, resources).map(drop),
+        Some(binary) => {
+            crate::preparer::data_file(&binary, root, resources, Some(&preparation.handoff(None)))
+                .map(drop)
+        }
         None => Ok(()),
     }
 }
@@ -1907,8 +1873,18 @@ pub fn reuse_prepared_everywhere() -> Vec<(String, String)> {
     for tag in installed_in(&versions) {
         // Here, on the start-up thread, and not in `complete_assets`, which Play also runs: a
         // download of thousands of files is not for the moment the game is waited for.
-        refill_own_store(&tag);
-        complete_assets(&tag);
+        let Ok(preparation) = prepare_lock(&tag) else {
+            continue;
+        };
+        let handoff = preparation.handoff(None);
+        refill_own_store(&tag, &handoff);
+        complete_assets_in(
+            &versions,
+            &tag,
+            minecraft_folders,
+            &|line| eprintln!("{line}"),
+            Some(&handoff),
+        );
     }
     reused
 }
@@ -1916,14 +1892,14 @@ pub fn reuse_prepared_everywhere() -> Vec<(String, String)> {
 fn reuse_prepared_in(versions: &Path) -> Vec<(String, String)> {
     let mut tags = installed_in(versions);
     tags.reverse();
-    let reused = tags
-        .iter()
-        .filter_map(|tag| reuse_prepared(versions, tag).map(|from| (tag.clone(), from)))
-        .collect();
-    for tag in &tags {
-        complete_reports(versions, tag);
-    }
-    reused
+    tags.into_iter()
+        .filter_map(|tag| {
+            let _preparation = prepare_lock_at(&versions.join(&tag), &tag).ok()?;
+            let from = reuse_prepared(versions, &tag);
+            complete_reports(versions, &tag);
+            from.map(|from| (tag, from))
+        })
+        .collect()
 }
 
 /// The data generator reports the game reads at run time: the built-in registries' network ids
@@ -1960,11 +1936,15 @@ fn complete_reports(versions: &Path, tag: &str) -> bool {
     };
     let reports = |dir: &Path| dir.join(".local/datagen/out/reports");
     let mut sources = vec![reports(&target)];
+    let mut source_claims = Vec::new();
     for other in installed_in(versions).into_iter().filter(|t| t != tag) {
         let dir = versions.join(&other);
         if server(&dir).as_ref() == Some(&pins) {
-            sources.push(resources_at(&dir));
-            sources.push(reports(&dir));
+            if let Ok(preparation) = prepare_lock_at(&dir, &other) {
+                sources.push(resources_at(&dir));
+                sources.push(reports(&dir));
+                source_claims.push(preparation);
+            }
         }
     }
     let mut complete = true;
@@ -1993,9 +1973,20 @@ fn complete_reports(versions: &Path, tag: &str) -> bool {
 /// in any Minecraft folder, one line each in the log, once per launcher run, and the version plays
 /// as before. Nothing is prepared again.
 pub fn complete_assets(tag: &str) {
-    complete_assets_in(&versions_dir(), tag, minecraft_folders, &|line| {
-        eprintln!("{line}")
-    });
+    let Ok(preparation) = prepare_lock(tag) else {
+        return;
+    };
+    complete_assets_staged(tag, &preparation.handoff(None));
+}
+
+pub(crate) fn complete_assets_staged(tag: &str, handoff: &crate::preparer::Handoff<'_>) {
+    complete_assets_in(
+        &versions_dir(),
+        tag,
+        minecraft_folders,
+        &|line| eprintln!("{line}"),
+        Some(handoff),
+    );
 }
 
 /// Whether Sunrise's own store is asked to download again: it has an asset index, the version
@@ -2015,13 +2006,13 @@ fn refill_wanted(
 /// and the copies of `complete_assets` read them from its store: asked again, once per run, through
 /// the same owner gate as any download from Mojang (`download_for_owner`), which keeps the files
 /// already whole. Called where a download is expected (`reuse_prepared_everywhere`), never on Play.
-fn refill_own_store(tag: &str) {
+fn refill_own_store(tag: &str, handoff: &crate::preparer::Handoff<'_>) {
     static ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let own = data_dir().join("minecraft");
     let root = versions_dir().join(tag);
     let resources = resources_at(&root);
     let missing = crate::preparer::binary(&root).and_then(|binary| {
-        crate::preparer::missing_extras(&binary, &root, &resources)
+        crate::preparer::missing_extras(&binary, &root, &resources, Some(handoff))
             .ok()
             .flatten()
     });
@@ -2056,6 +2047,7 @@ fn complete_assets_in(
     tag: &str,
     folders: impl Fn() -> Vec<PathBuf>,
     log: &dyn Fn(String),
+    handoff: Option<&crate::preparer::Handoff<'_>>,
 ) {
     // The versions tried this run. Held while adding: the start, an install and Play can complete one version at once.
     static TRIED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
@@ -2068,7 +2060,7 @@ fn complete_assets_in(
     let Some(binary) = crate::preparer::binary(&root) else {
         return;
     };
-    let lacking = match crate::preparer::missing_extras(&binary, &root, &resources) {
+    let lacking = match crate::preparer::missing_extras(&binary, &root, &resources, handoff) {
         Ok(Some(lacking)) if !lacking.is_empty() => lacking,
         Ok(_) => return,
         Err(e) => return log(format!("{tag}: {e}")),
@@ -2079,7 +2071,8 @@ fn complete_assets_in(
     }
     tried.push(root.clone());
     let kinds: Vec<String> = lacking.iter().map(|(kind, _)| kind.clone()).collect();
-    match crate::preparer::add_extras(&binary, &root, &resources, &kinds, &folders(), log) {
+    match crate::preparer::add_extras(&binary, &root, &resources, &kinds, &folders(), log, handoff)
+    {
         Ok(Some(added)) => {
             for (kind, error) in added.failed {
                 let what = lacking
@@ -2408,6 +2401,17 @@ pub fn preparer(
     minecraft: &Path,
     from: MinecraftFrom,
     log: &dyn Fn(String),
+    preparation: &crate::preparer::Preparation,
+) -> Result<(Command, PathBuf), String> {
+    preparer_staged(tag, minecraft, from, log, &preparation.handoff(None))
+}
+
+pub(crate) fn preparer_staged(
+    tag: &str,
+    minecraft: &Path,
+    from: MinecraftFrom,
+    log: &dyn Fn(String),
+    handoff: &crate::preparer::Handoff<'_>,
 ) -> Result<(Command, PathBuf), String> {
     set_prepare_step(PrepareStep::Files);
     // A native build reads the resources of its base, so it is the base that gets prepared.
@@ -2423,8 +2427,8 @@ pub fn preparer(
     let dir = version_dir(tag);
     let binary = crate::preparer::binary(&dir).ok_or_else(|| crate::preparer::too_old(tag))?;
     // The version's own answer: a sibling's verified import is linked in when found, and whether its exporters ship.
-    let needs =
-        crate::preparer::needs(&binary, &dir, log)?.ok_or_else(|| crate::preparer::too_old(tag))?;
+    let needs = crate::preparer::needs(&binary, &dir, log, Some(handoff))?
+        .ok_or_else(|| crate::preparer::too_old(tag))?;
     let reused = !needs.server_jar;
     let chosen = minecraft.to_path_buf();
     // Resolved even when the game files are reused: the assets still come from the install.
@@ -2559,7 +2563,21 @@ fn ensure_server_jar(
 }
 
 /// Copies the pinned version's sounds from the player's own launcher install into the version's resources with its own `sunrise-prepare sounds`; sound is optional, so a failure is a line in `log`.
-pub fn sounds(tag: &str, minecraft: &Path, log: &dyn Fn(String)) {
+pub fn sounds(
+    tag: &str,
+    minecraft: &Path,
+    log: &dyn Fn(String),
+    preparation: &crate::preparer::Preparation,
+) {
+    sounds_staged(tag, minecraft, log, &preparation.handoff(None));
+}
+
+pub(crate) fn sounds_staged(
+    tag: &str,
+    minecraft: &Path,
+    log: &dyn Fn(String),
+    handoff: &crate::preparer::Handoff<'_>,
+) {
     use crate::i18n::{tr, trf};
     let tag = resources_owner(tag);
     let tag = tag.as_str();
@@ -2567,7 +2585,7 @@ pub fn sounds(tag: &str, minecraft: &Path, log: &dyn Fn(String)) {
     set_prepare_step(PrepareStep::Sounds);
     log(tr("Copying the sounds from your Minecraft install").into());
     let result = match crate::preparer::binary(&dir) {
-        Some(binary) => crate::preparer::sounds(&binary, &dir, minecraft, log)
+        Some(binary) => crate::preparer::sounds(&binary, &dir, minecraft, log, Some(handoff))
             .and_then(|done| done.ok_or_else(|| crate::preparer::too_old(tag))),
         None => Err(crate::preparer::too_old(tag)),
     };
@@ -2848,6 +2866,10 @@ fn strip_launcher_render_env(cmd: &mut Command) {
 }
 
 pub fn client_command(tag: &str) -> Command {
+    client_with_resources(tag, &resources(tag))
+}
+
+pub(crate) fn client_with_resources(tag: &str, resources: &Path) -> Command {
     let home = game_home();
     let _ = fs::create_dir_all(&home);
     let mut cmd = Command::new(client_program(tag));
@@ -2860,7 +2882,7 @@ pub fn client_command(tag: &str) -> Command {
     cmd.current_dir(&home)
         .env("SUNRISE_HOME", &home)
         .arg("--resources")
-        .arg(resources(tag));
+        .arg(resources);
     // How the game asks for a renewed session (`account session`) while it runs.
     if let Ok(exe) = std::env::current_exe() {
         cmd.env("SUNRISE_LAUNCHER_EXE", exe);
@@ -3097,7 +3119,7 @@ pub fn prune_old_versions() -> Vec<String> {
         &protected,
         auto_installed,
     ) {
-        if crate::native_mods::resource_dependents(&tag) {
+        if crate::native_mods::resource_dependent(&tag).is_some() {
             eprintln!("Keeping old version {tag}: a native build uses its resources.");
             continue;
         }
@@ -3134,6 +3156,20 @@ pub fn server_dir(requested: Option<PathBuf>) -> PathBuf {
 
 /// Whether `tag` is prepared, with the run-time reports it needs completed when another copy has them.
 pub fn need_prepared(tag: &str) -> Result<(), String> {
+    need_prepared_inner(tag, None)
+}
+
+pub(crate) fn need_prepared_locked(
+    tag: &str,
+    preparation: &crate::preparer::Preparation,
+) -> Result<(), String> {
+    need_prepared_inner(tag, Some(preparation))
+}
+
+fn need_prepared_inner(
+    tag: &str,
+    preparation: Option<&crate::preparer::Preparation>,
+) -> Result<(), String> {
     let about = crate::native_mods::about(tag);
     if let Some(about) = &about {
         if !version_dir(&about.base).join(COMPLETE).is_file() {
@@ -3145,6 +3181,11 @@ pub fn need_prepared(tag: &str) -> Result<(), String> {
     }
     let tag = about.as_ref().map_or(tag, |about| about.base.as_str());
     if check_prepared(tag) {
+        let _owned = if preparation.is_none() {
+            Some(prepare_lock(tag)?)
+        } else {
+            None
+        };
         complete_reports(&versions_dir(), tag);
         Ok(())
     } else {
@@ -3162,6 +3203,9 @@ pub fn need_prepared(tag: &str) -> Result<(), String> {
 pub enum PlayStep {
     Assets,
     Mods,
+    Download,
+    Prepare,
+    Native,
     SignIn,
 }
 
@@ -3237,7 +3281,26 @@ impl Logged {
     pub fn start(job: Job, cmd: Command) -> Result<Self, String> {
         let (tx, rx) = std::sync::mpsc::channel();
         let running = spawn(job, cmd, tx)?;
-        let log = Arc::new(Mutex::new(std::collections::VecDeque::new()));
+        Ok(Self::keep(running, rx, Default::default()))
+    }
+
+    pub fn monitor_game(
+        child: Child,
+        runtime: RuntimeGuard,
+        prelaunch_log: std::collections::VecDeque<String>,
+    ) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel();
+        Self::keep(monitor_game(child, tx, runtime), rx, prelaunch_log)
+    }
+
+    fn keep(
+        running: Running,
+        rx: std::sync::mpsc::Receiver<Msg>,
+        mut initial_log: std::collections::VecDeque<String>,
+    ) -> Self {
+        let excess = initial_log.len().saturating_sub(LOG_KEEP);
+        initial_log.drain(..excess);
+        let log = Arc::new(Mutex::new(initial_log));
         let exit = Arc::new(Mutex::new(None));
         let (l, e) = (log.clone(), exit.clone());
         std::thread::spawn(move || {
@@ -3251,11 +3314,12 @@ impl Logged {
                         }
                     }
                     Msg::Exit(_, result) => *e.lock().unwrap() = Some(result),
+                    Msg::ClientObservationLost(error) => *e.lock().unwrap() = Some(Err(error)),
                     _ => {}
                 }
             }
         });
-        Ok(Self { running, log, exit })
+        Self { running, log, exit }
     }
 
     pub fn finished(&self) -> Option<Result<(), String>> {
@@ -4103,21 +4167,53 @@ pub enum Job {
 /// A running process; its output arrives as `Msg::Line`, its end as `Msg::Exit`.
 pub struct Running {
     pub child: Arc<Mutex<Child>>,
-    pub stdin: Option<ChildStdin>,
+    pub stdin: Option<Box<dyn std::io::Write + Send>>,
 }
 
 /// Launcher-owned tree-lock primitives and optional Windows runtime state.
 pub struct RuntimeGuard {
     _leases: Vec<crate::run_leases::Claim>,
+    pub(crate) managed_session: Option<PathBuf>,
     #[cfg(windows)]
     _windows: Option<crate::windows_runtime::Guard>,
+}
+
+impl RuntimeGuard {
+    /// Only a verified process exit retires a managed session early.
+    pub fn game_exited(mut self) {
+        crate::account::discard_launch_session(self.managed_session.take());
+    }
+}
+
+#[cfg(windows)]
+impl RuntimeGuard {
+    pub(crate) fn windows(&self) -> Result<&crate::windows_runtime::Guard, String> {
+        self._windows.as_ref().ok_or_else(|| {
+            crate::i18n::tr("The profile's runtime copy was not prepared.").to_owned()
+        })
+    }
 }
 
 pub use crate::run_leases::control::startup_cleanup;
 
 pub fn prepare_command(cmd: Command) -> Result<(Command, RuntimeGuard), String> {
+    prepare_runtime(cmd, None)
+}
+
+pub(crate) fn prepare_managed_command(
+    cmd: Command,
+    resources: &Path,
+) -> Result<(Command, RuntimeGuard), String> {
+    prepare_runtime(cmd, Some(resources))
+}
+
+fn prepare_runtime(
+    cmd: Command,
+    read_only_resources: Option<&Path>,
+) -> Result<(Command, RuntimeGuard), String> {
     crate::developer_offline::validate(&cmd)?;
-    let leases = crate::run_leases::shared(&cmd).map_err(crate::native_mods::cache_error)?;
+    let leases = crate::run_leases::shared(&cmd, read_only_resources)
+        .map_err(crate::native_mods::cache_error)?;
     #[cfg(windows)]
     let cmd = crate::windows_runtime::redirect(cmd);
     #[cfg(windows)]
@@ -4134,6 +4230,7 @@ pub fn prepare_command(cmd: Command) -> Result<(Command, RuntimeGuard), String> 
         cmd,
         RuntimeGuard {
             _leases: leases,
+            managed_session: None,
             #[cfg(windows)]
             _windows: guard,
         },
@@ -4152,30 +4249,36 @@ pub fn spawn(job: Job, cmd: Command, tx: Sender<Msg>) -> Result<Running, String>
 /// Holds the preparation lock of the version that owns `version`'s resources (its base, for a
 /// native build), so a second preparation of the same folder can't start while one runs; it is
 /// released when the guard drops.
-pub fn prepare_lock(version: &str) -> Result<sunrise_launcher_smod::locks::Locked, String> {
+pub fn prepare_lock(version: &str) -> Result<crate::preparer::Preparation, String> {
     let owner = resources_owner(version);
     prepare_lock_at(&version_dir(&owner), &owner)
 }
 
-fn prepare_lock_at(
-    dir: &Path,
-    version: &str,
-) -> Result<sunrise_launcher_smod::locks::Locked, String> {
+fn prepare_lock_at(dir: &Path, version: &str) -> Result<crate::preparer::Preparation, String> {
     let path = dir.join(".preparing.lock");
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
-    sunrise_launcher_smod::locks::locked(file, sunrise_launcher_smod::locks::LockMode::Exclusive)
-        .map_err(|error| match error {
-            std::fs::TryLockError::WouldBlock => crate::i18n::trf(
-                "Sunrise {version} is already being prepared.",
-                &[("version", version)],
-            ),
-            std::fs::TryLockError::Error(e) => format!("{}: {e}", path.display()),
-        })
+    let busy = || {
+        crate::i18n::trf(
+            "Sunrise {version} is already being prepared.",
+            &[("version", version)],
+        )
+    };
+    let mut options = fs::OpenOptions::new();
+    options.create(true).truncate(false).write(true);
+    #[cfg(windows)]
+    std::os::windows::fs::OpenOptionsExt::share_mode(&mut options, 0);
+    let file = options.open(&path).map_err(|e| {
+        #[cfg(windows)]
+        if matches!(e.raw_os_error(), Some(32 | 33)) {
+            return busy();
+        }
+        format!("{}: {e}", path.display())
+    })?;
+    #[cfg(unix)]
+    file.try_lock().map_err(|e| match e {
+        fs::TryLockError::WouldBlock => busy(),
+        fs::TryLockError::Error(e) => format!("{}: {e}", path.display()),
+    })?;
+    Ok(crate::preparer::Preparation::new(file))
 }
 
 /// [`spawn`], keeping `hold` (a lock) until the program ends; a preparation's whole process group is stopped if the launcher quits first.
@@ -4183,9 +4286,16 @@ pub fn spawn_holding(
     job: Job,
     cmd: Command,
     tx: Sender<Msg>,
-    hold: Option<sunrise_launcher_smod::locks::Locked>,
+    hold: Option<crate::preparer::Preparation>,
 ) -> Result<Running, String> {
     let (mut cmd, runtime) = prepare_command(cmd)?;
+    if let Some(preparation) = &hold {
+        let child = preparation
+            .handoff(None)
+            .spawn(cmd, true)
+            .map_err(|e| e.to_string())?;
+        return Ok(monitor(job, child, tx, runtime, hold));
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -4195,55 +4305,99 @@ pub fn spawn_holding(
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = play_log::spawn(&mut cmd)?;
+    let child = play_log::spawn(&mut cmd)?.into();
+    Ok(monitor(job, child, tx, runtime, hold))
+}
+
+/// Use the same streams, process monitor and crash reporting for an admitted game's child.
+pub fn monitor_game(child: Child, tx: Sender<Msg>, runtime: RuntimeGuard) -> Running {
+    monitor(Job::Client, child, tx, runtime, None)
+}
+
+fn monitor(
+    job: Job,
+    mut child: Child,
+    tx: Sender<Msg>,
+    runtime: RuntimeGuard,
+    hold: Option<crate::preparer::Preparation>,
+) -> Running {
     let pid = child.id();
     let group = matches!(job, Job::Prepare);
     if group {
         crate::process::owned::CHILDREN.track_group(pid);
     }
     let stdin = child.stdin.take();
+    let relayed = child.is_relayed();
+    let forwarding = Arc::new(Mutex::new(true));
+    // This channel closes once both pumps have reached EOF. The monitor may instead stop
+    // forwarding at a bounded deadline if wrapper diagnostics still own the same pipes.
+    let (reader_live, readers_done) = std::sync::mpsc::channel::<()>();
     let mut readers = Vec::new();
-    let out = child
-        .stdout
-        .take()
-        .map(|o| Box::new(o) as Box<dyn Read + Send>);
-    let err = child
-        .stderr
-        .take()
-        .map(|o| Box::new(o) as Box<dyn Read + Send>);
-    for stream in [out, err].into_iter().flatten() {
+    for stream in [child.stdout.take(), child.stderr.take()]
+        .into_iter()
+        .flatten()
+    {
         let tx = tx.clone();
+        let forwarding = Arc::clone(&forwarding);
+        let reader_live = reader_live.clone();
         readers.push(std::thread::spawn(move || {
             for line in BufReader::new(stream).lines().map_while(Result::ok) {
-                let _ = tx.send(Msg::Line(job, line));
+                let live = forwarding.lock().unwrap();
+                if !*live || tx.send(Msg::Line(job, line)).is_err() {
+                    break;
+                }
             }
+            drop(reader_live);
         }));
     }
+    drop(reader_live);
     let child = Arc::new(Mutex::new(child));
     let waited = child.clone();
     std::thread::spawn(move || {
-        for r in readers {
-            let _ = r.join();
+        if !relayed {
+            for r in readers {
+                let _ = r.join();
+            }
         }
+        // Wrapper output can stay open after the game itself has exited.
         let status = loop {
             if let Some(s) = waited.lock().unwrap().try_wait().transpose() {
                 break s;
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         };
+        if relayed {
+            // Exit can overtake the pumps. Give buffered final diagnostics time to reach
+            // the log, but don't wait for the wrapper or its descendants to close a pipe.
+            let _ = readers_done.recv_timeout(std::time::Duration::from_millis(200));
+        }
+        *forwarding.lock().unwrap() = false;
+        if relayed {
+            if let Err(error) = status {
+                let _ = tx.send(Msg::ClientObservationLost(
+                    crate::process::child::unconfirmed_exit(error),
+                ));
+                return;
+            }
+        }
         let result = match status {
-            Ok(s) if s.success() => Ok(()),
-            Ok(s) => Err(format!("Exited with {s}")),
+            Ok(s) => {
+                runtime.game_exited();
+                if s.success() {
+                    Ok(())
+                } else {
+                    Err(format!("Exited with {s}"))
+                }
+            }
             Err(e) => Err(e.to_string()),
         };
-        drop(runtime);
         if group {
             crate::process::owned::CHILDREN.release(pid);
         }
         drop(hold);
         let _ = tx.send(Msg::Exit(job, result));
     });
-    Ok(Running { child, stdin })
+    Running { child, stdin }
 }
 
 /// The launcher's appearance, as older launchers saved it: a theme is one look now, and a saved
@@ -5285,9 +5439,16 @@ pub fn {f}("
         assert!(prepare_lock(&base).is_ok());
         // Preparing a native build runs the base's preparer, and says so when it can't.
         let try_prepare = || {
-            preparer(&native, Path::new("."), MinecraftFrom::Install, &|_| {})
-                .map(|_| ())
-                .unwrap_err()
+            let preparation = prepare_lock(&native).unwrap();
+            preparer(
+                &native,
+                Path::new("."),
+                MinecraftFrom::Install,
+                &|_| {},
+                &preparation,
+            )
+            .map(|_| ())
+            .unwrap_err()
         };
         assert_eq!(try_prepare(), crate::preparer::too_old(&base));
         fs::remove_file(base_dir.join(COMPLETE)).unwrap();
@@ -5298,7 +5459,7 @@ pub fn {f}("
         );
         fs::write(base_dir.join(COMPLETE), "").unwrap();
         fs::remove_dir_all(version_dir(&sibling)).unwrap();
-        assert!(crate::native_mods::resource_dependents(&base));
+        assert!(crate::native_mods::resource_dependent(&base).is_some());
         assert!(remove_version(&base).is_err());
         assert!(remove(&base).is_err());
         assert!(base_dir.join(COMPLETE).exists());
@@ -5306,7 +5467,7 @@ pub fn {f}("
         let error = need_prepared(&native).unwrap_err();
         assert!(error.contains(&base), "{error}");
         fs::remove_dir_all(&native_dir).unwrap();
-        assert!(!crate::native_mods::resource_dependents(&base));
+        assert!(crate::native_mods::resource_dependent(&base).is_none());
     }
 
     #[test]
@@ -7282,8 +7443,8 @@ esac"#
         };
 
         let root = version("v1", true, &preparer);
-        complete_assets_in(&versions, "v1", folders, &log);
-        complete_assets_in(&versions, "v1", folders, &log);
+        complete_assets_in(&versions, "v1", folders, &log, None);
+        complete_assets_in(&versions, "v1", folders, &log, None);
         assert_eq!(
             *lines.borrow(),
             [
@@ -7315,7 +7476,13 @@ esac"#
             r#"printf '%s\n' '{"format": 1, "prepared": true, "missing": []}'"#,
         );
         for tag in ["v0", "v2", "v3"] {
-            complete_assets_in(&versions, tag, || unreachable!("no folder is needed"), &log);
+            complete_assets_in(
+                &versions,
+                tag,
+                || unreachable!("no folder is needed"),
+                &log,
+                None,
+            );
         }
         assert!(lines.borrow().is_empty(), "{:?}", lines.borrow());
         let _ = fs::remove_dir_all(&dir);

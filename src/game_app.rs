@@ -117,6 +117,61 @@ pub fn ensure(version: &Path) -> io::Result<PathBuf> {
     Ok(programs.join(PROGRAMS[0]))
 }
 
+/// Managed Play checks the actual macOS entry, including the files found next to its image.
+/// Only the launcher-owned, exactly spelled native-directory symlinks are permitted.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn verify_links(version: &Path, image: &Path) -> io::Result<()> {
+    let invalid = || io::Error::from(io::ErrorKind::InvalidData);
+    let programs = image.parent().ok_or_else(invalid)?;
+    for dir in programs.ancestors().take_while(|dir| *dir != version) {
+        if !fs::symlink_metadata(dir)?.file_type().is_dir() {
+            return Err(invalid());
+        }
+    }
+    let exact_file = |name: &std::ffi::OsStr| -> io::Result<()> {
+        let source = version.join(name);
+        let bundle = programs.join(name);
+        match (fs::symlink_metadata(&source), fs::symlink_metadata(&bundle)) {
+            (Ok(a), Ok(b))
+                if a.is_file() && b.is_file() && a.dev() == b.dev() && a.ino() == b.ino() =>
+            {
+                Ok(())
+            }
+            (Err(a), Err(b))
+                if a.kind() == io::ErrorKind::NotFound && b.kind() == io::ErrorKind::NotFound =>
+            {
+                Ok(())
+            }
+            _ => Err(invalid()),
+        }
+    };
+    for name in PROGRAMS.into_iter().chain(["native-mods.json"]) {
+        exact_file(name.as_ref())?;
+    }
+    for name in ["native-data", "native-content", "sunrise-native-mods"] {
+        let source = version.join(name);
+        let bundle = programs.join(name);
+        match (fs::symlink_metadata(&source), fs::symlink_metadata(&bundle)) {
+            (Ok(a), Ok(b))
+                if a.is_dir()
+                    && b.file_type().is_symlink()
+                    && fs::read_link(bundle)? == Path::new("../../..").join(name) => {}
+            (Err(a), Err(b))
+                if a.kind() == io::ErrorKind::NotFound && b.kind() == io::ErrorKind::NotFound => {}
+            _ => return Err(invalid()),
+        }
+    }
+    for directory in [version, programs] {
+        for entry in fs::read_dir(directory)? {
+            let name = entry?.file_name();
+            if runtime_library(&name.to_string_lossy()) {
+                exact_file(&name)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 // Runtime libraries installed by the native routes, the game's and each mod's own library; keep
 // bundle discovery in one place.
 fn runtime_library(name: &str) -> bool {
@@ -207,6 +262,7 @@ mod tests {
         fs::write(version.join("libexample.dylib"), b"mod").unwrap();
         fs::create_dir_all(version.join("sunrise-native-mods/example")).unwrap();
         let program = ensure(&version).unwrap();
+        verify_links(&version, &program).unwrap();
         let bundled = program.with_file_name("libsunrise_mod_host.dylib");
         assert!(same_file(&library, &bundled));
         assert!(program.with_file_name("libstd-test.dylib").exists());
@@ -218,7 +274,9 @@ mod tests {
             .is_dir());
         fs::remove_file(&library).unwrap();
         fs::write(&library, b"new").unwrap();
+        assert!(verify_links(&version, &program).is_err());
         ensure(&version).unwrap();
+        verify_links(&version, &program).unwrap();
         assert_eq!(fs::read(&bundled).unwrap(), b"new");
         fs::remove_file(&library).unwrap();
         fs::rename(

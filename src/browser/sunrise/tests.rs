@@ -41,6 +41,37 @@ fn put(index: &Index, local: bool, home: &Path) -> Result<Vec<installed::Entry>,
 }
 
 #[test]
+fn only_the_builtin_reply_can_prove_a_published_id_and_archive_hash() {
+    assert!(official_endpoint(INDEX_URL, false));
+    assert!(!official_endpoint(INDEX_URL, true));
+    assert!(!official_endpoint(
+        "https://example.invalid/index.json",
+        false
+    ));
+
+    // Published checksums for vanilla_bestiary 0.1.2 and 0.1.1. The older release
+    // still proves origin for those bytes; this is independent of a display row.
+    let old = "2fc5befa05c4190656bb9a9109fb6e15999e33801b13484f73a74f9abbfd00d4";
+    let mut project = sample().project("coords_hud").unwrap().clone();
+    project.id = "vanilla_bestiary".into();
+    project.kind = index::Kind::NativeMod;
+    let mut newest = project.versions[0].clone();
+    newest.version = "0.1.2".into();
+    newest.file.sha256 = "9281fccab1b489924a9291052bd52c62422b7b2c619714a316cf2bc53af1f6ec".into();
+    let mut previous = newest.clone();
+    previous.version = "0.1.1".into();
+    previous.file.sha256 = old.into();
+    project.versions = vec![newest, previous];
+    let authority = OfficialRegistry::fixture(&Index {
+        projects: vec![project],
+        ..Index::default()
+    });
+    assert!(authority.proves_archive("vanilla_bestiary", old));
+    assert!(!authority.proves_archive("foreign_bestiary", old));
+    assert!(!authority.proves_archive("vanilla_bestiary", &"7".repeat(64)));
+}
+
+#[test]
 fn a_required_mod_is_installed_once_and_refusals_leave_the_profile_intact() {
     let dir = tempfile::tempdir().unwrap();
     let mut index = sample();

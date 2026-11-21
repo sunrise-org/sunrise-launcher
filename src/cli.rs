@@ -1102,6 +1102,10 @@ fn attached(cmd: Command) -> Result<i32, String> {
     let status = backend::spawn_attached(&mut cmd)
         .and_then(|mut child| child.wait())
         .map_err(|e| format!("Could not start {:?}: {e}", cmd.get_program()))?;
+    attached_status(status)
+}
+
+fn attached_status(status: std::process::ExitStatus) -> Result<i32, String> {
     #[cfg(unix)]
     {
         sunrise_launcher::process::supervisor::exit_code(status).map_err(|error| error.to_string())
@@ -1359,11 +1363,21 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             } else {
                 backend::MinecraftFrom::Install
             };
-            let _preparing = backend::prepare_lock(&tag)?;
-            let (preparer, minecraft) =
-                backend::preparer(&tag, &minecraft, from, &|line| eprintln!("{line}"))?;
-            backend::sounds(&tag, &minecraft, &|line| println!("{line}"));
-            let code = attached(preparer)?;
+            let preparation = backend::prepare_lock(&tag)?;
+            let (preparer, minecraft) = backend::preparer(
+                &tag,
+                &minecraft,
+                from,
+                &|line| eprintln!("{line}"),
+                &preparation,
+            )?;
+            backend::sounds(&tag, &minecraft, &|line| println!("{line}"), &preparation);
+            let (preparer, _runtime) = backend::prepare_command(preparer)?;
+            let status = preparation
+                .spawn_attached(preparer)
+                .and_then(|mut child| child.wait())
+                .map_err(|e| format!("Could not run the game's preparer: {e}"))?;
+            let code = attached_status(status)?;
             if code != 0 {
                 return Ok(code);
             }
@@ -1384,52 +1398,100 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 Some(name) => instances::find(&name)?,
                 None => instances::selection()?,
             };
-            // Who plays this launch only.
-            let who = match account {
-                Some(who) => Some(
-                    Accounts::load()
-                        .find(&who)
-                        .ok_or_else(|| {
-                            format!("No signed-in account {who}. See `sunrise-launcher account`.")
-                        })?
-                        .uuid
-                        .clone(),
-                ),
-                None => None,
+            use sunrise_launcher::{jars, managed_play};
+            let accounts = Accounts::load();
+            let account = account
+                .as_deref()
+                .map(|who| {
+                    accounts.find(who).ok_or_else(|| {
+                        format!("No signed-in account {who}. See `sunrise-launcher account`.")
+                    })
+                })
+                .transpose()?;
+            let selected = account.or_else(|| accounts.selected());
+            let add_arguments = |cmd: &mut Command| -> Result<(), String> {
+                if let Some(code) = join {
+                    backend::join_friend(cmd, &code)?;
+                }
+                if let Some(world) = world {
+                    cmd.arg("--world").arg(world);
+                }
+                if let Some(server) = server {
+                    let list = server_list::List::load(&instance.home);
+                    let ip = server_list::find(&list, &server).map_or(server, |(_, s)| s.ip);
+                    cmd.arg("--server").arg(ip);
+                }
+                if creative {
+                    cmd.arg("--creative");
+                }
+                cmd.args(arg);
+                Ok(())
             };
-            let tag = instance.resolve_version(version.as_deref())?;
-            let mut cmd = backend::client_as(&tag, who.as_deref())?;
-            instances::apply(&mut cmd, &instance)?;
-            if let Some(code) = join {
-                backend::join_friend(&mut cmd, &code)?;
-            }
-            if let Some(world) = world {
-                cmd.arg("--world").arg(world);
-            }
-            if let Some(server) = server {
-                let list = server_list::List::load(&instance.home);
-                let ip = server_list::find(&list, &server).map_or(server, |(_, s)| s.ip);
-                cmd.arg("--server").arg(ip);
-            }
-            if creative {
-                cmd.arg("--creative");
-            }
-            cmd.args(arg);
-            let started = std::time::Instant::now();
+            let jar_permission = jars::Permission::headless(allow_jar_downloads);
             let vars = instance.vars();
-            cmd.envs(vars.iter().map(|(k, v)| (k, v)));
-            for notice in
-                sunrise_launcher::browser::sunrise::before_play(&mut cmd, &tag, &instance.launch)?
-            {
-                eprintln!("{notice}");
-            }
-            sunrise_launcher::jars::prepare_launch(
-                &mut cmd,
-                &instance.launch,
-                sunrise_launcher::jars::Permission::headless(allow_jar_downloads),
-            )
-            .map_err(|error| error.to_string())?;
-            let played = attached(sunrise_launcher::launch::wrap(cmd, &instance.launch)?);
+            let (started, played) = if instance.kind == instances::Kind::Pack {
+                let tag = instance.resolve_version(version.as_deref())?;
+                let mut cmd = backend::client_as(&tag, account.map(|a| a.uuid.as_str()))?;
+                instances::apply(&mut cmd, &instance)?;
+                add_arguments(&mut cmd)?;
+                cmd.envs(vars.iter().map(|(k, v)| (k, v)));
+                for notice in sunrise_launcher::browser::sunrise::before_play(
+                    &mut cmd,
+                    &tag,
+                    &instance.launch,
+                )? {
+                    eprintln!("{notice}");
+                }
+                jars::prepare_launch(&mut cmd, &instance.launch, jar_permission)
+                    .map_err(|error| error.to_string())?;
+                let command = sunrise_launcher::launch::wrap(cmd, &instance.launch)?;
+                (std::time::Instant::now(), attached(command))
+            } else {
+                let start = managed_play::Client {
+                    instance: &instance,
+                    accepted_account: selected.map(|a| a.uuid.as_str()),
+                    explicit_account: account.is_some(),
+                    requested_build: version.as_deref(),
+                    piped: false,
+                }
+                .start(
+                    || managed_play::headless_first(&instance, version.as_deref()),
+                    |cmd| {
+                        backend::append_game_args(cmd);
+                        add_arguments(cmd)
+                    },
+                    |cmd| jars::prepare_for_command(cmd, jar_permission).map_err(|e| e.to_string()),
+                    Some(&registry_consent),
+                    |progress| match progress {
+                        managed_play::Progress::Prepare => {
+                            backend::play_step("preparing the game's files")
+                        }
+                        managed_play::Progress::SignIn => backend::play_step("reading the sign-in"),
+                        managed_play::Progress::Line(line) => eprintln!("{line}"),
+                        _ => {}
+                    },
+                );
+                let mut game = match start {
+                    Ok(game) => game,
+                    Err(managed_play::StartError::Hook(
+                        error @ sunrise_launcher::launch::PreLaunchError::Exit(status),
+                    )) => {
+                        eprintln!("{error}");
+                        return attached_status(status);
+                    }
+                    Err(error) => return Err(error.into()),
+                };
+                for notice in game.registry_notices.iter().chain(&game.notice) {
+                    eprintln!("{notice}");
+                }
+                let started = std::time::Instant::now();
+                let status = game
+                    .child
+                    .wait()
+                    .map_err(sunrise_launcher::process::child::unconfirmed_exit)?;
+                game.runtime.game_exited();
+                (started, attached_status(status))
+            };
             if let Err(e) = instances::record_play(&instance.id, started.elapsed()) {
                 eprintln!("Play time not saved: {e}");
             }

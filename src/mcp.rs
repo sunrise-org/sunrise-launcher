@@ -5,8 +5,8 @@
 use crate::cli_tools;
 use crate::game_tools::{self, GameTools};
 use serde_json::{json, Value};
-use std::path::PathBuf;
 use std::time::Duration;
+use std::{cell::RefCell, collections::VecDeque, path::PathBuf};
 use sunrise_launcher::account::{self, Accounts, SignIn, SignInState};
 use sunrise_launcher::backend::{self, Job, Logged};
 use sunrise_launcher::i18n::tr;
@@ -87,43 +87,107 @@ impl Session {
                     Some(name) => instances::find(name)?,
                     None => instances::selection()?,
                 };
-                let tag = instance.resolve_version(arg_str(args, "version"))?;
-                let mut cmd = backend::client(&tag)?;
-                instances::apply(&mut cmd, &instance)?;
-                cmd.args(game_tools::control_args());
-                if let Some(world) = arg_str(args, "world") {
-                    cmd.arg("--world").arg(world);
-                }
-                for flag in ["creative", "offscreen"] {
-                    if args.get(flag).and_then(Value::as_bool).unwrap_or(false) {
-                        cmd.arg(format!("--{flag}"));
+                use sunrise_launcher::managed_play;
+                let requested = arg_str(args, "version");
+                let add_arguments = |cmd: &mut std::process::Command| -> Result<(), String> {
+                    cmd.args(game_tools::control_args());
+                    if let Some(world) = arg_str(args, "world") {
+                        cmd.arg("--world").arg(world);
                     }
-                }
-                if let Some(code) = arg_str(args, "join") {
-                    backend::join_friend(&mut cmd, code)?;
-                }
-                if let Some(server) = arg_str(args, "server") {
-                    let list = sunrise_launcher::server_list::List::load(&instance.home);
-                    let ip = sunrise_launcher::server_list::find(&list, server)
-                        .map_or_else(|_| server.to_string(), |(_, s)| s.ip);
-                    cmd.arg("--server").arg(ip);
-                }
-                if let Some(extra) = args.get("arg").and_then(Value::as_array) {
-                    cmd.args(extra.iter().filter_map(Value::as_str));
-                }
-                let launch = Default::default();
-                let notices =
-                    sunrise_launcher::browser::sunrise::before_play(&mut cmd, &tag, &launch)?;
-                jars::prepare_launch(&mut cmd, &launch, Permission::headless(allow_jar_downloads))
-                    .map_err(|error| error.to_string())?;
-                let client = Logged::start(Job::Client, cmd)?;
+                    for flag in ["creative", "offscreen"] {
+                        if args.get(flag).and_then(Value::as_bool).unwrap_or(false) {
+                            cmd.arg(format!("--{flag}"));
+                        }
+                    }
+                    if let Some(code) = arg_str(args, "join") {
+                        backend::join_friend(cmd, code)?;
+                    }
+                    if let Some(server) = arg_str(args, "server") {
+                        let list = sunrise_launcher::server_list::List::load(&instance.home);
+                        let ip = sunrise_launcher::server_list::find(&list, server)
+                            .map_or_else(|_| server.to_string(), |(_, s)| s.ip);
+                        cmd.arg("--server").arg(ip);
+                    }
+                    if let Some(extra) = args.get("arg").and_then(Value::as_array) {
+                        cmd.args(extra.iter().filter_map(Value::as_str));
+                    }
+                    Ok(())
+                };
+                let jar_permission = Permission::headless(allow_jar_downloads);
+                let (client, tag, notices) = if instance.kind == instances::Kind::Pack {
+                    let tag = instance.resolve_version(requested)?;
+                    let mut cmd = backend::client(&tag)?;
+                    instances::apply(&mut cmd, &instance)?;
+                    add_arguments(&mut cmd)?;
+                    let launch = Default::default();
+                    let notices =
+                        sunrise_launcher::browser::sunrise::before_play(&mut cmd, &tag, &launch)?;
+                    jars::prepare_launch(&mut cmd, &launch, jar_permission)
+                        .map_err(|error| error.to_string())?;
+                    (Logged::start(Job::Client, cmd)?, tag, notices)
+                } else {
+                    const HOOK_TAIL: usize = 20;
+                    const HOOK_LINE_BYTES: usize = 4096;
+                    let accounts = Accounts::load();
+                    let hook_tail = RefCell::new(VecDeque::with_capacity(HOOK_TAIL));
+                    let start = managed_play::Client {
+                        instance: &instance,
+                        accepted_account: accounts.selected().map(|a| a.uuid.as_str()),
+                        explicit_account: false,
+                        requested_build: requested,
+                        piped: true,
+                    }
+                    .start(
+                        || managed_play::headless_first(&instance, requested),
+                        |cmd| {
+                            backend::append_game_args(cmd);
+                            add_arguments(cmd)
+                        },
+                        |cmd| {
+                            jars::prepare_for_command(cmd, jar_permission)
+                                .map_err(|e| e.to_string())
+                        },
+                        None,
+                        |event| {
+                            if let managed_play::Progress::HookLine(line) = event {
+                                let mut tail = hook_tail.borrow_mut();
+                                if tail.len() == HOOK_TAIL {
+                                    tail.pop_front();
+                                }
+                                tail.push_back(
+                                    line[..line.floor_char_boundary(HOOK_LINE_BYTES)].to_owned(),
+                                );
+                            }
+                        },
+                    );
+                    let hook_tail = hook_tail.into_inner();
+                    let game = match start {
+                        Ok(game) => game,
+                        Err(managed_play::StartError::Hook(error)) if !hook_tail.is_empty() => {
+                            let mut text = error.to_string();
+                            for line in hook_tail {
+                                text.push('\n');
+                                text.push_str(&line);
+                            }
+                            return Err(text);
+                        }
+                        Err(error) => return Err(error.into()),
+                    };
+                    let mut notices = game.registry_notices;
+                    notices.extend(game.notice);
+                    (
+                        Logged::monitor_game(game.child, game.runtime, hook_tail),
+                        game.executable,
+                        notices,
+                    )
+                };
                 // Started once its control socket answers, as sunrise-ctl launch waits.
                 let deadline = std::time::Instant::now() + Duration::from_secs(120);
                 while !game_tools::listening() {
                     if let Some(result) = client.finished() {
                         return Err(format!(
-                            "The client stopped: {}\n{}",
-                            result.err().unwrap_or_default(),
+                            "Couldn't reach the client: {}\n{}",
+                            result.err().unwrap_or_else(|| "the game exited".into()),
                             client.tail(20).join("\n")
                         ));
                     }

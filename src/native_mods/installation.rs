@@ -14,9 +14,15 @@ pub(super) fn install(
 ) -> Result<(), String> {
     let _publication = crate::run_leases::installation().map_err(cache_error)?;
     let from = backend::version_dir(base);
-    let partial = target.directory(&format!(".{version}.partial"));
-    let _ = fs::remove_dir_all(&partial);
-    fs::create_dir_all(&partial).map_err(|e| e.to_string())?;
+    let dir = target.directory(version);
+    let parent = dir.parent().expect("build cache parent");
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let stage = tempfile::Builder::new()
+        .prefix(".native-publish-")
+        .tempdir_in(parent)
+        .map_err(|e| e.to_string())?;
+    let partial = stage.path().join("build");
+    fs::create_dir(&partial).map_err(|e| e.to_string())?;
     copy_base(&from, &partial, target, target == Target::Client)?;
     let installed = partial.join(target.binary());
     fs::copy(binary, &installed).map_err(|e| format!("The built game: {e}"))?;
@@ -37,16 +43,8 @@ pub(super) fn install(
                 .join(&bundle.manifest.id),
         )?;
     }
-    let _permission = match cancellation.publication_guard() {
-        Ok(permission) => permission,
-        Err(cancelled) => {
-            let _ = fs::remove_dir_all(&partial);
-            return Err(cancelled);
-        }
-    };
-    let dir = target.directory(version);
-    let _ = fs::remove_dir_all(&dir);
-    fs::rename(&partial, &dir).map_err(|e| e.to_string())?;
-    crate::run_leases::publish(&dir).map_err(cache_error)?;
-    fs::write(dir.join(".installed"), "").map_err(|e| e.to_string())
+    let _permission = cancellation.publication_guard()?;
+    // A completed tag may already be journaled by another profile. Publish only
+    // a new directory; a failed proof or occupied destination never changes it.
+    crate::run_leases::publish_build(&partial, &dir).map_err(cache_error)
 }

@@ -207,7 +207,18 @@ impl Entry {
                 })
     }
 
+    fn unpublished_game(&self) -> bool {
+        self.relative.parent() == Some(Path::new("versions"))
+            && self
+                .relative
+                .file_name()
+                .is_some_and(crate::backend::installation::private_stage)
+    }
+
     fn last_used(&self) -> Result<Option<std::time::SystemTime>, Error> {
+        if self.unpublished_game() {
+            return Ok(None); // Inventory never stamps a private publisher's staged directory.
+        }
         let Some(root) = &self.directory else {
             return Ok(None);
         };
@@ -391,7 +402,7 @@ impl Storage {
         for version in backend::installed() {
             if native_mods::is_native(&version)
                 && !played.contains(&version)
-                && !native_mods::resource_dependents(&version)
+                && native_mods::resource_dependent(&version).is_none()
                 && !backend::in_use(&version)
             {
                 add(
@@ -535,6 +546,16 @@ impl Storage {
         max_bytes: Option<u64>,
         native_allowed: bool,
     ) -> Result<Report, Error> {
+        self.evict_inventory_observed(now, max_bytes, native_allowed, |_| {})
+    }
+
+    pub(crate) fn evict_inventory_observed(
+        &self,
+        now: std::time::SystemTime,
+        max_bytes: Option<u64>,
+        native_allowed: bool,
+        mut before_clear: impl FnMut(&Path),
+    ) -> Result<Report, Error> {
         use super::policy::{self, Tier, Unit};
         let entries = self.entries()?;
         for entry in &entries {
@@ -656,6 +677,7 @@ impl Storage {
                 .find(|row| row.category == entry.category)
                 .unwrap();
             if selected.contains(&index) {
+                before_clear(&entry.path);
                 let result = if entry.path == self.root.join("native/target") {
                     self.lease.clear().map(|_| ())
                 } else {
@@ -666,7 +688,13 @@ impl Storage {
                     Ok(()) => trees[index] = Tree::build(&entry.path)?,
                     // A refusal comes before any deletion: the folder is as it was walked.
                     Err(
-                        error @ (Error::Busy | Error::UnprovenExclusion | Error::IncompleteUnit),
+                        error @ (Error::Busy
+                        | Error::UnprovenExclusion
+                        | Error::IncompleteUnit
+                        | Error::UnpublishedGame
+                        | Error::ResourceDependent(_)
+                        | Error::ReferencedProfile
+                        | Error::UnprovenReferences),
                     ) => row.kept.push(Kept {
                         bytes: trees[index].size(&mut HashSet::new()),
                         reason: native_mods::cache_error(error),
@@ -811,7 +839,13 @@ impl Storage {
                     // Only a cleared folder is walked again, to see what is left of it.
                     Ok(()) => trees[index] = Tree::build(&entry.path)?,
                     Err(
-                        error @ (Error::Busy | Error::UnprovenExclusion | Error::IncompleteUnit),
+                        error @ (Error::Busy
+                        | Error::UnprovenExclusion
+                        | Error::IncompleteUnit
+                        | Error::UnpublishedGame
+                        | Error::ResourceDependent(_)
+                        | Error::ReferencedProfile
+                        | Error::UnprovenReferences),
                     ) if retain => {
                         let row = rows
                             .iter_mut()

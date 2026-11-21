@@ -2,11 +2,19 @@
 //! up, copying and deleting them. Backups are made as vanilla's Make Backup makes them
 //! (`LevelStorageAccess.makeWorldBackup`): `backups/<yyyy-MM-dd_HH-mm-ss>_<folder>.zip` in the
 //! game folder, every file under `<folder>/` but the world's `session.lock`.
+use cap_fs_ext::{DirExt, FollowSymlinks, MetadataExt, OpenOptionsFollowExt};
+use cap_std::{ambient_authority, fs::Dir};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sunrise_launcher_nbt::{self as nbt, Limits, Tag};
+use sunrise_launcher_smod::{manifest::revision, runtime_leases::linked};
+
+mod effects;
+pub use effects::{unproved_mod_effects, SuspectMods};
 
 /// The lock a running game holds on a world; vanilla's backups leave it out.
 const LOCK: &str = "session.lock";
@@ -100,17 +108,21 @@ pub(crate) fn has_readable_level_dat(folder: &Path) -> bool {
 /// `.dat` files with ([`Limits::saved`]: its depth, no cap on the tag count, and a size bound), so
 /// a level.dat the game loads is never taken for an unreadable one.
 fn level_dat(path: &Path) -> Option<Tag> {
+    decode_level_dat(&fs::read(path).ok()?)
+}
+
+fn decode_level_dat(bytes: &[u8]) -> Option<Tag> {
     let limits = Limits::saved();
-    let bytes = fs::read(path).ok()?;
     let mut raw = Vec::new();
-    let raw = match flate2::read::GzDecoder::new(&bytes[..])
-        .take(limits.max_bytes as u64)
+    let raw = match flate2::read::GzDecoder::new(bytes)
+        .take(limits.max_bytes as u64 + 1)
         .read_to_end(&mut raw)
     {
-        Ok(_) => raw,
+        Ok(_) if raw.len() <= limits.max_bytes => &raw,
+        Ok(_) => return None,
         Err(_) => bytes,
     };
-    Some(nbt::read_named(&raw, limits).ok()?.0.tag)
+    Some(nbt::read_named(raw, limits).ok()?.0.tag)
 }
 
 fn read(path: &Path) -> Option<World> {
@@ -279,6 +291,359 @@ pub fn at_risk(home: &Path, ids: &[String]) -> Result<Vec<(World, Vec<String>, b
             (!used.is_empty()).then_some((s.world, used, s.known))
         })
         .collect())
+}
+
+/// One admitted save's risk for a proposed change. Equality binds the directory and the exact
+/// bytes (or absence) of both level files, not just the fields shown in the warning.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorldRisk {
+    pub path: PathBuf,
+    pub name: String,
+    /// All suspect IDs, in ID order. A last-loaded list cannot rule out historical use.
+    pub mods: Vec<String>,
+    /// Suspects positively identified in either level file, in ID order.
+    pub confirmed_mods: Vec<String>,
+    /// Every ID in `mods` has positive evidence. False means some of the risk is uncertain.
+    pub known: bool,
+    /// `level.dat` contains at least one nonempty, valid mod list and no malformed mod evidence.
+    /// This describes the last-loaded set only, never whether historic chunks contain a mod.
+    pub primary_complete: bool,
+    /// A present level file could not be parsed or has malformed mod evidence. Omitted or empty
+    /// lists are not malformed. Positive evidence in other lists or files is still reported.
+    pub malformed: bool,
+    /// Build-order evidence comes only from `level.dat`, never the older recovery file.
+    pub data_version: Option<i32>,
+    pub saved_commit: Option<String>,
+    directory: DirectoryIdentity,
+    levels: [Option<[u8; 32]>; 2],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct DirectoryIdentity {
+    device: u64,
+    inode: u64,
+    created: Option<cap_std::time::SystemTime>,
+}
+
+impl DirectoryIdentity {
+    fn of(dir: &Dir) -> io::Result<Self> {
+        let meta = dir.dir_metadata()?;
+        Ok(Self {
+            device: meta.dev(),
+            inode: meta.ino(),
+            created: meta.created().ok(),
+        })
+    }
+}
+
+/// Read a path-ordered world roster under the caller's profile admission. `sources` maps suspect
+/// mod IDs to namespaces claimed by their definitions. Both level files can confirm use, but
+/// neither can rule it out: chunks can retain blocks and items from mods no longer loaded. Every
+/// identified world therefore carries all suspects, with positive matches tracked separately.
+/// A directory with neither level file isn't a discovered world.
+///
+/// Fails on traversal or read I/O errors, redirected directories and aliased evidence files. A
+/// file whose bytes could be read and hashed but not parsed sets [`WorldRisk::malformed`] without
+/// suppressing recoverable positive evidence. This reader does not create or acquire `session.lock`.
+/// Callers hold profile admission (including roster writers), obtain
+/// [`lock_reviewed`] before publishing, and compare a fresh snapshot while both are held.
+/// Paths above the admitted home, same-volume mount aliases without a second visible name and
+/// arbitrary external writes are outside this check.
+pub fn review_risk(
+    home: &Path,
+    sources: &BTreeMap<String, BTreeSet<String>>,
+) -> Result<Vec<WorldRisk>, String> {
+    let meta = fs::symlink_metadata(home).map_err(|e| world_error(home, e))?;
+    if linked(&meta) || !meta.is_dir() {
+        return Err(world_error(home, io::ErrorKind::InvalidData));
+    }
+    let root =
+        Dir::open_ambient_dir(home, ambient_authority()).map_err(|e| world_error(home, e))?;
+    let root_id = DirectoryIdentity::of(&root).map_err(|e| world_error(home, e))?;
+    let saves_path = home.join("saves");
+    match fs::symlink_metadata(&saves_path) {
+        Ok(meta) if meta.is_dir() && !linked(&meta) => (),
+        Ok(_) => return Err(world_error(&saves_path, io::ErrorKind::InvalidData)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(world_error(&saves_path, e)),
+    }
+    let saves = root
+        .open_dir_nofollow("saves")
+        .map_err(|e| world_error(&saves_path, e))?;
+    let saves_id = DirectoryIdentity::of(&saves).map_err(|e| world_error(&saves_path, e))?;
+    if saves_id.device != root_id.device || saves_id == root_id {
+        return Err(world_error(&saves_path, io::ErrorKind::InvalidData));
+    }
+    let mut seen = BTreeSet::from([root_id, saves_id]);
+    let mut worlds = Vec::new();
+    for entry in saves.entries().map_err(|e| world_error(&saves_path, e))? {
+        let folder = entry.map_err(|e| world_error(&saves_path, e))?.file_name();
+        let path = saves_path.join(&folder);
+        let meta = fs::symlink_metadata(&path).map_err(|e| world_error(&path, e))?;
+        if linked(&meta) {
+            return Err(world_error(&path, io::ErrorKind::InvalidData));
+        }
+        if !meta.is_dir() {
+            continue;
+        }
+        let dir = saves
+            .open_dir_nofollow(&folder)
+            .map_err(|e| world_error(&path, e))?;
+        let directory = DirectoryIdentity::of(&dir).map_err(|e| world_error(&path, e))?;
+        if directory.device != saves_id.device || !seen.insert(directory) {
+            return Err(world_error(&path, io::ErrorKind::InvalidData));
+        }
+        let read = |name: &str| {
+            let file = path.join(name);
+            read_level_evidence(&dir, name, &file, directory.device)
+                .map_err(|e| world_error(&file, e))
+        };
+        let primary = read("level.dat")?;
+        let fallback = read("level.dat_old")?;
+        if primary.is_none() && fallback.is_none() {
+            continue;
+        }
+        let primary_records = primary.as_ref().and_then(|level| level.records.as_ref());
+        let fallback_records = fallback.as_ref().and_then(|level| level.records.as_ref());
+        let primary_complete = primary_records.is_some_and(|r| r.valid && !r.ids.is_empty());
+        let malformed = [primary.as_ref(), fallback.as_ref()]
+            .into_iter()
+            .flatten()
+            .any(|file| !file.records.as_ref().is_some_and(|r| r.valid));
+        let confirmed_mods: Vec<String> = sources
+            .iter()
+            .filter(|(id, claims)| {
+                [primary_records, fallback_records]
+                    .into_iter()
+                    .flatten()
+                    .any(|r| {
+                        r.ids.contains(id.as_str())
+                            || claims
+                                .iter()
+                                .any(|ns| ns != "minecraft" && r.namespaces.contains(ns))
+                    })
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        worlds.push(WorldRisk {
+            path,
+            name: primary_records
+                .and_then(|r| r.name.clone())
+                .or_else(|| fallback_records.and_then(|r| r.name.clone()))
+                .unwrap_or_else(|| folder.to_string_lossy().into_owned()),
+            known: confirmed_mods.len() == sources.len(),
+            mods: sources.keys().cloned().collect(),
+            confirmed_mods,
+            primary_complete,
+            malformed,
+            data_version: primary_records.and_then(|r| r.data_version),
+            saved_commit: primary_records.and_then(|r| r.saved_commit.clone()),
+            directory,
+            levels: [
+                primary.map(|file| file.digest),
+                fallback.map(|file| file.digest),
+            ],
+        });
+    }
+    worlds.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(worlds)
+}
+
+/// Held game-compatible locks for an admitted world roster. Dropping this guard releases them.
+pub struct ReviewedWorldLocks {
+    _locks: Vec<WorldLock>,
+}
+
+/// Lock the exact reviewed directories in path order without following redirected directories or
+/// aliased lock files. If any lock can't be acquired, release the rest and return an error.
+/// The caller keeps profile admission, rechecks the entire roster with [`review_risk`] after
+/// acquiring these locks and holds this guard through publishing. These locks exclude Sunrise's
+/// world opener, not arbitrary external file edits or new children in `saves`.
+pub fn lock_reviewed(worlds: &[WorldRisk]) -> Result<ReviewedWorldLocks, String> {
+    let mut ordered: Vec<_> = worlds.iter().collect();
+    ordered.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+    let mut locks = Vec::with_capacity(ordered.len());
+    for world in ordered {
+        let path = &world.path;
+        let parent = path
+            .parent()
+            .ok_or_else(|| world_error(path, io::ErrorKind::InvalidInput))?;
+        let folder = path
+            .file_name()
+            .ok_or_else(|| world_error(path, io::ErrorKind::InvalidInput))?;
+        let home = parent
+            .parent()
+            .ok_or_else(|| world_error(parent, io::ErrorKind::InvalidInput))?;
+        let saves_name = parent
+            .file_name()
+            .ok_or_else(|| world_error(parent, io::ErrorKind::InvalidInput))?;
+        for directory in [home, parent, path] {
+            let meta = fs::symlink_metadata(directory).map_err(|e| world_error(directory, e))?;
+            if linked(&meta) || !meta.is_dir() {
+                return Err(world_error(directory, io::ErrorKind::InvalidData));
+            }
+        }
+        let dir = Dir::open_ambient_dir(home, ambient_authority())
+            .and_then(|home| home.open_dir_nofollow(saves_name))
+            .and_then(|saves| saves.open_dir_nofollow(folder))
+            .map_err(|e| world_error(path, e))?;
+        if DirectoryIdentity::of(&dir).map_err(|e| world_error(path, e))? != world.directory {
+            return Err(world_error(path, "The reviewed world directory changed"));
+        }
+        let lock = path.join(LOCK);
+        let mut options = cap_std::fs::OpenOptions::new();
+        options.write(true).follow(FollowSymlinks::No);
+        match fs::symlink_metadata(&lock) {
+            Ok(meta) if meta.is_file() && !linked(&meta) => (),
+            Ok(_) => return Err(world_error(&lock, io::ErrorKind::InvalidData)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                options.create_new(true);
+            }
+            Err(e) => return Err(world_error(&lock, e)),
+        }
+        let file = dir
+            .open_with(LOCK, &options)
+            .map_err(|e| world_error(&lock, e))?;
+        let meta = file.metadata().map_err(|e| world_error(&lock, e))?;
+        if !meta.is_file() || meta.nlink() != 1 || meta.dev() != world.directory.device {
+            return Err(world_error(&lock, io::ErrorKind::InvalidData));
+        }
+        let file = file.into_std();
+        file.try_lock().map_err(|e| world_error(&lock, e))?;
+        locks.push(WorldLock(file));
+    }
+    Ok(ReviewedWorldLocks { _locks: locks })
+}
+
+fn world_error(path: &Path, error: impl std::fmt::Display) -> String {
+    format!("{}: {error}", path.display())
+}
+
+struct LevelEvidence {
+    digest: [u8; 32],
+    records: Option<LevelRecords>,
+}
+
+/// The hash and parsed evidence must come from the same read, so a changed file can't contribute
+/// metadata to an earlier snapshot. A missing file is distinct from a present, malformed one.
+fn read_level_evidence(
+    dir: &Dir,
+    name: &str,
+    path: &Path,
+    device: u64,
+) -> io::Result<Option<LevelEvidence>> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() && !linked(&meta) => (),
+        Ok(_) => return Err(io::ErrorKind::InvalidData.into()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    }
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    let file = dir.open_with(name, &options)?;
+    let meta = file.metadata()?;
+    if !meta.is_file() || meta.nlink() != 1 || meta.dev() != device {
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    let limit = Limits::saved().max_bytes;
+    let mut bytes = Vec::new();
+    file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > limit {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "World evidence exceeds the save size limit",
+        ));
+    }
+    Ok(Some(LevelEvidence {
+        digest: Sha256::digest(&bytes).into(),
+        records: decode_level_dat(&bytes).and_then(|root| LevelRecords::parse(&root)),
+    }))
+}
+
+struct LevelRecords {
+    name: Option<String>,
+    data_version: Option<i32>,
+    saved_commit: Option<String>,
+    ids: BTreeSet<String>,
+    namespaces: BTreeSet<String>,
+    valid: bool,
+}
+
+impl LevelRecords {
+    fn parse(root: &Tag) -> Option<Self> {
+        let data @ Tag::Compound(_) = root.get("Data")? else {
+            return None;
+        };
+        let sunrise = root.get("sunrise");
+        let fml = root.get("fml");
+        let shape_ok = [sunrise, fml]
+            .into_iter()
+            .flatten()
+            .all(|tag| matches!(tag, Tag::Compound(_)));
+        let mod_id = |entry: &Tag| {
+            // Versions are opaque saved text; the game writes "" when not known.
+            saved_string(entry.get("ModVersion")).filter(|v| !v.chars().any(char::is_control))?;
+            saved_string(entry.get("ModId"))
+                .filter(|id| (1..=64).contains(&id.len()) && id.bytes().all(mod_id_byte))
+        };
+        let content = validated_list(sunrise.and_then(|tag| tag.get("ContentModList")), mod_id);
+        let legacy = validated_list(fml.and_then(|tag| tag.get("LoadingModList")), mod_id);
+        let namespaces = validated_list(
+            sunrise.and_then(|tag| tag.get("BlockNamespaces")),
+            |entry| {
+                saved_string(Some(entry)).filter(|ns| {
+                    !ns.is_empty()
+                        && ns
+                            .bytes()
+                            .all(|b| mod_id_byte(b) || matches!(b, b'.' | b'-'))
+                })
+            },
+        );
+        Some(Self {
+            name: saved_string(data.get("LevelName")).filter(|name| !name.trim().is_empty()),
+            data_version: match data.get("DataVersion") {
+                Some(Tag::Int(version)) => Some(*version),
+                _ => None,
+            },
+            saved_commit: saved_string(sunrise.and_then(|tag| tag.get("LastSavedCommit")))
+                .filter(|commit| revision(commit)),
+            valid: shape_ok && content.is_some() && legacy.is_some() && namespaces.is_some(),
+            ids: content.into_iter().chain(legacy).flatten().collect(),
+            namespaces: namespaces.unwrap_or_default(),
+        })
+    }
+}
+
+fn mod_id_byte(b: u8) -> bool {
+    b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'
+}
+
+fn saved_string(tag: Option<&Tag>) -> Option<String> {
+    match tag {
+        Some(Tag::String(s)) => s.to_string().ok(),
+        _ => None,
+    }
+}
+
+/// The game omits empty lists. Reject a malformed list as a unit; other lists and the other
+/// level file can still supply positive evidence.
+fn validated_list(
+    tag: Option<&Tag>,
+    parse: impl Fn(&Tag) -> Option<String>,
+) -> Option<BTreeSet<String>> {
+    let Some(tag) = tag else {
+        return Some(BTreeSet::new());
+    };
+    let Tag::List(entries) = tag else {
+        return None;
+    };
+    let mut found = BTreeSet::new();
+    for entry in entries {
+        if !found.insert(parse(entry)?) {
+            return None;
+        }
+    }
+    Some(found)
 }
 
 fn size(dir: &Path) -> u64 {

@@ -14,6 +14,8 @@ use std::{
 pub struct ChildLeases {
     claims: Vec<Claim>,
     data: PathBuf,
+    #[cfg(windows)]
+    extra: Vec<File>,
 }
 impl ChildLeases {
     /// Acquire the shared gate, then each held tree. Fails immediately on contention.
@@ -26,6 +28,8 @@ impl ChildLeases {
         Ok(Self {
             claims,
             data: data.canonicalize()?,
+            #[cfg(windows)]
+            extra: Vec::new(),
         })
     }
     /// Create exactly one native child inside the isolated holder. Inherits that holder's cwd
@@ -83,8 +87,22 @@ impl ChildLeases {
         )
     }
 
-    fn files(&self) -> Vec<&File> {
-        self.claims.iter().flat_map(Claim::files).collect()
+    #[cfg(windows)]
+    pub(crate) fn retain(&mut self, files: [&File; 2]) -> io::Result<()> {
+        self.extra.extend(
+            files
+                .into_iter()
+                .map(File::try_clone)
+                .collect::<io::Result<Vec<_>>>()?,
+        );
+        Ok(())
+    }
+
+    pub(super) fn files(&self) -> Vec<&File> {
+        let claims = self.claims.iter().flat_map(Claim::files);
+        #[cfg(windows)]
+        let claims = claims.chain(self.extra.iter());
+        claims.collect()
     }
     #[cfg(unix)]
     pub fn spawn(self, command: std::process::Command) -> io::Result<std::process::Child> {
@@ -100,8 +118,8 @@ pub struct ProfileHandoff<'a> {
     pub(crate) handed_off: &'a std::sync::atomic::AtomicBool,
 }
 
-/// Preparation only needs the profile gate. The compiler also needs the existing Windows
-/// Job cutover (the Unix compiler uses its worker executable for process-tree proof).
+/// A staged profile child. The compiler also needs the existing Windows Job cutover
+/// (the Unix compiler uses its worker executable for process-tree proof).
 #[derive(Clone, Copy)]
 pub enum StagedChild {
     Prepare,
@@ -111,7 +129,7 @@ pub enum StagedChild {
 impl ProfileHandoff<'_> {
     #[cfg(unix)]
     fn spawn_unix(
-        self,
+        &self,
         command: std::process::Command,
         roots: &[&File],
         runtime_root: Option<&Path>,
@@ -147,6 +165,40 @@ impl ProfileHandoff<'_> {
     }
 }
 
+/// The shared version's preparation exclusion must follow its writer, even when
+/// there is no admitted profile (startup/Prepare).
+pub(crate) fn spawn_preparer(
+    mut command: std::process::Command,
+    file: &File,
+    profile: Option<&ProfileHandoff<'_>>,
+    piped: bool,
+) -> io::Result<super::child::Child> {
+    command.env_remove("SUNRISE_ACCOUNT_SESSIONS");
+    #[cfg(unix)]
+    {
+        if piped {
+            std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        }
+        let command = profile_streams(command, piped);
+        match profile {
+            Some(profile) => profile.spawn_unix(command, &[file], None),
+            None => spawn_unix(command, &[file], None, None),
+        }
+        .map(Into::into)
+    }
+    #[cfg(windows)]
+    spawn_windows_command(
+        &command,
+        &[file],
+        windows::Start {
+            profile: profile.map(|handoff| handoff.file),
+            attached: !piped,
+            ..windows::Start::default()
+        },
+        piped,
+    )
+}
+
 #[cfg(unix)]
 fn profile_streams(mut command: std::process::Command, piped: bool) -> std::process::Command {
     if piped {
@@ -161,7 +213,7 @@ fn profile_streams(mut command: std::process::Command, piped: bool) -> std::proc
 /// Only the chosen fork clears CLOEXEC. Consume the command, so stale pre_exec fds cannot
 /// be reused after these owners drop. No allocation or lock is taken in the child callback.
 #[cfg(unix)]
-fn spawn_unix(
+pub(super) fn spawn_unix(
     mut command: std::process::Command,
     roots: &[&File],
     runtime_root: Option<&Path>,
@@ -232,7 +284,9 @@ fn spawn_unix(
 #[cfg(windows)]
 pub(super) mod windows;
 #[cfg(windows)]
-pub(crate) use windows::CompilerJob;
+pub(crate) use windows::Job as CompilerJob;
+#[cfg(windows)]
+pub(super) use windows::Job as WrapperJob;
 #[cfg(windows)]
 pub use windows::WindowsChild;
 
@@ -247,6 +301,39 @@ pub(crate) fn spawn_compiler(command: &std::process::Command) -> io::Result<supe
             ..windows::Start::default()
         },
         true,
+    )
+}
+
+#[cfg(windows)]
+pub(super) fn spawn_windows_wrapper(
+    command: &std::process::Command,
+    piped: bool,
+) -> io::Result<super::child::Child> {
+    spawn_windows_command(
+        command,
+        &[],
+        windows::Start {
+            wrapper: true,
+            attached: !piped,
+            ..windows::Start::default()
+        },
+        piped,
+    )
+}
+
+#[cfg(windows)]
+pub(super) fn spawn_windows_relay(
+    command: &std::process::Command,
+    files: &[&File],
+) -> io::Result<super::child::Child> {
+    spawn_windows_command(
+        command,
+        files,
+        windows::Start {
+            attached: true,
+            ..windows::Start::default()
+        },
+        false,
     )
 }
 
@@ -296,9 +383,13 @@ mod tests;
 
 fn error(error: Error) -> io::Error {
     match error {
-        Error::Busy | Error::UnprovenExclusion | Error::IncompleteUnit => {
-            io::ErrorKind::WouldBlock.into()
-        }
+        Error::Busy
+        | Error::UnprovenExclusion
+        | Error::IncompleteUnit
+        | Error::UnpublishedGame
+        | Error::ResourceDependent(_)
+        | Error::ReferencedProfile
+        | Error::UnprovenReferences => io::ErrorKind::WouldBlock.into(),
         Error::UnsupportedFilesystem => io::ErrorKind::Unsupported.into(),
         Error::Unsafe(_) => io::ErrorKind::InvalidInput.into(),
         Error::Io(error) => error,

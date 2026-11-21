@@ -88,12 +88,14 @@ pub fn clone_or_copy(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 /// The version folder's `sunrise-prepare`, when it ships one.
+pub(crate) const BINARY: &str = if cfg!(windows) {
+    "sunrise-prepare.exe"
+} else {
+    "sunrise-prepare"
+};
+
 pub fn binary(dir: &Path) -> Option<PathBuf> {
-    let binary = dir.join(if cfg!(windows) {
-        "sunrise-prepare.exe"
-    } else {
-        "sunrise-prepare"
-    });
+    let binary = dir.join(BINARY);
     binary.is_file().then_some(binary)
 }
 
@@ -112,16 +114,92 @@ fn unrun(error: std::io::Error) -> String {
     )
 }
 
+/// Exclusive access to a version's shared preparation tree. On Unix the flock follows
+/// the inherited file description; on Windows the no-share open follows the handle.
+pub struct Preparation {
+    file: fs::File,
+    #[cfg(unix)]
+    handed_off: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(unix)]
+impl Drop for Preparation {
+    fn drop(&mut self) {
+        // An unrelated fork can still have a descriptor before exec. Only a deliberate
+        // preparer handoff needs that descriptor to keep the lock after we drop ours.
+        if !*self.handed_off.get_mut() {
+            let _ = self.file.unlock();
+        }
+    }
+}
+
+pub(crate) struct Handoff<'a> {
+    preparation: &'a Preparation,
+    profile: Option<crate::process::leases::ProfileHandoff<'a>>,
+}
+
+impl Preparation {
+    pub(crate) fn new(file: fs::File) -> Self {
+        Self {
+            file,
+            #[cfg(unix)]
+            handed_off: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    pub(crate) fn handoff<'a>(
+        &'a self,
+        profile: Option<crate::process::leases::ProfileHandoff<'a>>,
+    ) -> Handoff<'a> {
+        Handoff {
+            preparation: self,
+            profile,
+        }
+    }
+
+    pub fn spawn_attached(&self, command: Command) -> io::Result<crate::process::child::Child> {
+        self.handoff(None).spawn(command, false)
+    }
+}
+
+impl Handoff<'_> {
+    pub(crate) fn spawn(
+        &self,
+        command: Command,
+        piped: bool,
+    ) -> io::Result<crate::process::child::Child> {
+        let child = crate::process::leases::spawn_preparer(
+            command,
+            &self.preparation.file,
+            self.profile.as_ref(),
+            piped,
+        )?;
+        #[cfg(unix)]
+        self.preparation
+            .handed_off
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        Ok(child)
+    }
+}
+
 /// Runs `command` to its end, each stdout line to `out`; stderr is read beside it (so no pipe fills) and its lines returned.
 fn run(
     mut command: Command,
     out: &mut dyn FnMut(String),
+    handoff: Option<&Handoff<'_>>,
 ) -> Result<(ExitStatus, Vec<String>), String> {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = crate::process::owned::Owned::spawn(&mut command).map_err(unrun)?;
+    use crate::process::owned::Owned;
+    let mut child = if let Some(handoff) = handoff {
+        handoff.spawn(command, true).map(Owned::start_preparer)
+    } else {
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        Owned::spawn(&mut command)
+    }
+    .map_err(unrun)?;
+    drop(child.child().stdin.take());
     let stderr = child.child().stderr.take().expect("piped");
     let errors = std::thread::spawn(move || tail(stderr));
     let mut read = 0;
@@ -135,6 +213,24 @@ fn run(
     }
     let status = child.wait().map_err(unrun)?;
     Ok((status, errors.join().unwrap_or_default()))
+}
+
+pub(crate) fn run_staged(
+    command: Command,
+    handoff: Handoff<'_>,
+    line: &dyn Fn(String),
+) -> Result<(), String> {
+    let (status, errors) = run(command, &mut |text| line(text), Some(&handoff))?;
+    for error in errors {
+        line(error);
+    }
+    if !status.success() {
+        return Err(crate::i18n::trf(
+            "The game's preparer stopped ({status}).",
+            &[("status", &status.to_string())],
+        ));
+    }
+    Ok(())
 }
 
 /// The most a preparer's standard output is read for, and the most of its error output kept (its last lines).
@@ -169,16 +265,24 @@ fn tail(stream: impl std::io::Read) -> Vec<String> {
 }
 
 /// The JSON reply on the last stdout line of `command`, when the preparer has the subcommand (exit 2 means it doesn't); its log lines go to `line`.
-fn reply(command: Command, line: &dyn Fn(String)) -> Result<Option<Value>, String> {
+fn reply(
+    command: Command,
+    line: &dyn Fn(String),
+    handoff: Option<&Handoff<'_>>,
+) -> Result<Option<Value>, String> {
     let mut last = None;
-    let (status, errors) = run(command, &mut |text| {
-        let value: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-        match value["message"].as_str() {
-            Some(message) => line(message.to_owned()),
-            None if value.is_object() => last = Some(value),
-            None => {}
-        }
-    })?;
+    let (status, errors) = run(
+        command,
+        &mut |text| {
+            let value: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+            match value["message"].as_str() {
+                Some(message) => line(message.to_owned()),
+                None if value.is_object() => last = Some(value),
+                None => {}
+            }
+        },
+        handoff,
+    )?;
     if status.code() == Some(2) {
         return Ok(None);
     }
@@ -212,11 +316,12 @@ fn reply(command: Command, line: &dyn Fn(String)) -> Result<Option<Value>, Strin
 }
 
 /// Copies the sounds into `root`'s resources (`sounds`), each line to `line`; None when the preparer has no such command.
-pub fn sounds(
+pub(crate) fn sounds(
     binary: &Path,
     root: &Path,
     minecraft: &Path,
     line: &dyn Fn(String),
+    handoff: Option<&Handoff<'_>>,
 ) -> Result<Option<()>, String> {
     let mut command = crate::process::command(binary);
     command
@@ -226,7 +331,7 @@ pub fn sounds(
         .arg(root)
         .arg("--minecraft-dir")
         .arg(minecraft);
-    let (status, errors) = run(command, &mut |text| line(text))?;
+    let (status, errors) = run(command, &mut |text| line(text), handoff)?;
     match status.code() {
         Some(0) => Ok(Some(())),
         Some(2) => Ok(None),
@@ -255,9 +360,14 @@ pub struct Needs {
 }
 
 /// [`Needs`] from the version's own preparer; `None` when it is too old to answer.
-pub fn needs(binary: &Path, root: &Path, line: &dyn Fn(String)) -> Result<Option<Needs>, String> {
+pub(crate) fn needs(
+    binary: &Path,
+    root: &Path,
+    line: &dyn Fn(String),
+    handoff: Option<&Handoff<'_>>,
+) -> Result<Option<Needs>, String> {
     Ok(
-        reply(json_command(binary, root, "needs"), line)?.map(|value| Needs {
+        reply(json_command(binary, root, "needs"), line, handoff)?.map(|value| Needs {
             server_jar: value["server_jar"].as_bool().unwrap_or(true),
             jdk: value["jdk"].as_bool().unwrap_or(true),
         }),
@@ -282,21 +392,27 @@ fn extras(value: &Value) -> Extras {
 }
 
 /// The extras the prepared `resources` of `root` lack (`missing-extras --json`); `None` when the preparer is too old to answer.
-pub fn missing_extras(
+pub(crate) fn missing_extras(
     binary: &Path,
     root: &Path,
     resources: &Path,
+    handoff: Option<&Handoff<'_>>,
 ) -> Result<Option<Extras>, String> {
     let mut command = json_command(binary, root, "missing-extras");
     command.arg("--output").arg(resources);
-    Ok(reply(command, &|_| {})?.map(|value| extras(&value["missing"])))
+    Ok(reply(command, &|_| {}, handoff)?.map(|value| extras(&value["missing"])))
 }
 
 /// Writes the prepared `resources`' cache of prepared data (`data-file --json`): whether it wrote one; `None` when the preparer is too old to.
-pub fn data_file(binary: &Path, root: &Path, resources: &Path) -> Result<Option<bool>, String> {
+pub(crate) fn data_file(
+    binary: &Path,
+    root: &Path,
+    resources: &Path,
+    handoff: Option<&Handoff<'_>>,
+) -> Result<Option<bool>, String> {
     let mut command = json_command(binary, root, "data-file");
     command.arg("--output").arg(resources);
-    Ok(reply(command, &|_| {})?.map(|value| value["written"].as_bool().unwrap_or(false)))
+    Ok(reply(command, &|_| {}, handoff)?.map(|value| value["written"].as_bool().unwrap_or(false)))
 }
 
 /// What `extras` did: the kinds added, each that failed with why, and what still lacks.
@@ -308,13 +424,14 @@ pub struct Added {
 }
 
 /// Adds the `only` extras `resources` lack, each from the first of `folders` that has it (`extras --json`); `None` when the preparer is too old.
-pub fn add_extras(
+pub(crate) fn add_extras(
     binary: &Path,
     root: &Path,
     resources: &Path,
     only: &[String],
     folders: &[PathBuf],
     line: &dyn Fn(String),
+    handoff: Option<&Handoff<'_>>,
 ) -> Result<Option<Added>, String> {
     let mut command = json_command(binary, root, "extras");
     command
@@ -325,7 +442,7 @@ pub fn add_extras(
     for folder in folders {
         command.arg("--minecraft-dir").arg(folder);
     }
-    Ok(reply(command, line)?.map(|value| Added {
+    Ok(reply(command, line, handoff)?.map(|value| Added {
         added: value["added"]
             .as_array()
             .into_iter()
@@ -351,7 +468,52 @@ pub fn add_extras(
 mod tests {
     use super::*;
 
-    /// A preparer that runs `script` (a shell `case` on its first argument).
+    #[test]
+    fn an_unhanded_preparation_unlocks_despite_an_incidental_descriptor() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".preparing.lock");
+        let file = fs::File::create(&path).unwrap();
+        file.try_lock().unwrap();
+        let incidental = file.try_clone().unwrap();
+        let preparation = Preparation::new(file);
+        let next = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        assert!(matches!(next.try_lock(), Err(fs::TryLockError::WouldBlock)));
+        drop(preparation);
+        next.try_lock().unwrap();
+        drop(incidental);
+    }
+
+    #[test]
+    fn a_handed_off_preparation_stays_locked_until_the_preparer_exits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".preparing.lock");
+        let file = fs::File::create(&path).unwrap();
+        file.try_lock().unwrap();
+        let preparation = Preparation::new(file);
+        let binary = fake(
+            dir.path(),
+            "printf 'ready\\n'\nif IFS= read -r line; then exit 1; fi",
+        );
+        let mut child = preparation
+            .handoff(None)
+            .spawn(Command::new(binary), true)
+            .unwrap();
+        drop(preparation);
+
+        let mut ready = String::new();
+        BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut ready)
+            .unwrap();
+        let next = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        let while_running = next.try_lock();
+        // wait closes the stdin pipe, letting the mock leave its blocking read and exit.
+        assert!(child.wait().unwrap().success());
+        assert_eq!(ready, "ready\n");
+        assert!(matches!(while_running, Err(fs::TryLockError::WouldBlock)));
+        next.try_lock().unwrap();
+    }
+
+    /// A preparer that runs `script`.
     fn fake(dir: &Path, script: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         fs::create_dir_all(dir).unwrap();
@@ -377,7 +539,7 @@ esac"#,
         );
         let lines = std::cell::RefCell::new(Vec::new());
         let log = |line: String| lines.borrow_mut().push(line);
-        let answered = needs(&binary, &dir, &log).unwrap();
+        let answered = needs(&binary, &dir, &log, None).unwrap();
         assert_eq!(
             answered,
             Some(Needs {
@@ -385,7 +547,7 @@ esac"#,
                 jdk: true
             })
         );
-        let error = sounds(&binary, &dir, &dir, &log).unwrap_err();
+        let error = sounds(&binary, &dir, &dir, &log, None).unwrap_err();
         assert_eq!(error, "no sound index");
         assert_eq!(
             *lines.borrow(),
@@ -393,8 +555,8 @@ esac"#,
         );
 
         let old = fake(&dir.join("old"), "exit 2");
-        assert_eq!(needs(&old, &dir, &log).unwrap(), None);
-        assert_eq!(sounds(&old, &dir, &dir, &log).unwrap(), None);
+        assert_eq!(needs(&old, &dir, &log, None).unwrap(), None);
+        assert_eq!(sounds(&old, &dir, &dir, &log, None).unwrap(), None);
         let _ = fs::remove_dir_all(&dir);
     }
 

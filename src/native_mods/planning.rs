@@ -126,7 +126,7 @@ fn check_projects(
     } else {
         folder
     };
-    check_all(folder, &ids, sdk, base, cancellation)
+    check_all(folder, &ids, sdk, base, cancellation, None)
 }
 
 /// The mods an update leaves out: the unfit, then every mod that needs one of them. A mod the tool refuses can't be built on any build, so it stops the update as it stops a build, by name.

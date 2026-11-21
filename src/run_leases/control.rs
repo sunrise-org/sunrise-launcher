@@ -13,6 +13,11 @@ impl Running {
         let mut child = self.child.lock().unwrap();
         #[cfg(unix)]
         {
+            if child.is_relayed() {
+                // Ask the relay to stop its owned game, not a PID or the wrapper tree.
+                let _ = child.kill();
+                return;
+            }
             // GUI children own their group. Never signal a cached, already-reaped PID.
             if matches!(child.try_wait(), Ok(None)) {
                 unsafe {

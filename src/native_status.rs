@@ -420,6 +420,22 @@ pub(crate) fn check_compiled_profile(included: &[Included], home: &Path) -> Resu
     Ok(())
 }
 
+/// Managed Play cannot silently drop additional enabled native packages, even when
+/// every linked package would individually match an enabled archive.
+pub(crate) fn check_exact_compiled_profile(
+    included: &[Included],
+    home: &Path,
+) -> Result<(), String> {
+    let enabled = enabled(home);
+    if included.len() != enabled.len() || !compiled_match(included, &enabled) {
+        return Err(crate::i18n::tr(
+            "The selected game doesn't include exactly the enabled native mods.",
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn compiled_match(included: &[Included], enabled: &[Mod]) -> bool {
     included.iter().all(|m| {
         let mut same_id = enabled.iter().filter(|(id, ..)| id == &m.id);

@@ -58,6 +58,7 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         &on_mod,
         &Cancellation::default(),
         None,
+        None,
     )
     .unwrap();
     assert_eq!(
@@ -83,6 +84,7 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         &on_mod,
         &Cancellation::default(),
         None,
+        None,
     )
     .unwrap_err();
     assert_eq!(
@@ -100,6 +102,7 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
             &on_mod,
             &Cancellation::default(),
             None,
+            None,
         )
         .unwrap_err()
         .blame
@@ -111,6 +114,7 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         None,
         &on_mod,
         &Cancellation::default(),
+        None,
         None,
     )
     .unwrap_err();
@@ -157,6 +161,7 @@ fn a_regrant_cannot_admit_a_stale_sdk_check_or_registry_yes() {
         Some(&consent),
         &|_, _, _| unreachable!(),
         &current,
+        None,
         None,
     )
     .unwrap_err();
@@ -207,6 +212,7 @@ fn not_starting_a_worker_does_not_retain_its_staged_directory() {
             &|_, _, _| unreachable!(),
             cancellation,
             Some(&mut workspace),
+            None,
         )
         .unwrap_err();
         assert!(failure.error.contains(expected), "{}", failure.error);
@@ -250,6 +256,7 @@ exit 125
                     &|_, _, _| unreachable!(),
                     &active,
                     Some(&mut workspace),
+                    None,
                 )
                 .unwrap_err()
                 .error
@@ -331,6 +338,7 @@ fn the_runner_refuses_duplicate_terminal_events_and_wrong_or_extra_check_replies
         &|_, _, _| unreachable!(),
         &Cancellation::default(),
         None,
+        None,
     )
     .unwrap_err();
     assert!(
@@ -355,6 +363,7 @@ fn leader_success_or_blamed_failure_is_not_a_compiler_handoff() {
                 None,
                 &|_, _, _| unreachable!(),
                 &Cancellation::default(),
+                None,
                 None,
             )
         };
@@ -429,6 +438,13 @@ read -r answer
 printf '%s' "$answer" > "$TMPDIR/answer"
 "#,
     );
+    use crate::profile_txn::{Admission, Intent};
+    let home = root.path().join("game");
+    fs::create_dir(&home).unwrap();
+    let mut profile = Admission::open(&home, None).unwrap();
+    let stage = profile
+        .reserve(Intent::Install, Default::default())
+        .unwrap();
     let build_fixture = |program: &Path,
                          workspace: &mut Workspace,
                          cancellation: &Cancellation,
@@ -453,6 +469,7 @@ printf '%s' "$answer" > "$TMPDIR/answer"
             consent,
             on_mod,
             cancellation,
+            Some(stage.handoff()),
         )
     };
     let mut settings = crate::backend::Settings::default();
@@ -505,6 +522,12 @@ printf '%s' "$answer" > "$TMPDIR/answer"
         !old.join("tmp/finished").exists(),
         "retry finished independently"
     );
+    // The escaped SDK writer inherited the admitted profile through the real
+    // Linux subreaper. Neither cancellation nor the launcher's last copy unlocks it.
+    let stage_root = stage.path().to_owned();
+    drop(stage);
+    drop(profile);
+    assert!(Admission::open(&home, None).is_err());
     fs::write(old.join("tmp/release"), b"release").unwrap();
     let until = Instant::now() + Duration::from_secs(10);
     while !old.join("tmp/finished").exists() && Instant::now() < until {
@@ -518,6 +541,14 @@ printf '%s' "$answer" > "$TMPDIR/answer"
             b"retry"
         );
     }
+    let until = Instant::now() + Duration::from_secs(10);
+    while Admission::open(&home, None).is_err() && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !stage_root.exists(),
+        "only reclaim after the real staged writer exits"
+    );
     let clean = retry.path().to_owned();
     drop(retry);
     assert!(!clean.exists());
@@ -589,6 +620,7 @@ fn a_tool_on_another_contract_says_to_update_the_launcher_and_logs_its_errors() 
         None,
         &|_, _, _| {},
         &Cancellation::default(),
+        None,
         None,
     )
     .unwrap_err();
@@ -708,10 +740,10 @@ fn a_check_by_a_tool_on_another_contract_or_from_before_the_command_says_which_t
     let _ = std::fs::remove_dir_all(&dir);
     let plan = serde_json::json!({"contract": CONTRACT});
     fake(&dir, &["ERRORS", "EXIT3"]);
-    let newer = check(&dir.join("tool"), &plan, &Cancellation::default()).unwrap_err();
+    let newer = check(&dir.join("tool"), &plan, &Cancellation::default(), None).unwrap_err();
     assert!(newer.contains("update the launcher"), "{newer}");
     fake(&dir, &["ERRORS"]);
-    let older = check(&dir.join("tool"), &plan, &Cancellation::default()).unwrap_err();
+    let older = check(&dir.join("tool"), &plan, &Cancellation::default(), None).unwrap_err();
     assert!(older.contains("install a newer version"), "{older}");
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -189,7 +189,7 @@ fn require_unnamed_data_only(path: &[u16]) -> io::Result<()> {
     result
 }
 
-pub(super) fn replace(home: &Path, record: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn replace(home: &Path, record: &Path, bytes: &[u8]) -> io::Result<()> {
     replace_at(home, record, bytes, || {})
 }
 
@@ -382,8 +382,31 @@ pub(super) fn restore_move_at(from: &Path, to: &Path, renamed: impl FnOnce()) ->
     }
 }
 
+pub(crate) fn flush_tree(path: &Path) -> io::Result<()> {
+    let meta = fs::symlink_metadata(path)?;
+    if crate::native_cache::linked(&meta) {
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    if meta.is_dir() {
+        for entry in fs::read_dir(path)? {
+            flush_tree(&entry?.path())?;
+        }
+        #[cfg(not(windows))]
+        sync_directory(path)?;
+        Ok(())
+    } else if meta.is_file() {
+        #[cfg(windows)]
+        let file = File::options().write(true).open(path)?;
+        #[cfg(not(windows))]
+        let file = File::open(path)?;
+        flush(&file)
+    } else {
+        Err(io::ErrorKind::InvalidData.into())
+    }
+}
+
 /// Rename a prepared directory into an absent destination, or undo that move.
-pub(super) fn move_new_directory(from: &Path, to: &Path) -> io::Result<()> {
+pub(crate) fn move_new_directory(from: &Path, to: &Path) -> io::Result<()> {
     move_new_directory_at(from, to, || {})
 }
 

@@ -315,6 +315,13 @@ pub fn cache_error(error: crate::storage::Error) -> String {
             tr("A native build or cache cleanup is running. Try again when it finishes.").into()
         }
         crate::native_cache::Error::IncompleteUnit => tr("Native compilation outputs were kept because their executable completeness cannot be proven.").into(),
+        crate::native_cache::Error::UnpublishedGame => tr("An unpublished game download was kept. It may still be in use by another launcher.").into(),
+        crate::native_cache::Error::ResourceDependent(build) => trf(
+            "This version supplies resources to native build {build}. Remove that build first.",
+            &[("build", &build)],
+        ),
+        crate::native_cache::Error::ReferencedProfile => tr("A profile still uses this build, so it was kept.").into(),
+        crate::native_cache::Error::UnprovenReferences => tr("Sunrise couldn't check which profiles use this build, so it was kept.").into(),
         crate::native_cache::Error::UnprovenExclusion => tr(
             "An older game build can use this cache without runtime leases.",
         )
@@ -545,12 +552,11 @@ fn about_in(dir: &Path) -> Option<About> {
     })
 }
 
-/// The newest installed release or Nightly in `installed` (newest first).
-/// Installed native clients retain their base's prepared data even when not selected.
-pub(crate) fn resource_dependents(tag: &str) -> bool {
+/// An installed native client that retains this base's prepared data even if not selected.
+pub(crate) fn resource_dependent(tag: &str) -> Option<String> {
     backend::installed()
-        .iter()
-        .any(|version| about(version).is_some_and(|about| about.base == tag))
+        .into_iter()
+        .find(|version| about(version).is_some_and(|about| about.base.eq_ignore_ascii_case(tag)))
 }
 
 /// The newest installed release or Nightly in the launcher's newest-first build list.
@@ -995,6 +1001,7 @@ struct BuildOptions<'a> {
     worlds: Option<&'a Path>,
     /// The player chose to build without the mods that worlds were saved with.
     leave_out: bool,
+    staging: Option<&'a crate::profile_txn::Staging<'a>>,
 }
 
 /// Mods saved into worlds that a build would switch off ([`Failed::Worlds`]): what the player
@@ -1031,6 +1038,7 @@ fn check_all(
     sdk: &sdk_cache::Sdk,
     base: &sdk_cache::Base,
     cancellation: &Cancellation,
+    staging: Option<&crate::profile_txn::Staging<'_>>,
 ) -> Result<Checks, sdk_cache::Refusal> {
     if ids.is_empty() {
         return Ok(Checks::default());
@@ -1043,7 +1051,13 @@ fn check_all(
     let mut plan = serde_json::json!({"contract": 2, "mods": folder, "build": sdk.commit()});
     let mut supplied = Vec::new();
     loop {
-        let checked = tool::check(&program, &plan, cancellation).map_err(refused)?;
+        let checked = tool::check(
+            &program,
+            &plan,
+            cancellation,
+            staging.map(crate::profile_txn::Staging::handoff),
+        )
+        .map_err(refused)?;
         let (checks, needed) = checks_from(checked, ids, &supplied).map_err(refused)?;
         if needed.is_empty() {
             return Ok(checks);
@@ -1369,8 +1383,15 @@ fn pipeline(
     let mut route = None;
     if let Some(sdk) = &sdk {
         progress(Step::Checking(ids.len()));
-        let checks = check_all(check_folder, &ids, sdk, &sdk_base, cancellation)
-            .map_err(|r| r.to_string())?;
+        let checks = check_all(
+            check_folder,
+            &ids,
+            sdk,
+            &sdk_base,
+            cancellation,
+            options.staging,
+        )
+        .map_err(|r| r.to_string())?;
         if let Some((id, why)) = checks.refusals.first() {
             return Err(refusal_text(id, why).into());
         }
@@ -1543,8 +1564,15 @@ fn pipeline(
                 let route = match route {
                     Some(route) => route,
                     None => {
-                        let checks = check_all(check_folder, &ids, sdk, &sdk_base, cancellation)
-                            .map_err(refused)?;
+                        let checks = check_all(
+                            check_folder,
+                            &ids,
+                            sdk,
+                            &sdk_base,
+                            cancellation,
+                            options.staging,
+                        )
+                        .map_err(refused)?;
                         if let Some((id, why)) = checks.refusals.first() {
                             return Err(refusal_text(id, why).into());
                         }
@@ -1663,6 +1691,7 @@ fn pipeline(
                 })
             },
             cancellation,
+            options.staging.map(crate::profile_txn::Staging::handoff),
         );
         // Don't turn a stopped tool into an attributed compile failure.
         cancellation.check()?;
@@ -1886,6 +1915,59 @@ pub fn build(
         );
         finish_profile_build(base, instance, cancellation, built, &progress, catalogue)
     })
+}
+
+/// Compile the admitted profile's whole enabled set without changing its pointer or files.
+/// The exact build is only a cache candidate until the profile journal publishes it.
+pub(crate) fn build_exact_client(
+    base: &str,
+    home: &Path,
+    profile: Profile,
+    staging: &crate::profile_txn::Staging<'_>,
+    cancellation: &Cancellation,
+    progress: impl Fn(Step),
+    registry_consent: Option<&dyn Fn(&Consent) -> bool>,
+) -> Result<String, Failed> {
+    cancellation.admit_native_work()?;
+    if let Some(error) = backend::native_mod_architecture_error() {
+        return Err(Failed::Other(error));
+    }
+    logged_then(
+        |cache| {
+            let cache = cache.map_err(|error| Failed::Other(error.into()))?;
+            fs::create_dir_all(root()).map_err(|e| e.to_string())?;
+            let input = tempfile::Builder::new()
+                .prefix(".native-input-")
+                .tempdir_in(root())
+                .map_err(|e| e.to_string())?;
+            let folder = {
+                let _manifest = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
+                stage_installed(home, input.path().join("mods"))?.ok_or(Failed::Nothing)?
+            };
+            let built = pipeline(
+                cache,
+                base,
+                &folder,
+                profile,
+                Target::Client,
+                BuildOptions {
+                    cancellation: cancellation.clone(),
+                    staging: Some(staging),
+                    registry_consent,
+                    ..BuildOptions::default()
+                },
+                &progress,
+            )?;
+            if !built.left_out.is_empty() {
+                return Err(Failed::Other(
+                    tr("The build did not include every enabled mod. Nothing was switched.").into(),
+                ));
+            }
+            cancellation.check()?;
+            Ok(built.version)
+        },
+        |_| {},
+    )
 }
 
 /// Apply either legacy pin or plain fallback only under this attempt's original grant.
@@ -2191,6 +2273,7 @@ fn carried_over(name: &std::ffi::OsStr, target: Target) -> bool {
         "Sunrise.app",
         "native-mods.json",
         "native-data",
+        crate::managed_play::Artifact::ARCHIVE_RECEIPT,
         sunrise_launcher_smod::mod_list::NATIVE_DIR,
     ]
     .iter()
@@ -2400,8 +2483,59 @@ mod tests {
                 prerelease: false,
                 nightly: None,
             };
-            backend::install_as(&release, tag, &sha256, None, |_| {}).unwrap();
+            use backend::installation::install_as;
+            let inventoried = std::cell::Cell::new(false);
+            install_as(&release, tag, &sha256, None, None, |fraction| {
+                if fraction != 0.97 {
+                    return;
+                }
+                let versions = backend::versions_dir();
+                let stage = fs::read_dir(&versions)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .find(|path| backend::installation::private_stage(path.file_name().unwrap()))
+                    .unwrap();
+                assert!(stage.join("unpacked").is_dir());
+                let storage = crate::storage::Storage::open().unwrap();
+                let report = storage
+                    .report(Some(crate::storage::Category::SpareGameBuilds), true)
+                    .unwrap();
+                let staged = report
+                    .rows
+                    .iter()
+                    .find(|row| row.category == crate::storage::Category::SpareGameBuilds)
+                    .unwrap();
+                assert!(staged.kept.iter().any(
+                    |keep| keep.bytes > 0 && keep.reason.contains("unpublished game download")
+                ));
+                assert!(!stage.join(".last-used").exists());
+                assert!(stage.join("unpacked").is_dir());
+                assert!(
+                    backend::remove(stage.file_name().unwrap().to_str().unwrap())
+                        .unwrap_err()
+                        .contains("unpublished game download")
+                );
+                inventoried.set(true);
+            })
+            .unwrap();
+            assert!(inventoried.get());
             server.join().unwrap();
+            // The server is gone. An exact retry is local; even a request with a
+            // different proof must not remove the bytes that already occupy this name.
+            install_as(&release, tag, &sha256, None, None, |_| {}).unwrap();
+            assert!(install_as(&release, tag, &"c".repeat(64), None, None, |_| {}).is_err());
+            let game = backend::version_dir(tag);
+            let client = game.join(backend::CLIENT);
+            assert_eq!(fs::read(&client).unwrap(), b"release game");
+            fs::write(&client, b"different game").unwrap();
+            assert!(install_as(&release, tag, &sha256, None, None, |_| {}).is_err());
+            assert_eq!(fs::read(&client).unwrap(), b"different game");
+            fs::write(&client, b"release game").unwrap();
+            let library = game.join("unrecorded.dll");
+            fs::write(&library, b"not extracted from the archive").unwrap();
+            assert!(install_as(&release, tag, &sha256, None, None, |_| {}).is_err());
+            fs::remove_file(library).unwrap();
+            install_as(&release, tag, &sha256, None, None, |_| {}).unwrap();
             // `sunrise-launcher prepare` writes the resources from the player's own Minecraft.
             let resources = backend::resources(tag);
             fs::create_dir_all(&resources).unwrap();
@@ -3898,7 +4032,7 @@ printf ']}}\n'
             fs::write(&program, script).unwrap();
             fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
             let plan = serde_json::json!({"mods": input});
-            let checked = tool::check(&program, &plan, &Cancellation::default()).unwrap();
+            let checked = tool::check(&program, &plan, &Cancellation::default(), None).unwrap();
             checks_from(checked, ids, &[]).unwrap().0
         };
         let both = check(&folder, &["broken", "survivor"]);

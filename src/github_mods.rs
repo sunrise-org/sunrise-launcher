@@ -51,7 +51,7 @@ pub struct Link {
     pub target: Target,
 }
 
-fn plain(part: &str) -> bool {
+pub(crate) fn plain(part: &str) -> bool {
     !part.is_empty()
         && part != "."
         && part != ".."

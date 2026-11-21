@@ -306,13 +306,18 @@ impl Launcher {
         if self.client.is_some() || self.launch_busy() {
             return;
         }
-        let Some(home) = self
+        let Some(instance) = self
             .selected_instance()
             .filter(|i| i.id == intent.instance)
-            .map(|i| i.home.clone())
+            .cloned()
         else {
             return;
         };
+        if instance.kind != instances::Kind::Pack {
+            self.start_managed_client(instance, intent);
+            return;
+        }
+        let home = instance.home;
         self.play_admission = Some(intent);
         let tx = self.tx.clone();
         std::thread::spawn(move || {

@@ -93,6 +93,10 @@ impl Owned {
         Ok(CHILDREN.track(gate.spawn(command, role)?))
     }
 
+    pub(crate) fn start_preparer(child: Child) -> Self {
+        CHILDREN.track(child)
+    }
+
     #[cfg(windows)]
     pub(crate) fn spawn_compiler(command: &Command) -> io::Result<Self> {
         Ok(CHILDREN.track(super::leases::spawn_compiler(command)?))

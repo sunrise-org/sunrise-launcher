@@ -2,7 +2,7 @@
 mod download;
 mod launch;
 use crate::i18n::{tr, trf};
-pub use launch::{prepare_launch, LaunchError};
+pub use launch::{prepare_for_command, prepare_launch, LaunchError};
 use std::{
     collections::BTreeMap,
     fmt, fs, io,

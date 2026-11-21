@@ -490,12 +490,14 @@ fn menus() -> Vec<Menu> {
 mod startup;
 
 fn main() {
-    #[cfg(target_os = "linux")]
-    {
-        use sunrise_launcher::process::compiler_worker;
-        let mut args = std::env::args_os().skip(1);
-        if args.next().is_some_and(|arg| arg == compiler_worker::ARG) {
-            std::process::exit(compiler_worker::run(args));
+    let mut args = std::env::args_os().skip(1);
+    if let Some(mode) = args.next() {
+        #[cfg(target_os = "linux")]
+        if mode == sunrise_launcher::process::compiler_worker::ARG {
+            std::process::exit(sunrise_launcher::process::compiler_worker::run(args));
+        }
+        if let Some(status) = sunrise_launcher::process::relay::private(&mode, args) {
+            std::process::exit(status);
         }
     }
     startup::run();

@@ -1,8 +1,13 @@
-//! Private local process control. Keys are never arguments or diagnostics; no network telemetry.
+//! Private local process control; no network telemetry. Holder keys stay on disk; the
+//! launcher may pass a one-use Play token to a configured wrapper. Never log either.
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     io::{self, Read, Write},
     path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 use subtle::ConstantTimeEq;
@@ -58,10 +63,15 @@ impl Marker {
 #[cfg_attr(windows, path = "local_control/windows.rs")]
 mod platform;
 pub use platform::{Endpoint, Stream, connect};
+mod relay;
+pub use relay::MAX_RELAY_CLAIMS;
+#[cfg(windows)]
+pub use relay::connect_relay;
 
 pub struct Channel {
     stream: Stream,
     deadline: Instant,
+    revoked: Option<Arc<AtomicBool>>,
 }
 impl Channel {
     pub fn authenticate(
@@ -71,7 +81,11 @@ impl Channel {
         deadline: Instant,
     ) -> io::Result<Self> {
         stream.set_nonblocking(true)?;
-        let mut channel = Self { stream, deadline };
+        let mut channel = Self {
+            stream,
+            deadline,
+            revoked: None,
+        };
         if server {
             let mut version = [0];
             channel.read_all(&mut version)?;
@@ -117,6 +131,13 @@ impl Channel {
     ) -> io::Result<usize> {
         loop {
             check_deadline(self.deadline)?;
+            if self
+                .revoked
+                .as_ref()
+                .is_some_and(|flag| flag.load(Ordering::Acquire))
+            {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            }
             match operation(&mut self.stream) {
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => pause(self.deadline)?,
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => {}

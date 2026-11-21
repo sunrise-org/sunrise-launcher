@@ -339,7 +339,7 @@ fn data_directory_leaf_never_leases_ancestors_outside_data() {
         fs::create_dir_all(&data).unwrap();
         let mut command = Command::new(std::env::current_exe().unwrap());
         command.current_dir(&data).env("SUNRISE_HOME", &data);
-        let _claims = shared(&command).unwrap();
+        let _claims = shared(&command, None).unwrap();
         let registry = sunrise_launcher_smod::runtime_leases::Registry::existing(&data).unwrap();
         let parent = directory(data.parent().unwrap());
         assert!(
@@ -387,7 +387,7 @@ fn wrapped_game_leases_its_resources_without_parsing_the_wrapper() {
         .current_dir(&game)
         .env("SUNRISE_HOME", &home)
         .env(GAME, serde_json::to_string(&words).unwrap());
-    let _claims = shared(&command).unwrap();
+    let _claims = shared(&command, None).unwrap();
     let registry = Registry::open().unwrap();
     assert!(matches!(
         registry.lock(&directory(&resources), LockMode::Exclusive),

@@ -18,6 +18,7 @@ pub(crate) enum Access {
     UninstrumentedGame,
     LeasedGame,
     IncompleteGame,
+    UnpublishedGame,
 }
 impl Access {
     /// Installed units trust only their own executable; shared units require all potentially
@@ -63,6 +64,11 @@ impl Access {
         ] {
             if let Ok(relative) = path.strip_prefix(root) {
                 if let Some(unit) = relative.components().next() {
+                    if root == &versions
+                        && crate::backend::installation::private_stage(unit.as_os_str())
+                    {
+                        return Ok(Self::UnpublishedGame);
+                    }
                     let image = root.join(unit).join(binary);
                     return Ok(if capable_image(&image, &data)? {
                         Self::LeasedGame
@@ -140,6 +146,7 @@ impl Access {
         match self {
             Self::BuildTools | Self::LeasedGame => Ok(()),
             Self::IncompleteGame => Err(Error::IncompleteUnit),
+            Self::UnpublishedGame => Err(Error::UnpublishedGame),
             Self::UninstrumentedGame => Err(Error::UnprovenExclusion),
         }
     }
@@ -383,6 +390,19 @@ fn delete_unit(path: &Path, idle: bool, after_classification: impl FnOnce()) -> 
         match Access::for_unit(path)? {
             Access::UninstrumentedGame if idle => {}
             access => access.check()?,
+        }
+        // remove_unit holds the same exclusive fence as journal publication and
+        // roster changes. Candidate selection alone can never authorize detaching.
+        if path.parent() == Some(crate::backend::versions_dir().as_path()) {
+            let tag = path
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .ok_or_else(|| Error::Unsafe(path.to_owned()))?;
+            // Traditional native builds also keep the resources of their base build.
+            if let Some(build) = crate::native_mods::resource_dependent(tag) {
+                return Err(Error::ResourceDependent(build));
+            }
+            crate::managed_play::authorize_cache_removal(tag)?;
         }
         after_classification();
         if is_directory && contains_operational_locks(directory)? {

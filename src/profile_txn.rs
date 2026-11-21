@@ -2,7 +2,7 @@
 //! This layer doesn't select a build, inspect the network or decide what mods a player wants.
 //! Existing launcher routes are not cut over to this record until their replacements can all
 //! observe the same admission and committed generation.
-mod durable;
+pub(crate) mod durable;
 mod progress;
 
 use cap_fs_ext::MetadataExt;
@@ -102,7 +102,17 @@ impl Admission {
     /// Recovery can retire or restore references. Managed callers fence cache deletion
     /// around admission; no cache guard is held by this lease while a worker runs.
     pub fn open(home: &Path, external_owner: Option<&Path>) -> Result<Self, String> {
+        Self::open_fenced(home, external_owner, || Ok(()))
+    }
+
+    /// Acquire the caller's reference guards after the profile, never the reverse.
+    pub(crate) fn open_fenced<G>(
+        home: &Path,
+        external_owner: Option<&Path>,
+        fence: impl FnOnce() -> Result<G, String>,
+    ) -> Result<Self, String> {
         let lease = Self::claim(home, external_owner)?;
+        let _fence = fence()?;
         lease.recover()?;
         Ok(lease)
     }
@@ -637,6 +647,17 @@ impl<'a> Staging<'a> {
         self.lease.handoff()
     }
 
+    pub(crate) fn seal_pointer_replacing(
+        self,
+        previous: &[u8],
+        next: Vec<u8>,
+    ) -> Result<Sealed<'a>, String> {
+        if self.record.operation()?.previous_pointer.as_deref() != Some(previous) {
+            return Err(unsettled());
+        }
+        self.seal(next, &[])
+    }
+
     /// Bind exact preimages and candidates under the caller's reference guard, while only
     /// private files exist. A `None` source removes a file. Accept only launcher-managed names.
     pub fn seal(
@@ -735,18 +756,31 @@ impl Sealed<'_> {
     /// frontier is recorded. A caller's cache/reference guard must span this whole call.
     /// No network calls or approvals occur after cutoff.
     pub fn publish<G>(self, cutoff: impl FnOnce() -> Result<G, String>) -> Result<(), String> {
+        self.publish_observed(cutoff, |_, _| Ok(()))
+    }
+
+    pub(crate) fn publish_observed<G>(
+        self,
+        cutoff: impl FnOnce() -> Result<G, String>,
+        boundary: impl FnMut(usize, Boundary) -> Result<(), String>,
+    ) -> Result<(), String> {
         let home = self.0.lease.home();
         let record = read(home)?.ok_or_else(unsettled)?;
         if record.digest()? != self.0.record.digest()? {
             return Err(unsettled());
         }
-        let result = record.publish_at(home, cutoff, |_, _| Ok(()));
+        let result = record.publish_at(home, cutoff, boundary);
         if record.complete(home, |_| {}, || {})? {
             Ok(())
         } else {
             result
         }
     }
+}
+
+#[cfg(test)]
+pub(crate) fn tear_next_commit_marker() {
+    progress::fail_marker(progress::MarkerFault::TornWrite);
 }
 
 fn mod_root(path: &Path) -> bool {
@@ -763,25 +797,38 @@ fn valid_destination(path: &Path) -> bool {
     use sunrise_launcher_smod::mod_list::{DIR, FILE, NATIVE_DIR};
     match second {
         None => first == FILE || first == crate::browser::installed::MANIFEST,
-        Some(Component::Normal(file)) => {
-            (first == "mod-browser" && matches!(file.to_str(), Some("pack.json" | "pack.spack")))
-                || ((first == DIR || first == NATIVE_DIR)
-                    && file.to_str().is_some_and(|name| {
-                        // Before either leaf exists, neither native identity nor a
-                        // Unicode fold can rule out filesystem-specific aliases.
-                        sunrise_launcher_smod::index::browser_state::portable_ascii_component(name)
-                            && ((name.ends_with(".smod")
-                                && !name.starts_with('.')
-                                && name.len() <= 200
-                                && !name.contains('\x7f'))
-                                || (first == NATIVE_DIR
-                                    && name
-                                        .strip_suffix(".origin.json")
-                                        .is_some_and(sunrise_launcher_smod::index::valid_id)))
-                    }))
+        Some(Component::Normal(file)) if first == "mod-browser" => {
+            matches!(file.to_str(), Some("pack.json" | "pack.spack"))
+        }
+        Some(Component::Normal(file)) if first == DIR || first == NATIVE_DIR => {
+            use sunrise_launcher_smod::index::{browser_state::portable_ascii_component, valid_id};
+            let Some(name) = file.to_str() else {
+                return false;
+            };
+            valid_smod_leaf(name)
+                || (first == NATIVE_DIR
+                    && portable_ascii_component(name)
+                    && name.strip_suffix(".origin.json").is_some_and(valid_id))
         }
         _ => false,
     }
+}
+
+fn valid_smod_leaf(name: &str) -> bool {
+    // Before either leaf exists, neither native identity nor a Unicode fold
+    // can rule out filesystem-specific aliases.
+    sunrise_launcher_smod::index::browser_state::portable_ascii_component(name)
+        && name.ends_with(".smod")
+        && !name.starts_with('.')
+        && name.len() <= 200
+        && !name.contains('\x7f')
+}
+
+/// A receipt claims the same portable file a later transaction could replace.
+pub(crate) fn native_package_key(path: &str) -> Option<String> {
+    let (root, name) = path.split_once('/')?;
+    (root == sunrise_launcher_smod::mod_list::NATIVE_DIR && valid_smod_leaf(name))
+        .then(|| destination_key(Path::new(path)))
 }
 
 fn destination_key(path: &Path) -> String {
@@ -811,7 +858,7 @@ fn target(home: &Path, file: &Step) -> Result<PathBuf, String> {
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
-enum Boundary {
+pub(crate) enum Boundary {
     BeforeRename,
     Renamed,
     Durable,

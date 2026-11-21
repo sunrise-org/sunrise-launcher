@@ -149,8 +149,8 @@ impl Launcher {
                     return;
                 }
             };
-            let result = backend::preparer(&tag, &minecraft, from, &log)
-                .inspect(|(_, minecraft)| backend::sounds(&tag, minecraft, &log))
+            let result = backend::preparer(&tag, &minecraft, from, &log, &lock)
+                .inspect(|(_, minecraft)| backend::sounds(&tag, minecraft, &log, &lock))
                 .map(|(p, _)| {
                     backend::set_prepare_step(backend::PrepareStep::Prepare);
                     p
@@ -204,8 +204,109 @@ impl Launcher {
         starts_now(backend::is_prepared(tag), self.preparing, running)
     }
 
-    /// Starts the game: the session first (a network round trip when the token needs
-    /// renewing), then `drain` starts the process when it arrives.
+    pub(super) fn start_managed_client(
+        &mut self,
+        instance: instances::Instance,
+        intent: PlayIntent,
+    ) {
+        use sunrise_launcher::managed_play::{Client, FirstBuild, Progress};
+        let target = self.profile_target(&instance).cloned();
+        let release = target
+            .as_deref()
+            .and_then(|tag| self.release_to_install(tag));
+        let absent = match &self.releases {
+            Load::Loading => {
+                tr("Checking available builds. Press Play when the list is ready.").into()
+            }
+            Load::Failed(error) => error.clone(),
+            Load::Ready(_) => {
+                tr("No downloadable build matches this profile. Choose a game build.").into()
+            }
+        };
+        let destination = self.quick_play.take();
+        let invite = self.joining.take();
+        self.starting_pack = None;
+        self.play_install_recovery = None;
+        self.native_error = None;
+        self.prepare_log.clear();
+        self.client_started =
+            Some(std::time::SystemTime::now() - std::time::Duration::from_secs(2));
+        self.play_pressed = Some(Instant::now());
+        self.starting_client = Some(target.clone().unwrap_or_default());
+        self.play_step = Some(backend::PlayStep::Assets);
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let result = Client {
+                instance: &instance,
+                accepted_account: intent.account.as_deref(),
+                explicit_account: false,
+                requested_build: None,
+                piped: true,
+            }
+            .start(
+                || {
+                    if let Some(tag) = target
+                        .as_deref()
+                        .filter(|tag| backend::installed().iter().any(|found| found == tag))
+                    {
+                        FirstBuild::installed(tag)
+                    } else if let Some(release) = release {
+                        FirstBuild::download(&release)
+                    } else {
+                        Err(absent)
+                    }
+                },
+                |cmd| {
+                    if let Some(code) = invite {
+                        backend::join_friend(cmd, &code)?;
+                    }
+                    if let Some((flag, value)) = destination {
+                        cmd.arg(flag).arg(value);
+                    }
+                    backend::append_game_args(cmd);
+                    Ok(())
+                },
+                |cmd| {
+                    jar_launch::with_consent(&tx, |permission| {
+                        sunrise_launcher::jars::prepare_for_command(cmd, permission)
+                    })
+                    .map_err(|error| error.to_string())
+                },
+                Some(&|inventory: &native_mods::Consent| {
+                    let (reply, answer) = std::sync::mpsc::channel();
+                    tx.send(Msg::NativeRegistryConsent(inventory.clone(), reply))
+                        .is_ok()
+                        && answer.recv().unwrap_or(false)
+                }),
+                |progress| {
+                    let msg = match progress {
+                        Progress::Download(_) => Msg::PlayStep(backend::PlayStep::Download),
+                        Progress::Prepare => Msg::PlayStep(backend::PlayStep::Prepare),
+                        Progress::Native(_) => Msg::PlayStep(backend::PlayStep::Native),
+                        Progress::SignIn => Msg::PlayStep(backend::PlayStep::SignIn),
+                        Progress::Line(line) | Progress::HookLine(line) => {
+                            Msg::Line(Job::Prepare, line)
+                        }
+                    };
+                    let _ = tx.send(msg);
+                },
+            );
+            if let Err(std::sync::mpsc::SendError(Msg::ManagedClient { result, .. })) =
+                tx.send(Msg::ManagedClient {
+                    instance: Box::new(instance),
+                    result: Box::new(result),
+                })
+            {
+                if let Ok(game) = *result {
+                    // The admitted child owns its claims now. Closing the window does
+                    // not stop it; drain its streams until this launcher exits.
+                    backend::monitor_game(game.child, tx, game.runtime);
+                }
+            }
+        });
+    }
+
+    /// Starts a pack's game through its legacy route. Ordinary profiles use the admitted worker.
     fn start_client(&mut self, tag: String, intent: PlayIntent) {
         self.client_error = None;
         self.crash = None;

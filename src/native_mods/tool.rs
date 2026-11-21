@@ -4,6 +4,10 @@ use crate::rust_toolchain::Toolchain;
 use crate::{
     backend::{NativeGrant, PermissionFence},
     i18n::{tr, trf},
+    process::{
+        leases::{ProfileHandoff, StagedChild},
+        owned::Owned,
+    },
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -53,7 +57,7 @@ impl Cancellation {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    pub(super) fn admit_native_work(&self) -> Result<(), super::Failed> {
+    pub(crate) fn admit_native_work(&self) -> Result<(), super::Failed> {
         let mut state = self.state();
         state.check()?;
         if let Some(grant) = state.grant {
@@ -68,7 +72,7 @@ impl Cancellation {
         self.state().check()
     }
 
-    pub(super) fn publication_guard(&self) -> Result<Option<PermissionFence>, String> {
+    pub(crate) fn publication_guard(&self) -> Result<Option<PermissionFence>, String> {
         let state = self.state();
         state.check()?;
         state.grant.map(NativeGrant::hold).transpose()
@@ -260,6 +264,7 @@ pub(super) fn build(
     consent: Option<&dyn Fn(&Consent) -> bool>,
     on_mod: &dyn Fn(&str, usize, usize),
     cancellation: &Cancellation,
+    profile: Option<ProfileHandoff<'_>>,
 ) -> Result<Built, Failure> {
     #[cfg(not(target_os = "linux"))]
     let mut command = command(rust, program);
@@ -285,6 +290,7 @@ pub(super) fn build(
         on_mod,
         cancellation,
         Some(plan.workspace),
+        profile,
     )
 }
 
@@ -308,12 +314,13 @@ fn run(
     on_mod: &dyn Fn(&str, usize, usize),
     cancellation: &Cancellation,
     mut workspace: Option<&mut Workspace>,
+    profile: Option<ProfileHandoff<'_>>,
 ) -> Result<Built, Failure> {
     command
         .arg("native-build")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
-    let (mut child, errors) = start(command, cancellation, true)?;
+    let (mut child, errors) = start(command, cancellation, true, profile)?;
     if let Some(workspace) = workspace.as_deref_mut() {
         workspace.allow_worker();
     }
@@ -543,7 +550,8 @@ fn talk(
 fn start(
     mut command: std::process::Command,
     cancellation: &Cancellation,
-    _compiler: bool,
+    compiler: bool,
+    profile: Option<ProfileHandoff<'_>>,
 ) -> Result<(crate::process::owned::Owned, mpsc::Receiver<String>), String> {
     command.stderr(Stdio::piped());
     #[cfg(unix)]
@@ -553,13 +561,22 @@ fn start(
     state.check()?;
     // A grant check and the worker handoff form one short admission, never held during I/O.
     let permission = state.grant.map(NativeGrant::hold).transpose()?;
-    #[cfg(not(windows))]
-    let mut child = crate::process::owned::Owned::spawn(&mut command).map_err(unrun)?;
-    #[cfg(windows)]
-    let mut child = if _compiler {
-        crate::process::owned::Owned::spawn_compiler(&command)
+    let mut child = if let Some(profile) = profile {
+        let role = if compiler {
+            StagedChild::Compiler
+        } else {
+            StagedChild::Prepare
+        };
+        Owned::spawn_staged(command, profile, role)
     } else {
-        crate::process::owned::Owned::spawn(&mut command)
+        #[cfg(windows)]
+        if compiler {
+            Owned::spawn_compiler(&command)
+        } else {
+            Owned::spawn(&mut command)
+        }
+        #[cfg(not(windows))]
+        Owned::spawn(&mut command)
     }
     .map_err(unrun)?;
     state.tool = Some(child.child().id());
@@ -646,12 +663,14 @@ pub(super) fn check(
     program: &Path,
     plan: &Value,
     cancellation: &Cancellation,
+    profile: Option<ProfileHandoff<'_>>,
 ) -> Result<Checked, String> {
-    let value = ask(
+    let value = ask_fenced(
         crate::process::command(program),
         "native-check",
         plan,
         cancellation,
+        profile,
     )?;
     serde_json::from_value(value).map_err(|e| {
         trf(
@@ -663,10 +682,20 @@ pub(super) fn check(
 
 /// Runs one of the tool's one-line commands (`native-check`, `native-discover`, `native-lock`, `native-layout`) with `plan` (its `contract` filled in): its reply, or its error's message.
 pub(super) fn ask(
+    command: std::process::Command,
+    name: &str,
+    plan: &Value,
+    cancellation: &Cancellation,
+) -> Result<Value, String> {
+    ask_fenced(command, name, plan, cancellation, None)
+}
+
+fn ask_fenced(
     mut command: std::process::Command,
     name: &str,
     plan: &Value,
     cancellation: &Cancellation,
+    profile: Option<ProfileHandoff<'_>>,
 ) -> Result<Value, String> {
     let mut plan = plan.clone();
     plan["contract"] = CONTRACT.into();
@@ -674,7 +703,7 @@ pub(super) fn ask(
         .arg(name)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
-    let (mut child, errors) = start(command, cancellation, false)?;
+    let (mut child, errors) = start(command, cancellation, false, profile)?;
     let mut input = child.child().stdin.take().expect("piped");
     let sent = writeln!(input, "{plan}").map_err(unrun);
     drop(input);

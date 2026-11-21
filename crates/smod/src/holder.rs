@@ -288,7 +288,7 @@ mod controller;
 #[cfg(test)]
 mod entry_tests;
 mod record;
-pub use controller::{Prepared, Started, capable, launch};
+pub use controller::{Prepared, RunRecord, Started, capable, launch};
 mod game_entry;
 pub use game_entry::{acquire, acquire_entry, lease_paths, managed_lease_paths};
 #[cfg(test)]

@@ -1,20 +1,21 @@
 use super::*;
 use crate::{local_control::Endpoint, locks::Release, selection::ModSelectionContext};
 use std::{io::Read, process::Child};
-pub struct Prepared {
-    request: Request,
-    _snapshots: Vec<Snapshot>,
+/// Immutable bootstrap record also used by games that receive the claims directly.
+pub struct RunRecord {
+    entry: Entry,
+    reference: record::Reference,
+    snapshots: Vec<Snapshot>,
     _claims: Vec<Claim>,
     _record: File,
 }
-impl Prepared {
+impl RunRecord {
     pub fn new(
         data: PathBuf,
         trees: Vec<(PathBuf, bool)>,
-        program: Program,
         selection: &ModSelectionContext,
     ) -> io::Result<Self> {
-        if !data.is_absolute() || !program.directory.is_absolute() {
+        if !data.is_absolute() {
             return Err(io::ErrorKind::InvalidInput.into());
         }
         let registry = Registry::with_release(&data, Release::Close).map_err(lease_error)?;
@@ -62,14 +63,51 @@ impl Prepared {
         let (reference, file) =
             record::Reference::publish(snapshots.last().unwrap(), &entry, selection)?;
         Ok(Self {
-            request: Request {
-                entry,
-                program,
-                record: reference,
-            },
-            _snapshots: snapshots,
+            entry,
+            reference,
+            snapshots,
             _claims: claims,
             _record: file,
+        })
+    }
+
+    /// Set the launch record and return the directory that must stay in the game's claims.
+    pub fn direct_entry(&self, command: &mut Command) -> io::Result<&Path> {
+        self.entry.check_image(Path::new(command.get_program()))?;
+        self.entry.recheck()?;
+        command.env(ENTRY, self.reference.encode()?);
+        Ok(&self
+            .snapshots
+            .last()
+            .expect("the launch record snapshot")
+            .tree
+            .path)
+    }
+}
+
+pub struct Prepared {
+    request: Request,
+    _record: RunRecord,
+}
+impl Prepared {
+    pub fn new(
+        data: PathBuf,
+        trees: Vec<(PathBuf, bool)>,
+        program: Program,
+        selection: &ModSelectionContext,
+    ) -> io::Result<Self> {
+        if !program.directory.is_absolute() {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        let record = RunRecord::new(data, trees, selection)?;
+        let request = Request {
+            entry: record.entry.clone(),
+            program,
+            record: record.reference.clone(),
+        };
+        Ok(Self {
+            request,
+            _record: record,
         })
     }
 }
