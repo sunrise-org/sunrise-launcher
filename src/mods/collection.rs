@@ -65,14 +65,16 @@ impl Launcher {
 
     /// Install what is ticked and not yet installed, planned together.
     fn collection_install(&mut self, id: &str) {
-        let Some((_, collection, view)) = self.collection_view(id) else {
+        let Some((_, _, view)) = self.collection_view(id) else {
             return;
         };
-        if view.conflict.is_some() || !self.guard() {
+        if view.conflict.is_some() {
             return;
         }
         self.ui.mods.notice = None;
-        self.mods_install_many(view.to_install(), collection.name);
+        if let Err(why) = self.queue_registry_install(id.into(), view.to_install()) {
+            self.ui.mods.notice = Some(Err(why));
+        }
     }
 
     pub(super) fn collection_page(
@@ -90,8 +92,12 @@ impl Launcher {
                 .child(muted(tr("This collection can't be shown.")))
                 .into_any_element();
         };
-        let native_allowed = self.settings.native_mods_allowed_at.is_some();
-        let busy = self.mods_busy();
+        let working = self.registry_card_control(&id, |label| {
+            dim(primary("alt-collection-install", label)
+                .w_full()
+                .h(px(tokens::ACTION)))
+            .into_any_element()
+        });
         let owners = collection.owners.join(", ");
         let icon = self.mods_image(&collection.icon, images::ICON);
 
@@ -160,13 +166,10 @@ impl Launcher {
         // The side panel: the one Install, and what it does.
         let summary = &view.summary;
         let done = view.done();
-        let ready = view.can_install() && !busy;
-        let wants_ok = !native_allowed
-            && view
-                .lines
-                .iter()
-                .any(|l| l.ticked && sunrise::is_native_mod(&l.id));
-        let action: AnyElement = if done {
+        let ready = view.can_install() && self.mods_locked().is_none();
+        let action: AnyElement = if let Some(progress) = working {
+            progress
+        } else if done {
             div()
                 .h(px(tokens::ACTION))
                 .flex()
@@ -181,12 +184,7 @@ impl Launcher {
                 .child(tr("Installed"))
                 .into_any_element()
         } else {
-            let label = if wants_ok {
-                tr("Install…")
-            } else {
-                tr("Install")
-            };
-            let b = primary("alt-collection-install", label)
+            let b = primary("alt-collection-install", self.registry_install_label())
                 .w_full()
                 .h(px(tokens::ACTION));
             if ready {
@@ -231,7 +229,7 @@ impl Launcher {
         facts = facts.child(fact("user", trf("By {authors}", &[("authors", &owners)])));
         let tail = match done {
             true => tr("Each mod updates and is removed on its own, from Installed."),
-            false => tr("Each mod installs, updates and is removed on its own."),
+            false => tr("The selected mods and their dependencies install together."),
         };
         let downloads: u64 = collection
             .members
@@ -300,6 +298,7 @@ impl Launcher {
                             ),
                     )
                     .child(action)
+                    .children(self.registry_card_outcome(&id, cx))
                     .child(
                         div()
                             .text_size(px(tokens::LABEL))

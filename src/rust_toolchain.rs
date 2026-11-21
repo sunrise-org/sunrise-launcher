@@ -582,9 +582,11 @@ fn download_archive(
     sha256: &str,
     to: &Path,
     progress: &impl Fn(f32),
+    cancellation: &crate::native_mods::Cancellation,
 ) -> Result<(), String> {
+    cancellation.check()?;
     save_archive(
-        backend::get(url)?.into_reader(),
+        cancellation.reader(backend::get(url)?.into_reader()),
         url,
         bytes,
         sha256,
@@ -623,53 +625,94 @@ fn save_archive(
     Ok(())
 }
 
+pub(crate) fn unsupported_host() -> String {
+    if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
+        crate::i18n::tr("Native mods are not supported by the Windows ARM64 launcher yet; its managed compiler is not available.").into()
+    } else {
+        crate::i18n::trf(
+            "Native mods need Rust, and the launcher has none for {os} {arch}.",
+            &[
+                ("os", std::env::consts::OS),
+                ("arch", std::env::consts::ARCH),
+            ],
+        )
+    }
+}
+
 /// Downloads, checks and unpacks the pinned toolchain (once); `progress` gets the fraction done.
 pub fn install(progress: impl Fn(f32)) -> Result<Toolchain, String> {
+    install_cancellable(progress, &crate::native_mods::Cancellation::default())
+}
+
+pub(crate) fn install_cancellable(
+    progress: impl Fn(f32),
+    cancellation: &crate::native_mods::Cancellation,
+) -> Result<Toolchain, String> {
+    cancellation.check()?;
     if let Some(done) = installed() {
         return Ok(done);
     }
-    let host = host().ok_or_else(|| {
-        if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
-            crate::i18n::tr("Native mods are not supported by the Windows ARM64 launcher yet; its managed compiler is not available.")
-                .to_string()
-        } else {
-            format!(
-                "Native mods need Rust, and the launcher has none for {} {}.",
-                std::env::consts::OS,
-                std::env::consts::ARCH
-            )
-        }
-    })?;
+    let host = host().ok_or_else(unsupported_host)?;
     let dir = dir_for(host);
-    let partial = root().join(format!(".{VERSION}-{}.partial", host.target));
-    let _ = fs::remove_dir_all(&partial);
-    fs::create_dir_all(&partial).map_err(|e| e.to_string())?;
-    let count = (host.components.len() + usize::from(host.c_toolchain.is_some())) as f32;
-    for (i, &(name, sha256, bytes)) in host.components.iter().enumerate() {
+    let root = root();
+    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    let scratch = tempfile::Builder::new()
+        .prefix("toolchain-")
+        .tempdir_in(&root)
+        .map_err(|e| e.to_string())?;
+    let partial = scratch.path().join("unpacked");
+    fs::create_dir(&partial).map_err(|e| e.to_string())?;
+    let total = host
+        .components
+        .iter()
+        .map(|&(_, _, bytes)| bytes)
+        .sum::<u64>()
+        + host.c_toolchain.map_or(0, |compiler| compiler.bytes);
+    let mut done = 0_u64;
+    progress(0.0);
+    for &(name, sha256, bytes) in host.components {
         let file = format!("{name}-{VERSION}-{}.tar.gz", host.target);
-        let archive = root().join(format!(".{file}"));
-        let step = |f: f32| progress((i as f32 + f) / count);
-        download_archive(&format!("{DIST}/{file}"), bytes, sha256, &archive, &step)
-            .map_err(|e| format!("Rust {VERSION} ({name}): {e}"))?;
-        let unpacked = unpack(&archive, &partial);
+        let archive = scratch.path().join(&file);
+        // save_checked accounts for 90% before verifying the checksum; only count received bytes.
+        let step = |f: f32| {
+            progress(
+                (done as f64 + f64::from((f / 0.9).min(1.0)) * bytes as f64) as f32 / total as f32,
+            )
+        };
+        download_archive(
+            &format!("{DIST}/{file}"),
+            bytes,
+            sha256,
+            &archive,
+            &step,
+            cancellation,
+        )
+        .map_err(|e| format!("Rust {VERSION} ({name}): {e}"))?;
+        let unpacked = unpack(&archive, &partial, cancellation);
         let _ = fs::remove_file(&archive);
         unpacked.map_err(|e| format!("Rust {VERSION} ({name}): {e}"))?;
+        done += bytes;
     }
     if let Some(compiler) = host.c_toolchain {
-        let archive = root().join(format!(".{}.zip", compiler.directory));
-        let done = host.components.len() as f32;
-        let step = |f: f32| progress((done + f) / count);
+        let archive = scratch.path().join(format!(".{}.zip", compiler.directory));
+        let step = |f: f32| {
+            progress(
+                (done as f64 + f64::from((f / 0.9).min(1.0)) * compiler.bytes as f64) as f32
+                    / total as f32,
+            )
+        };
         download_archive(
             compiler.url,
             compiler.bytes,
             compiler.sha256,
             &archive,
             &step,
+            cancellation,
         )
         .map_err(|e| format!("{}: {e}", compiler.version))?;
         let unpacked = match compiler.kind {
-            CToolchainKind::WinLibs => unpack_mingw(&archive, &partial),
-            CToolchainKind::LlvmMingw => unpack_llvm_mingw(&archive, &partial),
+            CToolchainKind::WinLibs => unpack_mingw(&archive, &partial, cancellation),
+            CToolchainKind::LlvmMingw => unpack_llvm_mingw(&archive, &partial, cancellation),
         };
         let _ = fs::remove_file(&archive);
         unpacked.map_err(|e| format!("{}: {e}", compiler.version))?;
@@ -684,6 +727,7 @@ pub fn install(progress: impl Fn(f32)) -> Result<Toolchain, String> {
             ));
         }
     }
+    cancellation.check()?;
     fs::write(partial.join(COMPLETE), VERSION).map_err(|e| e.to_string())?;
     let _ = fs::remove_dir_all(&dir);
     fs::rename(&partial, &dir).map_err(|e| e.to_string())?;
@@ -694,9 +738,13 @@ pub fn install(progress: impl Fn(f32)) -> Result<Toolchain, String> {
 /// Unpacks one component archive into `prefix`, as its installer would: an archive holds
 /// `<top>/<component>/<files>` per component, and each component's files go under `prefix`. Its
 /// installer script, lists and `manifest.in` stay out.
-fn unpack(archive: &Path, prefix: &Path) -> Result<(), String> {
+fn unpack(
+    archive: &Path,
+    prefix: &Path,
+    cancellation: &crate::native_mods::Cancellation,
+) -> Result<(), String> {
     let file = fs::File::open(archive).map_err(|e| e.to_string())?;
-    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(file));
+    let mut tar = tar::Archive::new(cancellation.reader(flate2::read::GzDecoder::new(file)));
     for entry in tar.entries().map_err(|e| e.to_string())? {
         let mut entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path().map_err(|e| e.to_string())?.into_owned();
@@ -734,10 +782,15 @@ fn component_path(path: &Path) -> Option<PathBuf> {
 }
 
 /// Unpacks MinGW-w64's zip into `prefix`: its `mingw64/` folder, documentation left out.
-fn unpack_mingw(archive: &Path, prefix: &Path) -> Result<(), String> {
+fn unpack_mingw(
+    archive: &Path,
+    prefix: &Path,
+    cancellation: &crate::native_mods::Cancellation,
+) -> Result<(), String> {
     let file = fs::File::open(archive).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
     for i in 0..zip.len() {
+        cancellation.check()?;
         let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
         let Some(relative) = entry.enclosed_name().and_then(|p| mingw_path(&p)) else {
             continue;
@@ -751,17 +804,23 @@ fn unpack_mingw(archive: &Path, prefix: &Path) -> Result<(), String> {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         let mut out = fs::File::create(&to).map_err(|e| format!("{}: {e}", relative.display()))?;
-        std::io::copy(&mut entry, &mut out).map_err(|e| format!("{}: {e}", relative.display()))?;
+        std::io::copy(&mut cancellation.reader(&mut entry), &mut out)
+            .map_err(|e| format!("{}: {e}", relative.display()))?;
     }
     Ok(())
 }
 
 /// Unpacks LLVM-MinGW under `llvm-mingw/`. Release archives have either a versioned top folder or
 /// the toolchain folders at their root; both layouts are accepted, but paths may never escape it.
-fn unpack_llvm_mingw(archive: &Path, prefix: &Path) -> Result<(), String> {
+fn unpack_llvm_mingw(
+    archive: &Path,
+    prefix: &Path,
+    cancellation: &crate::native_mods::Cancellation,
+) -> Result<(), String> {
     let file = fs::File::open(archive).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
     for i in 0..zip.len() {
+        cancellation.check()?;
         let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
         let Some(relative) = entry.enclosed_name().and_then(|p| llvm_mingw_path(&p)) else {
             continue;
@@ -775,7 +834,8 @@ fn unpack_llvm_mingw(archive: &Path, prefix: &Path) -> Result<(), String> {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         let mut out = fs::File::create(&to).map_err(|e| format!("{}: {e}", relative.display()))?;
-        std::io::copy(&mut entry, &mut out).map_err(|e| format!("{}: {e}", relative.display()))?;
+        std::io::copy(&mut cancellation.reader(&mut entry), &mut out)
+            .map_err(|e| format!("{}: {e}", relative.display()))?;
     }
     Ok(())
 }
@@ -1066,6 +1126,26 @@ mod tests {
     }
 
     #[test]
+    fn stopped_pinned_archive_is_never_published() {
+        let directory = tempfile::tempdir().unwrap();
+        let archive = directory.path().join("archive");
+        let cancellation = crate::native_mods::Cancellation::default();
+        let bytes = vec![b'x'; 1 << 17];
+        let expected = sunrise_launcher_smod::index::sha256(&bytes);
+        let result = save_archive(
+            cancellation.reader(bytes.as_slice()),
+            "fixture",
+            bytes.len() as u64,
+            &expected,
+            &archive,
+            &|_| cancellation.stop(),
+        );
+        assert!(result.is_err());
+        assert!(cancellation.is_stopped());
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
     fn every_host_pins_each_component_once_with_a_sha256() {
         for host in HOSTS {
             let names: Vec<&str> = host.components.iter().map(|(name, ..)| *name).collect();
@@ -1273,7 +1353,12 @@ mod tests {
         }
         tar.into_inner().unwrap().finish().unwrap().flush().unwrap();
         let prefix = dir.join("prefix");
-        unpack(&archive, &prefix).unwrap();
+        unpack(
+            &archive,
+            &prefix,
+            &crate::native_mods::Cancellation::default(),
+        )
+        .unwrap();
         assert_eq!(
             fs::read_to_string(prefix.join("bin/cargo")).unwrap(),
             "binary"
@@ -1397,7 +1482,12 @@ mod tests {
         }
         zip.finish().unwrap();
         let prefix = dir.join("prefix");
-        unpack_mingw(&archive, &prefix).unwrap();
+        unpack_mingw(
+            &archive,
+            &prefix,
+            &crate::native_mods::Cancellation::default(),
+        )
+        .unwrap();
         assert_eq!(
             fs::read_to_string(prefix.join("mingw64/bin/gcc.exe")).unwrap(),
             "gcc"
@@ -1438,7 +1528,12 @@ mod tests {
         }
         zip.finish().unwrap();
         let prefix = dir.join("prefix");
-        unpack_llvm_mingw(&archive, &prefix).unwrap();
+        unpack_llvm_mingw(
+            &archive,
+            &prefix,
+            &crate::native_mods::Cancellation::default(),
+        )
+        .unwrap();
         assert_eq!(
             fs::read_to_string(prefix.join("llvm-mingw/bin/clang.exe")).unwrap(),
             "clang"

@@ -18,21 +18,25 @@ use windows_sys::Win32::{
 };
 
 /// An owned process object; neither waiting nor termination guesses ownership from a PID.
-pub struct WindowsChild(OwnedHandle, u32, Option<Arc<CompilerJob>>);
+pub struct WindowsChild(OwnedHandle, u32, Option<Arc<Job>>);
 
-/// An unnamed non-inheritable job. The launcher's death closes its last handle and kills the tree.
+/// Neither job permits breakaway. Only the compiler dies with its launcher. A wrapped game
+/// must survive the launcher after its confirmed handoff, like a directly started game.
 #[derive(Debug)]
-pub(crate) struct CompilerJob(OwnedHandle);
+pub(crate) struct Job(OwnedHandle, bool);
 
-impl CompilerJob {
-    fn create() -> io::Result<Self> {
+impl Job {
+    fn create(compiler: bool) -> io::Result<Self> {
         // SAFETY: no name or inherited security descriptor; the caller owns the returned handle.
         let handle = unsafe { CreateJobObjectW(ptr::null(), ptr::null()) };
         if handle.is_null() {
             return Err(io::Error::last_os_error());
         }
         // SAFETY: CreateJobObjectW returned an owned handle. Set a fixed-size, no-breakaway limit.
-        let job = Self(unsafe { OwnedHandle::from_raw_handle(handle) });
+        let job = Self(unsafe { OwnedHandle::from_raw_handle(handle) }, compiler);
+        if !compiler {
+            return Ok(job);
+        }
         let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         if unsafe {
@@ -47,6 +51,17 @@ impl CompilerJob {
             return Err(io::Error::last_os_error());
         }
         Ok(job)
+    }
+
+    pub(crate) fn contains(&self, process: &OwnedHandle) -> io::Result<bool> {
+        let mut member = 0;
+        // SAFETY: both handles are live and member is writable for the duration of the call.
+        if unsafe { IsProcessInJob(process.as_raw_handle(), self.0.as_raw_handle(), &mut member) }
+            == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(member != 0)
     }
 
     pub(crate) fn terminate(&self) -> io::Result<()> {
@@ -179,8 +194,16 @@ impl WindowsChild {
         self.1
     }
 
-    pub(crate) fn compiler_job(&self) -> Option<Arc<CompilerJob>> {
-        self.2.clone()
+    pub(crate) fn compiler_job(&self) -> Option<Arc<Job>> {
+        self.2.as_ref().filter(|job| job.1).cloned()
+    }
+
+    pub(crate) fn wrapper_job(&self) -> Option<Arc<Job>> {
+        self.2.as_ref().filter(|job| !job.1).cloned()
+    }
+
+    pub(crate) fn wrapper_leader_exited(&self) -> io::Result<bool> {
+        self.status(0).map(|status| status.is_some())
     }
 
     pub(crate) fn kill(&self) -> io::Result<()> {
@@ -195,14 +218,26 @@ impl WindowsChild {
     }
 
     pub(crate) fn try_wait(&self) -> io::Result<Option<std::process::ExitStatus>> {
-        self.status(0)
+        let status = self.status(0)?;
+        if let Some(job) = self.2.as_ref().filter(|job| !job.1) {
+            if status.is_some() && job.accounting()?.ActiveProcesses != 0 {
+                return Ok(None);
+            }
+        }
+        Ok(status)
     }
 
     /// Wait for the owned process, retaining its full Windows exit code.
     pub fn wait(&self) -> io::Result<std::process::ExitStatus> {
         let status = self.status(INFINITE)?.ok_or(io::ErrorKind::TimedOut)?;
         if let Some(job) = &self.2 {
-            job.check_finished(self.1)?;
+            if job.1 {
+                job.check_finished(self.1)?;
+            } else {
+                while job.accounting()?.ActiveProcesses != 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
         }
         Ok(status)
     }
@@ -286,9 +321,11 @@ pub(super) struct Start<'a> {
     pub directory: Option<&'a Path>,
     pub streams: Option<[HANDLE; 3]>,
     pub runtime_root: Option<&'a Path>,
+    pub profile: Option<&'a File>,
     pub breakaway: bool,
     pub attached: bool,
     pub compiler: bool,
+    pub wrapper: bool,
 }
 
 pub(super) fn spawn_exact(
@@ -315,15 +352,15 @@ pub(super) fn spawn_exact(
         argument(&mut line, &wide(arg)?);
     }
     line.push(0);
-    let job = start
-        .compiler
-        .then(CompilerJob::create)
+    let job = (start.compiler || start.wrapper)
+        .then(|| Job::create(start.compiler))
         .transpose()?
         .map(Arc::new);
     let nul = File::options().read(true).write(true).open("NUL")?;
     let mut roots: Vec<_> = files.iter().map(|file| file.as_raw_handle()).collect();
     roots.sort_unstable_by_key(|h| *h as usize);
     roots.dedup();
+    let runtime_end = 3 + roots.len();
     // SAFETY: Win32 calls borrow valid stdio/file handles; duplicates are owned immediately.
     unsafe {
         let own = GetCurrentProcess();
@@ -335,7 +372,11 @@ pub(super) fn spawn_exact(
             ]
         });
         let mut inherited = Vec::new();
-        for source in stdio.into_iter().chain(roots) {
+        for source in stdio
+            .into_iter()
+            .chain(roots)
+            .chain(start.profile.map(AsRawHandle::as_raw_handle))
+        {
             let source = if source.is_null() || source == INVALID_HANDLE_VALUE {
                 nul.as_raw_handle()
             } else {
@@ -357,7 +398,7 @@ pub(super) fn spawn_exact(
             inherited.push(OwnedHandle::from_raw_handle(duplicate));
         }
         let handles: Vec<_> = inherited.iter().map(AsRawHandle::as_raw_handle).collect();
-        let numbers = handles[3..]
+        let numbers = handles[3..runtime_end]
             .iter()
             .map(|h| (*h as usize).to_string())
             .collect::<Vec<_>>()

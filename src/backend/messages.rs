@@ -6,15 +6,17 @@ pub enum Msg {
     Releases(Result<Vec<Release>, String>),
     Links(Links),
     Progress(String, f32),
-    Installed(String, Result<(), String>),
-    /// A version's files are gone (or could not be deleted).
-    Removed(String, Result<(), String>),
-    /// `prune_old_versions` ended; these versions were deleted.
-    Pruned(Vec<String>),
-    /// What each installed version takes on disk (`disk_use`).
-    DiskUse(Vec<(String, u64)>),
+    Installed(String, Result<InstallOutcome, String>),
+    NightlyReceiptRetried(Arc<NightlyReceiptWarning>, Result<(), String>),
+    /// A Storage removal finished; any failed removal names its build.
+    Removed(Vec<(String, String)>),
+    /// Automatic cleanup finished; any failed removal names its build.
+    Pruned(Vec<(String, String)>),
+    BuildInventory(u64, Vec<version_storage::Build>),
     Line(Job, String),
     Exit(Job, Result<(), String>),
+    /// A relayed game acknowledged creation, but its actual exit was not observed.
+    ClientObservationLost(String),
     /// Boxed: two releases, the largest message by far.
     Updates(Box<Updates>),
     LauncherChecked(Box<Result<Option<Release>, String>>),
@@ -37,23 +39,38 @@ pub enum Msg {
     Session(Result<Option<crate::account::GameSession>, crate::account::NoOwner>),
     /// The step Play is at before the game starts, for the button's label.
     PlayStep(PlayStep),
+    ManagedClient {
+        instance: Box<crate::instances::Instance>,
+        result: Box<Result<crate::managed_play::Started, crate::managed_play::StartError>>,
+    },
+    /// The exit worker has tried to save the completed profile's play time.
+    PlayRecorded,
     /// The worker checked the game's journal for the selected profile before Play changed it.
     PlayAdmission(
         PathBuf,
         Result<(), crate::browser::installed::GameInstallProblem>,
     ),
-    /// The existing build picker changed the pin, or refused an unsettled game journal.
+    /// Saving a channel preference is separate from changing the committed build.
     PinnedBuild {
         home: PathBuf,
         result: Result<(), String>,
-        close_versions: bool,
     },
+    SwitchProgress(crate::browser::sunrise::InstallProgress),
+    SwitchQuestion(
+        Box<crate::browser::sunrise::SwitchQuestion>,
+        std::sync::mpsc::Sender<bool>,
+    ),
+    Switched(
+        PathBuf,
+        Box<Result<crate::browser::sunrise::Switched, String>>,
+    ),
+    ReceiptAcknowledged(PathBuf, Result<bool, String>),
     JarConsent {
         jars: Vec<sunrise_launcher_smod::manifest::JarRef>,
         reply: std::sync::mpsc::Sender<bool>,
     },
     JarClient {
-        run: Option<String>,
+        run: Option<Box<crate::instances::Instance>>,
         account: Option<String>,
         session_file: Option<PathBuf>,
         registry_notices: Vec<String>,
@@ -66,6 +83,6 @@ pub enum Msg {
     NativeRegistryConsent(crate::native_mods::Consent, std::sync::mpsc::Sender<bool>),
     /// The native-mods build ended: the version built, or why not.
     Native(Result<String, crate::native_mods::Failed>),
-    /// An imported game build is installed (`build_import::import`): its version, or why not.
+    /// An imported game build is installed (`build_import::install`): its version, or why not.
     Imported(Result<String, String>),
 }

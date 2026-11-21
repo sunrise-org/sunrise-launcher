@@ -78,10 +78,9 @@ The opening, then Play ([clip](docs/opening.webm)):
 - **Play**: prepares resources as `PLAY.txt` describes (your launcher's 26.3 install, the
   26.3 server jar from that version's own json, and Java 25) and copies its sounds from your
   launcher's asset store (`sunrise-prepare sounds`; a launcher install without them only
-  leaves the game silent), then starts the client. Preparing is
-  sunrise-prepare: linked into the launcher, used in-process when a version ships the same
-  preparer sources, else that version's own `sunrise-prepare`; versions released before it
-  still prepare with their Python script and need Python 3.10+. Before importing,
+  leaves the game silent), then starts the client. Preparing runs that version's own
+  `sunrise-prepare`; versions released before it still prepare with their Python script and
+  need Python 3.10+. Before importing,
   preparation reuses checksum-verified game jars and libraries from the current
   or another installed Sunrise version, so the original Minecraft install is
   only required when no valid imported copy exists.
@@ -105,8 +104,9 @@ The opening, then Play ([clip](docs/opening.webm)):
   registry. Modrinth is searched for those packs only: Java mods and Java modpacks are not
   offered. Install puts a file in the game folder only after its checksum matches; installed
   packs show their source and checksum, with Update, **Update all** and Remove
-  ([docs/mod-browser.md](../docs/mod-browser.md)). A modpack from the registry is installed as an
-  instance of its own and played from its profile (`sunrise-launcher modpack list|play|remove`).
+  ([docs/mod-browser.md](../docs/mod-browser.md)). `sunrise-launcher modpack list` still shows
+  installed Sunrise modpacks. Installing, updating, playing and removing them is paused; their
+  files are unchanged.
 - **Servers**: host a world for friends with buttons. **Create a server** asks for a name, a world
   (a new one, with an optional seed, or a copy of one of your single-player worlds), the game mode,
   difficulty, most players, who can join (friends only, the default, or anyone with the address)
@@ -399,7 +399,8 @@ and don't set `%ERRORLEVEL%` / `$LASTEXITCODE`. Scripts that need the exit code 
     sunrise-launcher remove <tag>
     sunrise-launcher import-build <path> [--version <tag>] --trust-unsigned   a game program you have, as its own version
     sunrise-launcher prepare [--minecraft <dir>] [--version <tag>]
-    sunrise-launcher play [--version <tag>] [--instance <name>] [--arg <ARG>]...   start the client; --arg passes an extra argument through (repeatable)
+    sunrise-launcher play [--instance <name>] [--arg <ARG>]...   start the profile’s committed build; --arg passes an extra argument through (repeatable)
+    sunrise-launcher switch <tag> [--profile <name>]   switch to an exact installed and prepared build; world decisions require a terminal
     sunrise-launcher server [--dir <dir>] [--version <tag>] [--accept-eula]
     sunrise-launcher notes [<tag>]                  patch notes as plain text
     sunrise-launcher links                          the Discord and website links
@@ -414,7 +415,7 @@ and don't set `%ERRORLEVEL%` / `$LASTEXITCODE`. Scripts that need the exit code 
     sunrise-launcher instance create <name> [--copy <instance>]   empty, or a copy of one's worlds, options and packs
     sunrise-launcher instance rename|icon|group <instance> <value>  icon: a block or item name, #rrggbb or none
     sunrise-launcher instance select <instance>     make Play start it
-    sunrise-launcher instance version <instance> <tag|latest>   keep it on one installed version, or follow updates
+    sunrise-launcher instance show [profile]        show the committed build
     sunrise-launcher worlds [list] [--instance <name>]        an instance's worlds
     sunrise-launcher worlds backup|copy|delete <world> [--instance <name>]   delete moves it to the trash
     sunrise-launcher packs [list] [--kind resource|shader] [--instance <name>]   resource and shader packs, on or off
@@ -426,11 +427,11 @@ and don't set `%ERRORLEVEL%` / `$LASTEXITCODE`. Scripts that need the exit code 
     sunrise-launcher multiplayer [list] [--instance <name>]   the servers in an instance's Multiplayer list
     sunrise-launcher multiplayer add <address> [--name <name>] | remove <server>
     sunrise-launcher modpack [list]                 the installed Sunrise modpacks
-    sunrise-launcher modpack play <pack> [--version <tag>]                 play it as its own profile
-    sunrise-launcher modpack remove <pack>
+    sunrise-launcher modpack play <pack>   temporarily unavailable
+    sunrise-launcher modpack remove <pack>                   temporarily unavailable
     sunrise-launcher mods [list]                    what the mod browser installed (docs/mod-browser.md)
     sunrise-launcher mods search <text> [--kind resource|shader|datapack|mod|modpack] [--everything] [--source modrinth]
-    sunrise-launcher mods install <id or slug>      checksum checked, with what it needs; a Sunrise modpack is installed as an instance
+    sunrise-launcher mods install <id or slug>      checksum checked, with what it needs; Sunrise modpacks are paused
     sunrise-launcher mods update [<pack>] [--check]
     sunrise-launcher mods remove <pack>
     sunrise-launcher servers [list]                 the servers hosted from the launcher, and whether they run

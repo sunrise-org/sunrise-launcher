@@ -45,16 +45,22 @@ impl std::error::Error for LaunchError {
     }
 }
 
-/// The launcher prepares data from manifests; compiled identity is the engine's responsibility.
-/// The command must already include the instance/modpack, quick-play and global arguments.
-/// Per-instance environment is applied here as well as by `launch::wrap`, so both see the same
-/// effective home. No game, Java or native-source fixture is executed during preparation.
+/// Prepare jars on the legacy route, which has not assembled its final instance environment.
 pub fn prepare_launch(
     command: &mut Command,
     launch: &Launch,
     permission: Permission<'_>,
 ) -> Result<(), LaunchError> {
     launch::apply_environment(command, launch);
+    prepare_for_command(command, permission)
+}
+
+/// Prepare jars for the exact command that will play, without changing its environment or
+/// arguments. The launcher reads requirements from manifests without running the game or Java.
+pub fn prepare_for_command(
+    command: &Command,
+    permission: Permission<'_>,
+) -> Result<(), LaunchError> {
     let command_error = |source| LaunchError::Command {
         program: command.get_program().into(),
         source,

@@ -2,10 +2,11 @@
 use crate::theme::Theme;
 use gpui::{
     div, prelude::*, px, AnyElement, FontStyle, FontWeight, HighlightStyle, SharedString,
-    StyledText,
+    StyledText, UnderlineStyle,
 };
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use std::ops::Range;
+use sunrise_launcher::browser::sunrise::sources::{Readme, ReadmeImage};
 
 /// A run of text's styled ranges.
 type Spans = Vec<(Range<usize>, Span)>;
@@ -19,17 +20,37 @@ enum Block {
     Code(String),
     Rule,
     Table(Vec<Row>),
+    Image(usize),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Span {
     Strong,
     Emphasis,
     Code,
-    Link,
+    Link(Option<String>),
 }
 
 pub fn render(source: &str, t: &Theme) -> AnyElement {
+    render_inner(source, t, None, |_| div().into_any_element())
+}
+
+/// A checked README uses the same native Markdown as release notes. Only its pinned,
+/// validated links and media are interactive; HTML never becomes a widget.
+pub fn render_pinned(
+    readme: &Readme,
+    t: &Theme,
+    image: impl FnMut(&ReadmeImage) -> AnyElement,
+) -> AnyElement {
+    render_inner(readme.markdown(), t, Some(readme), image)
+}
+
+fn render_inner(
+    source: &str,
+    t: &Theme,
+    pinned: Option<&Readme>,
+    mut image: impl FnMut(&ReadmeImage) -> AnyElement,
+) -> AnyElement {
     let mut blocks = Vec::new();
     let (mut text, mut spans) = (String::new(), Vec::new());
     let mut open: Vec<(Span, usize)> = Vec::new();
@@ -55,11 +76,37 @@ pub fn render(source: &str, t: &Theme) -> AnyElement {
             _ => Block::Paragraph(t, s),
         });
     };
+    let mut in_image = false;
+    let mut next_image = 0usize;
     for event in Parser::new_ext(
         source,
         Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES,
     ) {
+        if in_image {
+            if event == Event::End(TagEnd::Image) {
+                in_image = false;
+            }
+            continue;
+        }
         match event {
+            Event::Start(Tag::Image { dest_url, .. }) if pinned.is_some() => {
+                if let Some((n, _)) = pinned
+                    .into_iter()
+                    .flat_map(Readme::images)
+                    .enumerate()
+                    .skip(next_image)
+                    .find(|(_, image)| image.destination() == dest_url.as_ref())
+                {
+                    flush(&mut blocks, &mut text, &mut spans, &mut item, heading);
+                    // Spans from an outer link cannot cross the separately rendered image.
+                    for (_, start) in &mut open {
+                        *start = 0;
+                    }
+                    blocks.push(Block::Image(n));
+                    next_image = n + 1;
+                    in_image = true;
+                }
+            }
             Event::Start(Tag::Heading { level, .. }) => {
                 heading = Some(match level {
                     HeadingLevel::H1 => 1,
@@ -99,9 +146,17 @@ pub fn render(source: &str, t: &Theme) -> AnyElement {
             }
             Event::Start(Tag::Strong) => open.push((Span::Strong, text.len())),
             Event::Start(Tag::Emphasis) => open.push((Span::Emphasis, text.len())),
-            Event::Start(Tag::Link { .. }) => open.push((Span::Link, text.len())),
+            Event::Start(Tag::Link { dest_url, .. }) => {
+                open.push((
+                    Span::Link(pinned.and_then(|readme| readme.link(&dest_url))),
+                    text.len(),
+                ));
+            }
             Event::End(TagEnd::Strong | TagEnd::Emphasis | TagEnd::Link) => {
                 if let Some((span, start)) = open.pop() {
+                    if matches!(&span, Span::Link(Some(_))) && start < text.len() {
+                        text.push_str("\u{a0}↗");
+                    }
                     spans.push((start..text.len(), span));
                 }
             }
@@ -141,37 +196,60 @@ pub fn render(source: &str, t: &Theme) -> AnyElement {
 
     let blocks_drawn = std::cell::Cell::new(0u64);
     let styled = |text: String, spans: Spans| {
-        let highlights = spans.into_iter().map(|(range, span)| {
-            let style = match span {
-                Span::Strong => HighlightStyle {
-                    font_weight: Some(FontWeight::SEMIBOLD),
-                    color: Some(t.ink),
-                    ..Default::default()
-                },
-                Span::Emphasis => HighlightStyle {
-                    font_style: Some(FontStyle::Italic),
-                    ..Default::default()
-                },
-                Span::Code => HighlightStyle {
-                    background_color: Some(t.plate_soft),
-                    color: Some(t.ink),
-                    ..Default::default()
-                },
-                Span::Link => HighlightStyle {
-                    color: Some(t.ink),
-                    ..Default::default()
-                },
-            };
-            (range, style)
-        });
+        let text_len = text.len();
+        let links: Vec<_> = spans
+            .iter()
+            .filter_map(|(range, span)| match span {
+                Span::Link(Some(url)) if !range.is_empty() && range.end <= text_len => {
+                    Some((range.clone(), url.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        let highlights = spans
+            .into_iter()
+            .filter(|(range, _)| range.end <= text_len)
+            .map(|(range, span)| {
+                let style = match span {
+                    Span::Strong => HighlightStyle {
+                        font_weight: Some(FontWeight::SEMIBOLD),
+                        color: Some(t.ink),
+                        ..Default::default()
+                    },
+                    Span::Emphasis => HighlightStyle {
+                        font_style: Some(FontStyle::Italic),
+                        ..Default::default()
+                    },
+                    Span::Code => HighlightStyle {
+                        background_color: Some(t.plate_soft),
+                        color: Some(t.ink),
+                        ..Default::default()
+                    },
+                    Span::Link(url) => HighlightStyle {
+                        color: Some(t.ink),
+                        underline: url.is_some().then_some(UnderlineStyle {
+                            thickness: px(1.),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                };
+                (range, style)
+            });
         let text = SharedString::from(text);
         // Numbered, so two blocks with the same words are two selections.
         let nth = blocks_drawn.get();
         blocks_drawn.set(nth + 1);
-        crate::selectable::Selectable::styled(
-            gpui::ElementId::NamedInteger(text.clone(), nth),
-            StyledText::new(text).with_highlights(highlights.collect::<Vec<_>>()),
-        )
+        let id = gpui::ElementId::NamedInteger(text.clone(), nth);
+        let text = StyledText::new(text).with_highlights(gpui::combine_highlights(highlights, []));
+        if links.is_empty() {
+            crate::selectable::Selectable::styled(id, text).into_any_element()
+        } else {
+            let (ranges, urls): (Vec<_>, Vec<_>) = links.into_iter().unzip();
+            gpui::InteractiveText::new(id, text)
+                .on_click(ranges, move |i, _, cx| cx.open_url(&urls[i]))
+                .into_any_element()
+        }
     };
     // The glass look sets notes as the mockup's: 14 px on 1.55 at 75 %, lists with square
     // bullets, 6 px apart.
@@ -233,6 +311,7 @@ pub fn render(source: &str, t: &Theme) -> AnyElement {
                     .into_any_element()
             }
             Block::Rule => div().h(px(1.)).bg(t.rule).my(px(8.)).into_any_element(),
+            Block::Image(n) => image(&pinned.expect("image in a pinned README").images()[n]),
             Block::Table(rows) => {
                 let mut grid = div()
                     .flex()

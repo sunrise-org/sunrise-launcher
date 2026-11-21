@@ -511,7 +511,7 @@ impl Language {
     /// The table, as shipped: English text to this language's.
     fn source(self) -> &'static str {
         match self {
-            Self::English => "{}",
+            Self::English => include_str!("../lang/en.json"),
             Self::French => include_str!("../lang/fr.json"),
             Self::Russian => include_str!("../lang/ru.json"),
             Self::German => include_str!("../lang/de.json"),

@@ -104,6 +104,24 @@ fn name(marker: &Marker) -> Vec<u16> {
 }
 pub struct Stream(File);
 impl Stream {
+    pub(super) fn client_process_id(&self) -> io::Result<u32> {
+        let mut pid = 0;
+        // SAFETY: this is the owned server endpoint and pid is a writable output slot.
+        if unsafe { GetNamedPipeClientProcessId(self.0.as_raw_handle(), &mut pid) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(pid)
+    }
+
+    pub(super) fn server_process_id(&self) -> io::Result<u32> {
+        let mut pid = 0;
+        // SAFETY: this is the owned client endpoint and pid is a writable output slot.
+        if unsafe { GetNamedPipeServerProcessId(self.0.as_raw_handle(), &mut pid) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(pid)
+    }
+
     pub fn set_nonblocking(&self, enabled: bool) -> io::Result<()> {
         let mode = PIPE_READMODE_BYTE | if enabled { PIPE_NOWAIT } else { PIPE_WAIT };
         // SAFETY: the owned pipe handle and mode pointer remain valid throughout the call.
@@ -188,9 +206,20 @@ impl Endpoint {
         Ok(Self(Some(Stream(unsafe { File::from_raw_handle(handle) }))))
     }
     pub fn accept(&mut self, deadline: Instant) -> io::Result<Stream> {
+        self.accept_while(deadline, || true)
+    }
+
+    pub fn accept_while(
+        &mut self,
+        deadline: Instant,
+        pending: impl Fn() -> bool,
+    ) -> io::Result<Stream> {
         let stream = self.0.take().ok_or(io::ErrorKind::NotConnected)?;
         loop {
             check_deadline(deadline)?;
+            if !pending() {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            }
             // NOWAIT can report a listening instance as successful: confirm an actual peer.
             // SAFETY: the owned NOWAIT pipe does not use an overlapped structure.
             unsafe {
@@ -214,6 +243,14 @@ impl Endpoint {
 #[path = "windows_tests.rs"]
 mod tests;
 pub fn connect(marker: &Marker, deadline: Instant) -> io::Result<Stream> {
+    connect_with_flags(marker, deadline, 0)
+}
+
+pub(super) fn connect_with_flags(
+    marker: &Marker,
+    deadline: Instant,
+    flags: u32,
+) -> io::Result<Stream> {
     loop {
         check_deadline(deadline)?;
         // SAFETY: name is null-terminated; all optional pointers are null for this synchronous open.
@@ -224,7 +261,7 @@ pub fn connect(marker: &Marker, deadline: Instant) -> io::Result<Stream> {
                 0,
                 null(),
                 OPEN_EXISTING,
-                0,
+                flags,
                 null_mut(),
             )
         };

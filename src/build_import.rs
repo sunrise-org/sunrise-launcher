@@ -6,8 +6,8 @@
 //! research-lock.json, preparer sources and prepared resources) with the picked program in
 //! place of that version's own, as a native build is (`native_mods::install`).
 //!
-//! Nothing signed it: the Versions page says so. Its tag (`imported-<date>-<sha>`) is no
-//! release's, so no update replaces it, prunes it or moves the selection off it.
+//! Nothing signed it: Storage says so. Its tag (`imported-<date>-<sha>`) is not a
+//! release's, so an update neither replaces nor prunes it.
 
 use crate::backend::{self, CLIENT};
 use crate::i18n::{tr, trf};
@@ -59,16 +59,20 @@ pub fn about(version: &str) -> Option<About> {
     })
 }
 
-/// A supported base: a signed release/Nightly, or an explicitly chosen unsigned developer build.
+/// A local base the player can name. Old game installations are valid here even though their
+/// tags are not offered by the release catalogue or chosen as the automatic default.
 fn eligible_base(version: &str) -> bool {
     backend::is_game_tag(version)
+        || version
+            .strip_prefix('v')
+            .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
         || crate::nightly::date_of(version).is_some()
         || crate::developer_install::is_developer(version)
 }
 
 /// The installed version an import takes its game files from: `requested` (`--version`), else
 /// `selected` when it is an eligible base, else the newest installed release or Nightly.
-/// Developer bases never enter that automatic fallback.
+/// Legacy and developer bases never enter that automatic fallback.
 fn base_for(
     installed: &[String],
     requested: Option<&str>,
@@ -91,10 +95,22 @@ fn base_for(
     }
 }
 
-/// Installs the game program at `path` (or the one inside an archive there) as a new version on
-/// the game files of `requested` (default: [`base_for`]), prepared from another version where it
-/// can be, and selects it. Importing the same program again selects the version it made before.
+pub fn can_import(installed: &[String], selected: Option<&str>) -> bool {
+    base_for(installed, None, selected).is_ok()
+}
+
+/// An explicit CLI import selects the resulting build, including when it was already installed.
 pub fn import(path: &Path, requested: Option<&str>) -> Result<String, String> {
+    let tag = install(path, requested)?;
+    // Read again: other settings may have changed during the copy.
+    let mut settings = backend::Settings::load();
+    settings.selected = Some(tag.clone());
+    settings.save()?;
+    Ok(tag)
+}
+
+/// Installs the game program at `path` (or in the archive there) without changing any selection.
+pub fn install(path: &Path, requested: Option<&str>) -> Result<String, String> {
     let file = path.file_name().map_or_else(
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
@@ -115,10 +131,6 @@ pub fn import(path: &Path, requested: Option<&str>) -> Result<String, String> {
         ));
     }
     backend::reuse_prepared_for(&tag);
-    // Read again: the window may have saved other settings during the copy.
-    let mut settings = backend::Settings::load();
-    settings.selected = Some(tag.clone());
-    settings.save()?;
     Ok(tag)
 }
 
@@ -452,6 +464,80 @@ mod tests {
     }
 
     #[test]
+    fn an_explicit_installed_legacy_game_still_supplies_import_files() {
+        let versions = dir("legacy-base");
+        let legacy = "v2026.10.13";
+        let stable = "26.3-0.1.0";
+        for tag in [stable, legacy] {
+            let root = versions.join(tag);
+            fs::create_dir_all(&root).unwrap();
+            fs::write(root.join(".installed"), b"").unwrap();
+            fs::write(root.join("research-lock.json"), tag).unwrap();
+        }
+        let installed = [stable.to_owned(), legacy.to_owned()];
+        assert!(!backend::is_game_tag(legacy));
+        assert!(base_for(&installed[..1], Some(legacy), None).is_err());
+        assert_eq!(base_for(&installed, None, None).unwrap(), stable);
+        assert_eq!(base_for(&installed, None, Some(legacy)).unwrap(), legacy);
+        assert!(base_for(&installed[1..], None, None).is_err());
+        let base = base_for(&installed, Some(legacy), None).unwrap();
+        let tag = install_in(
+            &versions,
+            &base,
+            &program(b"local client"),
+            CLIENT,
+            "2026-11-20",
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(versions.join(tag).join("research-lock.json")).unwrap(),
+            legacy
+        );
+        fs::remove_dir_all(versions).unwrap();
+    }
+
+    #[test]
+    fn storage_import_does_not_change_the_selected_build() {
+        const ACTOR: &str = "SUNRISE_TEST_STORAGE_IMPORT";
+        let scratch = tempfile::tempdir().unwrap();
+        if std::env::var_os(ACTOR).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "build_import::tests::storage_import_does_not_change_the_selected_build",
+                ])
+                .env(ACTOR, "1")
+                .env("SUNRISE_LAUNCHER_HOME", scratch.path().join("launcher"))
+                .env("SUNRISE_HOME", scratch.path().join("game"))
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            return;
+        }
+        let tag = "26.3-0.1.0";
+        let base = backend::version_dir(tag);
+        fs::create_dir_all(&base).unwrap();
+        fs::write(base.join(CLIENT), program(b"signed base")).unwrap();
+        fs::write(base.join(".installed"), "").unwrap();
+        backend::Settings {
+            selected: Some(tag.into()),
+            ..Default::default()
+        }
+        .save()
+        .unwrap();
+        let path = scratch.path().join(CLIENT);
+        fs::write(&path, program(b"another build")).unwrap();
+        let new = install(&path, None).unwrap();
+        assert!(is_imported(&new));
+        assert_eq!(backend::Settings::load().selected.as_deref(), Some(tag));
+        assert!(backend::installed().contains(&new));
+    }
+
+    #[test]
     fn a_failed_import_leaves_nothing_behind() {
         let versions = dir("failed");
         // A folder from an import that never finished is not that program's version.
@@ -590,14 +676,14 @@ mod tests {
     fn the_base_is_the_selected_release_or_the_newest_one() {
         let installed = [
             "nightly-2026-11-01-c9d474d".to_string(),
-            "v0.2.95".to_string(),
+            "26.3-0.1.0".to_string(),
             "native-c9d474d-0123456789ab".to_string(),
             "imported-2026-10-31-abcdef0".to_string(),
         ];
         let newest = Ok("nightly-2026-11-01-c9d474d".to_string());
         assert_eq!(
-            base_for(&installed, None, Some("v0.2.95")),
-            Ok("v0.2.95".to_string())
+            base_for(&installed, None, Some("26.3-0.1.0")),
+            Ok("26.3-0.1.0".to_string())
         );
         for selected in [None, Some("imported-2026-10-31-abcdef0"), Some("v0.1.0")] {
             assert_eq!(base_for(&installed, None, selected), newest);
@@ -618,7 +704,7 @@ mod tests {
         mixed.insert(0, developer.to_string());
         assert_eq!(base_for(&mixed, None, None), newest);
         // --version can explicitly name a developer base, but not an imported or native derivative.
-        let asked = |b| base_for(&installed, Some(b), Some("v0.2.95"));
+        let asked = |b| base_for(&installed, Some(b), Some("26.3-0.1.0"));
         assert_eq!(asked("nightly-2026-11-01-c9d474d"), newest);
         for b in [
             "v0.1.0",

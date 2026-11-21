@@ -1,6 +1,7 @@
 //! `sunrise-launcher <subcommand>`: the same steps as the window, from a terminal. Every
 //! command goes through `backend`; this file only parses arguments and prints.
 mod progress;
+mod switch;
 use progress::{native_progress, progress};
 
 use clap::{Parser, Subcommand};
@@ -184,16 +185,14 @@ enum DataCmd {
 enum ModpackCmd {
     /// The installed Sunrise modpacks (the default)
     List,
-    /// Play a Sunrise modpack as its own profile
+    /// Playing Sunrise modpacks is temporarily unavailable
     Play {
         pack: String,
         /// Allow missing original Java asset/data jars to be downloaded from Modrinth
         #[arg(long)]
         allow_jar_downloads: bool,
-        #[arg(long)]
-        version: Option<String>,
     },
-    /// Remove a Sunrise modpack and the profile's saves
+    /// Removing Sunrise modpacks is temporarily unavailable
     Remove { pack: String },
 }
 
@@ -201,6 +200,8 @@ enum ModpackCmd {
 enum InstanceCmd {
     /// The profiles, each with its game folder (* = the one Play starts)
     List,
+    /// Show a profile's committed game build (defaults to the selected profile)
+    Show { profile: Option<String> },
     /// Make a profile: empty but for your options and name, or a copy of another one's
     /// worlds, options and packs
     Create {
@@ -224,8 +225,6 @@ enum InstanceCmd {
     },
     /// Make Play start this profile
     Select { instance: String },
-    /// Keep a profile on one installed Sunrise version, or "latest" to follow updates again
-    Version { instance: String, version: String },
     /// Export a profile to share as a zip: its settings, packs, Sunrise mods and the worlds
     /// named. Never logs, screenshots or account data; worlds go without their per-player files
     Export {
@@ -459,8 +458,8 @@ enum ModsCmd {
         instance: Option<String>,
     },
     /// Install a pack or a Sunrise mod and what it needs into a profile, by its id or slug
-    /// (checksums checked); a Sunrise modpack is installed as a profile of its own; a data pack
-    /// goes into the world `--world` names
+    /// (checksums checked); a data pack goes into the world `--world` names. Installing and
+    /// updating Sunrise modpacks is temporarily unavailable
     Install {
         project: String,
         /// Install the project's data pack into this world of the profile (its name or folder)
@@ -474,6 +473,9 @@ enum ModsCmd {
         everything: bool,
         #[arg(long, value_enum, default_value_t = SourceArg::Modrinth)]
         source: SourceArg,
+        /// Allow registry native code and the named build dependencies to run
+        #[arg(long)]
+        trust_native_code: bool,
     },
     /// Update what the browser installed (or one pack)
     Update {
@@ -484,6 +486,9 @@ enum ModsCmd {
         /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
+        /// Allow an update known to drop registered definitions that saved worlds may use
+        #[arg(long)]
+        confirm_world_loss: bool,
     },
     /// Install a native mod from a GitHub link (docs/modding/src/how-to/native-mods.md, "Install from GitHub"):
     /// https://github.com/OWNER/REPO (its latest release, else its default branch),
@@ -503,9 +508,14 @@ enum ModsCmd {
         /// Allow native code for this install (remembered; revoke in Settings, Storage)
         #[arg(long)]
         trust_native_code: bool,
+        /// Allow a replacement that could remove saved-world content when adding an already installed mod
+        #[arg(long)]
+        confirm_world_loss: bool,
     },
-    /// Look for newer versions of the native mods installed from GitHub (the latest release, or the
-    /// default branch's head for a mod installed from a commit), and install them
+    /// Check native mods from GitHub, and update those installed from a release with a matching record
+    #[command(
+        after_help = "Before replacement, Sunrise verifies the installed archive against its recorded GitHub asset and shows its path and SHA-256. A commit install can still be checked with --check; to replace it, remove it explicitly and add the new version."
+    )]
     UpdateGithub {
         /// One mod (default: all of them)
         id: Option<String>,
@@ -518,13 +528,23 @@ enum ModsCmd {
         /// Allow native code for this install (remembered; revoke in Settings, Storage)
         #[arg(long)]
         trust_native_code: bool,
+        /// Allow proved loss of registered definitions (not needed for native mods)
+        #[arg(long)]
+        confirm_world_loss: bool,
     },
-    /// Remove a pack the browser installed
+    /// Remove an installed mod archive or a pack the browser installed
+    #[command(
+        after_help = "For a mod archive, the review names its exact file and SHA-256 before removal, and any mods that need it are turned off rather than deleted."
+    )]
     Remove {
+        /// An installed mod ID or a project the browser installed
         project: String,
         /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
+        /// Allow removal even if it could remove content from a saved world
+        #[arg(long)]
+        confirm_world_loss: bool,
     },
     /// Turn on a mod the browser installed (sunrise-mods.txt; the game's Mods screen has no
     /// switch)
@@ -625,8 +645,6 @@ enum Cmd {
         /// Allow missing original Java asset/data jars to be downloaded from Modrinth
         #[arg(long)]
         allow_jar_downloads: bool,
-        #[arg(long, help = "Installed version to play (default: profile version)")]
-        version: Option<String>,
         /// The profile to play (its name or id; default: the selected one)
         #[arg(long)]
         instance: Option<String>,
@@ -650,6 +668,14 @@ enum Cmd {
         /// the one `account select` picked: several games can play as several accounts at once
         #[arg(long, value_name = "WHO")]
         account: Option<String>,
+    },
+    /// Switch a profile to an exact installed and prepared game build
+    Switch {
+        /// The target build tag
+        tag: String,
+        /// The profile to switch (name or id; defaults to the selected profile)
+        #[arg(long)]
+        profile: Option<String>,
     },
     /// Run a dedicated server here; type commands into its console
     Server {
@@ -692,9 +718,9 @@ enum Cmd {
     NativeBuild {
         /// Discover internal uses through compiler diagnostics. Prints resolved declarations
         /// as JSON for cargo sunrise-mod internals sync; never installs or selects a game
-        #[arg(long, conflicts_with_all = ["server_output", "instance", "version", "update", "profile"], requires = "folder")]
+        #[arg(long, conflicts_with_all = ["server_output", "instance", "version", "profile"], requires = "folder")]
         sync_internals: bool,
-        #[arg(long, requires = "folder", conflicts_with_all = ["sync_internals", "server_output", "instance", "version", "update", "profile"])]
+        #[arg(long, requires = "folder", conflicts_with_all = ["sync_internals", "server_output", "instance", "version", "profile"])]
         catalog: bool,
         /// Copy discovery catalogs into this caller-owned empty directory
         #[arg(long, requires = "catalog")]
@@ -720,15 +746,10 @@ enum Cmd {
         /// (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
-        /// The installed version whose game files the build reuses, and whose commit it builds on
-        /// when no mod pins one (default: the one the profile plays, so a rebuild stays on its
-        /// Sunrise)
+        /// For a profile, assert its current base. In server-export mode, select the installed
+        /// game build to use (defaults to the newest installed release or Nightly)
         #[arg(long)]
         version: Option<String>,
-        /// Move to the newest installed release or Nightly instead of the Sunrise the profile
-        /// plays (rebuilds the mods for that pinned SDK)
-        #[arg(long, conflicts_with = "version")]
-        update: bool,
         /// Allow native code for this install (remembered; revoke in Settings, Storage)
         #[arg(long)]
         trust_native_code: bool,
@@ -740,12 +761,6 @@ enum Cmd {
         /// prebuilt one: for CI, which keeps that path proven
         #[arg(long, hide = true)]
         mixins_from_source: bool,
-        /// When a mod this build can't use was saved into the profile's worlds, build without
-        /// it anyway: what the mod added to those worlds is lost when they are next opened
-        /// (back them up in the game first). Without this the build stops and names the
-        /// worlds, leaving the profile as it is
-        #[arg(long, conflicts_with = "server_output")]
-        leave_out_mods: bool,
     },
     /// Show a release's patch notes (default: the newest)
     Notes { tag: Option<String> },
@@ -758,9 +773,9 @@ enum Cmd {
     },
     /// Show the launcher's settings, or set one (the Settings page): selected-version TAG,
     /// game-architecture auto|x64|arm64,
-    /// minecraft-dir PATH, server-dir PATH ("default" resets a folder), install-new-versions
-    /// on|off, prune-old-versions on|off (delete old versions after an install, keeping the
-    /// selected one, the ones profiles use and the newest few), keep-versions N (how many of the
+    /// minecraft-dir PATH, server-dir PATH ("default" resets a folder),
+    /// prune-old-versions on|off (delete unused old automatic downloads after an install, keeping
+    /// the newest few), keep-versions N (how many of the
     /// newest to keep; "default" is 2), opening-animation on|off, cat on|off (the corner cat), proxy http://host:port|socks5://host:port
     /// ("default" removes it), while-playing stay|minimize|hide (what the window does while the game runs), language
     /// system|CODE (the window's language: en, fr, de, ja, pt-br... any language the launcher has;
@@ -866,7 +881,7 @@ enum Cmd {
         #[command(subcommand)]
         action: Option<MultiplayerCmd>,
     },
-    /// Sunrise modpacks from the registry: list them, play one as its own profile, or remove it
+    /// Sunrise modpacks from the registry: list installed packs
     Modpack {
         #[command(subcommand)]
         action: Option<ModpackCmd>,
@@ -919,11 +934,10 @@ pub fn command() -> clap::Command {
 pub const AI_COMMANDS: [&str; 1] = ["mcp"];
 
 /// The keys `settings` sets.
-const SETTING_KEYS: [&str; 20] = [
+const SETTING_KEYS: [&str; 19] = [
     "selected-version",
     "minecraft-dir",
     "server-dir",
-    "install-new-versions",
     "prune-old-versions",
     "keep-versions",
     "opening-animation",
@@ -956,7 +970,6 @@ fn set_setting(s: &mut backend::Settings, key: &str, value: &str) -> Result<(), 
         "selected-version" => s.selected = Some(backend::resolve_version(Some(value))?),
         "minecraft-dir" => s.minecraft_dir = folder(value),
         "server-dir" => s.server_dir = folder(value),
-        "install-new-versions" => s.install_new_versions = Some(on_off(value)?),
         "prune-old-versions" => s.prune_old_versions = Some(on_off(value)?),
         "keep-versions" => {
             s.keep_versions = match value {
@@ -1096,12 +1109,21 @@ fn json(value: serde_json::Value) {
     println!("{}", serde_json::to_string_pretty(&value).unwrap());
 }
 
-/// Runs a game process in this terminal and reports how it ended.
+/// Runs the fixture process in this terminal and reports how it ended.
+#[cfg(test)]
 fn attached(cmd: Command) -> Result<i32, String> {
-    let (mut cmd, _runtime) = backend::prepare_command(cmd)?;
+    let (cmd, _runtime) = backend::prepare_command(cmd)?;
+    attached_prepared(cmd)
+}
+
+fn attached_prepared(mut cmd: Command) -> Result<i32, String> {
     let status = backend::spawn_attached(&mut cmd)
         .and_then(|mut child| child.wait())
         .map_err(|e| format!("Could not start {:?}: {e}", cmd.get_program()))?;
+    attached_status(status)
+}
+
+fn attached_status(status: std::process::ExitStatus) -> Result<i32, String> {
     #[cfg(unix)]
     {
         sunrise_launcher::process::supervisor::exit_code(status).map_err(|error| error.to_string())
@@ -1223,15 +1245,13 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             allow_jar_downloads,
             instance,
             version,
-            update,
             trust_native_code,
             profile,
             mixins_from_source,
-            leave_out_mods,
         } => {
-            native_permission(trust_native_code)?;
             native_mods::mixins_from_source(mixins_from_source);
             if catalog {
+                native_permission(trust_native_code)?;
                 let destination = catalog_output.ok_or("--catalog requires --catalog-output")?;
                 let destination =
                     native_mods::catalog(&folder.expect("required by clap"), &destination)?;
@@ -1239,6 +1259,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 return Ok(0);
             }
             if sync_internals {
+                native_permission(trust_native_code)?;
                 let entries = native_mods::sync_internals(&folder.expect("required by clap"))?;
                 println!(
                     "{}",
@@ -1253,14 +1274,15 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 }
             };
             if let Some(output) = server_output {
+                native_permission(trust_native_code)?;
                 // Export mode: a standalone server engine in `output`. No instance is read
                 // or changed, and no launcher config is written; `folder` is required (clap).
                 let folder = folder.unwrap();
                 let base = match &version {
                     Some(v) => backend::resolve_version(Some(v))?,
                     // The instance's version is never looked at here: the newest installed
-                    // release or Nightly, or that one with `--update` (never a native build).
-                    None => native_mods::base_for(None, &backend::installed(), update)
+                    // release or Nightly, never a native build.
+                    None => native_mods::base_for(None, &backend::installed(), false)
                         .ok_or_else(backend::no_version_installed)?,
                 };
                 let built = native_mods::build_server(
@@ -1291,19 +1313,39 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 Some(name) => instances::find(name)?,
                 None => instances::selection()?,
             };
+            let owner = if target.kind != instances::Kind::Pack
+                && target.home.try_exists().map_err(|e| e.to_string())?
+            {
+                Some(sunrise_launcher::managed_play::Profile::open(
+                    &target.home,
+                    None,
+                )?)
+            } else {
+                None
+            };
+            let active = owner
+                .as_ref()
+                .map(|owner| owner.active())
+                .transpose()?
+                .flatten();
+            let base = match active {
+                Some(active) => active.base().to_owned(),
+                None => {
+                    let plays = target.resolve_version(None)?;
+                    let tag = native_mods::about(&plays).map_or(plays, |build| build.base);
+                    native_mods::base_for(Some(&tag), &backend::installed(), false)
+                        .ok_or_else(backend::no_version_installed)?
+                }
+            };
+            if let Some(requested) = version.as_deref().filter(|tag| *tag != base) {
+                return Err(trf("This profile uses {build}, not {requested}. Use Switch to change its game build.", &[("build", &base), ("requested", requested)]));
+            }
+            native_permission(trust_native_code)?;
             let target = match profile {
                 Some(profile) => {
                     instances::edit(&target.id, |meta| meta.native_profile = Some(profile))?
                 }
                 None => target,
-            };
-            let base = match version {
-                Some(v) => backend::resolve_version(Some(&v))?,
-                None => {
-                    let plays = target.resolve_version(None).ok();
-                    native_mods::base_for(plays.as_deref(), &backend::installed(), update)
-                        .ok_or_else(backend::no_version_installed)?
-                }
             };
             let explicit = folder.is_some() || profile.is_some();
             let folder = match folder {
@@ -1312,7 +1354,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             };
             let profile = explicit.then_some(target.native_profile);
             let built =
-                match native_mods::build(&base, &folder, &target, profile, leave_out_mods, &native_mods::Cancellation::default(), steps, registry_consent, || backend::releases().ok()) {
+                match native_mods::build(&base, &folder, &target, profile, false, &native_mods::Cancellation::default(), steps, registry_consent, || backend::releases().ok()) {
                     // A content mod needs no build: the instance stays as it is.
                     Err(nothing @ native_mods::Failed::Nothing) => {
                         println!("{nothing}");
@@ -1323,7 +1365,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 .map_err(|error| {
                     if let native_mods::Failed::Worlds(stake) = &error {
                         return trf(
-                            "{error}\n{stay}: nothing changed. Or run again with --leave-out-mods to build without the mods named.",
+                            "{error}\n{stay}: nothing changed.",
                             &[
                                 ("error", &stake.text),
                                 ("stay", &native_mods::fit::stay(&stake.stay)),
@@ -1359,11 +1401,21 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             } else {
                 backend::MinecraftFrom::Install
             };
-            let _preparing = backend::prepare_lock(&tag)?;
-            let (preparer, minecraft) =
-                backend::preparer(&tag, &minecraft, from, &|line| eprintln!("{line}"))?;
-            backend::sounds(&tag, &minecraft, &|line| println!("{line}"));
-            let code = attached(preparer)?;
+            let preparation = backend::prepare_lock(&tag)?;
+            let (preparer, minecraft) = backend::preparer(
+                &tag,
+                &minecraft,
+                from,
+                &|line| eprintln!("{line}"),
+                &preparation,
+            )?;
+            backend::sounds(&tag, &minecraft, &|line| println!("{line}"), &preparation);
+            let (preparer, _runtime) = backend::prepare_command(preparer)?;
+            let status = preparation
+                .spawn_attached(preparer)
+                .and_then(|mut child| child.wait())
+                .map_err(|e| format!("Could not run the game's preparer: {e}"))?;
+            let code = attached_status(status)?;
             if code != 0 {
                 return Ok(code);
             }
@@ -1371,7 +1423,6 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
         }
         Cmd::Play {
             allow_jar_downloads,
-            version,
             instance,
             world,
             creative,
@@ -1380,61 +1431,96 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             arg,
             account,
         } => {
-            let instance = match instance {
-                Some(name) => instances::find(&name)?,
-                None => instances::selection()?,
+            let instance = instances::for_play(instance.as_deref())?;
+            use sunrise_launcher::{jars, managed_play};
+            let accounts = Accounts::load();
+            let account = account
+                .as_deref()
+                .map(|who| {
+                    accounts.find(who).ok_or_else(|| {
+                        format!("No signed-in account {who}. See `sunrise-launcher account`.")
+                    })
+                })
+                .transpose()?;
+            let selected = account.or_else(|| accounts.selected());
+            let add_arguments = |cmd: &mut Command| -> Result<(), String> {
+                if let Some(code) = join {
+                    backend::join_friend(cmd, &code)?;
+                }
+                if let Some(world) = world {
+                    cmd.arg("--world").arg(world);
+                }
+                if let Some(server) = server {
+                    let list = server_list::List::load(&instance.home);
+                    let ip = server_list::find(&list, &server).map_or(server, |(_, s)| s.ip);
+                    cmd.arg("--server").arg(ip);
+                }
+                if creative {
+                    cmd.arg("--creative");
+                }
+                cmd.args(arg);
+                Ok(())
             };
-            // Who plays this launch only.
-            let who = match account {
-                Some(who) => Some(
-                    Accounts::load()
-                        .find(&who)
-                        .ok_or_else(|| {
-                            format!("No signed-in account {who}. See `sunrise-launcher account`.")
-                        })?
-                        .uuid
-                        .clone(),
-                ),
-                None => None,
-            };
-            let tag = instance.resolve_version(version.as_deref())?;
-            let mut cmd = backend::client_as(&tag, who.as_deref())?;
-            instances::apply(&mut cmd, &instance)?;
-            if let Some(code) = join {
-                backend::join_friend(&mut cmd, &code)?;
-            }
-            if let Some(world) = world {
-                cmd.arg("--world").arg(world);
-            }
-            if let Some(server) = server {
-                let list = server_list::List::load(&instance.home);
-                let ip = server_list::find(&list, &server).map_or(server, |(_, s)| s.ip);
-                cmd.arg("--server").arg(ip);
-            }
-            if creative {
-                cmd.arg("--creative");
-            }
-            cmd.args(arg);
-            let started = std::time::Instant::now();
+            let jar_permission = jars::Permission::headless(allow_jar_downloads);
             let vars = instance.vars();
-            cmd.envs(vars.iter().map(|(k, v)| (k, v)));
-            for notice in
-                sunrise_launcher::browser::sunrise::before_play(&mut cmd, &tag, &instance.launch)?
-            {
-                eprintln!("{notice}");
+            let (started, played, finished) = {
+                let start = managed_play::Client {
+                    instance: &instance,
+                    accepted_account: selected.map(|a| a.uuid.as_str()),
+                    explicit_account: account.is_some(),
+                    piped: false,
+                }
+                .start(
+                    || managed_play::headless_first(&instance),
+                    |cmd| {
+                        backend::append_game_args(cmd);
+                        add_arguments(cmd)
+                    },
+                    |cmd| jars::prepare_for_command(cmd, jar_permission).map_err(|e| e.to_string()),
+                    Some(&registry_consent),
+                    |progress| match progress {
+                        managed_play::Progress::Prepare => {
+                            backend::play_step("preparing the game's files")
+                        }
+                        managed_play::Progress::SignIn => backend::play_step("reading the sign-in"),
+                        managed_play::Progress::Line(line) => eprintln!("{line}"),
+                        _ => {}
+                    },
+                );
+                let mut game = match start {
+                    Ok(game) => game,
+                    Err(managed_play::StartError::Hook(
+                        error @ sunrise_launcher::launch::PreLaunchError::Exit(status),
+                    )) => {
+                        eprintln!("{error}");
+                        return attached_status(status);
+                    }
+                    Err(error) => return Err(error.into()),
+                };
+                for notice in game.registry_notices.iter().chain(&game.notice) {
+                    eprintln!("{notice}");
+                }
+                let started = std::time::Instant::now();
+                let status = game
+                    .child
+                    .wait()
+                    .map_err(sunrise_launcher::process::child::unconfirmed_exit)?;
+                game.runtime.game_exited();
+                (started, attached_status(status), game.instance)
+            };
+            if let Err(error) = instances::finish_play(&finished, started.elapsed(), || {
+                after_exit(&finished, &vars)
+            }) {
+                eprintln!(
+                    "{}",
+                    crate::trf("Play time not saved: {error}", &[("error", &error)])
+                );
             }
-            sunrise_launcher::jars::prepare_launch(
-                &mut cmd,
-                &instance.launch,
-                sunrise_launcher::jars::Permission::headless(allow_jar_downloads),
-            )
-            .map_err(|error| error.to_string())?;
-            let played = attached(sunrise_launcher::launch::wrap(cmd, &instance.launch)?);
-            if let Err(e) = instances::record_play(&instance.id, started.elapsed()) {
-                eprintln!("Play time not saved: {e}");
-            }
-            after_exit(&instance, &vars);
             return played;
+        }
+        Cmd::Switch { tag, profile } => {
+            let instance = instances::read_profile(profile.as_deref())?;
+            switch::run(&instance, &tag, as_json)?;
         }
         Cmd::Server {
             dir,
@@ -1452,7 +1538,8 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 sunrise_launcher::jars::Permission::headless(allow_jar_downloads),
             )
             .map_err(|error| error.to_string())?;
-            return attached(cmd);
+            let (cmd, _runtime) = backend::prepare_server_command(&tag, &dir, cmd)?;
+            return attached_prepared(cmd);
         }
         Cmd::Notes { tag } => {
             let r = backend::release_notes(tag.as_deref())?;
@@ -2084,10 +2171,33 @@ fn servers(action: ServersCmd, as_json: bool) -> Result<(), String> {
     }
     Ok(())
 }
-/// Installs the native mods of `found` (a GitHub link, resolved) into the game folder `home`: the
-/// warning and the exact source link first, and nothing downloaded without `trust`.
+fn approve_mod_change(
+    impact: &sunrise_launcher::browser::sunrise::ChangeImpact,
+    confirmed: bool,
+) -> bool {
+    eprintln!("{}", impact.detail());
+    let allowed = confirmed || !impact.risks_worlds();
+    if !allowed {
+        eprintln!(
+            "{}",
+            tr("Nothing was changed. Use --confirm-world-loss only if you accept this risk.")
+        );
+    }
+    allowed
+}
+
+/// Commands for browser-installed content and registry mods in a selected profile.
 fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
     use sunrise_launcher::browser::{installed, sunrise, Kind, Query, SourceId};
+    // The pause is about the registry project, regardless of the requested destination.
+    let registry_project = match &action {
+        ModsCmd::Install {
+            project,
+            source: SourceArg::Sunrise,
+            ..
+        } => Some(sunrise::install_project(project)?),
+        _ => None,
+    };
     // What the browser installs goes into an instance's game folder.
     let instance = match &action {
         ModsCmd::List { instance }
@@ -2111,17 +2221,23 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
     let game = backend::played_version_id_by(instance.version.as_deref());
     let entry_json = |e: &installed::Entry| serde_json::to_value(e).unwrap_or_default();
     let line = |label: &str, f: f32| progress(label.to_string())(f);
-    let from_registry = installed::Installed::load(&home)
-        .entries
-        .iter()
-        .any(|e| e.source == SourceId::Sunrise);
-    if from_registry && sunrise::index().is_ok() {
-        if let Some(index) = sunrise::fetched_index() {
-            for said in sunrise::turn_off_revoked(&index, &home)? {
-                eprintln!("{said}");
-            }
+    let mutation_progress = |step| {
+        if let sunrise::InstallProgress::Downloading(f) = step {
+            line(tr("Downloading"), f);
         }
-    }
+    };
+    let mutation_hooks = || sunrise::InstallHooks {
+        progress: &mutation_progress,
+        native: &|q| {
+            Err(trf(
+                "Allow native code for {mods} in Settings before updating.",
+                &[("mods", &q.names.join(", "))],
+            ))
+        },
+        registry_crates: None,
+        continue_after_failure: &|_| false,
+        resolve: None,
+    };
     let on = matches!(action, ModsCmd::Enable { .. });
     match action {
         ModsCmd::List { .. } => {
@@ -2232,12 +2348,17 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             everything,
             source,
             world,
+            trust_native_code,
             ..
         } => {
             let source = source.get();
-            let p = source.project(&project)?;
+            let p = match registry_project {
+                Some(found) => found,
+                None => source.project(&project)?,
+            };
             if let Some(world) = world {
-                let world = sunrise_launcher::worlds::find(&home, &world)?;
+                let profile = sunrise_launcher::managed_play::Profile::open_selected(&instance)?;
+                let world = sunrise_launcher::worlds::find(profile.home(), &world)?;
                 let done = installed::install_datapack(
                     &*source,
                     &p,
@@ -2270,22 +2391,71 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     p.title
                 ));
             }
-            if p.kind == Kind::Modpack && p.source == SourceId::Sunrise {
-                let pack = sunrise::pack::install(&p.id, &line)?;
+            if p.source == SourceId::Sunrise && p.kind == Kind::Mod {
+                if everything {
+                    return Err(tr("Registry mods must fit the profile's game build.").into());
+                }
+                let progress_line = progress(p.title.clone());
+                let installed = sunrise::install_registry(
+                    &instance,
+                    sunrise::install_target(&instance)?,
+                    || vec![p.id],
+                    || sunrise_launcher::managed_play::headless_first(&instance),
+                    sunrise::InstallHooks {
+                        progress: &|step| {
+                            if let sunrise::InstallProgress::Downloading(f) = step {
+                                progress_line(f);
+                            }
+                        },
+                        native: &|question| {
+                            if question.retry {
+                                return Err(trf(
+                                    "Checking a different version would also run native code from {mods}. No mods were installed. Run Install again only if you trust those mods.",
+                                    &[("mods", &question.names.join(", "))],
+                                ));
+                            }
+                            eprintln!(
+                                "{}",
+                                trf(
+                                    "These mods run native code: {mods}",
+                                    &[("mods", &question.names.join(", "))]
+                                )
+                            );
+                            if !trust_native_code {
+                                return Err(tr(
+                                    "Pass --trust-native-code only if you trust these mods.",
+                                )
+                                .into());
+                            }
+                            native_permission(true)?;
+                            Ok(true)
+                        },
+                        registry_crates: Some(&|inventory| {
+                            eprintln!("{}\n{}", inventory.label(), inventory.detail());
+                            trust_native_code
+                        }),
+                        continue_after_failure: &|_| false,
+                        resolve: None,
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+                let done = installed
+                    .added
+                    .iter()
+                    .chain(installed.updated.iter().map(|(_, entry)| entry));
                 if as_json {
-                    json(
-                        serde_json::json!({"pack": pack.id, "version": pack.version, "mods": pack.mods, "home": sunrise::pack::home(&pack.work)}),
-                    );
+                    json(done.map(entry_json).collect());
                 } else {
-                    println!(
-                        "{} {} is installed as its own profile, with {}.",
-                        pack.name,
-                        pack.version,
-                        pack.mods.join(", ")
-                    );
-                    println!("Play it: sunrise-launcher modpack play {}", pack.id);
+                    for e in done {
+                        println!("{} {}: {} ({})", e.title, e.number, e.file, e.checksum);
+                    }
                 }
                 return Ok(());
+            }
+            if p.kind == Kind::Mod {
+                return Err(
+                    tr("Only Sunrise registry mods can be installed by the browser.").into(),
+                );
             }
             let done = installed::install(&*source, &p, everything, &home, &game, &line)?;
             if as_json {
@@ -2295,7 +2465,13 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 println!("{} {}: {} ({})", e.title, e.number, e.file, e.checksum);
             }
         }
-        ModsCmd::Update { project, check, .. } => {
+        ModsCmd::Update {
+            project,
+            check,
+            confirm_world_loss,
+            ..
+        } => {
+            let identity = sunrise_launcher::profile_txn::Identity::of(&home);
             let list = installed::Installed::load(&home).entries;
             let chosen: Vec<_> = list
                 .iter()
@@ -2311,18 +2487,74 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     None => "Nothing installed from the browser yet.".into(),
                 });
             }
-            for e in chosen {
-                let source = sunrise_launcher::browser::source(e.source);
-                let newer = installed::update_for(&*source, e, &game)?;
-                match newer {
-                    None => println!("{} {}: up to date.", e.title, e.number),
-                    Some(v) if check => {
-                        println!("{} {}: {} is available.", e.title, e.number, v.number)
+            let registry = |e: &installed::Entry| {
+                instance.kind != instances::Kind::Pack
+                    && e.source == SourceId::Sunrise
+                    && e.kind == Kind::Mod
+            };
+            if !check {
+                if project.is_some()
+                    && chosen
+                        .iter()
+                        .all(|entry| entry.kind == Kind::Mod && !registry(entry))
+                {
+                    return Err(
+                        tr("Only Sunrise registry mods can be updated by this command.").into(),
+                    );
+                }
+                let ids = chosen
+                    .iter()
+                    .copied()
+                    .filter(|e| registry(e))
+                    .map(|e| e.project.clone())
+                    .collect::<Vec<_>>();
+                if !ids.is_empty() {
+                    let requested = if project.is_some() {
+                        sunrise::UpdateRequest::Strict(ids)
+                    } else {
+                        sunrise::UpdateRequest::Bulk(ids)
+                    };
+                    let result = sunrise::update_registry(
+                        &instance,
+                        identity?,
+                        requested,
+                        || sunrise_launcher::managed_play::headless_first(&instance),
+                        mutation_hooks(),
+                        &|impact| approve_mod_change(impact, confirm_world_loss),
+                    )
+                    .map_err(|e| match e {
+                        sunrise::InstallError::Cancelled => tr("Nothing was updated.").into(),
+                        e => e.to_string(),
+                    })?;
+                    if as_json {
+                        json(result.updated.iter().map(|(_, e)| entry_json(e)).collect());
+                    } else if result.updated.is_empty() && result.added.is_empty() {
+                        println!("{}", tr("No registry updates available."));
+                    } else {
+                        for e in result.updated.iter().map(|(_, e)| e).chain(&result.added) {
+                            println!("{} {}: {}", e.title, e.number, e.file);
+                        }
                     }
-                    Some(_) => {
-                        let p = source.project(&e.project)?;
-                        let done = installed::install(&*source, &p, true, &home, &game, &line)?;
-                        for done in done {
+                }
+            }
+            for e in chosen {
+                use installed::PackUpdate;
+                let status = if e.kind != Kind::Mod {
+                    installed::update_pack(&home, e, &game, check, &line)?
+                } else if check {
+                    let source = sunrise_launcher::browser::source(e.source);
+                    installed::update_for(&*source, e, &game)?
+                        .map_or(PackUpdate::Current, |v| PackUpdate::Available(v.number))
+                } else {
+                    continue;
+                };
+                match status {
+                    PackUpdate::Current => println!("{} {}: up to date.", e.title, e.number),
+                    PackUpdate::Available(number) => {
+                        println!("{} {}: {number} is available.", e.title, e.number)
+                    }
+                    PackUpdate::Updated(entries) => {
+                        for done in entries {
                             println!("{} {}: {}", done.title, done.number, done.file);
                         }
                     }
@@ -2334,16 +2566,26 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             mod_id,
             all,
             trust_native_code,
+            confirm_world_loss,
             ..
         } => {
             let link = github_mods::parse(&url)?;
             let found = github_mods::resolve(&link, &github_mods::api)?;
-            github_native(&home, &found, mod_id.as_deref(), all, trust_native_code)?;
+            github_native(GithubInstall {
+                instance: &instance,
+                found: &found,
+                only: mod_id.as_deref(),
+                all,
+                update: false,
+                trust: trust_native_code,
+                confirm_world_loss,
+            })?;
         }
         ModsCmd::UpdateGithub {
             id,
             check,
             trust_native_code,
+            confirm_world_loss,
             ..
         } => {
             let mut origins = github_mods::origins(&home);
@@ -2367,19 +2609,65 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     o.label()
                 );
                 if !check {
-                    github_native(&home, &latest, Some(&o.id), false, trust_native_code)?;
+                    github_native(GithubInstall {
+                        instance: &instance,
+                        found: &latest,
+                        only: Some(&o.id),
+                        all: false,
+                        update: true,
+                        trust: trust_native_code,
+                        confirm_world_loss,
+                    })?;
                 }
             }
         }
-        ModsCmd::Remove { project, .. } if github_mods::origin(&home, &project).is_some() => {
-            github_mods::remove(&home, &project)?;
-            println!("Removed {project} (installed from GitHub).");
-        }
-        ModsCmd::Remove { project, .. } => {
-            let e = installed::remove(&home, &project)?;
-            println!("Removed {} ({}).", e.title, e.file);
+        ModsCmd::Remove {
+            project,
+            confirm_world_loss,
+            ..
+        } => {
+            let identity = sunrise_launcher::profile_txn::Identity::of(&home);
+            let list = installed::Installed::read(&home)?;
+            let installed = list.lookup(&project);
+            if let Some(row) = installed.filter(|row| row.kind != Kind::Mod) {
+                let entry = installed::remove_pack(&home, row)?;
+                println!("Removed {} ({}).", entry.title, entry.file);
+            } else {
+                if instance.kind == instances::Kind::Pack {
+                    return Err(tr("This pack controls which mods it installs.").into());
+                }
+                let id = installed.map_or(project, |row| row.project.clone());
+                let removed = sunrise::remove_mods(
+                    &instance,
+                    identity?,
+                    &[id],
+                    || sunrise_launcher::managed_play::headless_first(&instance),
+                    mutation_hooks(),
+                    &|impact| approve_mod_change(impact, confirm_world_loss),
+                )
+                .map_err(|e| match e {
+                    sunrise::InstallError::Cancelled => tr("Nothing was removed.").into(),
+                    e => e.to_string(),
+                })?;
+                if as_json {
+                    json(removed.into());
+                } else {
+                    for name in removed {
+                        println!("{}", trf("Removed {mod}.", &[("mod", &name)]));
+                    }
+                }
+            }
         }
         ModsCmd::Enable { project, .. } | ModsCmd::Disable { project, .. } => {
+            let profile = if on {
+                let identity = sunrise_launcher::profile_txn::Identity::of(&home)?;
+                Some(
+                    sunrise_launcher::managed_play::Profile::open_for(&home, None, Some(identity))
+                        .map_err(String::from)?,
+                )
+            } else {
+                None
+            };
             let e = installed::Installed::load(&home)
                 .lookup(&project)
                 .cloned()
@@ -2399,7 +2687,13 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     return Err(format!("{} was taken down: {}", e.title, r.reason));
                 }
             }
-            sunrise_launcher::browser::mod_list::set_enabled(&home, id, on)?;
+            if let Some(profile) = profile {
+                if let Some((_, reason)) = profile.enable_unheld(&[id])?.into_iter().next() {
+                    return Err(format!("{}: {}.", e.title, reason.label()));
+                }
+            } else {
+                sunrise_launcher::browser::mod_list::set_enabled(&home, id, false)?;
+            }
             println!("{} is {}.", e.title, if on { "on" } else { "off" });
         }
     }
@@ -2471,6 +2765,30 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
                 all.iter().for_each(|i| line(i, i.id == selected));
             }
         }
+        InstanceCmd::Show { profile } => {
+            use sunrise_launcher::managed_play::Profile;
+            let instance = instances::read_profile(profile.as_deref())?;
+            let active = match instance.home.try_exists().map_err(|e| e.to_string())? {
+                true => Profile::open(&instance.home, None)?.active()?,
+                false => None,
+            };
+            if as_json {
+                json(serde_json::json!({
+                    "profile": instance.id,
+                    "build": active.as_ref().map(|a| a.base()),
+                    "image": active.as_ref().map(|a| a.executable()),
+                    "generation": active.as_ref().map(|a| a.generation()),
+                }));
+            } else {
+                let build = active
+                    .as_ref()
+                    .map_or_else(|| tr("Not initialized"), |a| a.base());
+                println!(
+                    "{}",
+                    trf("Profile game build: {build}", &[("build", build)])
+                );
+            }
+        }
         InstanceCmd::Create { name, copy } => changed(instances::create(&name, copy.as_deref())?),
         InstanceCmd::Delete { instance } => {
             let gone = instances::delete(&instance)?;
@@ -2490,17 +2808,6 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
             changed(instances::edit(&instance, |m| m.group = group)?)
         }
         InstanceCmd::Select { instance } => changed(instances::select(&instance)?),
-        InstanceCmd::Version { instance, version } => {
-            let pin = match version.as_str() {
-                "latest" => None,
-                tag => Some(backend::resolve_version(Some(tag))?),
-            };
-            let profile = instances::find(&instance)?;
-            let _lock = sunrise_launcher::browser::lock_home(&profile.home)
-                .map_err(|error| error.to_string())?;
-            sunrise_launcher::browser::installed::recover_game_install(&profile.home)?;
-            changed(instances::edit(&profile.id, |m| m.version = pin)?)
-        }
         InstanceCmd::Launch {
             instance,
             pre_launch,
@@ -2891,12 +3198,11 @@ fn multiplayer(action: MultiplayerCmd, as_json: bool) -> Result<(), String> {
 fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
     use sunrise_launcher::datapacks;
     use sunrise_launcher::worlds::{self, World};
-    let home = |instance: Option<String>| -> Result<PathBuf, String> {
-        Ok(match instance {
-            Some(name) => instances::find(&name)?.home,
-            None => instances::selection()?.home,
-        })
+    let profile = |instance: Option<String>| match instance {
+        Some(name) => instances::find(&name),
+        None => instances::selection(),
     };
+    let home = |instance| profile(instance).map(|profile| profile.home);
     let value = |w: &World| {
         let millis = w
             .last_played
@@ -2926,25 +3232,24 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
             }
         }
         WorldsCmd::Backup { world, instance } => {
-            let home = home(instance)?;
-            let zip = worlds::backup(&home, &worlds::find(&home, &world)?)?;
+            let profile =
+                sunrise_launcher::managed_play::Profile::open_selected(&profile(instance)?)?;
+            let home = profile.home();
+            let zip = worlds::backup(home, &worlds::find(home, &world)?)?;
             match as_json {
                 true => json(serde_json::json!({ "backup": zip })),
                 false => println!("{}", zip.display()),
             }
         }
         WorldsCmd::Copy { world, instance } => {
-            let home = home(instance)?;
-            let copy = worlds::copy(&worlds::find(&home, &world)?)?;
+            let copy = worlds::copy(&profile(instance)?, &world)?;
             match as_json {
                 true => json(value(&copy)),
                 false => println!("Copied to {} ({})", copy.name, copy.folder),
             }
         }
         WorldsCmd::Delete { world, instance } => {
-            let home = home(instance)?;
-            let w = worlds::find(&home, &world)?;
-            worlds::delete(&w)?;
+            let w = worlds::delete(&profile(instance)?, &world)?;
             println!("{} is in the trash.", w.name);
         }
         WorldsCmd::DatapackList { world, instance } => {
@@ -2970,7 +3275,9 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
             file,
             instance,
         } => {
-            let w = worlds::find(&home(instance)?, &world)?;
+            let profile =
+                sunrise_launcher::managed_play::Profile::open_selected(&profile(instance)?)?;
+            let w = worlds::find(profile.home(), &world)?;
             let p = datapacks::add(&w.path, &file)?;
             println!(
                 "Added {} to {}: the game turns it on when the world opens.",
@@ -2982,7 +3289,9 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
             pack,
             instance,
         } => {
-            let w = worlds::find(&home(instance)?, &world)?;
+            let profile =
+                sunrise_launcher::managed_play::Profile::open_selected(&profile(instance)?)?;
+            let w = worlds::find(profile.home(), &world)?;
             let p = datapacks::find(&w.path, &pack)?;
             datapacks::remove(&w.path, &p)?;
             println!("{} is in the trash.", p.file);
@@ -2993,19 +3302,11 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
 
 fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
     use sunrise_launcher::browser::sunrise;
-    let work = |pack: &str| {
-        let work = sunrise::pack::packs_dir().join(pack);
-        if sunrise::pack::is_pack(&work) {
-            Ok(work)
-        } else {
-            Err(format!("{pack} isn't an installed modpack."))
-        }
-    };
     match action {
         ModpackCmd::List => {
             let registry = sunrise::pack::list();
             if registry.is_empty() && !as_json {
-                println!("No modpack installed yet: sunrise-launcher mods install <modpack> --source sunrise");
+                println!("{}", tr("No Sunrise modpacks are installed."));
             }
             for p in &registry {
                 if as_json {
@@ -3023,31 +3324,14 @@ fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
                 }
             }
         }
-        ModpackCmd::Play {
-            pack,
-            version,
-            allow_jar_downloads,
-        } => {
-            let tag = backend::resolve_version(version.as_deref())?;
-            let mut cmd = backend::client(&tag)?;
-            sunrise::pack::apply(&mut cmd, &work(&pack)?)?;
-            let launch = Default::default();
-            for notice in sunrise::before_play(&mut cmd, &tag, &launch)? {
-                eprintln!("{notice}");
-            }
-            sunrise_launcher::jars::prepare_launch(
-                &mut cmd,
-                &launch,
-                sunrise_launcher::jars::Permission::headless(allow_jar_downloads),
-            )
-            .map_err(|error| error.to_string())?;
-            return attached(cmd);
-        }
-        ModpackCmd::Remove { pack } => sunrise::pack::remove(&work(&pack)?)?,
+        ModpackCmd::Play { .. } => return Err(sunrise::pack::play_unavailable()),
+        ModpackCmd::Remove { .. } => return Err(sunrise::pack::remove_unavailable()),
     }
     Ok(0)
 }
 
+#[cfg(test)]
+mod server_tests;
 #[cfg(test)]
 mod storage_tests;
 #[cfg(test)]
@@ -3439,7 +3723,6 @@ mod tests {
                 server_output,
                 instance,
                 version,
-                update,
                 profile,
                 ..
             }) => {
@@ -3447,7 +3730,6 @@ mod tests {
                 assert_eq!(server_output.as_deref(), Some(Path::new("engine-out")));
                 assert_eq!(instance, None);
                 assert_eq!(version, None);
-                assert!(!update);
                 assert_eq!(profile, None);
             }
             _ => panic!("expected native-build"),
@@ -3467,21 +3749,11 @@ mod tests {
             })
         ));
         assert!(parse(&["mods", "--allow-jar-downloads"]).is_err());
-        // Leaving mods out is for an instance's build; a server export switches nothing off.
-        assert!(matches!(
-            parse(&["--leave-out-mods"]).unwrap().command,
-            Some(Cmd::NativeBuild {
-                leave_out_mods: true,
-                ..
-            })
-        ));
-        assert!(parse(&["mods", "--server-output", "engine-out", "--leave-out-mods"]).is_err());
         // The mod folder is explicit in export mode: no default from an instance.
         assert!(parse(&["--server-output", "engine-out"]).is_err());
         // Export mode never touches an instance.
         assert!(parse(&["mods", "--server-output", "engine-out", "--instance", "A"]).is_err());
-        // Export mode accepts an explicit version and profile; a version
-        // and --update refuse each other, as in the game mode.
+        // Export mode accepts an explicit version and compilation profile.
         match parse(&[
             "mods",
             "--server-output",
@@ -3495,35 +3767,13 @@ mod tests {
         .command
         {
             Some(Cmd::NativeBuild {
-                version,
-                update,
-                profile,
-                ..
+                version, profile, ..
             }) => {
                 assert_eq!(version.as_deref(), Some("v2026.10.13"));
-                assert!(!update);
                 assert_eq!(profile, Some(native_mods::Profile::Optimized));
             }
             _ => panic!("expected native-build"),
         }
-        // --update on its own: the newest installed release or Nightly, never a native build.
-        match parse(&["mods", "--server-output", "engine-out", "--update"])
-            .unwrap()
-            .command
-        {
-            Some(Cmd::NativeBuild { update, .. }) => assert!(update),
-            _ => panic!("expected native-build"),
-        }
-        // A version refuses --update, as in the game mode.
-        assert!(parse(&[
-            "mods",
-            "--server-output",
-            "engine-out",
-            "--version",
-            "v2026.10.13",
-            "--update"
-        ])
-        .is_err());
         assert!(parse(&["mods", "--allow-version-mismatch"]).is_err());
         // The game mode is unchanged: an instance build without --server-output.
         assert!(matches!(
@@ -3537,14 +3787,14 @@ mod tests {
         // The export mode picks the newest installed release or Nightly, never a native build
         // (`native-*`), and `--update` changes nothing when it already is the newest.
         let installed = vec![
-            "v2026.10.13".to_string(),
-            "v2026.09.01".to_string(),
+            "26.3-0.1.1".to_string(),
+            "26.3-0.1.0".to_string(),
             "native-2b03c1".to_string(),
         ];
         for update in [false, true] {
             assert_eq!(
                 native_mods::base_for(None, &installed, update).as_deref(),
-                Some("v2026.10.13")
+                Some("26.3-0.1.1")
             );
         }
         assert_eq!(native_mods::base_for(None, &[], false), None);
@@ -3557,7 +3807,7 @@ mod catalog_tests;
 
 #[path = "cli_native_permission.rs"]
 mod native_permission_impl;
-use native_permission_impl::{github_native, native_permission, registry_consent};
+use native_permission_impl::{github_native, native_permission, registry_consent, GithubInstall};
 
 mod developer_builds;
 

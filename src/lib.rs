@@ -31,6 +31,8 @@ pub mod jdk;
 pub mod launch;
 #[cfg(target_os = "macos")]
 mod mac_update;
+#[doc(hidden)] // Internal launcher contracts, exposed to the integration harness.
+pub mod managed_play;
 pub mod mojang;
 mod native_cache;
 pub mod native_fit;
@@ -45,6 +47,7 @@ pub mod pictures;
 pub mod preparer;
 pub mod private_window;
 pub mod process;
+pub mod profile_txn;
 pub mod proxy;
 pub mod relocation;
 mod run_leases;

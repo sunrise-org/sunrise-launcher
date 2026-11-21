@@ -19,7 +19,6 @@ pub(super) enum Page {
     Project,
     Join,
     Hosting,
-    Versions,
     Settings,
 }
 
@@ -48,7 +47,7 @@ pub(super) struct State {
     pub last_server: Option<Page>,
     pub after_install: Option<(crate::launcher_play::PlayIntent, String)>,
     /// A Play (including a destination) that explicitly asked for the sign-in now under way.
-    pub after_sign_in: Option<String>,
+    pub after_sign_in: Option<crate::launcher_play::PlayIntent>,
 }
 
 /// The keyboard's ring, in `color`, around a filled control that has no edge of its own to turn
@@ -277,7 +276,7 @@ impl Launcher {
     /// Also called for world and server destinations. Never send a destination through the
     /// legacy shortcuts, which skip some of the checks on the main Play action.
     pub(super) fn play_game(&mut self) {
-        if self.client.is_some() || self.launch_busy() {
+        if self.client.is_some() || (self.launch_busy() && !self.registry_accepts_play()) {
             return;
         }
         self.prepare_error = None;
@@ -285,17 +284,21 @@ impl Launcher {
         self.play_registry_notices.clear();
         self.crash = None;
         self.install_error = None;
-        let Some(instance) = self.selected_instance().map(|i| i.id.clone()) else {
+        let Some(instance) = self.selected_instance() else {
             return;
         };
+        let kind = instance.kind;
         let intent = launcher_play::PlayIntent::new(instance, self.accounts.selected());
+        if self.refuse_pack_play(kind) {
+            return;
+        }
         if intent.account.is_none() && !sunrise_launcher::developer_offline::selected() {
             let destination = self.quick_play.take();
             let invite = self.joining.take();
             self.sign_in_to_play();
             self.quick_play = destination;
             self.joining = invite;
-            self.ui.after_sign_in = Some(intent.instance);
+            self.ui.after_sign_in = Some(intent);
             return;
         }
         self.resume_play(intent);
@@ -303,22 +306,34 @@ impl Launcher {
 
     /// Continue the same accepted Play after a launch step; never recapture the account.
     pub(super) fn resume_play(&mut self, intent: launcher_play::PlayIntent) {
-        if self.client.is_some() || self.launch_busy() {
-            return;
-        }
-        let Some(home) = self
+        let Some(instance) = self
             .selected_instance()
-            .filter(|i| i.id == intent.instance)
-            .map(|i| i.home.clone())
+            .filter(|i| intent.matches_profile(i))
+            .cloned()
         else {
             return;
         };
-        self.play_admission = Some(intent);
-        let tx = self.tx.clone();
-        std::thread::spawn(move || {
-            let result = sunrise_launcher::browser::installed::recover_game_install(&home);
-            let _ = tx.send(Msg::PlayAdmission(home, result));
-        });
+        if self.refuse_pack_play(instance.kind) {
+            return;
+        }
+        if self.registry_accepts_play() {
+            self.defer_registry_play(&instance, intent);
+            return;
+        }
+        if self.client.is_some() || self.launch_busy() {
+            return;
+        }
+        self.start_managed_client(instance, intent);
+    }
+
+    fn refuse_pack_play(&mut self, kind: instances::Kind) -> bool {
+        if kind != instances::Kind::Pack {
+            return false;
+        }
+        self.client_error = Some(sunrise_launcher::browser::sunrise::pack::play_unavailable());
+        self.quick_play = None;
+        self.joining = None;
+        true
     }
 
     pub(super) fn play_after_journal_check(
@@ -331,14 +346,20 @@ impl Launcher {
         }
         let Some(instance) = self
             .selected_instance()
-            .filter(|i| i.id == intent.instance && i.home == home)
+            .filter(|i| intent.matches_profile(i) && i.home == home)
             .cloned()
         else {
             return;
         };
         let target = self.profile_target(&instance);
-        let Some(tag) = target.filter(|tag| self.installed.contains(tag)).cloned() else {
-            let release = target.and_then(|tag| self.release_to_install(tag));
+        let Some(tag) = target
+            .as_ref()
+            .filter(|tag| self.installed.contains(tag))
+            .cloned()
+        else {
+            let release = target
+                .as_deref()
+                .and_then(|tag| self.release_to_install(tag));
             if let Some(release) = release {
                 self.ui.after_install = Some((intent, release.tag.clone()));
                 self.install(&release);
@@ -381,18 +402,19 @@ impl Launcher {
     }
 
     pub(super) fn navigate(&mut self, page: Page) {
+        let before = self.ui.page;
         match page {
             Page::Discover => self.open_mods(),
             Page::Packs => self.open_packs(),
-            Page::Versions => {
-                self.reset_versions();
-                self.ui.page = page;
-            }
             Page::Join | Page::Hosting => {
                 self.ui.last_server = Some(page);
                 self.ui.page = page;
             }
             _ => self.ui.page = page,
+        }
+        if self.ui.page != before {
+            self.storage_builds.confirm = None;
+            self.refresh_open_storage_builds();
         }
     }
 
@@ -411,7 +433,6 @@ impl Launcher {
             (Page::Discover, "nav-mods", "puzzle", tr("Mods")),
             (Page::Packs, "nav-packs", "package", tr("Packs")),
             (Page::Join, "nav-servers", "server", tr("Servers")),
-            (Page::Versions, "nav-versions", "archive", tr("Versions")),
         ] {
             let on = active == dest;
             let colour = if on { p.chrome_text } else { p.chrome_muted };
@@ -524,7 +545,6 @@ impl Launcher {
         let header = self.header(cx);
         let content = match page {
             Page::Settings => self.settings(window, cx),
-            Page::Versions => self.versions_page(cx).into_any_element(),
             Page::Home => self.home(window, cx),
             Page::Join | Page::Hosting => {
                 let body = if page == Page::Hosting {
@@ -677,7 +697,7 @@ impl Launcher {
         let create = (page == Page::Hosting)
             .then(|| self.hosting_create(cx))
             .flatten();
-        let sheet = self.live_sheet(cx);
+        let sheet = self.live_sheet(window, cx);
         let sign_in = self.owner_screen_open.then(|| self.owner_screen(cx));
         let profile = self.profile_dialog(window, cx);
         let mut layers: Vec<_> = [create, profile, sheet, sign_in]

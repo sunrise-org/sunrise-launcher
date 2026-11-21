@@ -364,8 +364,7 @@ fn cmd_line(line: &str) -> Command {
     c
 }
 
-/// Runs the post-exit command, if any, on its own thread: nothing waits for it, its output is
-/// dropped.
+/// Runs the post-exit command to completion on the caller's worker, discarding output.
 pub fn run_after_exit(launch: &Launch, dir: &std::path::Path, vars: &[(&'static str, OsString)]) {
     let Some(mut cmd) = after_exit(launch, dir, vars) else {
         return;
@@ -374,11 +373,15 @@ pub fn run_after_exit(launch: &Launch, dir: &std::path::Path, vars: &[(&'static 
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    std::thread::spawn(move || {
-        if let Err(e) = cmd.status() {
-            eprintln!("The post-exit command didn't run: {e}");
-        }
-    });
+    if let Err(e) = cmd.status() {
+        eprintln!(
+            "{}",
+            crate::i18n::trf(
+                "The post-exit command didn't run: {error}",
+                &[("error", &e.to_string())]
+            )
+        );
+    }
 }
 
 /// The Unix script: the pre-launch command (in a subshell, so its `exit` doesn't end the script
@@ -429,7 +432,7 @@ pub fn plan(launch: &Launch, words: Vec<OsString>, windows: bool, found: &Found)
 }
 
 /// `to` gets `from`'s folder and variables.
-fn same_place(from: &Command, to: &mut Command) {
+pub(crate) fn same_place(from: &Command, to: &mut Command) {
     if let Some(dir) = from.get_current_dir() {
         to.current_dir(dir);
     }
@@ -441,13 +444,22 @@ fn same_place(from: &Command, to: &mut Command) {
     }
 }
 
-/// Runs the pre-launch `line` in `game`'s folder with its variables and waits for it. Err, with
-/// the end of what it printed, when it fails: the game must not start.
-fn run_first(line: &str, game: &Command) -> Result<(), String> {
-    let mut cmd = cmd_line(line);
+fn hook_command(line: &str, game: &Command) -> Command {
+    let mut cmd = if cfg!(windows) {
+        cmd_line(line)
+    } else {
+        let mut shell = Command::new("/bin/sh");
+        shell.arg("-c").arg(line);
+        shell
+    };
     same_place(game, &mut cmd);
     crate::process::hide_console(&mut cmd);
-    let out = cmd
+    cmd
+}
+
+/// Runs the pre-launch `line` on the legacy path. Include the end of its output in a refusal.
+fn run_first(line: &str, game: &Command) -> Result<(), String> {
+    let out = hook_command(line, game)
         .output()
         .map_err(|e| format!("The pre-launch command didn't run: {e}"))?;
     if out.status.success() {
@@ -503,6 +515,129 @@ pub fn wrap(mut cmd: Command, launch: &Launch) -> Result<Command, String> {
         run_first(&line, &out)?;
     }
     Ok(out)
+}
+
+/// Apply instance switches before validating exact selection. Hooks run before the final
+/// verification, not inside a short-lived relay authorization. Game arguments remain structured.
+pub(crate) fn managed_wrapper(command: &mut Command, launch: &Launch) -> Vec<OsString> {
+    let found = if cfg!(target_os = "linux") {
+        Found::here()
+    } else {
+        Found::default()
+    };
+    command.envs(switch_env(launch, &found));
+    for (name, value) in &launch.env {
+        if ![
+            "SUNRISE_SESSION_FILE",
+            "SUNRISE_LAUNCHER_EXE",
+            crate::developer_offline::ENV,
+        ]
+        .iter()
+        .any(|key| {
+            if cfg!(windows) {
+                name.eq_ignore_ascii_case(key)
+            } else {
+                name == key
+            }
+        }) {
+            command.env(name, value);
+        }
+    }
+    let mut prefix = switch_programs(launch, &found);
+    prefix.extend(split_args(&launch.wrapper).into_iter().map(OsString::from));
+    prefix
+}
+
+#[derive(Debug)]
+pub enum PreLaunchError {
+    DidNotRun(std::io::Error),
+    Exit(std::process::ExitStatus),
+}
+
+impl std::fmt::Display for PreLaunchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::i18n::trf;
+        match self {
+            Self::DidNotRun(error) => f.write_str(&trf(
+                "The pre-launch command didn't run: {reason}",
+                &[("reason", &error.to_string())],
+            )),
+            Self::Exit(status) => {
+                #[cfg(unix)]
+                let code = crate::process::supervisor::exit_code(*status).ok();
+                #[cfg(windows)]
+                let code = status.code();
+                let code = code.map_or_else(|| status.to_string(), |code| code.to_string());
+                f.write_str(&trf(
+                    "The pre-launch command failed (exit {code}), so the game did not start.",
+                    &[("code", &code)],
+                ))
+            }
+        }
+    }
+}
+
+pub(crate) fn managed_pre_launch(
+    command: &Command,
+    launch: &Launch,
+    piped: bool,
+    log: &dyn Fn(String),
+) -> Result<(), PreLaunchError> {
+    use std::{
+        io::{BufRead, BufReader},
+        process::Stdio,
+        sync::mpsc,
+    };
+    let line = launch.pre_launch.trim();
+    if line.is_empty() {
+        return Ok(());
+    }
+    let mut hook = hook_command(line, command);
+    let status = if piped {
+        hook.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child =
+            crate::process::owned::Owned::spawn(&mut hook).map_err(PreLaunchError::DidNotRun)?;
+        let (out, lines) = mpsc::sync_channel(64);
+        std::thread::scope(|scope| {
+            let child_io = child.child();
+            for pipe in [child_io.stdout.take(), child_io.stderr.take()]
+                .into_iter()
+                .flatten()
+            {
+                let out = out.clone();
+                scope.spawn(move || {
+                    for line in BufReader::new(pipe).split(b'\n').map_while(Result::ok) {
+                        if out
+                            .send(
+                                String::from_utf8_lossy(&line)
+                                    .trim_end_matches('\r')
+                                    .to_owned(),
+                            )
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                });
+            }
+            drop(out);
+            for line in lines {
+                log(line);
+            }
+            child.wait()
+        })
+    } else {
+        // Keep stdout and stderr distinct (and stdin attached), just as the old
+        // Unix shell+exec route did. The hook still runs before final verification.
+        hook.status()
+    }
+    .map_err(PreLaunchError::DidNotRun)?;
+    if !status.success() {
+        return Err(PreLaunchError::Exit(status));
+    }
+    Ok(())
 }
 
 /// Apply the final instance environment before either selection or process wrapping.

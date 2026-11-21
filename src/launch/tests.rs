@@ -4,6 +4,21 @@ fn os(words: &[&str]) -> Vec<OsString> {
     words.iter().map(OsString::from).collect()
 }
 
+#[cfg(unix)]
+#[test]
+fn managed_hook_forwards_both_pipes_to_the_console() {
+    let game = Command::new("not-started");
+    let launch = Launch {
+        pre_launch: "printf 'stdout\\n'; printf 'stderr\\n' >&2".into(),
+        ..Launch::default()
+    };
+    let lines = std::cell::RefCell::new(Vec::new());
+    managed_pre_launch(&game, &launch, true, &|line| lines.borrow_mut().push(line)).unwrap();
+    let mut lines = lines.into_inner();
+    lines.sort();
+    assert_eq!(lines, ["stderr", "stdout"]);
+}
+
 #[test]
 fn variables_are_read_and_written_back() {
     let env = parse_env("MANGOHUD=1  DRI_PRIME=1\nNAME=\"two words\" EMPTY=").unwrap();

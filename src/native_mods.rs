@@ -26,6 +26,7 @@ pub use bundle::{
 };
 mod planning;
 pub use planning::{routes, update_check, UpdateCheck};
+pub(crate) use planning::{source_routes, SourceCheckError};
 mod internals_sync;
 mod tool;
 pub use internals_sync::catalog;
@@ -143,6 +144,23 @@ fn platform_for_game(base: &str) -> Result<BuildPlatform, String> {
         ));
     };
     windows_build_platform(machine, host.target)
+}
+
+/// Only a known host or game-machine mismatch; missing or unreadable game files are not a verdict.
+pub(crate) fn known_host_block(base: Option<&str>) -> Option<String> {
+    let host = match rust_toolchain::host() {
+        Some(host) => host,
+        None => return Some(rust_toolchain::unsupported_host()),
+    };
+    if let Some(error) = backend::native_mod_architecture_error() {
+        return Some(error);
+    }
+    if cfg!(windows) {
+        let base = base?;
+        let machine = pe_machine(&backend::version_dir(base).join(backend::CLIENT)).ok()?;
+        return windows_build_platform(machine, host.target).err();
+    }
+    None
 }
 
 fn windows_build_platform(machine: u16, host_target: &str) -> Result<BuildPlatform, String> {
@@ -286,7 +304,7 @@ fn blamed_text(failed: tool::Failure) -> String {
             return trf(
                 "The native build failed: {error}",
                 &[("error", &failed.error)],
-            )
+            );
         }
         Some(tool::Blame {
             mod_id,
@@ -315,6 +333,13 @@ pub fn cache_error(error: crate::storage::Error) -> String {
             tr("A native build or cache cleanup is running. Try again when it finishes.").into()
         }
         crate::native_cache::Error::IncompleteUnit => tr("Native compilation outputs were kept because their executable completeness cannot be proven.").into(),
+        crate::native_cache::Error::UnpublishedGame => tr("An unpublished game download was kept. It may still be in use by another launcher.").into(),
+        crate::native_cache::Error::ResourceDependent(build) => trf(
+            "This version supplies resources to native build {build}. Remove that build first.",
+            &[("build", &build)],
+        ),
+        crate::native_cache::Error::ReferencedProfile => tr("A profile still uses this build, so it was kept.").into(),
+        crate::native_cache::Error::UnprovenReferences => tr("Sunrise couldn't check which profiles use this build, so it was kept.").into(),
         crate::native_cache::Error::UnprovenExclusion => tr(
             "An older game build can use this cache without runtime leases.",
         )
@@ -472,8 +497,11 @@ fn mismatch(mods: &[Bundle], revision: &str) -> Option<String> {
     })
 }
 
-fn build_revision(base: &str, built_on: Option<&About>) -> Result<String, String> {
-    built_on.map_or_else(|| revision_of(base), |about| Ok(about.sunrise.clone()))
+fn build_revision(base: &str, built_on: Option<&About>) -> Result<String, Failed> {
+    built_on.map_or_else(
+        || revision_evidence(base),
+        |about| Ok(about.sunrise.clone()),
+    )
 }
 
 fn mismatch_error(list: &str) -> String {
@@ -484,15 +512,18 @@ fn mismatch_error(list: &str) -> String {
 /// a developer install's checkout, else what the release's signed copy of its SDK's index names
 /// ([`sdk_cache::build_of`]).
 pub fn revision_of(version: &str) -> Result<String, String> {
+    revision_evidence(version).map_err(String::from)
+}
+
+fn revision_evidence(version: &str) -> Result<String, Failed> {
     if crate::developer_install::is_developer(version) {
-        return crate::developer_install::revision(version);
+        return Ok(crate::developer_install::revision(version)?);
     }
-    sdk_cache::build_of(
+    Ok(sdk_cache::build_of(
         version,
         &sdk_cache::Base::from_env(),
         &sunrise_launcher_release_verify::sdk_keys_for(backend::GAME_REPO),
-    )
-    .map_err(|refusal| refusal.to_string())
+    )?)
 }
 
 /// What a native build was made from: its `native-mods.json`.
@@ -545,42 +576,49 @@ fn about_in(dir: &Path) -> Option<About> {
     })
 }
 
-/// The newest installed release or Nightly in `installed` (newest first).
-/// Installed native clients retain their base's prepared data even when not selected.
-pub(crate) fn resource_dependents(tag: &str) -> bool {
+/// An installed native client that retains this base's prepared data even if not selected.
+pub(crate) fn resource_dependent(tag: &str) -> Option<String> {
     backend::installed()
-        .iter()
-        .any(|version| about(version).is_some_and(|about| about.base == tag))
+        .into_iter()
+        .find(|version| about(version).is_some_and(|about| about.base.eq_ignore_ascii_case(tag)))
 }
 
 /// The newest installed release or Nightly in the launcher's newest-first build list.
 pub fn newest_installed(installed: &[String]) -> Option<&String> {
     installed
         .iter()
-        .find(|t| backend::is_game_tag(t) || t.starts_with("nightly-"))
+        .find(|t| crate::instances::Channel::of_build(t).is_some())
 }
 
 /// The installed version a build for an instance that plays `current` starts from: `current`
 /// itself, so a rebuild stays on the Sunrise it plays (a native build's own revision, [`about`]).
-/// With `update`, or when it plays nothing installed, the newest installed release or Nightly.
+/// With `update`, follow the base build’s channel; with no current build, take the newest install.
 /// An imported build is no commit to build on: its game files' version is.
 pub fn base_for(current: Option<&str>, installed: &[String], update: bool) -> Option<String> {
     let imported = current.and_then(crate::build_import::about).map(|a| a.base);
-    match imported.as_deref().or(current) {
-        Some(v) if !update && installed.iter().any(|t| t == v) => Some(v.to_owned()),
+    match (update, imported.as_deref().or(current)) {
+        (true, Some(current)) => {
+            let native = about(current);
+            let base = native.as_ref().map_or(current, |build| build.base.as_str());
+            crate::instances::Channel::of_build(base)?
+                .newest_installed(installed)
+                .cloned()
+        }
+        (false, Some(v)) if installed.iter().any(|t| t == v) => Some(v.to_owned()),
         _ => newest_installed(installed).cloned(),
     }
 }
 
 /// The newer Sunrise a build with `update` would move native build `version` to: the newest
-/// installed release or Nightly, when it is newer than the one the build started from.
+/// installed build on its channel, when it is newer than the one the build started from.
 pub fn update_for(version: &str, installed: &[String]) -> Option<String> {
     newer_than(&about(version)?.base, installed)
 }
 
 pub fn newer_than(base: &str, installed: &[String]) -> Option<String> {
-    newest_installed(installed)
-        .filter(|n| *n != base && backend::compare_versions(n, base).is_gt())
+    crate::instances::Channel::of_build(base)?
+        .newest_installed(installed)
+        .filter(|n| backend::compare_game_versions(n, base).is_gt())
         .cloned()
 }
 
@@ -942,13 +980,37 @@ pub enum Failed {
         left: Vec<LeftOut>,
         error: String,
         compiling: bool,
+        log: Option<std::sync::Arc<str>>,
     },
     /// The folder holds no native mod to build.
     Nothing,
     /// Mods this build can't use were saved into worlds: the player chooses (stay, or back the
     /// worlds up and build without them).
     Worlds(Box<AtStake>),
+    /// Transfer or preparation of the pinned compiler failed before mod code ran.
+    Tools(String),
+    /// SDK evidence was unavailable or refused, not a local cache I/O error. A mod id
+    /// means the failure belongs to that mod's inherited pin, not the target build.
+    Sdk {
+        refusal: sdk_cache::Refusal,
+        mod_id: Option<String>,
+    },
     Other(String),
+}
+
+impl From<sdk_cache::Refusal> for Failed {
+    fn from(refusal: sdk_cache::Refusal) -> Self {
+        match refusal {
+            refusal @ sdk_cache::Refusal::Cache(_) => Self::Other(refusal.to_string()),
+            refusal => {
+                log_sdk_refusal(&refusal);
+                Self::Sdk {
+                    refusal,
+                    mod_id: None,
+                }
+            }
+        }
+    }
 }
 
 impl From<String> for Failed {
@@ -960,7 +1022,8 @@ impl From<String> for Failed {
 impl std::fmt::Display for Failed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Mods { error, .. } | Self::Other(error) => f.write_str(error),
+            Self::Mods { error, .. } | Self::Tools(error) | Self::Other(error) => f.write_str(error),
+            Self::Sdk { refusal, .. } => std::fmt::Display::fmt(refusal, f),
             Self::Worlds(stake) => f.write_str(&stake.text),
             Self::Nothing => f.write_str(no_mods_to_build()),
             Self::NoConsent => f.write_str(tr("Native mods run inside your game with your rights; mixins compile code into the game. Allow native mods in Settings, Storage, or pass --trust-native-code.")),
@@ -995,6 +1058,9 @@ struct BuildOptions<'a> {
     worlds: Option<&'a Path>,
     /// The player chose to build without the mods that worlds were saved with.
     leave_out: bool,
+    staging: Option<&'a crate::profile_txn::Staging<'a>>,
+    /// The complete candidate profile, including its staged content and selection.
+    exact_home: Option<&'a Path>,
 }
 
 /// Mods saved into worlds that a build would switch off ([`Failed::Worlds`]): what the player
@@ -1031,6 +1097,7 @@ fn check_all(
     sdk: &sdk_cache::Sdk,
     base: &sdk_cache::Base,
     cancellation: &Cancellation,
+    staging: Option<&crate::profile_txn::Staging<'_>>,
 ) -> Result<Checks, sdk_cache::Refusal> {
     if ids.is_empty() {
         return Ok(Checks::default());
@@ -1043,7 +1110,16 @@ fn check_all(
     let mut plan = serde_json::json!({"contract": 2, "mods": folder, "build": sdk.commit()});
     let mut supplied = Vec::new();
     loop {
-        let checked = tool::check(&program, &plan, cancellation).map_err(refused)?;
+        let checked = tool::check(
+            &program,
+            &plan,
+            cancellation,
+            staging.map(crate::profile_txn::Staging::handoff),
+        )
+        .map_err(|failure| match failure {
+            tool::CheckFailure::Local(error) => sdk_cache::Refusal::Cache(error),
+            tool::CheckFailure::Refused(error) => refused(error),
+        })?;
         let (checks, needed) = checks_from(checked, ids, &supplied).map_err(refused)?;
         if needed.is_empty() {
             return Ok(checks);
@@ -1114,13 +1190,17 @@ fn checks_from(
 /// A build's refusal of the mod tools, as the player reads it. A refused signature is short on
 /// screen, so its reason goes to the build log, where a report can quote it.
 fn refused(refusal: sdk_cache::Refusal) -> String {
-    if let sdk_cache::Refusal::Unsigned { build, why } = &refusal {
+    log_sdk_refusal(&refusal);
+    refusal.to_string()
+}
+
+fn log_sdk_refusal(refusal: &sdk_cache::Refusal) {
+    if let sdk_cache::Refusal::Unsigned { build, why } = refusal {
         let _ = append_log(&trf(
             "The mod tools for {build} were refused: {why}",
             &[("build", build), ("why", why)],
         ));
     }
-    refusal.to_string()
 }
 
 /// Never switch a mod off silently in a game folder with worlds (SDK design §10.1, "Worlds"):
@@ -1205,6 +1285,42 @@ fn retry_check_inputs(
         .transpose()
 }
 
+/// Prove both the applicable dispatch graph and the actual Cargo library order.
+fn resolve_build_dependencies(
+    instance: &Path,
+    mods: &[Bundle],
+    declared: &[Vec<dependencies::Dependency>],
+    side: sunrise_launcher_smod::manifest::Side,
+    overrides: &dependencies::Overrides,
+) -> Result<dependencies::Resolution, String> {
+    let settings = sunrise_launcher_smod::mod_list::ModList::load(instance);
+    let content: Vec<_> =
+        sunrise_launcher_smod::selection::content_packages(instance, &settings.enabled, &[])
+            .collect();
+    let applicable: Vec<_> = mods
+        .iter()
+        .map(|bundle| &bundle.manifest)
+        .chain(content.iter().map(|source| &source.package.manifest))
+        .collect();
+    dependencies::resolve_manifests(&applicable, side, overrides)
+        .map_err(|error| error.to_string())?;
+
+    // Dispatch overrides cannot make an incomplete or reversed Cargo library graph link.
+    let inputs: Vec<_> = mods
+        .iter()
+        .zip(declared)
+        .map(|(bundle, deps)| dependencies::Mod {
+            id: &bundle.manifest.id,
+            version: &bundle.manifest.version,
+            has_api: true,
+            code: true,
+            dependencies: deps,
+        })
+        .collect();
+    dependencies::resolve_links(&inputs)
+        .map_err(|error| format!("code link requirements refused: {error}"))
+}
+
 /// The pipeline both targets build with ([`build`], [`build_server`]): `folder`'s mods on the
 /// Sunrise revision they pin (else `base`'s, the installed version whose game files the build
 /// reuses: a native build's own revision when it is one, [`base_for`]), compiled as `target`
@@ -1287,36 +1403,13 @@ fn pipeline(
     if mods.is_empty() {
         return Err(Failed::Nothing);
     }
-    let inputs: Vec<_> = mods
-        .iter()
-        .zip(&declared)
-        .map(|(bundle, deps)| dependencies::Mod {
-            id: &bundle.manifest.id,
-            version: &bundle.manifest.version,
-            has_api: true,
-            code: true,
-            dependencies: deps,
-        })
-        .collect();
-    // Native sources live beside the instance's sunrise-mods directory. Read
-    // its policy before compiling, but never use dispatch overrides to stage
-    // an incomplete or reversed Cargo library graph.
-    let instance = folder.parent().unwrap_or_else(|| Path::new("."));
+    // Native sources live beside the instance's sunrise-mods directory.
+    let instance = options
+        .exact_home
+        .unwrap_or_else(|| folder.parent().unwrap_or_else(|| Path::new(".")));
     let overrides =
         dependencies::Overrides::read(&instance.join(sunrise_launcher_smod::mod_list::DIR))?;
-    let settings = sunrise_launcher_smod::mod_list::ModList::load(instance);
-    let content: Vec<_> =
-        sunrise_launcher_smod::selection::content_packages(instance, &settings.enabled, &[])
-            .collect();
-    let applicable: Vec<_> = mods
-        .iter()
-        .map(|bundle| &bundle.manifest)
-        .chain(content.iter().map(|source| &source.package.manifest))
-        .collect();
-    dependencies::resolve_manifests(&applicable, side, &overrides)
-        .map_err(|error| error.to_string())?;
-    let resolution = dependencies::resolve_links(&inputs)
-        .map_err(|error| format!("code link requirements refused: {error}"))?;
+    let resolution = resolve_build_dependencies(instance, &mods, &declared, side, &overrides)?;
     let ordered: Vec<Bundle> = resolution.order.iter().map(|&i| mods[i].clone()).collect();
     let ids: Vec<&str> = mods.iter().map(|b| b.manifest.id.as_str()).collect();
     for bundle in &ordered {
@@ -1349,11 +1442,35 @@ fn pipeline(
     // made for it exactly. Any other build tests each mod made for another build (SDK design §10).
     let sdk = if developer {
         if let Some(list) = mismatch(&mods, &revision) {
+            if options.exact_home.is_some() {
+                let error = trf(
+                    "Made for other Sunrise versions: {mods}; rebuild against this game.",
+                    &[("mods", &list)],
+                );
+                // A local developer checkout has no alternate surface to compare. An
+                // exact revision mismatch is a proved no-fit, not a failed SDK request.
+                let unfit: Vec<_> = mods
+                    .iter()
+                    .filter(|mod_| mod_.native().sunrise != revision)
+                    .map(|mod_| LeftOut::new(mod_, isolate::Why::Unfit(error.clone())))
+                    .collect();
+                let pairs: Vec<_> = mods
+                    .iter()
+                    .zip(&declared)
+                    .map(|(bundle, dependencies)| (bundle, dependencies.as_slice()))
+                    .collect();
+                return Err(Failed::Mods {
+                    left: isolate::with_dependents(&unfit, &pairs),
+                    error,
+                    compiling: false,
+                    log: None,
+                });
+            }
             return Err(mismatch_error(&list).into());
         }
         None
     } else {
-        Some(sdk_cache::index(&sdk_base, &revision, &keys).map_err(refused)?)
+        Some(sdk_cache::index(&sdk_base, &revision, &keys)?)
     };
     let mixins_pins = mixins::pins(&mods, sdk.as_ref(), &sdk_base, local_sdk.as_deref())?;
     // Give older SDK tools the exact pin they require, and hash the same inputs we build.
@@ -1369,8 +1486,14 @@ fn pipeline(
     let mut route = None;
     if let Some(sdk) = &sdk {
         progress(Step::Checking(ids.len()));
-        let checks = check_all(check_folder, &ids, sdk, &sdk_base, cancellation)
-            .map_err(|r| r.to_string())?;
+        let checks = check_all(
+            check_folder,
+            &ids,
+            sdk,
+            &sdk_base,
+            cancellation,
+            options.staging,
+        )?;
         if let Some((id, why)) = checks.refusals.first() {
             return Err(refusal_text(id, why).into());
         }
@@ -1410,15 +1533,20 @@ fn pipeline(
                 .zip(&declared)
                 .map(|(b, d)| (b, d.as_slice()))
                 .collect();
-            let unfit: Vec<LeftOut> = unusable
+            let omissions: Vec<LeftOut> = unusable
                 .iter()
                 .filter_map(|(id, verdict)| {
                     let bundle = mods.iter().find(|b| &b.manifest.id == id)?;
-                    let why = isolate::Why::Unfit(fit::line(id, verdict, &shown));
+                    let line = fit::line(id, verdict, &shown);
+                    let why = if matches!(verdict, fit::Verdict::NoList { .. }) {
+                        isolate::Why::Unproved(line)
+                    } else {
+                        isolate::Why::Unfit(line)
+                    };
                     Some(LeftOut::new(bundle, why).with_detail(fit::detail(verdict)))
                 })
                 .collect();
-            let left = isolate::with_dependents(&unfit, &pairs);
+            let left = isolate::with_dependents(&omissions, &pairs);
             if let Some(home) = options.worlds {
                 guard_worlds(home, &left, &shown, options.leave_out)?;
             }
@@ -1426,6 +1554,7 @@ fn pipeline(
                 left,
                 error: texts.join("\n\n"),
                 compiling: false,
+                log: None,
             });
         }
     }
@@ -1451,8 +1580,17 @@ fn pipeline(
     let shown = sdk
         .as_ref()
         .map_or_else(|| sdk_cache::shown(&revision, None), |sdk| sdk.shown());
-    let blame = |e: String| -> Failed {
-        let going = compile_omissions(&e, &fitted, &mods, &declared);
+    let blame = |failure: tool::Failure| -> Failed {
+        let going = match failure.blame.as_ref() {
+            Some(tool::Blame {
+                mod_id,
+                kind: tool::BlameKind::Compile,
+            }) if options.exact_home.is_some() || fitted.contains(mod_id) => {
+                compile_omissions(mod_id, &mods, &declared)
+            }
+            _ => Vec::new(),
+        };
+        let e = blamed_text(failure);
         let Some(failed) = going.first() else {
             return Failed::Other(e);
         };
@@ -1461,10 +1599,19 @@ fn pipeline(
                 return stop;
             }
         }
+        let reason = if options.exact_home.is_some() {
+            trf(
+                "Couldn't compile {mod} for this game.",
+                &[("mod", &failed.id)],
+            )
+        } else {
+            fit::did_not_build(&failed.id)
+        };
         Failed::Mods {
-            error: format!("{}\n\n{e}", fit::did_not_build(&failed.id)),
+            error: format!("{reason}\n\n{e}"),
             left: going,
             compiling: true,
+            log: options.exact_home.and_then(|_| build_log::snapshot()),
         }
     };
     let mixins = mixins::for_key(&mixins_pins, |r| {
@@ -1481,6 +1628,10 @@ fn pipeline(
         developer_key.as_deref().or(platform.cache_key()),
         &requested,
     )?;
+    if let Some(stage) = options.staging {
+        let _publication = crate::run_leases::installation().map_err(cache_error)?;
+        stage.retain_target(&version)?;
+    }
     let exists = target.directory(&version).join(".installed").is_file();
     // The steps around the mods' compile, timed like each command (`run_checked`), so the log
     // accounts for the whole build.
@@ -1519,7 +1670,7 @@ fn pipeline(
                 let sdk = match sdk {
                     Some(sdk) => sdk,
                     None => {
-                        fetched = sdk_cache::index(&sdk_base, &revision, &keys).map_err(refused)?;
+                        fetched = sdk_cache::index(&sdk_base, &revision, &keys)?;
                         &fetched
                     }
                 };
@@ -1538,13 +1689,19 @@ fn pipeline(
                         },
                     })
                 };
-                let program = sdk_cache::tool(sdk, &sdk_base, &fetched).map_err(refused)?;
+                let program = sdk_cache::tool(sdk, &sdk_base, &fetched)?;
                 // A developer base using its commit's SDK release asks its route here: no fit was checked.
                 let route = match route {
                     Some(route) => route,
                     None => {
-                        let checks = check_all(check_folder, &ids, sdk, &sdk_base, cancellation)
-                            .map_err(refused)?;
+                        let checks = check_all(
+                            check_folder,
+                            &ids,
+                            sdk,
+                            &sdk_base,
+                            cancellation,
+                            options.staging,
+                        )?;
                         if let Some((id, why)) = checks.refusals.first() {
                             return Err(refusal_text(id, why).into());
                         }
@@ -1558,8 +1715,7 @@ fn pipeline(
                     )
                 })?;
                 let slices =
-                    sdk_cache::slices(lease, sdk, &sdk_base, route.name(), target, &fetched)
-                        .map_err(refused)?;
+                    sdk_cache::slices(lease, sdk, &sdk_base, route.name(), target, &fetched)?;
                 (slices, program, Some(route))
             }
         };
@@ -1628,7 +1784,14 @@ fn pipeline(
     if let Some((game, program, expected_route)) = &prebuilt {
         let checking = std::time::Instant::now();
         linker()?;
-        let rust = rust_toolchain::install(|f| progress(Step::Rust(f)))?;
+        let rust = rust_toolchain::install_cancellable(|f| progress(Step::Rust(f)), cancellation)
+            .map_err(|error| {
+            if cancellation.is_stopped() {
+                Failed::Other(CANCELLED.into())
+            } else {
+                Failed::Tools(error)
+            }
+        })?;
         timed("Checking the Rust toolchain", checking)?;
         progress(Step::PrebuiltMods);
         let compiling = std::time::Instant::now();
@@ -1663,10 +1826,11 @@ fn pipeline(
                 })
             },
             cancellation,
+            options.staging.map(crate::profile_txn::Staging::handoff),
         );
         // Don't turn a stopped tool into an attributed compile failure.
         cancellation.check()?;
-        let built = built.map_err(|failure| blame(blamed_text(failure)))?;
+        let built = built.map_err(blame)?;
         let libraries = workspace
             .verify_outputs(
                 &built,
@@ -1685,7 +1849,7 @@ fn pipeline(
             "Native mods route: {route}.",
             &[("route", built.route.name())],
         ))
-        .map_err(blame)?;
+        .map_err(Failed::Other)?;
         // The whole step; the tool's own build and the function replacement have their lines.
         append_log(&trf(
             "Mods compiled against the prebuilt game in {seconds} s",
@@ -1694,7 +1858,7 @@ fn pipeline(
                 &format!("{:.1}", compiling.elapsed().as_secs_f64()),
             )],
         ))
-        .map_err(blame)?;
+        .map_err(Failed::Other)?;
         cancellation.check()?;
         progress(Step::Install);
         let installing = std::time::Instant::now();
@@ -1720,16 +1884,11 @@ fn pipeline(
 /// The fitted mod identified by the compiler diagnostic, and every required dependent that
 /// would be missing its library. The same reasons guard worlds, drive retries and reach the player.
 fn compile_omissions(
-    error: &str,
-    fitted: &[String],
+    blamed_id: &str,
     mods: &[Bundle],
     declared: &[Vec<dependencies::Dependency>],
 ) -> Vec<LeftOut> {
-    let Some(bundle) = fitted.iter().find_map(|id| {
-        mods.iter().find(|bundle| {
-            &bundle.manifest.id == id && error.contains(&build_log::failed(&compiling_mod(id)))
-        })
-    }) else {
+    let Some(bundle) = mods.iter().find(|bundle| bundle.manifest.id == blamed_id) else {
         return Vec::new();
     };
     let pairs = mods
@@ -1759,7 +1918,7 @@ fn isolated(
         // A mod whose own refusal is the error isn't said a second time before it.
         let labels: Vec<String> = skip
             .iter()
-            .filter(|left| !matches!(&left.why, isolate::Why::Unfit(line) if error.contains(line)))
+            .filter(|left| !matches!(&left.why, isolate::Why::Unfit(line) | isolate::Why::Unproved(line) if error.contains(line)))
             .map(LeftOut::label)
             .collect();
         Failed::Other(match labels.is_empty() {
@@ -1780,6 +1939,7 @@ fn isolated(
                 left,
                 error,
                 compiling,
+                ..
             }) => {
                 compiles += usize::from(compiling);
                 let new: Vec<LeftOut> = left
@@ -1805,9 +1965,12 @@ fn isolated(
                     left: skip,
                     error: last,
                     compiling: false,
-                })
+                    log: None,
+                });
             }
             Err(Failed::NoConsent) => return Err(Failed::NoConsent),
+            Err(Failed::Tools(error)) => return Err(Failed::Tools(error)),
+            Err(Failed::Sdk { refusal, .. }) => return Err(said(&skip, refusal.to_string())),
             Err(Failed::Worlds(stake)) => return Err(Failed::Worlds(stake)),
             Err(Failed::Other(error)) if error == CANCELLED => return Err(Failed::Other(error)),
             Err(Failed::Other(error)) => return Err(said(&skip, error)),
@@ -1888,6 +2051,60 @@ pub fn build(
     })
 }
 
+/// Compile the admitted profile's whole enabled set without changing its pointer or files.
+/// The exact build is only a cache candidate until the profile journal publishes it.
+pub(crate) fn build_exact_client(
+    base: &str,
+    home: &Path,
+    profile: Profile,
+    staging: &crate::profile_txn::Staging<'_>,
+    cancellation: &Cancellation,
+    progress: impl Fn(Step),
+    registry_consent: Option<&dyn Fn(&Consent) -> bool>,
+) -> Result<String, Failed> {
+    cancellation.admit_native_work()?;
+    if let Some(error) = backend::native_mod_architecture_error() {
+        return Err(Failed::Other(error));
+    }
+    logged_then(
+        |cache| {
+            let cache = cache.map_err(|error| Failed::Other(error.into()))?;
+            fs::create_dir_all(root()).map_err(|e| e.to_string())?;
+            let input = tempfile::Builder::new()
+                .prefix(".native-input-")
+                .tempdir_in(root())
+                .map_err(|e| e.to_string())?;
+            let folder = {
+                let _manifest = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
+                stage_installed(home, input.path().join("mods"))?.ok_or(Failed::Nothing)?
+            };
+            let built = pipeline(
+                cache,
+                base,
+                &folder,
+                profile,
+                Target::Client,
+                BuildOptions {
+                    cancellation: cancellation.clone(),
+                    staging: Some(staging),
+                    registry_consent,
+                    exact_home: Some(home),
+                    ..BuildOptions::default()
+                },
+                &progress,
+            )?;
+            if !built.left_out.is_empty() {
+                return Err(Failed::Other(
+                    tr("The build did not include every enabled mod. Nothing was switched.").into(),
+                ));
+            }
+            cancellation.check()?;
+            Ok(built.version)
+        },
+        |_| {},
+    )
+}
+
 /// Apply either legacy pin or plain fallback only under this attempt's original grant.
 fn finish_profile_build(
     base: &str,
@@ -1905,15 +2122,14 @@ fn finish_profile_build(
     // and keeps which mods wait and why.
     if let Err(Failed::Mods { left, .. }) = &built {
         let plain = checked_about(base)?.map_or_else(|| base.to_owned(), |about| about.base);
-        let installed = backend::installed();
-        let selected = backend::Settings::load()
-            .selected
-            .filter(|s| installed.contains(s));
+        let selected = backend::Settings::load().selected;
+        let (installed, nightly) = backend::play_installations(selected.as_deref());
         let pin = plain_pin(
             instance.channel,
             &plain,
             selected.as_deref(),
             &installed,
+            nightly.as_ref(),
             catalogue,
             || cancellation.check(),
         )?;
@@ -1960,46 +2176,29 @@ fn finish_profile_build(
     Ok(ClientBuild::Native(built.version))
 }
 
-/// Clearing the pin must play the checked base both in the window and on the command line.
-/// Nightly follows the launcher's selection. Stable follows the newest installed Stable choice
-/// in the window, or Nightly when the known catalogue has no Stable release. With no catalogue,
-/// pin rather than guess.
-fn follows_plain(
-    channel: instances::Channel,
-    plain: &str,
-    selected: Option<&str>,
-    stable: impl FnOnce() -> Option<String>,
-) -> bool {
-    selected == Some(plain)
-        && match channel {
-            instances::Channel::Nightly => true,
-            instances::Channel::Stable => stable().as_deref() == Some(plain),
-        }
-}
-
-/// The version a plain fallback pins its instance to: None when clearing the pin plays `plain`
-/// ([`follows_plain`]). Stable asks the newest installed Stable build of `catalogue`, the release
-/// list the caller already has (None when it has none: the pin stays, and nothing is fetched).
-/// The lookup can take a while on the command line, so `cancelled` is asked once it is back, before anything is
-/// saved.
+/// Clear the pin only if the checked base will play both in the window and from the CLI.
+/// Without the Stable catalogue we cannot predict its ordinary Nightly fallback.
 fn plain_pin(
     channel: instances::Channel,
     plain: &str,
     selected: Option<&str>,
     installed: &[String],
+    nightly: Option<&String>,
     catalogue: impl FnOnce() -> Option<Vec<backend::Release>>,
     cancelled: impl FnOnce() -> Result<(), String>,
 ) -> Result<Option<String>, String> {
-    let follows = follows_plain(channel, plain, selected, || {
-        let releases = catalogue()?;
-        match channel.following(&releases) {
-            instances::Channel::Stable => channel
-                .builds(&releases)
-                .find(|b| installed.contains(&b.tag))
-                .map(|b| b.tag.clone()),
-            instances::Channel::Nightly => selected.map(str::to_owned),
-        }
-    });
+    let selected = installed.iter().find(|tag| Some(tag.as_str()) == selected);
+    let target = |releases: &[backend::Release]| {
+        channel
+            .play_target(releases, installed, nightly, selected)
+            .map(String::as_str)
+            == Some(plain)
+    };
+    let follows = target(&[])
+        && match channel {
+            instances::Channel::Nightly => true,
+            instances::Channel::Stable => catalogue().is_some_and(|releases| target(&releases)),
+        };
     cancelled()?;
     Ok((!follows).then(|| plain.to_owned()))
 }
@@ -2191,6 +2390,7 @@ fn carried_over(name: &std::ffi::OsStr, target: Target) -> bool {
         "Sunrise.app",
         "native-mods.json",
         "native-data",
+        crate::managed_play::Artifact::ARCHIVE_RECEIPT,
         sunrise_launcher_smod::mod_list::NATIVE_DIR,
     ]
     .iter()
@@ -2271,6 +2471,7 @@ mod tests {
             kind: instances::Kind::Own,
             work: PathBuf::new(),
             home: PathBuf::new(),
+            incarnation: None,
             icon: None,
             group: None,
             version: None,
@@ -2371,7 +2572,8 @@ mod tests {
                 .iter()
                 .map(|b| format!("{b:02x}"))
                 .collect();
-        let install_release = |tag: &str| {
+        use backend::installation::{install_as, InstallIntent};
+        let install_release = |tag: &str, intent| {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             let url = format!(
                 "http://{}/sunrise-linux-x86_64.tar.gz",
@@ -2400,16 +2602,145 @@ mod tests {
                 prerelease: false,
                 nightly: None,
             };
-            backend::install_as(&release, tag, &sha256, None, |_| {}).unwrap();
+            if intent == InstallIntent::Repair {
+                let result = install_as(&release, tag, &sha256, None, None, intent, |_| {});
+                server.join().unwrap();
+                return result.map(|_| ());
+            }
+            let inventoried = std::cell::Cell::new(false);
+            install_as(&release, tag, &sha256, None, None, intent, |fraction| {
+                if fraction != 0.97 {
+                    return;
+                }
+                let versions = backend::versions_dir();
+                let stage = fs::read_dir(&versions)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .find(|path| backend::installation::private_stage(path.file_name().unwrap()))
+                    .unwrap();
+                assert!(stage.join("unpacked").is_dir());
+                let storage = crate::storage::Storage::open().unwrap();
+                let report = storage
+                    .report(Some(crate::storage::Category::SpareGameBuilds), true)
+                    .unwrap();
+                let staged = report
+                    .rows
+                    .iter()
+                    .find(|row| row.category == crate::storage::Category::SpareGameBuilds)
+                    .unwrap();
+                assert!(staged.kept.iter().any(
+                    |keep| keep.bytes > 0 && keep.reason.contains("unpublished game download")
+                ));
+                assert!(!stage.join(".last-used").exists());
+                assert!(stage.join("unpacked").is_dir());
+                assert!(
+                    backend::remove(stage.file_name().unwrap().to_str().unwrap())
+                        .unwrap_err()
+                        .contains("unpublished game download")
+                );
+                inventoried.set(true);
+            })
+            .unwrap();
+            assert!(inventoried.get());
             server.join().unwrap();
+            // The server is gone. An exact retry is local; even a request with a
+            // different proof must not remove the bytes that already occupy this name.
+            install_as(&release, tag, &sha256, None, None, intent, |_| {}).unwrap();
+            assert!(
+                install_as(&release, tag, &"c".repeat(64), None, None, intent, |_| {}).is_err()
+            );
+            let game = backend::version_dir(tag);
+            let client = game.join(backend::CLIENT);
+            assert_eq!(fs::read(&client).unwrap(), b"release game");
+            fs::write(&client, b"different game").unwrap();
+            assert!(install_as(&release, tag, &sha256, None, None, intent, |_| {}).is_err());
+            assert_eq!(fs::read(&client).unwrap(), b"different game");
+            fs::write(&client, b"release game").unwrap();
+            let library = game.join("unrecorded.dll");
+            fs::write(&library, b"not extracted from the archive").unwrap();
+            assert!(install_as(&release, tag, &sha256, None, None, intent, |_| {}).is_err());
+            fs::remove_file(library).unwrap();
+            install_as(&release, tag, &sha256, None, None, intent, |_| {}).unwrap();
+            Ok(())
+        };
+        let prepare = |tag| {
             // `sunrise-launcher prepare` writes the resources from the player's own Minecraft.
             let resources = backend::resources(tag);
             fs::create_dir_all(&resources).unwrap();
             fs::write(resources.join("sunrise-resources.json"), b"{}").unwrap();
         };
-        let (old, new) = ("v2026.11.01", "v2026.11.02");
+        let (old, new) = ("26.3-0.1.0", "26.3-0.1.1");
         // (a) A fresh install: the release is the build's base, chosen as the launcher chooses.
-        install_release(old);
+        install_release(old, InstallIntent::Exact).unwrap();
+        prepare(old);
+        // The same-version install used to repair an architecture must not touch a running build.
+        let tree = cap_std::fs::Dir::open_ambient_dir(
+            backend::version_dir(old),
+            cap_std::ambient_authority(),
+        )
+        .unwrap();
+        let claim = crate::run_leases::Registry::open()
+            .unwrap()
+            .lock(&tree, crate::native_cache::LockMode::Shared)
+            .unwrap();
+        drop(tree);
+        assert_eq!(
+            install_release(old, InstallIntent::Repair).unwrap_err(),
+            cache_error(crate::storage::Error::Busy)
+        );
+        assert!(backend::installed().iter().any(|tag| tag == old));
+        assert!(backend::resources(old)
+            .join("sunrise-resources.json")
+            .is_file());
+        drop(claim);
+        let client = backend::version_dir(old).join(backend::CLIENT);
+        fs::write(&client, b"different game").unwrap();
+        {
+            use crate::profile_txn::{Admission, Bootstrap};
+            let homes = backend::game_home().join("instances");
+            fs::create_dir_all(&homes).unwrap();
+            let held = tempfile::tempdir_in(homes).unwrap();
+            let mut profile = Admission::open(held.path(), None).unwrap();
+            profile
+                .bind_bootstrap(
+                    || {
+                        Ok(Bootstrap::new(
+                            old.into(),
+                            old.into(),
+                            [1; 16],
+                            [2; 32],
+                            serde_json::json!({}),
+                        ))
+                    },
+                    |_| Ok(()),
+                )
+                .unwrap();
+            assert_eq!(
+                install_release(old, InstallIntent::Repair).unwrap_err(),
+                cache_error(crate::native_cache::Error::ReferencedProfile)
+            );
+            assert_eq!(fs::read(&client).unwrap(), b"different game");
+        }
+        install_release(old, InstallIntent::Repair).unwrap();
+        assert_eq!(fs::read(&client).unwrap(), b"release game");
+        assert!(backend::installed().iter().any(|tag| tag == old));
+        // A legacy interrupted install occupied the tag without committing it. Explicit
+        // Repair uses the same exclusive staged publication, but cannot reuse its resources.
+        let old_root = backend::version_dir(old);
+        fs::remove_file(old_root.join(".installed")).unwrap();
+        fs::write(&client, b"interrupted game").unwrap();
+        prepare(old);
+        assert!(!backend::installed().iter().any(|tag| tag == old));
+        install_release(old, InstallIntent::Repair).unwrap();
+        assert_eq!(fs::read(client).unwrap(), b"release game");
+        assert!(old_root.join(".installed").is_file());
+        assert!(!backend::resources(old)
+            .join("sunrise-resources.json")
+            .exists());
+        assert!(!backend::versions_dir()
+            .join(format!(".repair-{old}"))
+            .exists());
+        prepare(old);
         let base = base_for(None, &backend::installed(), false).unwrap();
         assert_eq!(base, old);
         let binary = dir("player-flow").join("built");
@@ -2430,7 +2761,8 @@ mod tests {
         assert_eq!(backend::resources(native), backend::resources(old));
         // (b) An update: a newer release arrives, and a rebuild with `update` moves to it. The
         // build made before it still plays, on the base it was made from, which stays installed.
-        install_release(new);
+        install_release(new, InstallIntent::Exact).unwrap();
+        prepare(new);
         assert_eq!(
             base_for(Some(native), &backend::installed(), true).as_deref(),
             Some(new)
@@ -2466,6 +2798,7 @@ mod tests {
                         }],
                         error: "compiler failure".into(),
                         compiling: true,
+                        log: None,
                     });
                 }
                 assert_eq!(skip[0].id, "broken");
@@ -2618,13 +2951,14 @@ mod tests {
     #[test]
     fn a_plain_fallback_is_cancelled_after_the_stable_lookup() {
         use instances::Channel::Stable;
-        let installed = ["v1.0.0".to_owned()];
+        let installed = ["26.3-0.1.0".to_owned()];
         let cancelled = std::cell::Cell::new(false);
         let pin = plain_pin(
             Stable,
-            "v1.0.0",
-            Some("v1.0.0"),
+            "26.3-0.1.0",
+            Some("26.3-0.1.0"),
             &installed,
+            None,
             || {
                 // A cancel that came while the lookup ran.
                 cancelled.set(true);
@@ -2641,13 +2975,14 @@ mod tests {
         assert_eq!(pin, Err("Cancelled".to_owned()));
         let pin = plain_pin(
             Stable,
-            "v1.0.0",
-            Some("v1.0.0"),
+            "26.3-0.1.0",
+            Some("26.3-0.1.0"),
             &installed,
+            None,
             || None,
             || Ok(()),
         );
-        assert_eq!(pin, Ok(Some("v1.0.0".to_owned())));
+        assert_eq!(pin, Ok(Some("26.3-0.1.0".to_owned())));
     }
 
     #[test]
@@ -2663,17 +2998,18 @@ mod tests {
             prerelease: false,
             nightly: None,
         };
-        let installed = ["v1.0.0".to_owned()];
+        let installed = ["26.3-0.1.0".to_owned()];
         let mut asked = 0;
-        // The newest installed Stable build of the caller's list is v1.0.0: the pin clears.
+        // The newest installed Stable build of the caller's list is 26.3-0.1.0: the pin clears.
         let pin = plain_pin(
             Stable,
-            "v1.0.0",
-            Some("v1.0.0"),
+            "26.3-0.1.0",
+            Some("26.3-0.1.0"),
             &installed,
+            None,
             || {
                 asked += 1;
-                Some(vec![release("v1.0.0")])
+                Some(vec![release("26.3-0.1.0")])
             },
             || Ok(()),
         );
@@ -2681,20 +3017,21 @@ mod tests {
         // The window has no list yet: the pin stays, and the build asks nobody for one.
         let pin = plain_pin(
             Stable,
-            "v1.0.0",
-            Some("v1.0.0"),
+            "26.3-0.1.0",
+            Some("26.3-0.1.0"),
             &installed,
+            None,
             || None,
             || Ok(()),
         );
-        assert_eq!(pin, Ok(Some("v1.0.0".to_owned())));
+        assert_eq!(pin, Ok(Some("26.3-0.1.0".to_owned())));
     }
 
     #[test]
     fn a_stable_setup_can_unpin_to_nightly_only_while_there_is_no_stable_release() {
         let nightly = "nightly-2026-11-17-2d81263";
         let mut releases = vec![backend::Release {
-            tag: "v1.1.0".into(),
+            tag: "26.3-0.1.1".into(),
             name: String::new(),
             body: String::new(),
             date: String::new(),
@@ -2710,41 +3047,19 @@ mod tests {
                 nightly,
                 Some(nightly),
                 &installed,
+                Some(&installed[0]),
                 || Some(releases),
                 || Ok(()),
             )
         };
         assert_eq!(pin(releases.clone()), Ok(None));
         releases.push(backend::Release {
-            tag: "v1.0.0".into(),
+            tag: "26.3-0.1.0".into(),
             prerelease: false,
             ..releases[0].clone()
         });
-        // Stable will download v1.0.0 next Play, so keep the Nightly we actually checked.
+        // Stable will download 26.3-0.1.0 next Play, so keep the Nightly we actually checked.
         assert_eq!(pin(releases), Ok(Some(nightly.to_owned())));
-    }
-
-    #[test]
-    fn a_stable_setup_cannot_unpin_to_a_different_or_unknown_build_after_a_plain_fallback() {
-        use instances::Channel::{Nightly, Stable};
-        let nightly = "nightly-2026-11-17-2d81263";
-        let stable = "v1.0.0";
-        let checked = |tag: &str| Some(tag.to_owned());
-        assert!(!follows_plain(Stable, nightly, Some(nightly), || checked(
-            stable
-        )));
-        assert!(!follows_plain(Stable, nightly, Some(nightly), || None));
-        assert!(follows_plain(Stable, stable, Some(stable), || checked(
-            stable
-        )));
-        // The CLI without an explicit version follows the launcher's selection.
-        assert!(!follows_plain(Stable, stable, Some(nightly), || checked(
-            stable
-        )));
-        assert!(follows_plain(Nightly, nightly, Some(nightly), || panic!(
-            "unneeded release lookup"
-        )));
-        assert!(!follows_plain(Nightly, nightly, None, || None));
     }
 
     #[test]
@@ -2762,6 +3077,7 @@ mod tests {
                     left: vec![unfit.clone()],
                     error: "jei doesn't fit this game.".into(),
                     compiling: false,
+                    log: None,
                 }),
                 _ => Err(Failed::Nothing),
             },
@@ -2809,9 +3125,10 @@ mod tests {
                 }
                 let error = build_log::failed(&compiling_mod("lib"));
                 Err(Failed::Mods {
-                    left: compile_omissions(&error, &["lib".into()], &bundles, &deps),
+                    left: compile_omissions("lib", &bundles, &deps),
                     error,
                     compiling: true,
+                    log: None,
                 })
             },
             &|step| {
@@ -2867,6 +3184,7 @@ mod tests {
                     }],
                     error: "compiler failure".into(),
                     compiling: true,
+                    log: None,
                 })
             },
             &|_| {},
@@ -3898,7 +4216,7 @@ printf ']}}\n'
             fs::write(&program, script).unwrap();
             fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
             let plan = serde_json::json!({"mods": input});
-            let checked = tool::check(&program, &plan, &Cancellation::default()).unwrap();
+            let checked = tool::check(&program, &plan, &Cancellation::default(), None).unwrap();
             checks_from(checked, ids, &[]).unwrap().0
         };
         let both = check(&folder, &["broken", "survivor"]);
@@ -4218,9 +4536,9 @@ printf ']}}\n'
     fn a_rebuild_stays_on_the_instances_sunrise_until_an_update() {
         let installed: Vec<String> = [
             "nightly-2026-10-29-4baa571",
-            "v2026.10.20",
+            "26.3-0.1.1",
             "native-83f15fa-0123456789ab",
-            "v2026.10.13",
+            "26.3-0.1.0",
         ]
         .map(String::from)
         .to_vec();
@@ -4228,23 +4546,24 @@ printf ']}}\n'
         let native = "native-83f15fa-0123456789ab";
         assert_eq!(base(Some(native), false).as_deref(), Some(native));
         assert_eq!(
-            base(Some("v2026.10.13"), false).as_deref(),
-            Some("v2026.10.13")
+            base(Some("26.3-0.1.0"), false).as_deref(),
+            Some("26.3-0.1.0")
         );
         let newest = Some("nightly-2026-10-29-4baa571");
-        assert_eq!(base(Some(native), true).as_deref(), newest);
+        assert_eq!(
+            base(Some("26.3-0.1.0"), true).as_deref(),
+            Some("26.3-0.1.1")
+        );
         assert_eq!(base(None, false).as_deref(), newest);
         assert_eq!(base(Some("native-gone"), false).as_deref(), newest);
         assert_eq!(base_for(Some(native), &[native.into()], true), None);
-        // Update offers the newest release or Nightly, when newer than the build's own.
-        assert_eq!(newer_than("v2026.10.20", &installed).as_deref(), newest);
-        assert_eq!(newer_than("nightly-2026-10-29-4baa571", &installed), None);
-        let releases = ["v2026.10.20".to_string(), "v2026.10.13".to_string()];
-        assert_eq!(newer_than("v2026.10.20", &releases), None);
+        // Updates stay on the base’s channel.
         assert_eq!(
-            newer_than("v2026.10.13", &releases).as_deref(),
-            Some("v2026.10.20")
+            newer_than("26.3-0.1.0", &installed).as_deref(),
+            Some("26.3-0.1.1")
         );
+        assert_eq!(newer_than("nightly-2026-10-29-4baa571", &installed), None);
+        assert_eq!(newer_than("26.3-0.1.1", &installed), None);
     }
 
     #[test]

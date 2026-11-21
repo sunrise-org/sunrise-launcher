@@ -389,8 +389,8 @@ fn a_multimc_instances_folder_finds_the_launcher_root() {
     assert_linked(&linked, &dir, jar);
 }
 
-/// When the chosen folder is inside a launcher tree, the error names it and says to launch the
-/// instance once, instead of listing every launcher (#693).
+/// When the chosen folder is inside a launcher tree, the error names it and says to play
+/// once, instead of listing every launcher (#693).
 #[test]
 fn the_not_found_message_names_the_launcher_that_was_chosen() {
     let s = Scratch::new("prism-hint");
@@ -400,7 +400,7 @@ fn the_not_found_message_names_the_launcher_that_was_chosen() {
     let error =
         resolve_with(&chosen, &[], &s.0.join("linked"), &Mojang::new(MANIFEST)).unwrap_err();
     assert!(
-        error.contains("Launch the 26.3 instance once in Prism Launcher"),
+        error.contains("Play 26.3 once in Prism Launcher"),
         "{error}"
     );
     assert!(!error.contains("or in Prism Launcher, MultiMC"), "{error}");
@@ -496,12 +496,23 @@ fn nothing_found_lists_every_folder_and_what_it_lacks() {
          {} (the folder doesn't exist)\n  \
          {} (Prism Launcher: libraries/com/mojang/minecraft/26.3/minecraft-26.3-client.jar is \
          not the 26.3 release Sunrise was made for)\n  \
-         {} (Modrinth App: no Minecraft 26.3 client jar)\nTo fix it:\n",
+         {} (Modrinth App: no Minecraft 26.3 client jar)\n\
+         Minecraft version file not found: {}\nTo fix it:\n",
         chosen.display(),
         wrong.display(),
-        empty.display()
+        empty.display(),
+        chosen
+            .join("versions")
+            .join("26.3")
+            .join("26.3.json")
+            .display(),
     );
     assert!(error.starts_with(&expected), "{error}");
+    assert!(error.contains("--minecraft PATH"));
+    assert!(error.contains("Minecraft folder › Choose…"));
+    assert!(error
+        .contains("sunrise-launcher account sign-in, then sunrise-launcher prepare --download"));
+    assert!(!error.contains("--minecraft-dir"));
     assert!(error.contains(
         "Prism Launcher, MultiMC, the Modrinth App, ATLauncher, GDLauncher or Dawn Client"
     ));

@@ -6,6 +6,9 @@ pub const MOD_POLICY: &str = "https://playsunrise.net/mods/policy";
 /// The mod registry's index, published by sunrise-org/sunrise-mods (`SUNRISE_MOD_INDEX` overrides it).
 pub const MOD_INDEX: &str = "https://sunrise-org.github.io/sunrise-mods/index.json";
 
+/// The registry's Nightly source listings. A listing does not vet the source or authorize code.
+pub const MOD_SOURCES: &str = "https://sunrise-org.github.io/sunrise-mods/sources.json";
+
 /// Where the registry's icons and screenshots are served from: the same GitHub Pages site.
 pub const MOD_IMAGES: &str = "https://sunrise-org.github.io/sunrise-mods/";
 

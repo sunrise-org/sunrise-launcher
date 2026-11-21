@@ -4,6 +4,10 @@ use crate::rust_toolchain::Toolchain;
 use crate::{
     backend::{NativeGrant, PermissionFence},
     i18n::{tr, trf},
+    process::{
+        leases::{ProfileHandoff, StagedChild},
+        owned::Owned,
+    },
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -31,6 +35,7 @@ pub struct Cancellation(Arc<Mutex<Attempt>>);
 #[derive(Default)]
 struct Attempt {
     stopped: bool,
+    publishing: bool,
     tool: Option<u32>,
     #[cfg(windows)]
     job: Option<Arc<crate::process::leases::CompilerJob>>,
@@ -53,7 +58,7 @@ impl Cancellation {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    pub(super) fn admit_native_work(&self) -> Result<(), super::Failed> {
+    pub(crate) fn admit_native_work(&self) -> Result<(), super::Failed> {
         let mut state = self.state();
         state.check()?;
         if let Some(grant) = state.grant {
@@ -64,19 +69,47 @@ impl Cancellation {
         Ok(())
     }
 
-    pub(super) fn check(&self) -> Result<(), String> {
+    pub(crate) fn check(&self) -> Result<(), String> {
         self.state().check()
     }
 
-    pub(super) fn publication_guard(&self) -> Result<Option<PermissionFence>, String> {
+    pub(crate) fn publication_guard(&self) -> Result<Option<PermissionFence>, String> {
         let state = self.state();
         state.check()?;
         state.grant.map(NativeGrant::hold).transpose()
     }
 
+    /// Serialize the staged journal's cutoff with Stop. No worker cancellation follows it.
+    pub(crate) fn begin_publication(&self) -> Result<Option<PermissionFence>, String> {
+        let mut state = self.state();
+        state.check()?;
+        let permission = state.grant.map(NativeGrant::hold).transpose()?;
+        state.publishing = true;
+        Ok(permission)
+    }
+
+    /// Check the attempt before each bounded download or extraction read.
+    pub(crate) fn reader<R: std::io::Read>(&self, reader: R) -> impl std::io::Read + use<'_, R> {
+        struct Reader<'a, R>(&'a Cancellation, R);
+        impl<R: std::io::Read> std::io::Read for Reader<'_, R> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.0.check().map_err(std::io::Error::other)?;
+                self.1.read(buf)
+            }
+        }
+        Reader(self, reader)
+    }
+
+    pub fn is_stopped(&self) -> bool {
+        self.state().stopped
+    }
+
     /// Stops this attempt and the SDK tool it started, if any.
     pub fn stop(&self) {
         let mut state = self.state();
+        if state.publishing {
+            return;
+        }
         state.stopped = true;
         #[cfg(windows)]
         if let Some(job) = &state.job {
@@ -126,6 +159,13 @@ pub struct Consent {
 }
 
 impl Consent {
+    /// No added crate has a build script or a proc macro, so nothing of theirs runs while
+    /// building: their code only goes into the mod, which native permission already covers.
+    /// There is nothing to ask.
+    pub fn runs_nothing_at_build(&self) -> bool {
+        self.build_scripts.is_empty() && self.proc_macros.is_empty()
+    }
+
     pub fn label(&self) -> String {
         trf(
             "Native mod adds {count} registry crates",
@@ -260,6 +300,7 @@ pub(super) fn build(
     consent: Option<&dyn Fn(&Consent) -> bool>,
     on_mod: &dyn Fn(&str, usize, usize),
     cancellation: &Cancellation,
+    profile: Option<ProfileHandoff<'_>>,
 ) -> Result<Built, Failure> {
     #[cfg(not(target_os = "linux"))]
     let mut command = command(rust, program);
@@ -285,6 +326,7 @@ pub(super) fn build(
         on_mod,
         cancellation,
         Some(plan.workspace),
+        profile,
     )
 }
 
@@ -308,12 +350,13 @@ fn run(
     on_mod: &dyn Fn(&str, usize, usize),
     cancellation: &Cancellation,
     mut workspace: Option<&mut Workspace>,
+    profile: Option<ProfileHandoff<'_>>,
 ) -> Result<Built, Failure> {
     command
         .arg("native-build")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
-    let (mut child, errors) = start(command, cancellation, true)?;
+    let (mut child, errors) = start(command, cancellation, true, profile)?;
     if let Some(workspace) = workspace.as_deref_mut() {
         workspace.allow_worker();
     }
@@ -520,9 +563,11 @@ fn talk(
                     build_scripts,
                     proc_macros,
                 };
-                let yes = consent.is_some_and(|ask| ask(&question));
+                let yes =
+                    question.runs_nothing_at_build() || consent.is_some_and(|ask| ask(&question));
                 // The answer can arrive after revoke and regrant. Bind the affirmative
-                // write, not the dialog, to this attempt's original revision.
+                // write, not the dialog, to this attempt's original revision; an answer
+                // given without asking is bound the same way.
                 let _permission = if yes {
                     cancellation
                         .publication_guard()
@@ -543,7 +588,8 @@ fn talk(
 fn start(
     mut command: std::process::Command,
     cancellation: &Cancellation,
-    _compiler: bool,
+    compiler: bool,
+    profile: Option<ProfileHandoff<'_>>,
 ) -> Result<(crate::process::owned::Owned, mpsc::Receiver<String>), String> {
     command.stderr(Stdio::piped());
     #[cfg(unix)]
@@ -553,13 +599,22 @@ fn start(
     state.check()?;
     // A grant check and the worker handoff form one short admission, never held during I/O.
     let permission = state.grant.map(NativeGrant::hold).transpose()?;
-    #[cfg(not(windows))]
-    let mut child = crate::process::owned::Owned::spawn(&mut command).map_err(unrun)?;
-    #[cfg(windows)]
-    let mut child = if _compiler {
-        crate::process::owned::Owned::spawn_compiler(&command)
+    let mut child = if let Some(profile) = profile {
+        let role = if compiler {
+            StagedChild::Compiler
+        } else {
+            StagedChild::Prepare
+        };
+        Owned::spawn_staged(command, profile, role)
     } else {
-        crate::process::owned::Owned::spawn(&mut command)
+        #[cfg(windows)]
+        if compiler {
+            Owned::spawn_compiler(&command)
+        } else {
+            Owned::spawn(&mut command)
+        }
+        #[cfg(not(windows))]
+        Owned::spawn(&mut command)
     }
     .map_err(unrun)?;
     state.tool = Some(child.child().id());
@@ -641,48 +696,71 @@ pub(super) struct CheckedMod {
     pub needs: Option<Need>,
 }
 
+/// Separate protocol refusals from local process or profile-handoff failures.
+#[derive(Debug)]
+pub(super) enum CheckFailure {
+    Local(String),
+    Refused(String),
+}
+
 /// Asks the tool at `program` how the mods `plan` names stand against its build (`native-check`).
 pub(super) fn check(
     program: &Path,
     plan: &Value,
     cancellation: &Cancellation,
-) -> Result<Checked, String> {
-    let value = ask(
+    profile: Option<ProfileHandoff<'_>>,
+) -> Result<Checked, CheckFailure> {
+    let value = ask_fenced(
         crate::process::command(program),
         "native-check",
         plan,
         cancellation,
+        profile,
     )?;
     serde_json::from_value(value).map_err(|e| {
-        trf(
+        CheckFailure::Refused(trf(
             "The native build tool's answer couldn't be read: {error}. Update the launcher.",
             &[("error", &e.to_string())],
-        )
+        ))
     })
 }
 
 /// Runs one of the tool's one-line commands (`native-check`, `native-discover`, `native-lock`, `native-layout`) with `plan` (its `contract` filled in): its reply, or its error's message.
 pub(super) fn ask(
-    mut command: std::process::Command,
+    command: std::process::Command,
     name: &str,
     plan: &Value,
     cancellation: &Cancellation,
 ) -> Result<Value, String> {
+    ask_fenced(command, name, plan, cancellation, None).map_err(|error| match error {
+        CheckFailure::Local(text) | CheckFailure::Refused(text) => text,
+    })
+}
+
+fn ask_fenced(
+    mut command: std::process::Command,
+    name: &str,
+    plan: &Value,
+    cancellation: &Cancellation,
+    profile: Option<ProfileHandoff<'_>>,
+) -> Result<Value, CheckFailure> {
     let mut plan = plan.clone();
     plan["contract"] = CONTRACT.into();
     command
         .arg(name)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
-    let (mut child, errors) = start(command, cancellation, false)?;
+    let (mut child, errors) =
+        start(command, cancellation, false, profile).map_err(CheckFailure::Local)?;
+    let local = |error| CheckFailure::Local(unrun(error));
     let mut input = child.child().stdin.take().expect("piped");
-    let sent = writeln!(input, "{plan}").map_err(unrun);
+    let sent = writeln!(input, "{plan}").map_err(local);
     drop(input);
     let mut output = Output::new(child.child().stdout.take().expect("piped"));
-    let reply_line = (|| -> Result<Option<String>, String> {
+    let reply_line = (|| {
         let mut first = None;
         let mut extra = false;
-        while let Some(line) = output.line(&mut child, cancellation).map_err(unrun)? {
+        while let Some(line) = output.line(&mut child, cancellation).map_err(local)? {
             if !line.trim().is_empty() {
                 if first.is_some() {
                     extra = true;
@@ -692,13 +770,13 @@ pub(super) fn ask(
             }
         }
         if extra {
-            return Err(invalid_check_reply());
+            return Err(CheckFailure::Refused(invalid_check_reply()));
         }
         Ok(first)
     })();
-    let status = child.wait().map_err(unrun);
+    let status = child.wait().map_err(local);
     let errors = finish(cancellation, errors);
-    cancellation.check()?;
+    cancellation.check().map_err(CheckFailure::Local)?;
     sent?;
     let result = reply_line.and_then(|line| {
         let status = status?;
@@ -708,6 +786,7 @@ pub(super) fn ask(
             (None, code) => Err(ended(code)),
             (Some(_), _) => Err(invalid_check_reply()),
         }
+        .map_err(CheckFailure::Refused)
     });
     if result.is_err() {
         log_errors(&errors);

@@ -38,7 +38,11 @@ impl Registry {
 }
 
 /// Launcher-owned primitives-in-use; this is not a standalone cleanup safety guarantee.
-pub(crate) fn shared(command: &Command) -> Result<Vec<Claim>, Error> {
+pub(crate) fn shared(
+    command: &Command,
+    read_only_resources: Option<&Path>,
+) -> Result<Vec<Claim>, Error> {
+    let read_only_resources = read_only_resources.map(Path::canonicalize).transpose()?;
     let logs = override_value(command, "SUNRISE_HOME").map_or_else(
         || std::env::var_os("SUNRISE_HOME").map(std::path::PathBuf::from),
         |value| value.map(std::path::PathBuf::from),
@@ -160,7 +164,11 @@ pub(crate) fn shared(command: &Command) -> Result<Vec<Claim>, Error> {
         return Ok(Vec::new());
     }
     for path in &paths {
-        crate::storage::mark_used(path)?;
+        // Managed resources are a sealed image. Keep the same lease without inserting
+        // the mutable cache's recency marker into the bytes the next Play must prove.
+        if read_only_resources.as_ref() != Some(path) {
+            crate::storage::mark_used(path)?;
+        }
     }
     paths
         .into_iter()
@@ -423,9 +431,13 @@ fn spawn_program(command: &mut Command) -> std::io::Result<std::process::Child> 
 
 /// Publish stable tree lock inodes before completing a newly installed unit.
 pub(crate) fn publish(path: &Path) -> Result<(), Error> {
+    publish_at(path, &crate::backend::data_dir())
+}
+
+pub(crate) fn publish_at(path: &Path, data: &Path) -> Result<(), Error> {
     let path = path.canonicalize()?;
-    let registry = Registry::open()?;
-    let data = crate::backend::data_dir().canonicalize()?;
+    let registry = Registry::at(data)?;
+    let data = data.canonicalize()?;
     if !path.starts_with(&data) {
         return Ok(());
     }
@@ -456,6 +468,17 @@ pub(crate) fn publish(path: &Path) -> Result<(), Error> {
         let directory = Dir::open_ambient_dir(&unit, cap_std::ambient_authority())?;
         drop(registry.lock(&directory, LockMode::Shared)?);
     }
+    Ok(())
+}
+
+/// Expose a fully written private tree without replacing anything. The directory's lock
+/// identities survive its same-volume rename. The caller holds the cache publication fence.
+pub(crate) fn publish_build(from: &Path, to: &Path) -> Result<(), Error> {
+    use crate::profile_txn::durable;
+    publish(from)?;
+    fs::File::create_new(from.join(".installed"))?;
+    durable::flush_tree(from)?;
+    durable::move_new_directory(from, to)?;
     Ok(())
 }
 

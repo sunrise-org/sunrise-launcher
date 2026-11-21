@@ -2,14 +2,25 @@
 //! A slot belongs to one game home; its lock is held until the child exits.
 use sha2::{Digest, Sha256};
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
-use std::{fs, io, path::Path, process::Command};
+use std::{fs, io, io::Write, path::Path, process::Command};
 
 use crate::run_leases::SOURCE;
-const SLOT: &str = "SUNRISE_WINDOWS_RUNTIME_SLOT";
+pub(crate) const SLOT: &str = "SUNRISE_WINDOWS_RUNTIME_SLOT";
 
 pub(crate) struct Guard {
-    _slot: fs::File,
-    _source: fs::File,
+    slot: fs::File,
+    source: fs::File,
+    game: std::path::PathBuf,
+}
+
+impl Guard {
+    pub(crate) fn files(&self) -> [&fs::File; 2] {
+        [&self.slot, &self.source]
+    }
+
+    pub(crate) fn game(&self) -> &Path {
+        &self.game
+    }
 }
 
 fn value<'a>(cmd: &'a Command, key: &str) -> Option<&'a std::ffi::OsStr> {
@@ -29,9 +40,7 @@ fn redirect_in(cmd: Command, root: &Path) -> Command {
         .map(Path::new)
         .or(cmd.get_current_dir())
         .expect("the game command has a home");
-    let home = fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
-    let key = format!("{:x}", Sha256::digest(home.as_os_str().as_encoded_bytes()));
-    let slot = root.join(key);
+    let slot = slot_for_home(root, home);
     let mut out = Command::new(slot.join("game").join(crate::backend::CLIENT));
     out.args(cmd.get_args());
     if let Some(dir) = cmd.get_current_dir() {
@@ -45,6 +54,48 @@ fn redirect_in(cmd: Command, root: &Path) -> Command {
     }
     out.env(SLOT, slot);
     out
+}
+
+fn slot_for_home(root: &Path, home: &Path) -> std::path::PathBuf {
+    let home = fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+    root.join(format!(
+        "{:x}",
+        Sha256::digest(home.as_os_str().as_encoded_bytes())
+    ))
+}
+
+/// Check the staged executable against the original dedicated command while its slot is held.
+pub(crate) fn verify_dedicated(expected: &Command, actual: &Command) -> io::Result<()> {
+    use sunrise_launcher_smod::index::sha256_file;
+
+    let invalid = || io::Error::from(io::ErrorKind::InvalidInput);
+    let data = crate::backend::data_dir();
+    let slot = slot_for_home(
+        &data.join("run"),
+        expected.get_current_dir().expect("dedicated server cwd"),
+    );
+    let program = slot.join("game").join(crate::backend::CLIENT);
+    if actual.get_program() != program.as_os_str()
+        || value(actual, SLOT) != Some(slot.as_os_str())
+        || actual
+            .get_envs()
+            .filter(|(name, _)| *name != SLOT)
+            .ne(expected.get_envs())
+    {
+        return Err(invalid());
+    }
+    let trusted_slot = data
+        .canonicalize()?
+        .join("run")
+        .join(slot.file_name().unwrap());
+    if program.canonicalize()? != trusted_slot.join("game").join(crate::backend::CLIENT)
+        || fs::symlink_metadata(&program)?.file_attributes() & 0x400 != 0
+        || sha256_file(&program).map_err(io::Error::other)?
+            != sha256_file(Path::new(expected.get_program())).map_err(io::Error::other)?
+    {
+        return Err(invalid());
+    }
+    Ok(())
 }
 
 /// Prepare under an exclusive lock. Never fall back to a version-specific executable:
@@ -65,6 +116,7 @@ fn prepare_in(cmd: &Command, root: &Path) -> io::Result<Option<Guard>> {
     if slot.parent() != Some(root) || !valid_key {
         return Err(io::ErrorKind::InvalidInput.into());
     }
+    plain_directory(root)?;
     stage(Path::new(source), slot).map(Some)
 }
 
@@ -84,8 +136,10 @@ fn stage(source: &Path, slot: &Path) -> io::Result<Guard> {
         .write(true)
         .create(true)
         .truncate(false)
+        // Exclusive sharing follows the file object through DuplicateHandle. The creator's
+        // exit, unlike a Win32 byte-range lock, does not release the child's exclusion.
+        .share_mode(0)
         .open(slot.join("run.lock"))?;
-    lock.try_lock().map_err(io::Error::other)?;
     // Retain the original exe's protection against deletion/rebuild while playing.
     let source_file = fs::OpenOptions::new()
         .read(true)
@@ -93,12 +147,18 @@ fn stage(source: &Path, slot: &Path) -> io::Result<Guard> {
         .open(source.join(crate::backend::CLIENT))?;
     let game = slot.join("game");
     plain_directory(&game)?;
-    // Windows refuses this write while an orphaned game still executes the old binary,
-    // even if its launcher (and thus the advisory lock) has already exited.
-    fs::copy(
-        source.join(crate::backend::CLIENT),
-        game.join(crate::backend::CLIENT),
-    )?;
+    let runtime = game.join(crate::backend::CLIENT);
+    match fs::symlink_metadata(&runtime) {
+        Ok(meta) if meta.is_file() && !crate::native_cache::linked(&meta) => (),
+        Ok(_) => return Err(io::ErrorKind::InvalidInput.into()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+        Err(error) => return Err(error),
+    }
+    // Replace the directory entry, never write through an existing link. Windows refuses
+    // to replace an executing image even if its launcher (and lock) has already exited.
+    let staged = tempfile::NamedTempFile::new_in(&game)?.into_temp_path();
+    fs::copy(source.join(crate::backend::CLIENT), &staged)?;
+    staged.persist(runtime)?;
     for entry in fs::read_dir(&game)? {
         let entry = entry?;
         if entry.file_name() == crate::backend::CLIENT {
@@ -124,18 +184,18 @@ fn stage(source: &Path, slot: &Path) -> io::Result<Guard> {
             fs::copy(entry.path(), to)?;
         }
     }
-    fs::write(
-        slot.join("source.json"),
-        serde_json::to_vec(&fs::canonicalize(source)?)?,
-    )?;
+    let mut marker = tempfile::NamedTempFile::new_in(slot)?;
+    marker.write_all(&serde_json::to_vec(&source.canonicalize()?)?)?;
+    marker.persist(slot.join("source.json"))?;
     // The game runs from this copy and, finding the launcher's lease registry above it, locks
     // the copy and its folders up to the data folder: they need lease entries, as an installed
     // version's have.
     crate::run_leases::publish(&game)
         .map_err(|error| io::Error::other(crate::native_mods::cache_error(error)))?;
     Ok(Guard {
-        _slot: lock,
-        _source: source_file,
+        slot: lock,
+        source: source_file,
+        game,
     })
 }
 
@@ -179,17 +239,15 @@ fn in_use_in(source: &Path, root: &Path) -> bool {
         if recorded.as_ref() != Some(&source) {
             return false;
         }
-        let Ok(lock) = fs::OpenOptions::new()
+        let Ok(_slot) = fs::OpenOptions::new()
             .read(true)
             .write(true)
+            .share_mode(0)
             .open(slot.path().join("run.lock"))
         else {
             return true;
         };
-        if lock.try_lock().is_err() {
-            return true;
-        }
-        // If the launcher exited first, Windows still protects the running image.
+        // If a legacy launcher exited first, Windows still protects the running image.
         fs::OpenOptions::new()
             .write(true)
             .open(slot.path().join("game").join(crate::backend::CLIENT))
@@ -263,7 +321,9 @@ mod tests {
         assert!(replacement.is_err());
         assert!(!in_use_in(&source, &root.join("run")));
         drop(prepare_in(&cmd, &root.join("run")).unwrap());
-        fs::remove_dir_all(root).unwrap();
+        // Windows can keep the killed child's image mapped for a moment after `wait`; the
+        // temporary folder is only cleanup, not part of what this test checks.
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

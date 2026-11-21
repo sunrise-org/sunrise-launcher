@@ -1,11 +1,12 @@
 //! Everything that is not UI: GitHub, installs, resource preparation, the game's processes and
 //! updates. The GUI, the CLI and the MCP server all go through this module. Functions here
 //! block; the GUI runs them on threads and reads their messages.
+use crate::process::child::Child;
 use crate::{account, mojang, sources};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
@@ -139,10 +140,10 @@ impl GameArchitecture {
     }
 }
 
-const GAME_BUILD_ARCHITECTURE: &str = ".sunrise-game-architecture.json";
+pub(crate) const GAME_BUILD_ARCHITECTURE: &str = ".sunrise-game-architecture.json";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-struct InstalledGameArchitecture {
+pub(crate) struct InstalledGameArchitecture {
     /// The architecture requested when this version was installed.
     requested: GameArchitecture,
     /// The archive's actual architecture (x64 may be the safe ARM64 fallback).
@@ -295,8 +296,9 @@ pub fn can_choose_game_architecture() -> bool {
 /// have no marker; their PE machine type is used for both.
 fn installed_game_architecture(tag: &str) -> Option<InstalledGameArchitecture> {
     let dir = version_dir(tag);
-    serde_json::from_slice(&fs::read(dir.join(GAME_BUILD_ARCHITECTURE)).ok()?)
+    fs::read(dir.join(GAME_BUILD_ARCHITECTURE))
         .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .or_else(|| {
             let binary = pe_architecture_file(&dir.join(CLIENT))?;
             Some(InstalledGameArchitecture {
@@ -332,17 +334,6 @@ fn architecture_for_pe_machine(machine: u16) -> Option<GameArchitecture> {
     }
 }
 
-fn installation_matches_game_architecture(tag: &str, settings: &Settings) -> bool {
-    if !can_choose_game_architecture() {
-        return true;
-    }
-    let Some(target) = selected_game_architecture(settings) else {
-        return true;
-    };
-    installed_game_architecture(tag)
-        .is_some_and(|installed| installed_architecture_matches(target, installed))
-}
-
 fn installed_architecture_matches(
     target: GameArchitecture,
     installed: InstalledGameArchitecture,
@@ -350,35 +341,44 @@ fn installed_architecture_matches(
     installed.requested == target || installed.binary == target
 }
 
-fn game_architecture_install_needed(
-    target: GameArchitecture,
-    expected: GameArchitecture,
-    installed: Option<InstalledGameArchitecture>,
-) -> bool {
-    installed.is_none_or(|installed| {
-        (installed.requested != target && installed.binary != target)
-            || installed.binary != expected
-    })
+/// The exact installed build can be repaired only while it is still offered for this setting.
+/// This is a same-build operation, not an update candidate.
+pub fn architecture_reinstall<'a>(
+    releases: &'a [Release],
+    tag: &str,
+    choice: GameArchitecture,
+) -> Option<&'a Release> {
+    if !can_choose_game_architecture() || !version_dir(tag).join(COMPLETE).is_file() {
+        return None;
+    }
+    architecture_reinstall_for(
+        releases,
+        tag,
+        choice,
+        std::env::consts::ARCH,
+        installed_game_architecture(tag),
+    )
 }
 
-/// Whether an installed version needs the selected architecture downloaded. This also refreshes
-/// old installs with a same-version install when needed to record an ARM64 fallback choice.
-pub fn needs_game_architecture_install(tag: &str, release: &Release) -> bool {
-    if !can_choose_game_architecture() {
-        return false;
-    }
-    let Some(expected) = release
-        .asset
-        .as_ref()
-        .and_then(|(url, _)| architecture_for_asset(url))
-    else {
-        return false;
+fn architecture_reinstall_for<'a>(
+    releases: &'a [Release],
+    tag: &str,
+    choice: GameArchitecture,
+    process: &str,
+    installed: Option<InstalledGameArchitecture>,
+) -> Option<&'a Release> {
+    let channel = crate::instances::Channel::of_build(tag)?;
+    let release = channel.builds(releases).find(|r| r.tag == tag)?;
+    let (asset, fallback) = game_assets_for("windows", Some("aarch64"), process, choice)?;
+    let expected = architecture_for_asset(asset_installed(release, Some(asset), fallback)?)?;
+    let target = match choice {
+        GameArchitecture::Auto => architecture_for_platform(process)?,
+        explicit => explicit,
     };
-    let settings = Settings::load();
-    let Some(target) = selected_game_architecture(&settings) else {
-        return false;
-    };
-    game_architecture_install_needed(target, expected, installed_game_architecture(tag))
+    // A recorded x64 fallback for ARM64 is valid until an ARM64 archive is offered.
+    installed
+        .is_none_or(|have| !installed_architecture_matches(target, have) || have.binary != expected)
+        .then_some(release)
 }
 
 fn native_mod_architecture_message(
@@ -402,31 +402,86 @@ pub(crate) fn native_mod_architecture_error() -> Option<String> {
         .map(|message| crate::i18n::tr(message).to_string())
 }
 
-/// Refuse to launch an explicit game architecture until this version has been installed for it.
+/// Refuse an explicit game architecture mismatch. CLI Play and server startup do not fetch a
+/// catalogue to guess whether the exact installation can still be repaired.
 pub fn game_architecture_launch_error(tag: &str) -> Option<String> {
+    game_architecture_launch_error_with_catalogue(tag, &[])
+}
+
+/// The window can recommend a reinstall from the version picker only when it offers that exact repair.
+pub fn game_architecture_launch_error_with_catalogue(
+    tag: &str,
+    releases: &[Release],
+) -> Option<String> {
     if !can_choose_game_architecture() {
         return None;
     }
-    let settings = Settings::load();
-    if settings.game_architecture == GameArchitecture::Auto
-        || installation_matches_game_architecture(tag, &settings)
-    {
+    let choice = Settings::load().game_architecture;
+    if choice == GameArchitecture::Auto {
         return None;
     }
-    let target = selected_game_architecture(&settings)?;
-    let installed = installed_game_architecture(tag).map(|a| a.binary);
+    architecture_mismatch_for(
+        tag,
+        releases,
+        choice,
+        std::env::consts::ARCH,
+        installed_game_architecture(tag),
+    )
+}
+
+pub(crate) fn managed_game_architecture_launch_error(
+    tag: &str,
+    variant: Option<&installation::BoundVariant>,
+) -> Option<String> {
+    if !can_choose_game_architecture() {
+        return None;
+    }
+    let choice = Settings::load().game_architecture;
+    if choice == GameArchitecture::Auto {
+        return None;
+    }
+    check_game_architecture(tag, variant, choice)
+}
+
+pub(crate) fn check_game_architecture(
+    tag: &str,
+    variant: Option<&installation::BoundVariant>,
+    choice: GameArchitecture,
+) -> Option<String> {
+    let installed = match variant {
+        Some(variant) => variant.architecture(),
+        None => installed_game_architecture(tag),
+    };
+    // A saved binding can't silently adopt a different archive, even for the same tag.
+    architecture_mismatch_for(tag, &[], choice, std::env::consts::ARCH, installed)
+}
+
+fn architecture_mismatch_for(
+    tag: &str,
+    releases: &[Release],
+    choice: GameArchitecture,
+    process: &str,
+    installed: Option<InstalledGameArchitecture>,
+) -> Option<String> {
+    if installed.is_some_and(|have| installed_architecture_matches(choice, have)) {
+        return None;
+    }
     let label = |arch| match arch {
         GameArchitecture::X64 => "x64".to_owned(),
         GameArchitecture::Arm64 => "ARM64".to_owned(),
         GameArchitecture::Auto => crate::i18n::tr("Automatic").to_string(),
     };
+    let available = architecture_reinstall_for(releases, tag, choice, process, installed).is_some();
     let installed = installed
-        .map(label)
+        .map(|have| label(have.binary))
         .unwrap_or_else(|| crate::i18n::tr("Unknown").to_string());
-    let selected = label(target);
     Some(crate::i18n::trf(
-        "This version has a {installed} game build, but Settings selects {selected}. Install the selected build from Versions before launching.",
-        &[("installed", &installed), ("selected", &selected)],
+        if available {
+            "This version has a {installed} game build, but Settings selects {selected}. Reinstall it from the version picker beside Play before launching."
+        } else {
+            "This version has a {installed} game build, but Settings selects {selected}. Switch back to the installed architecture or Automatic, or choose another available build."
+        },
+        &[("installed", &installed), ("selected", &label(choice))],
     ))
 }
 
@@ -518,11 +573,8 @@ pub(crate) fn get_unless_missing(url: &str) -> Result<Option<ureq::Response>, St
     }
 }
 
-/// A Sunrise game tag: `v` then a digit (`v2026.10.13`); a launcher `vX.Y.Z` matches too, but only the game repository's list is checked, and its launcher releases are `launcher@X.Y.Z`.
-pub fn is_game_tag(tag: &str) -> bool {
-    tag.strip_prefix('v')
-        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
-}
+mod game_tags;
+pub use game_tags::{compare_game_versions, is_game_tag, stable_version};
 
 /// The launcher version in a `vX.Y.Z` tag of [`LAUNCHER_REPO`], or None for any other tag: the verifier's own grammar, so discovery never takes a tag it would refuse.
 pub fn launcher_version(tag: &str) -> Option<&str> {
@@ -548,7 +600,7 @@ fn own_tag_of(tag: Option<&str>, injected: Option<&str>) -> String {
     }
 }
 
-/// Where a tag or version stands among Sunrise's releases (docs/versioning.md): the tags from
+/// Launcher version ordering, including historical launcher tags: the tags from
 /// before 0.2 (`vYYYY.MM.DD[.N]`, `launcher-vX.Y.Z`) and bare versions first, compared number by
 /// number with missing parts as zero and anything after a `-` ignored, as launchers always did;
 /// then the 0.2 tags (`vX.Y.Z`, `launcher@X.Y.Z`) in semver's order, a pre-release
@@ -558,9 +610,6 @@ pub enum ReleaseOrder {
     /// Numbers without trailing zeros, so 1.2 and 1.2.0 are equal.
     Before02(Vec<u64>),
     Semver([u64; 3], Prerelease),
-    /// A Nightly (`nightly-<date>-<commit>`), by its date: newer than every release, since the
-    /// Nightly is the only build Sunrise ships.
-    Nightly(String),
 }
 
 /// (is a release, the pre-release's identifiers): a release follows every pre-release of its
@@ -577,9 +626,6 @@ pub enum Identifier {
 const FIRST_YEAR: u64 = 1000;
 
 pub fn release_order(tag: &str) -> ReleaseOrder {
-    if let Some(date) = crate::nightly::date_of(tag) {
-        return ReleaseOrder::Nightly(date.to_owned());
-    }
     // The game repository's launcher tags (`launcher@X.Y.Z`, before that `launcher-vX.Y.Z`) still order among the rest.
     let semver = tag
         .strip_prefix("launcher@")
@@ -652,13 +698,15 @@ fn release_list() -> Result<serde_json::Value, String> {
     .unwrap_or_else(|| serde_json::json!([])))
 }
 
-/// The game's releases in `list` whose tag passes `keep`, newest first, with the asset named `asset`, downloaded from [`GAME_REPO`].
+/// The game's releases in `list` whose tag passes `keep`, with the named asset from [`GAME_REPO`].
 pub(crate) fn parse_releases(
     list: &serde_json::Value,
     asset: Option<&str>,
     keep: fn(&str) -> bool,
 ) -> Vec<Release> {
-    parse_releases_from(list, asset, keep, crate::signed::asset_url)
+    let mut out = parse_releases_from(list, asset, keep, crate::signed::asset_url);
+    out.sort_by(|a, b| compare_game_versions(&b.tag, &a.tag));
+    out
 }
 
 /// This launcher's releases in `list` (from [`LAUNCHER_REPO`]), newest first, with the asset named `asset`, downloaded from there.
@@ -666,12 +714,14 @@ pub(crate) fn parse_launcher_releases(
     list: &serde_json::Value,
     asset: Option<&str>,
 ) -> Vec<Release> {
-    parse_releases_from(
+    let mut out = parse_releases_from(
         list,
         asset,
         is_launcher_tag,
         crate::signed::launcher_asset_url,
-    )
+    );
+    out.sort_by(|a, b| compare_versions(&b.tag, &a.tag));
+    out
 }
 
 fn parse_releases_from(
@@ -710,7 +760,6 @@ fn parse_releases_from(
             nightly: None,
         });
     }
-    out.sort_by(|a, b| compare_versions(&b.tag, &a.tag));
     out
 }
 
@@ -718,9 +767,8 @@ fn is_launcher_tag(tag: &str) -> bool {
     launcher_version(tag).is_some()
 }
 
-/// Published Sunrise builds, newest first: the current Nightly (the only build Sunrise ships since
-/// 2026-10-28, docs/release-flow.md), the last week's Nightlies, then the releases from before.
-/// Drafts never reach the anonymous API, and launcher releases are left out.
+/// Published Sunrise builds: the current Nightly, then Stable builds newest first.
+/// No dated Nightly release, game prerelease or launcher release is offered here.
 pub fn releases() -> Result<Vec<Release>, String> {
     Ok(game_releases(&release_list()?))
 }
@@ -748,7 +796,8 @@ fn game_releases_with(
     asset: Option<&str>,
     fallback: Option<&str>,
 ) -> Vec<Release> {
-    let keep = |tag: &str| is_game_tag(tag) || sunrise_launcher_release_verify::is_nightly(tag);
+    use sunrise_launcher_release_verify::NIGHTLY;
+    let keep = |tag: &str| tag == NIGHTLY || is_game_tag(tag);
     let mut out = parse_releases(list, asset, keep);
     if fallback.is_some() {
         // The same releases in the same order: only the asset looked for differs.
@@ -758,16 +807,15 @@ fn game_releases_with(
             }
         }
     }
+    out.retain(|r| r.tag == NIGHTLY || !r.prerelease);
     for r in &mut out {
-        if sunrise_launcher_release_verify::is_nightly(&r.tag) {
+        if r.tag == NIGHTLY {
             let version = crate::nightly::version_of(r);
             let tag = std::mem::replace(&mut r.tag, version);
-            r.prerelease = tag != sunrise_launcher_release_verify::NIGHTLY;
+            r.prerelease = false;
             r.nightly = Some(tag);
         }
     }
-    // Two Nightlies of one day: the current one first (the dated one is the day's earlier build).
-    out.sort_by(|a, b| compare_versions(&b.tag, &a.tag).then(a.prerelease.cmp(&b.prerelease)));
     out
 }
 
@@ -801,12 +849,6 @@ fn launcher_releases_from(
 /// The newest Sunrise release that has a build for this platform.
 pub fn latest(releases: &[Release]) -> Option<&Release> {
     releases.iter().find(|r| r.asset.is_some())
-}
-
-/// The releases a launcher installs by itself: every one that is published as a release, so
-/// GitHub's latest when it comes out. The pre-releases of the old Alpha channel are left out.
-pub fn installable_updates(releases: &[Release]) -> Vec<Release> {
-    releases.iter().filter(|r| !r.prerelease).cloned().collect()
 }
 
 /// How often a launcher left open looks for new releases: they come out several times a day.
@@ -919,24 +961,54 @@ fn tool_safe(path: &Path) -> bool {
 /// link (horizon-mixins refuses one, and macOS's /tmp is one). On Windows, when the resolved
 /// path isn't [`tool_safe`], [`windows_build_dir`] names the same folder a way MinGW-w64 can open.
 pub fn build_dir() -> PathBuf {
+    if let Some(root) = crate::data_location::admitted_build_root() {
+        return root.to_owned();
+    }
+    resolve_build_dir(true, |_| Ok(()))
+        .expect("unconditional build admission")
+        .0
+}
+
+pub(crate) fn admit_build_dir<T>(
+    admit: impl FnMut(&Path) -> Result<T, String>,
+) -> Result<(PathBuf, T), String> {
+    resolve_build_dir(true, admit)
+}
+
+/// The offline worker must not create a cache directory before acquiring Move's claims.
+pub(crate) fn relocation_build_dir() -> PathBuf {
+    resolve_build_dir(false, |_| Ok(()))
+        .expect("read-only build path lookup")
+        .0
+}
+
+fn resolve_build_dir<T>(
+    #[cfg_attr(not(windows), allow(unused_variables))] provision: bool,
+    mut admit: impl FnMut(&Path) -> Result<T, String>,
+) -> Result<(PathBuf, T), String> {
     // Tests keep it inside their scratch launcher folder (`data_dir`).
     if !cfg!(test) && std::env::var_os("SUNRISE_LAUNCHER_HOME").is_none_or(|p| p.is_empty()) {
         // A location that does not open stands in as the default folders, as
         // `data_location::startup` makes it for the window: never a panic here.
         if let Ok(Some(roots)) = crate::data_location::configured_roots() {
-            return roots.build;
+            let lease = admit(&roots.build)?;
+            return Ok((roots.build, lease));
         }
     }
     let data = data_dir();
-    let _ = fs::create_dir_all(&data);
-    let real = data.canonicalize().map(plain).unwrap_or(data);
+    // Resolve existing ancestors without creating a root before first-start carry-over.
+    let real = crate::data_location::canonical_data_path(&data).unwrap_or(data);
     if tool_safe(&real) {
-        return real;
+        let lease = admit(&real)?;
+        return Ok((real, lease));
     }
     #[cfg(windows)]
-    return windows_build_dir(&real);
+    return windows_build_dir(&real, provision, admit);
     #[cfg(not(windows))]
-    real
+    {
+        let lease = admit(&real)?;
+        Ok((real, lease))
+    }
 }
 
 /// [`build_dir`] when `real` isn't [`tool_safe`]: [`ascii_build_dir`], a real folder of
@@ -948,25 +1020,40 @@ pub fn build_dir() -> PathBuf {
 /// directory" on `C:/Users/\xca\xe8…`). A folder whose real name is ASCII stays ASCII however a
 /// tool resolves it.
 #[cfg(windows)]
-fn windows_build_dir(real: &Path) -> PathBuf {
+fn windows_build_dir<T>(
+    real: &Path,
+    provision: bool,
+    mut admit: impl FnMut(&Path) -> Result<T, String>,
+) -> Result<(PathBuf, T), String> {
     let dir = ascii_build_dir(real, std::env::var_os("ProgramData").map(PathBuf::from));
     // ProgramData is writable by every account, so the folder may be another account's: its
     // `bin` and `cargo\config.toml` would run as this player. Only a folder made here, or owned
     // by this account, is used.
     // The parent is made with `create_dir_all` (ProgramData may be missing); only the final
     // component is made with `create_dir`, which fails on a folder that already exists.
-    let claim = |dir: &Path| {
-        if let Some(parent) = dir.parent() {
+    for candidate in build_dir_candidates(&dir) {
+        if candidate.is_dir() && owned_by_this_account(&candidate) {
+            let lease = admit(&candidate)?;
+            return Ok((candidate, lease));
+        }
+        if !provision || candidate.exists() {
+            continue;
+        }
+        let lease = admit(&candidate)?;
+        if let Some(parent) = candidate.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        fs::create_dir(dir).is_ok() || owned_by_this_account(dir)
-    };
-    if let Some(dir) = first_claimed_dir(&dir, claim) {
-        return dir;
+        if fs::create_dir(&candidate).is_ok()
+            || (candidate.is_dir() && owned_by_this_account(&candidate))
+        {
+            return Ok((candidate, lease));
+        }
     }
     // Never an unclaimed folder: the short name of the data folder, else a folder of this
     // process's own in the temporary folder.
-    build_fallback(short_path(real), std::process::id(), &std::env::temp_dir())
+    let path = build_fallback(short_path(real), std::process::id(), &std::env::temp_dir());
+    let lease = admit(&path)?;
+    Ok((path, lease))
 }
 
 /// The build folder when no numbered name could be claimed: `short` if it is [`tool_safe`],
@@ -978,18 +1065,15 @@ fn build_fallback(short: Option<PathBuf>, pid: u32, temp: &Path) -> PathBuf {
         .unwrap_or_else(|| temp.join(format!("sunrise-launcher-{pid}")))
 }
 
-/// `base`, else `base-2`, `base-3`… (up to `base-9`): the first one `claim` takes, which makes
-/// the folder or finds it to be the caller's own. A folder someone else made is passed over.
-#[cfg_attr(not(windows), allow(dead_code))]
-fn first_claimed_dir(base: &Path, claim: impl Fn(&Path) -> bool) -> Option<PathBuf> {
-    let name = base.file_name()?.to_os_string();
-    std::iter::once(base.to_path_buf())
-        .chain((2..=9).map(|n| {
-            let mut next = name.clone();
-            next.push(format!("-{n}"));
-            base.with_file_name(next)
-        }))
-        .find(|dir| claim(dir))
+/// `base`, else `base-2`, `base-3`… (up to `base-9`).
+#[cfg(any(windows, test))]
+fn build_dir_candidates(base: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+    let name = base.file_name().expect("cache base name").to_os_string();
+    std::iter::once(base.to_path_buf()).chain((2..=9).map(move |n| {
+        let mut next = name.clone();
+        next.push(format!("-{n}"));
+        base.with_file_name(next)
+    }))
 }
 
 /// Whether the folder `path` is owned by the account this process runs as: the owner a folder
@@ -1083,7 +1167,7 @@ fn short_path(path: &Path) -> Option<PathBuf> {
     (got != 0 && got < need).then(|| PathBuf::from(std::ffi::OsString::from_wide(&buf[..got])))
 }
 
-fn versions_dir() -> PathBuf {
+pub(crate) fn versions_dir() -> PathBuf {
     data_dir().join("versions")
 }
 
@@ -1098,6 +1182,40 @@ pub fn installed() -> Vec<String> {
     installed_in(&versions_dir())
 }
 
+/// Installed versions and the newest installed Nightly known to be current, for Play.
+pub fn play_installations(selected: Option<&str>) -> (Vec<String>, Option<String>) {
+    let versions = versions_dir();
+    let installed = installed_in(&versions);
+    let nightly = crate::nightly::known_install(&versions, &installed, selected).cloned();
+    (installed, nightly)
+}
+
+/// Accept the current rolling Nightly as offline evidence when it is already installed on
+/// the newest date. Do this on the release worker before the window can use that catalogue.
+pub fn note_play_catalogue(releases: &[Release]) -> Result<(), String> {
+    crate::nightly::note_published(releases);
+    let Some(current) = crate::instances::Channel::Nightly.builds(releases).next() else {
+        return Ok(());
+    };
+    let versions = versions_dir();
+    if !versions.join(&current.tag).join(COMPLETE).is_file() {
+        return Ok(());
+    }
+    let _publication =
+        crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
+    let installed = installed_in(&versions);
+    let newest_date = installed
+        .iter()
+        .find_map(|tag| crate::nightly::date_of(tag));
+    if newest_date.is_some()
+        && newest_date == crate::nightly::date_of(&current.tag)
+        && installed.contains(&current.tag)
+    {
+        crate::nightly::record_current(&versions, &current.tag).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn installed_in(versions: &Path) -> Vec<String> {
     let mut tags: Vec<String> = fs::read_dir(versions)
         .into_iter()
@@ -1106,7 +1224,9 @@ fn installed_in(versions: &Path) -> Vec<String> {
         .filter(|e| e.path().join(COMPLETE).exists())
         .filter_map(|e| e.file_name().into_string().ok())
         .collect();
-    tags.sort_by(|a, b| compare_versions(b, a));
+    // Keep the display and inventory order deterministic. Play uses the rolling receipt instead
+    // of comparing same-day hashes.
+    tags.sort_by(|a, b| compare_game_versions(b, a).then_with(|| b.cmp(a)));
     tags
 }
 
@@ -1124,16 +1244,6 @@ pub(crate) fn fetch_small(url: &str) -> Result<Option<Vec<u8>>, String> {
         .read_to_end(&mut body)
         .map_err(|e| format!("Download interrupted: {e}"))?;
     Ok(Some(body))
-}
-
-/// The SHA-256 the release's signed checksums give for `asset`, or why it must not be installed.
-fn signed_digest(tag: &str, asset: &str) -> Result<String, String> {
-    crate::signed::digest(
-        tag,
-        asset,
-        &sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO),
-        fetch_small,
-    )
 }
 
 /// Downloads `url` into `to`; the file is kept only if its SHA-256 is `sha256`, the signed (or
@@ -1154,7 +1264,22 @@ pub(crate) fn download(
         n => n,
     };
     let name = url.rsplit('/').next().unwrap_or(url);
-    save_checked(response.into_reader(), size, name, sha256, to, progress)
+    save_checked(response.into_reader(), size, name, sha256, to, progress).map_err(String::from)
+}
+
+#[derive(Debug)]
+pub(crate) enum SaveCheckedError {
+    Local(std::io::Error),
+    Download(String),
+}
+
+impl From<SaveCheckedError> for String {
+    fn from(error: SaveCheckedError) -> Self {
+        match error {
+            SaveCheckedError::Local(error) => error.to_string(),
+            SaveCheckedError::Download(error) => error,
+        }
+    }
 }
 
 /// Saves `reader` as `to` once all of it has arrived and its SHA-256 is `sha256`: until then it
@@ -1166,12 +1291,12 @@ pub(crate) fn save_checked(
     sha256: &str,
     to: &Path,
     progress: &impl Fn(f32),
-) -> Result<(), String> {
+) -> Result<(), SaveCheckedError> {
     let mut temp = to.as_os_str().to_owned();
     temp.push(format!(".part-{}", std::process::id()));
     let temp = PathBuf::from(temp);
     let saved = write_checked(reader, size, name, sha256, &temp, progress)
-        .and_then(|()| fs::rename(&temp, to).map_err(|e| e.to_string()));
+        .and_then(|()| fs::rename(&temp, to).map_err(SaveCheckedError::Local));
     if saved.is_err() {
         let _ = fs::remove_file(&temp);
     }
@@ -1185,23 +1310,24 @@ fn write_checked(
     sha256: &str,
     to: &Path,
     progress: &impl Fn(f32),
-) -> Result<(), String> {
-    let mut file = fs::File::create(to).map_err(|e| e.to_string())?;
+) -> Result<(), SaveCheckedError> {
+    let mut file = fs::File::create(to).map_err(SaveCheckedError::Local)?;
     let mut hash = sunrise_launcher_release_verify::Sha256::default();
     let (mut done, mut buf) = (0u64, vec![0u8; 1 << 16]);
     loop {
         let n = reader
             .read(&mut buf)
-            .map_err(|e| format!("Download interrupted: {e}"))?;
+            .map_err(|e| SaveCheckedError::Download(format!("Download interrupted: {e}")))?;
         if n == 0 {
             break;
         }
         hash.update(&buf[..n]);
-        file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+        file.write_all(&buf[..n]).map_err(SaveCheckedError::Local)?;
         done += n as u64;
         progress((done as f32 / size.max(1) as f32).min(1.0) * 0.9);
     }
     sunrise_launcher_release_verify::check(name, sha256, &hash.hex())
+        .map_err(SaveCheckedError::Download)
 }
 
 fn unpack(archive: &Path, url: &str, to: &Path) -> Result<(), String> {
@@ -1217,91 +1343,46 @@ fn unpack(archive: &Path, url: &str, to: &Path) -> Result<(), String> {
     }
 }
 
-/// Downloads one release, checks it against its signed checksums and unpacks it; `progress` gets
-/// the fraction done.
-pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<(), String> {
-    let tag = release.tag.as_str();
-    let settings = Settings::load();
-    let assets = game_assets_for(
-        std::env::consts::OS,
-        native_windows_architecture(),
-        std::env::consts::ARCH,
-        settings.game_architecture,
-    );
-    let (asset, fallback) = assets.map_or((ASSET, GAME_FALLBACK), |(asset, fallback)| {
-        (Some(asset), fallback)
-    });
-    let asset = asset_installed(release, asset, fallback).ok_or_else(|| {
-        crate::i18n::trf(
-            "{tag} has no build for the selected game architecture.",
-            &[("tag", tag)],
-        )
-        .to_string()
-    })?;
-    let sha256 = match &release.nightly {
-        // Signed for its own version (SHA256SUMS.v2.sig), which its title names and it installs as;
-        // served under its own GitHub tag. A title that doesn't parse strictly is refused: nothing
-        // signs GitHub's publication time.
-        Some(github_tag) => {
-            let version = crate::signed::title_version(github_tag, &release.name)
-                .filter(|v| *v == release.tag)
-                .ok_or_else(|| {
-                    crate::i18n::trf(
-                        "This Nightly's title ({title}) doesn't name its date and commit as Sunrise \
-                         signs them, so it can't be checked: it was not installed.",
-                        &[("title", &format!("{:?}", release.name))],
-                    )
-                })?;
-            crate::signed::build_digest(
-                github_tag,
-                &version,
-                asset,
-                &sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO),
-                fetch_small,
-            )?
-        }
-        None if is_game_tag(tag) => signed_digest(tag, asset)?,
-        None => return Err(format!("{tag} is not a Sunrise release.")),
-    };
-    install_as(
-        release,
-        tag,
-        &sha256,
-        selected_game_architecture(&settings),
-        progress,
-    )?;
-    // An older build publishes no release file; `played` then reads its research-lock.json.
-    let source = release.nightly.as_deref().unwrap_or(tag);
-    let bytes = fetch_small(&crate::signed::asset_url(source, RELEASE_FILE));
-    if let (Ok(Some(bytes)), Ok(sha256)) = (bytes, release_file_digest(release, source)) {
-        let _ = keep_release_file(&version_dir(tag), &bytes, &sha256);
+pub use installation::{InstallOutcome, NightlyReceiptWarning};
+
+/// Installs one signed release or reuses its proved rolling Nightly image. Only a retry of
+/// a known receipt failure skips the normal post-install actions.
+pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<InstallOutcome, String> {
+    let tag = &release.tag;
+    installation::recover_replacement(tag)?;
+    let download = installation::GameDownload::select(release)?;
+    let proof = download.prove(tag)?;
+    let outcome = download.repair(tag, &proof, progress)?;
+    if matches!(outcome, InstallOutcome::Installed(_)) {
+        // Preparation has its own admission. Never hold the cache publication lock here;
+        // managed First Play instead prepares through its profile-owned staged handoff.
+        reuse_prepared_for(tag);
     }
-    Ok(())
+    Ok(outcome)
 }
 
 /// The build's facts a launcher reads first (docs/api/release-file.md), signed beside its archives.
 const RELEASE_FILE: &str = "sunrise-release.json";
-
-/// [`RELEASE_FILE`]'s signed digest in `release`, published under the GitHub tag `source`.
-fn release_file_digest(release: &Release, source: &str) -> Result<String, String> {
-    match &release.nightly {
-        Some(_) => crate::signed::build_digest(
-            source,
-            &release.tag,
-            RELEASE_FILE,
-            &sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO),
-            fetch_small,
-        ),
-        None => signed_digest(source, RELEASE_FILE),
-    }
-}
 
 /// Keeps `bytes` as the installed build's [`RELEASE_FILE`] in `dir` when they are the signed `sha256`'s.
 fn keep_release_file(dir: &Path, bytes: &[u8], sha256: &str) -> Result<(), String> {
     if sunrise_launcher_release_verify::sha256_hex(bytes) != sha256 {
         return Err(format!("{RELEASE_FILE}: not the signed file"));
     }
-    fs::write(dir.join(RELEASE_FILE), bytes).map_err(|e| format!("{RELEASE_FILE}: {e}"))
+    let file = dir.join(RELEASE_FILE);
+    match fs::File::create_new(&file) {
+        Ok(mut file) => file.write_all(bytes),
+        Err(error)
+            if error.kind() == std::io::ErrorKind::AlreadyExists
+                && fs::symlink_metadata(&file)
+                    .is_ok_and(|meta| meta.is_file() && !crate::native_cache::linked(&meta))
+                && fs::read(&file).is_ok_and(|existing| existing == bytes) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+    .map_err(|e| format!("{RELEASE_FILE}: {e}"))
 }
 
 /// The asset `release` installs from: the fallback when [`game_releases_with`] took it (its file
@@ -1329,47 +1410,35 @@ pub use developer_play::client_as;
 
 /// Downloads `release`'s archive for this platform, checks it against `sha256` (its signed
 /// checksum), and unpacks it as the installed version `tag`.
-mod installation;
-pub(crate) use installation::install_as;
+pub(crate) mod installation;
+pub use installation::recover_game_installations;
 
 pub fn remove(tag: &str) -> Result<(), String> {
-    // A native build's base keeps its prepared data, so it stays while one is installed.
-    if let Some(build) = installed()
-        .into_iter()
-        .find(|version| crate::native_mods::about(version).is_some_and(|about| about.base == tag))
-    {
-        return Err(crate::i18n::trf(
-            "This version supplies resources to native build {build}. Remove that build first.",
-            &[("build", &build)],
-        ));
-    }
-    let dir = version_dir(tag);
-    crate::cache_cleanup::delete_version(&dir, !in_use(tag))
-        .map_err(crate::native_mods::cache_error)?;
-    forget_prepared();
-    Ok(())
+    remove_observed(tag, || {})
 }
 
-/// The bytes an installed version takes on disk.
-pub fn disk_use(tag: &str) -> u64 {
-    fn size(dir: &Path) -> u64 {
-        fs::read_dir(dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|e| match e.metadata() {
-                Ok(m) if m.is_dir() => size(&e.path()),
-                Ok(m) => m.len(),
-                Err(_) => 0,
-            })
-            .sum()
-    }
-    size(&version_dir(tag))
+pub(crate) fn remove_observed(tag: &str, selected: impl FnOnce()) -> Result<(), String> {
+    let dir = version_dir(tag);
+    let idle = !in_use(tag);
+    selected();
+    crate::cache_cleanup::delete_version(&dir, idle).map_err(crate::native_mods::cache_error)?;
+    forget_prepared();
+    Ok(())
 }
 
 /// The Minecraft version a Sunrise build targets, from its research-lock.json.
 pub fn game_version(tag: &str) -> String {
     game_version_at(&version_dir(tag))
+}
+
+/// Switch must classify packages against the exact build, never the legacy default JAR.
+pub(crate) fn switch_game_version(tag: &str) -> Result<String, String> {
+    locked_game(&version_dir(tag)).ok_or_else(|| {
+        crate::i18n::tr(
+            "The selected build's game version could not be verified. Nothing was switched.",
+        )
+        .into()
+    })
 }
 
 fn read_json(path: &Path) -> Option<serde_json::Value> {
@@ -1452,6 +1521,12 @@ fn resources_at(dir: &Path) -> PathBuf {
 }
 
 const RESOURCES_MANIFEST: &str = "sunrise-resources.json";
+
+/// The target preparation records the world format of the verified client JAR it used.
+pub(crate) fn prepared_world_version(resources: &Path) -> Option<i32> {
+    let manifest = read_json(&resources.join(RESOURCES_MANIFEST))?;
+    i32::try_from(manifest.get("data_version")?.as_i64()?).ok()
+}
 
 /// How long a drawn page believes an answer of [`is_prepared`] without looking at the disk again.
 /// What the launcher itself changes (a preparation, an install, a removal) drops it at once
@@ -1671,7 +1746,7 @@ const LEGACY_EXPORTERS: [&str; 18] = [
     "VanillaPlayerHealthOracle.java",
 ];
 
-/// The digest `sunrise_prepare::sources_sha256` gives a preparer crate's sources: `Cargo.toml`, `build.rs` and `src/*.rs`, CRs dropped.
+/// The digest preparers before `OUTPUT_VERSION` gave their crate's sources: `Cargo.toml`, `build.rs` and `src/*.rs`, CRs dropped.
 fn preparer_sources_sha256(crate_dir: &Path) -> Option<String> {
     use sha2::Digest;
     let mut files = Vec::new();
@@ -1827,6 +1902,9 @@ fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
         if game_version_at(&source) != version {
             continue;
         }
+        let Ok(_source) = prepare_lock_at(&source, &other) else {
+            continue;
+        };
         let from = resources_at(&source);
         let Some(manifest) = read_json(&from.join(RESOURCES_MANIFEST)) else {
             continue;
@@ -1859,15 +1937,35 @@ fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
     None
 }
 
+/// A first Play already owns the preparation lock. Reuse compatible resources but leave
+/// preparer children to the staged path; they must retain its profile admission.
+pub(crate) fn reuse_prepared_for_play(tag: &str) {
+    let versions = versions_dir();
+    reuse_prepared(&versions, tag);
+    complete_reports(&versions, tag);
+    forget_prepared();
+}
+
 /// What an install does once its folder is in place (an imported build's too, `build_import`):
 /// another installed version's resources if it has none, whatever its resources lack, then its
 /// data file.
 pub(crate) fn reuse_prepared_for(tag: &str) {
     let about = crate::native_mods::about(tag);
     let tag = about.as_ref().map_or(tag, |about| about.base.as_str());
-    reuse_prepared(&versions_dir(), tag);
-    complete_assets(tag);
+    let Ok(preparation) = prepare_lock(tag) else {
+        return;
+    };
+    let versions = versions_dir();
+    reuse_prepared(&versions, tag);
+    complete_assets_in(
+        &versions,
+        tag,
+        minecraft_folders,
+        &|line| eprintln!("{line}"),
+        Some(&preparation.handoff(None)),
+    );
     forget_prepared();
+    drop(preparation);
     let (root, resources) = (version_dir(tag), resources(tag));
     let spawned = std::thread::Builder::new()
         .name("Prepared data file".into())
@@ -1889,8 +1987,13 @@ fn write_data_file(root: &Path, resources: &Path) -> Result<(), String> {
     if !prepared_at(resources) || resources.join(crate::preparer::DATA_FILE).exists() {
         return Ok(());
     }
+    let version = root.file_name().unwrap_or_default().to_string_lossy();
+    let preparation = prepare_lock_at(root, &version)?;
     match crate::preparer::binary(root) {
-        Some(binary) => crate::preparer::data_file(&binary, root, resources).map(drop),
+        Some(binary) => {
+            crate::preparer::data_file(&binary, root, resources, Some(&preparation.handoff(None)))
+                .map(drop)
+        }
         None => Ok(()),
     }
 }
@@ -1907,8 +2010,18 @@ pub fn reuse_prepared_everywhere() -> Vec<(String, String)> {
     for tag in installed_in(&versions) {
         // Here, on the start-up thread, and not in `complete_assets`, which Play also runs: a
         // download of thousands of files is not for the moment the game is waited for.
-        refill_own_store(&tag);
-        complete_assets(&tag);
+        let Ok(preparation) = prepare_lock(&tag) else {
+            continue;
+        };
+        let handoff = preparation.handoff(None);
+        refill_own_store(&tag, &handoff);
+        complete_assets_in(
+            &versions,
+            &tag,
+            minecraft_folders,
+            &|line| eprintln!("{line}"),
+            Some(&handoff),
+        );
     }
     reused
 }
@@ -1916,14 +2029,14 @@ pub fn reuse_prepared_everywhere() -> Vec<(String, String)> {
 fn reuse_prepared_in(versions: &Path) -> Vec<(String, String)> {
     let mut tags = installed_in(versions);
     tags.reverse();
-    let reused = tags
-        .iter()
-        .filter_map(|tag| reuse_prepared(versions, tag).map(|from| (tag.clone(), from)))
-        .collect();
-    for tag in &tags {
-        complete_reports(versions, tag);
-    }
-    reused
+    tags.into_iter()
+        .filter_map(|tag| {
+            let _preparation = prepare_lock_at(&versions.join(&tag), &tag).ok()?;
+            let from = reuse_prepared(versions, &tag);
+            complete_reports(versions, &tag);
+            from.map(|from| (tag, from))
+        })
+        .collect()
 }
 
 /// The data generator reports the game reads at run time: the built-in registries' network ids
@@ -1960,11 +2073,15 @@ fn complete_reports(versions: &Path, tag: &str) -> bool {
     };
     let reports = |dir: &Path| dir.join(".local/datagen/out/reports");
     let mut sources = vec![reports(&target)];
+    let mut source_claims = Vec::new();
     for other in installed_in(versions).into_iter().filter(|t| t != tag) {
         let dir = versions.join(&other);
         if server(&dir).as_ref() == Some(&pins) {
-            sources.push(resources_at(&dir));
-            sources.push(reports(&dir));
+            if let Ok(preparation) = prepare_lock_at(&dir, &other) {
+                sources.push(resources_at(&dir));
+                sources.push(reports(&dir));
+                source_claims.push(preparation);
+            }
         }
     }
     let mut complete = true;
@@ -1993,9 +2110,20 @@ fn complete_reports(versions: &Path, tag: &str) -> bool {
 /// in any Minecraft folder, one line each in the log, once per launcher run, and the version plays
 /// as before. Nothing is prepared again.
 pub fn complete_assets(tag: &str) {
-    complete_assets_in(&versions_dir(), tag, minecraft_folders, &|line| {
-        eprintln!("{line}")
-    });
+    let Ok(preparation) = prepare_lock(tag) else {
+        return;
+    };
+    complete_assets_staged(tag, &preparation.handoff(None));
+}
+
+pub(crate) fn complete_assets_staged(tag: &str, handoff: &crate::preparer::Handoff<'_>) {
+    complete_assets_in(
+        &versions_dir(),
+        tag,
+        minecraft_folders,
+        &|line| eprintln!("{line}"),
+        Some(handoff),
+    );
 }
 
 /// Whether Sunrise's own store is asked to download again: it has an asset index, the version
@@ -2015,13 +2143,13 @@ fn refill_wanted(
 /// and the copies of `complete_assets` read them from its store: asked again, once per run, through
 /// the same owner gate as any download from Mojang (`download_for_owner`), which keeps the files
 /// already whole. Called where a download is expected (`reuse_prepared_everywhere`), never on Play.
-fn refill_own_store(tag: &str) {
+fn refill_own_store(tag: &str, handoff: &crate::preparer::Handoff<'_>) {
     static ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let own = data_dir().join("minecraft");
     let root = versions_dir().join(tag);
     let resources = resources_at(&root);
     let missing = crate::preparer::binary(&root).and_then(|binary| {
-        crate::preparer::missing_extras(&binary, &root, &resources)
+        crate::preparer::missing_extras(&binary, &root, &resources, Some(handoff))
             .ok()
             .flatten()
     });
@@ -2056,6 +2184,7 @@ fn complete_assets_in(
     tag: &str,
     folders: impl Fn() -> Vec<PathBuf>,
     log: &dyn Fn(String),
+    handoff: Option<&crate::preparer::Handoff<'_>>,
 ) {
     // The versions tried this run. Held while adding: the start, an install and Play can complete one version at once.
     static TRIED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
@@ -2068,7 +2197,7 @@ fn complete_assets_in(
     let Some(binary) = crate::preparer::binary(&root) else {
         return;
     };
-    let lacking = match crate::preparer::missing_extras(&binary, &root, &resources) {
+    let lacking = match crate::preparer::missing_extras(&binary, &root, &resources, handoff) {
         Ok(Some(lacking)) if !lacking.is_empty() => lacking,
         Ok(_) => return,
         Err(e) => return log(format!("{tag}: {e}")),
@@ -2079,7 +2208,8 @@ fn complete_assets_in(
     }
     tried.push(root.clone());
     let kinds: Vec<String> = lacking.iter().map(|(kind, _)| kind.clone()).collect();
-    match crate::preparer::add_extras(&binary, &root, &resources, &kinds, &folders(), log) {
+    match crate::preparer::add_extras(&binary, &root, &resources, &kinds, &folders(), log, handoff)
+    {
         Ok(Some(added)) => {
             for (kind, error) in added.failed {
                 let what = lacking
@@ -2408,6 +2538,17 @@ pub fn preparer(
     minecraft: &Path,
     from: MinecraftFrom,
     log: &dyn Fn(String),
+    preparation: &crate::preparer::Preparation,
+) -> Result<(Command, PathBuf), String> {
+    preparer_staged(tag, minecraft, from, log, &preparation.handoff(None))
+}
+
+pub(crate) fn preparer_staged(
+    tag: &str,
+    minecraft: &Path,
+    from: MinecraftFrom,
+    log: &dyn Fn(String),
+    handoff: &crate::preparer::Handoff<'_>,
 ) -> Result<(Command, PathBuf), String> {
     set_prepare_step(PrepareStep::Files);
     // A native build reads the resources of its base, so it is the base that gets prepared.
@@ -2423,8 +2564,8 @@ pub fn preparer(
     let dir = version_dir(tag);
     let binary = crate::preparer::binary(&dir).ok_or_else(|| crate::preparer::too_old(tag))?;
     // The version's own answer: a sibling's verified import is linked in when found, and whether its exporters ship.
-    let needs =
-        crate::preparer::needs(&binary, &dir, log)?.ok_or_else(|| crate::preparer::too_old(tag))?;
+    let needs = crate::preparer::needs(&binary, &dir, log, Some(handoff))?
+        .ok_or_else(|| crate::preparer::too_old(tag))?;
     let reused = !needs.server_jar;
     let chosen = minecraft.to_path_buf();
     // Resolved even when the game files are reused: the assets still come from the install.
@@ -2498,9 +2639,14 @@ pub fn preparer(
         .join("server-jars")
         .join(format!("{version}.jar"));
     if !reused {
-        let json: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(&manifest).map_err(|e| e.to_string())?)
-                .map_err(|e| e.to_string())?;
+        let manifest_text = fs::read_to_string(&manifest).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                sources::missing_version_file(&manifest) + &sources::prepare_advice()
+            } else {
+                e.to_string()
+            }
+        })?;
+        let json = serde_json::from_str(&manifest_text).map_err(|e| e.to_string())?;
         let fetch = |url: &str| -> Result<Vec<u8>, String> {
             let mut body = Vec::new();
             get(url)?
@@ -2559,7 +2705,21 @@ fn ensure_server_jar(
 }
 
 /// Copies the pinned version's sounds from the player's own launcher install into the version's resources with its own `sunrise-prepare sounds`; sound is optional, so a failure is a line in `log`.
-pub fn sounds(tag: &str, minecraft: &Path, log: &dyn Fn(String)) {
+pub fn sounds(
+    tag: &str,
+    minecraft: &Path,
+    log: &dyn Fn(String),
+    preparation: &crate::preparer::Preparation,
+) {
+    sounds_staged(tag, minecraft, log, &preparation.handoff(None));
+}
+
+pub(crate) fn sounds_staged(
+    tag: &str,
+    minecraft: &Path,
+    log: &dyn Fn(String),
+    handoff: &crate::preparer::Handoff<'_>,
+) {
     use crate::i18n::{tr, trf};
     let tag = resources_owner(tag);
     let tag = tag.as_str();
@@ -2567,7 +2727,7 @@ pub fn sounds(tag: &str, minecraft: &Path, log: &dyn Fn(String)) {
     set_prepare_step(PrepareStep::Sounds);
     log(tr("Copying the sounds from your Minecraft install").into());
     let result = match crate::preparer::binary(&dir) {
-        Some(binary) => crate::preparer::sounds(&binary, &dir, minecraft, log)
+        Some(binary) => crate::preparer::sounds(&binary, &dir, minecraft, log, Some(handoff))
             .and_then(|done| done.ok_or_else(|| crate::preparer::too_old(tag))),
         None => Err(crate::preparer::too_old(tag)),
     };
@@ -2848,6 +3008,10 @@ fn strip_launcher_render_env(cmd: &mut Command) {
 }
 
 pub fn client_command(tag: &str) -> Command {
+    client_with_resources(tag, &resources(tag))
+}
+
+pub(crate) fn client_with_resources(tag: &str, resources: &Path) -> Command {
     let home = game_home();
     let _ = fs::create_dir_all(&home);
     let mut cmd = Command::new(client_program(tag));
@@ -2860,7 +3024,7 @@ pub fn client_command(tag: &str) -> Command {
     cmd.current_dir(&home)
         .env("SUNRISE_HOME", &home)
         .arg("--resources")
-        .arg(resources(tag));
+        .arg(resources);
     // How the game asks for a renewed session (`account session`) while it runs.
     if let Ok(exe) = std::env::current_exe() {
         cmd.env("SUNRISE_LAUNCHER_EXE", exe);
@@ -2889,17 +3053,30 @@ pub(crate) fn client_program(tag: &str) -> PathBuf {
     dir.join(CLIENT)
 }
 
-pub fn server_command(tag: &str, folder: &Path) -> Command {
-    let mut cmd = Command::new(version_dir(tag).join(CLIENT));
-    if crate::developer_install::uses_developer(tag) {
-        cmd.env("SUNRISE_TELEMETRY_URL", "off");
-    }
-    crate::run_leases::mark(&mut cmd, &version_dir(tag));
-    cmd.current_dir(folder)
-        .arg("--resources")
-        .arg(resources(tag))
-        .args(["--dedicated", "--nogui"]);
-    cmd
+mod dedicated;
+
+pub(crate) use dedicated::root as server_root;
+
+pub fn server_command(tag: &str, folder: &Path) -> Result<Command, String> {
+    dedicated::command(tag, folder)
+}
+
+/// Check the command returned by `prepare_server_command`, while its runtime guard is held.
+pub fn verify_server_command(tag: &str, folder: &Path, command: &Command) -> Result<(), String> {
+    dedicated::verify(tag, folder, command, true)
+}
+
+/// Keep the isolated directory and the installed source fenced before Windows stages its slot,
+/// then check the exact staged command before either dedicated spawn route can use it.
+pub fn prepare_server_command(
+    tag: &str,
+    folder: &Path,
+    cmd: Command,
+) -> Result<(Command, RuntimeGuard), String> {
+    dedicated::verify(tag, folder, &cmd, false)?;
+    let (cmd, runtime) = prepare_command(cmd)?;
+    verify_server_command(tag, folder, &cmd)?;
+    Ok((cmd, runtime))
 }
 
 /// Whether `eula.txt` says `eula` is true, read as a Java properties file as the server reads it:
@@ -2954,9 +3131,15 @@ pub fn eula_agreed(folder: &Path) -> bool {
 
 /// Writes eula.txt as vanilla's server expects it, once the player agreed in the launcher.
 pub fn agree_eula(folder: &Path) -> Result<(), String> {
-    fs::create_dir_all(folder).map_err(|e| e.to_string())?;
+    let folder = server_root(folder)?;
+    fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
     let text = "#By changing the setting below to TRUE you are indicating your agreement to our EULA (https://aka.ms/MinecraftEULA).\neula=true\n";
-    fs::write(folder.join("eula.txt"), text).map_err(|e| e.to_string())
+    // Replace a directory entry rather than writing through an existing link to player data.
+    let mut eula = tempfile::NamedTempFile::new_in(&folder).map_err(|e| e.to_string())?;
+    eula.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+    eula.persist(folder.join("eula.txt"))
+        .map(|_| ())
+        .map_err(|e| e.error.to_string())
 }
 
 // ----- Shared steps for the front ends -----------------------------------------------------------
@@ -2987,70 +3170,8 @@ pub fn no_version_installed() -> String {
     )
 }
 
-/// Removes an installed version, unless a program runs from it, and moves the selection to the
-/// newest one left if needed.
-pub fn remove_version(tag: &str) -> Result<(), String> {
-    if !installed().iter().any(|t| t == tag) {
-        return Err(format!("{tag} is not installed."));
-    }
-    if in_use(tag) {
-        return Err(format!("{tag} is running. Quit it first."));
-    }
-    remove(tag)?;
-    crate::storage::eviction::request_cleanup();
-    let mut settings = Settings::load();
-    if settings.selected.as_deref() == Some(tag) {
-        settings.selected = installed().first().cloned();
-        settings.save()?;
-    }
-    Ok(())
-}
-
-/// How many of the newest managed versions of each kind stay installed by default.
-const KEEP_NEWEST: usize = 2;
-
-/// Only Nightlies installed by an update may be removed automatically. Absence of this marker
-/// means a manual install or a version from an older launcher whose origin is unknown.
-const AUTO_INSTALLED: &str = ".auto-installed";
-
-pub(crate) fn auto_installed(tag: &str) -> bool {
-    version_dir(tag).join(AUTO_INSTALLED).is_file()
-}
-
-pub fn mark_auto_installed(tag: &str) -> Result<(), String> {
-    let dir = version_dir(tag);
-    if !dir.join(COMPLETE).is_file() {
-        return Err(format!("{tag} is not installed."));
-    }
-    fs::write(dir.join(AUTO_INSTALLED), "").map_err(|e| e.to_string())
-}
-
-/// Keep the newest releases and automatically installed Nightlies separately. Manual and legacy
-/// Nightlies are outside the quota; selected and instance-pinned versions are always protected.
-fn stale_versions(
-    installed: &[String],
-    keep: usize,
-    protected: &[String],
-    auto: impl Fn(&str) -> bool,
-) -> Vec<String> {
-    let (mut releases, mut nightlies) = (0, 0);
-    installed
-        .iter()
-        .filter(|t| {
-            if is_game_tag(t) {
-                releases += 1;
-                releases > keep
-            } else if crate::nightly::date_of(t).is_some() && auto(t) {
-                nightlies += 1;
-                nightlies > keep
-            } else {
-                false
-            }
-        })
-        .filter(|t| !protected.contains(t))
-        .cloned()
-        .collect()
-}
+pub mod version_storage;
+pub use version_storage::remove_version;
 
 /// Whether a running program was started from the version's folder: the game and a server take
 /// their program and `--resources` from it. Windows refuses to delete a running program's files,
@@ -3075,47 +3196,6 @@ pub(crate) fn in_use(_tag: &str) -> bool {
     false
 }
 
-/// Deletes the release versions nothing needs after an install or update, unless the player
-/// turned that off: all but the newest few (`Settings::keep_newest`), the selected version, the
-/// ones instances pin and the ones a program is running from. A version that does not delete
-/// is logged and the rest still go. Returns the versions deleted. They install again from GitHub.
-pub fn prune_old_versions() -> Vec<String> {
-    let settings = Settings::load();
-    if !settings.auto_prune() {
-        return Vec::new();
-    }
-    let mut protected: Vec<String> = settings.selected.iter().cloned().collect();
-    protected.extend(
-        crate::instances::list()
-            .into_iter()
-            .filter_map(|i| i.version),
-    );
-    let mut gone = Vec::new();
-    for tag in stale_versions(
-        &installed(),
-        settings.keep_newest(),
-        &protected,
-        auto_installed,
-    ) {
-        if crate::native_mods::resource_dependents(&tag) {
-            eprintln!("Keeping old version {tag}: a native build uses its resources.");
-            continue;
-        }
-        if in_use(&tag) {
-            eprintln!("Keeping old version {tag}: the game is running from it.");
-            continue;
-        }
-        match remove(&tag) {
-            Ok(()) => {
-                eprintln!("Removed old version {tag}.");
-                gone.push(tag);
-            }
-            Err(e) => eprintln!("Could not remove old version {tag}: {e}"),
-        }
-    }
-    gone
-}
-
 /// The Minecraft folder to prepare from: the one given, the one chosen in the launcher, or the
 /// official launcher's default. It may be absent when imported files can be reused.
 pub fn minecraft_dir(requested: Option<PathBuf>) -> Result<PathBuf, String> {
@@ -3134,6 +3214,20 @@ pub fn server_dir(requested: Option<PathBuf>) -> PathBuf {
 
 /// Whether `tag` is prepared, with the run-time reports it needs completed when another copy has them.
 pub fn need_prepared(tag: &str) -> Result<(), String> {
+    need_prepared_inner(tag, None)
+}
+
+pub(crate) fn need_prepared_locked(
+    tag: &str,
+    preparation: &crate::preparer::Preparation,
+) -> Result<(), String> {
+    need_prepared_inner(tag, Some(preparation))
+}
+
+fn need_prepared_inner(
+    tag: &str,
+    preparation: Option<&crate::preparer::Preparation>,
+) -> Result<(), String> {
     let about = crate::native_mods::about(tag);
     if let Some(about) = &about {
         if !version_dir(&about.base).join(COMPLETE).is_file() {
@@ -3145,6 +3239,11 @@ pub fn need_prepared(tag: &str) -> Result<(), String> {
     }
     let tag = about.as_ref().map_or(tag, |about| about.base.as_str());
     if check_prepared(tag) {
+        let _owned = if preparation.is_none() {
+            Some(prepare_lock(tag)?)
+        } else {
+            None
+        };
         complete_reports(&versions_dir(), tag);
         Ok(())
     } else {
@@ -3162,6 +3261,9 @@ pub fn need_prepared(tag: &str) -> Result<(), String> {
 pub enum PlayStep {
     Assets,
     Mods,
+    Download,
+    Prepare,
+    Native,
     SignIn,
 }
 
@@ -3194,21 +3296,26 @@ pub fn join_friend(cmd: &mut Command, code: &str) -> Result<(), String> {
 
 /// The dedicated server's command in `folder`, once prepared and the EULA is agreed to.
 pub fn server(tag: &str, folder: &Path, accept_eula: bool) -> Result<Command, String> {
+    let command = server_command(tag, folder)?;
+    let folder = command
+        .get_current_dir()
+        .expect("dedicated command owns its directory");
     if let Some(error) = game_architecture_launch_error(tag) {
         return Err(error);
     }
     need_prepared(tag)?;
+    dedicated::verify_paths(tag, &command)?;
     if accept_eula {
         agree_eula(folder)?;
     }
     if !eula_agreed(folder) {
-        return Err("Running a server needs your agreement to the Minecraft EULA (https://aka.ms/MinecraftEULA). Accept it to continue.".into());
+        return Err(crate::i18n::tr("Running a server needs your agreement to the Minecraft EULA (https://aka.ms/MinecraftEULA). Accept it to continue.").into());
     }
-    fs::create_dir_all(folder).map_err(|e| e.to_string())?;
-    Ok(server_command(tag, folder))
+    Ok(command)
 }
 
 mod release_selection;
+pub(crate) use release_selection::WorldBuildOrder;
 
 /// One release's notes: the tag given, or the newest.
 pub fn release_notes(tag: Option<&str>) -> Result<Release, String> {
@@ -3235,9 +3342,39 @@ pub const LOG_KEEP: usize = 2000;
 
 impl Logged {
     pub fn start(job: Job, cmd: Command) -> Result<Self, String> {
+        Self::start_with(|tx| spawn(job, cmd, tx))
+    }
+
+    pub fn start_server(tag: &str, folder: &Path, cmd: Command) -> Result<Self, String> {
+        let (cmd, runtime) = prepare_server_command(tag, folder, cmd)?;
+        Self::start_with(|tx| spawn_prepared(Job::Server, cmd, runtime, tx, None))
+    }
+
+    fn start_with(
+        start: impl FnOnce(Sender<Msg>) -> Result<Running, String>,
+    ) -> Result<Self, String> {
         let (tx, rx) = std::sync::mpsc::channel();
-        let running = spawn(job, cmd, tx)?;
-        let log = Arc::new(Mutex::new(std::collections::VecDeque::new()));
+        let running = start(tx)?;
+        Ok(Self::keep(running, rx, Default::default()))
+    }
+
+    pub fn monitor_game(
+        child: Child,
+        runtime: RuntimeGuard,
+        prelaunch_log: std::collections::VecDeque<String>,
+    ) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel();
+        Self::keep(monitor_game(child, tx, runtime), rx, prelaunch_log)
+    }
+
+    fn keep(
+        running: Running,
+        rx: std::sync::mpsc::Receiver<Msg>,
+        mut initial_log: std::collections::VecDeque<String>,
+    ) -> Self {
+        let excess = initial_log.len().saturating_sub(LOG_KEEP);
+        initial_log.drain(..excess);
+        let log = Arc::new(Mutex::new(initial_log));
         let exit = Arc::new(Mutex::new(None));
         let (l, e) = (log.clone(), exit.clone());
         std::thread::spawn(move || {
@@ -3251,11 +3388,12 @@ impl Logged {
                         }
                     }
                     Msg::Exit(_, result) => *e.lock().unwrap() = Some(result),
+                    Msg::ClientObservationLost(error) => *e.lock().unwrap() = Some(Err(error)),
                     _ => {}
                 }
             }
         });
-        Ok(Self { running, log, exit })
+        Self { running, log, exit }
     }
 
     pub fn finished(&self) -> Option<Result<(), String>> {
@@ -3303,16 +3441,23 @@ pub struct Updates {
     pub launcher_error: Option<String>,
 }
 
-/// The newest Sunrise build with a build here (the current Nightly), if it isn't installed and
-/// no installed version is newer. Two Nightlies of one day compare equal: the one on GitHub is
-/// the update.
-pub fn sunrise_update(releases: &[Release], installed: &[String]) -> Option<Release> {
-    let newest = latest(releases)?;
+/// An update stays on the profile's followed channel. Installed builds on another channel
+/// do not suppress it. A new rolling Nightly built the same day is still an update.
+pub fn sunrise_update<'a>(
+    releases: &'a [Release],
+    installed: &[String],
+    channel: crate::instances::Channel,
+) -> Option<&'a Release> {
+    let newest = channel.builds(releases).next()?;
     let newer = !installed.contains(&newest.tag)
-        && installed
-            .iter()
-            .all(|t| compare_versions(&newest.tag, t).is_ge());
-    newer.then(|| newest.clone())
+        && channel.newest_installed(installed).is_none_or(|tag| {
+            let order = compare_game_versions(&newest.tag, tag);
+            match channel {
+                crate::instances::Channel::Stable => order.is_gt(),
+                crate::instances::Channel::Nightly => order.is_ge(),
+            }
+        });
+    newer.then_some(newest)
 }
 
 /// The newest launcher release with an archive for this platform, if newer than this launcher ([`own_tag`]).
@@ -3333,6 +3478,9 @@ pub fn releases_and_updates(on_releases: impl FnOnce(Result<Vec<Release>, String
     releases_and_updates_with(
         release_list,
         installed,
+        crate::instances::selection()
+            .ok()
+            .and_then(|instance| instance.version.is_none().then_some(instance.channel)),
         || launcher_releases(crate::github::CachePolicy::PreferCache),
         on_releases,
     )
@@ -3341,6 +3489,7 @@ pub fn releases_and_updates(on_releases: impl FnOnce(Result<Vec<Release>, String
 fn releases_and_updates_with(
     load: impl FnOnce() -> Result<serde_json::Value, String>,
     installed: impl FnOnce() -> Vec<String>,
+    channel: Option<crate::instances::Channel>,
     launchers: impl FnOnce() -> Result<Vec<Release>, String>,
     on_releases: impl FnOnce(Result<Vec<Release>, String>),
 ) -> Updates {
@@ -3349,8 +3498,9 @@ fn releases_and_updates_with(
         Ok(list) => {
             let releases = game_releases(&list);
             let installed_versions = installed();
-            updates.sunrise = sunrise_update(&installable_updates(&releases), &installed_versions)
-                .or_else(|| architecture_update(&releases, &installed_versions));
+            updates.sunrise = channel
+                .and_then(|c| sunrise_update(&releases, &installed_versions, c))
+                .cloned();
             on_releases(Ok(releases));
         }
         Err(e) => {
@@ -3365,24 +3515,6 @@ fn releases_and_updates_with(
     updates
 }
 
-/// If the selected installed game has the wrong architecture, offer the same release again so
-/// the preference also applies when there is no newer game version.
-fn architecture_update(releases: &[Release], installed: &[String]) -> Option<Release> {
-    if !can_choose_game_architecture() {
-        return None;
-    }
-    let settings = Settings::load();
-    let tag = settings
-        .selected
-        .filter(|tag| installed.contains(tag))
-        .or_else(|| installed.iter().find(|tag| is_game_tag(tag)).cloned())?;
-    if !is_game_tag(&tag) {
-        return None;
-    }
-    let release = releases.iter().find(|release| release.tag == tag)?;
-    needs_game_architecture_install(&tag, release).then(|| release.clone())
-}
-
 /// A fresh release-list request for both kinds of update (plus older-launcher fallback if needed).
 pub fn check_updates() -> Updates {
     releases_and_updates(|_| {})
@@ -3391,64 +3523,54 @@ pub fn check_updates() -> Updates {
 mod update_selection;
 pub use update_selection::select_after_update;
 
-/// Installs `tag` (or with "latest" the newest release, pre-releases left out), then updates the selection as
+/// Installs `tag` (or with "latest", the profile's latest release), then updates the selection as
 /// `select_after_update` says when `as_update`, or always selects it otherwise.
 pub fn install_tag(tag: &str, as_update: bool, progress: impl Fn(f32)) -> Result<String, String> {
     let releases = [releases()?, release_selection::snapshot(tag)?].concat();
+    install_offered_tag(&releases, tag, as_update, |release| {
+        install(release, progress)
+    })
+}
+
+fn install_offered_tag(
+    releases: &[Release],
+    tag: &str,
+    as_update: bool,
+    install: impl FnOnce(&Release) -> Result<InstallOutcome, String>,
+) -> Result<String, String> {
     let release = if tag == "latest" {
-        releases
-            .iter()
-            .find(|r| r.asset.is_some() && !r.prerelease)
+        crate::instances::selected()
+            .channel
+            .following(releases)
+            .builds(releases)
+            .next()
             .ok_or("No release has a build for this platform yet.")?
     } else {
-        release_selection::by_tag(&releases, tag)
+        release_selection::by_tag(releases, tag)
             .ok_or_else(|| format!("No Sunrise release is tagged {tag}."))?
     };
     if release.asset.is_none() {
         return Err(format!("{} has no build for this platform.", release.tag));
     }
     let before = installed();
-    let downgrade = nightly_downgrade(release, &before);
-    if let Some(warning) = &downgrade {
+    let outcome = install(release)?;
+    if let Some(warning) = outcome.receipt_warning() {
         eprintln!("{warning}");
     }
-    install(release, progress)?;
-    if as_update && release.nightly.is_some() {
-        if let Err(e) = mark_auto_installed(&release.tag) {
-            eprintln!("Could not mark updated Nightly {}: {e}", release.tag);
-        }
+    if matches!(outcome, InstallOutcome::ReceiptOnly(_)) {
+        return Ok(release.tag.clone());
     }
     let mut settings = Settings::load();
-    // An older Nightly is a deliberate rollback: installed, but an update never moves the selection back.
-    let select = !as_update
-        || (downgrade.is_none() && select_after_update(settings.selected.as_deref(), &before));
+    let select =
+        !as_update || select_after_update(settings.selected.as_deref(), &before, &release.tag);
     if select {
         settings.selected = Some(release.tag.clone());
         settings.save()?;
     }
-    if as_update && release.nightly.is_some() {
-        crate::nightly::after_update(&release.tag);
+    for (tag, error) in version_storage::prune_old_versions(releases, &release.tag) {
+        eprintln!("Could not remove old game build {tag}: {error}");
     }
-    prune_old_versions();
     Ok(release.tag.clone())
-}
-
-/// A warning when `release` is a Nightly older than a Nightly already installed: a rollback, which is
-/// allowed, but never what an update should do silently (an older build served as the current one
-/// shows its own date, since that date is signed). None otherwise.
-pub fn nightly_downgrade(release: &Release, installed: &[String]) -> Option<String> {
-    release.nightly.as_ref()?;
-    let newest = installed
-        .iter()
-        .filter(|v| crate::nightly::date_of(v).is_some())
-        .max_by(|a, b| compare_versions(a, b))?;
-    compare_versions(&release.tag, newest).is_lt().then(|| {
-        crate::i18n::trf(
-            "{tag} is older than {newest}, which is installed: installing it as a rollback. The selection \
-             only moves to it when you pick it.",
-            &[("tag", &release.tag), ("newest", newest)],
-        )
-    })
 }
 
 /// The launcher's own path, read once at start: after a self-update the running file is gone.
@@ -4103,21 +4225,53 @@ pub enum Job {
 /// A running process; its output arrives as `Msg::Line`, its end as `Msg::Exit`.
 pub struct Running {
     pub child: Arc<Mutex<Child>>,
-    pub stdin: Option<ChildStdin>,
+    pub stdin: Option<Box<dyn std::io::Write + Send>>,
 }
 
 /// Launcher-owned tree-lock primitives and optional Windows runtime state.
 pub struct RuntimeGuard {
     _leases: Vec<crate::run_leases::Claim>,
+    pub(crate) managed_session: Option<PathBuf>,
     #[cfg(windows)]
     _windows: Option<crate::windows_runtime::Guard>,
+}
+
+impl RuntimeGuard {
+    /// Only a verified process exit retires a managed session early.
+    pub fn game_exited(mut self) {
+        crate::account::discard_launch_session(self.managed_session.take());
+    }
+}
+
+#[cfg(windows)]
+impl RuntimeGuard {
+    pub(crate) fn windows(&self) -> Result<&crate::windows_runtime::Guard, String> {
+        self._windows.as_ref().ok_or_else(|| {
+            crate::i18n::tr("The profile's runtime copy was not prepared.").to_owned()
+        })
+    }
 }
 
 pub use crate::run_leases::control::startup_cleanup;
 
 pub fn prepare_command(cmd: Command) -> Result<(Command, RuntimeGuard), String> {
+    prepare_runtime(cmd, None)
+}
+
+pub(crate) fn prepare_managed_command(
+    cmd: Command,
+    resources: &Path,
+) -> Result<(Command, RuntimeGuard), String> {
+    prepare_runtime(cmd, Some(resources))
+}
+
+fn prepare_runtime(
+    cmd: Command,
+    read_only_resources: Option<&Path>,
+) -> Result<(Command, RuntimeGuard), String> {
     crate::developer_offline::validate(&cmd)?;
-    let leases = crate::run_leases::shared(&cmd).map_err(crate::native_mods::cache_error)?;
+    let leases = crate::run_leases::shared(&cmd, read_only_resources)
+        .map_err(crate::native_mods::cache_error)?;
     #[cfg(windows)]
     let cmd = crate::windows_runtime::redirect(cmd);
     #[cfg(windows)]
@@ -4134,6 +4288,7 @@ pub fn prepare_command(cmd: Command) -> Result<(Command, RuntimeGuard), String> 
         cmd,
         RuntimeGuard {
             _leases: leases,
+            managed_session: None,
             #[cfg(windows)]
             _windows: guard,
         },
@@ -4152,30 +4307,36 @@ pub fn spawn(job: Job, cmd: Command, tx: Sender<Msg>) -> Result<Running, String>
 /// Holds the preparation lock of the version that owns `version`'s resources (its base, for a
 /// native build), so a second preparation of the same folder can't start while one runs; it is
 /// released when the guard drops.
-pub fn prepare_lock(version: &str) -> Result<sunrise_launcher_smod::locks::Locked, String> {
+pub fn prepare_lock(version: &str) -> Result<crate::preparer::Preparation, String> {
     let owner = resources_owner(version);
     prepare_lock_at(&version_dir(&owner), &owner)
 }
 
-fn prepare_lock_at(
-    dir: &Path,
-    version: &str,
-) -> Result<sunrise_launcher_smod::locks::Locked, String> {
+fn prepare_lock_at(dir: &Path, version: &str) -> Result<crate::preparer::Preparation, String> {
     let path = dir.join(".preparing.lock");
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
-    sunrise_launcher_smod::locks::locked(file, sunrise_launcher_smod::locks::LockMode::Exclusive)
-        .map_err(|error| match error {
-            std::fs::TryLockError::WouldBlock => crate::i18n::trf(
-                "Sunrise {version} is already being prepared.",
-                &[("version", version)],
-            ),
-            std::fs::TryLockError::Error(e) => format!("{}: {e}", path.display()),
-        })
+    let busy = || {
+        crate::i18n::trf(
+            "Sunrise {version} is already being prepared.",
+            &[("version", version)],
+        )
+    };
+    let mut options = fs::OpenOptions::new();
+    options.create(true).truncate(false).write(true);
+    #[cfg(windows)]
+    std::os::windows::fs::OpenOptionsExt::share_mode(&mut options, 0);
+    let file = options.open(&path).map_err(|e| {
+        #[cfg(windows)]
+        if matches!(e.raw_os_error(), Some(32 | 33)) {
+            return busy();
+        }
+        format!("{}: {e}", path.display())
+    })?;
+    #[cfg(unix)]
+    file.try_lock().map_err(|e| match e {
+        fs::TryLockError::WouldBlock => busy(),
+        fs::TryLockError::Error(e) => format!("{}: {e}", path.display()),
+    })?;
+    Ok(crate::preparer::Preparation::new(file))
 }
 
 /// [`spawn`], keeping `hold` (a lock) until the program ends; a preparation's whole process group is stopped if the launcher quits first.
@@ -4183,9 +4344,26 @@ pub fn spawn_holding(
     job: Job,
     cmd: Command,
     tx: Sender<Msg>,
-    hold: Option<sunrise_launcher_smod::locks::Locked>,
+    hold: Option<crate::preparer::Preparation>,
 ) -> Result<Running, String> {
-    let (mut cmd, runtime) = prepare_command(cmd)?;
+    let (cmd, runtime) = prepare_command(cmd)?;
+    spawn_prepared(job, cmd, runtime, tx, hold)
+}
+
+fn spawn_prepared(
+    job: Job,
+    mut cmd: Command,
+    runtime: RuntimeGuard,
+    tx: Sender<Msg>,
+    hold: Option<crate::preparer::Preparation>,
+) -> Result<Running, String> {
+    if let Some(preparation) = &hold {
+        let child = preparation
+            .handoff(None)
+            .spawn(cmd, true)
+            .map_err(|e| e.to_string())?;
+        return Ok(monitor(job, child, tx, runtime, hold));
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -4195,55 +4373,99 @@ pub fn spawn_holding(
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = play_log::spawn(&mut cmd)?;
+    let child = play_log::spawn(&mut cmd)?.into();
+    Ok(monitor(job, child, tx, runtime, hold))
+}
+
+/// Use the same streams, process monitor and crash reporting for an admitted game's child.
+pub fn monitor_game(child: Child, tx: Sender<Msg>, runtime: RuntimeGuard) -> Running {
+    monitor(Job::Client, child, tx, runtime, None)
+}
+
+fn monitor(
+    job: Job,
+    mut child: Child,
+    tx: Sender<Msg>,
+    runtime: RuntimeGuard,
+    hold: Option<crate::preparer::Preparation>,
+) -> Running {
     let pid = child.id();
     let group = matches!(job, Job::Prepare);
     if group {
         crate::process::owned::CHILDREN.track_group(pid);
     }
     let stdin = child.stdin.take();
+    let relayed = child.is_relayed();
+    let forwarding = Arc::new(Mutex::new(true));
+    // This channel closes once both pumps have reached EOF. The monitor may instead stop
+    // forwarding at a bounded deadline if wrapper diagnostics still own the same pipes.
+    let (reader_live, readers_done) = std::sync::mpsc::channel::<()>();
     let mut readers = Vec::new();
-    let out = child
-        .stdout
-        .take()
-        .map(|o| Box::new(o) as Box<dyn Read + Send>);
-    let err = child
-        .stderr
-        .take()
-        .map(|o| Box::new(o) as Box<dyn Read + Send>);
-    for stream in [out, err].into_iter().flatten() {
+    for stream in [child.stdout.take(), child.stderr.take()]
+        .into_iter()
+        .flatten()
+    {
         let tx = tx.clone();
+        let forwarding = Arc::clone(&forwarding);
+        let reader_live = reader_live.clone();
         readers.push(std::thread::spawn(move || {
             for line in BufReader::new(stream).lines().map_while(Result::ok) {
-                let _ = tx.send(Msg::Line(job, line));
+                let live = forwarding.lock().unwrap();
+                if !*live || tx.send(Msg::Line(job, line)).is_err() {
+                    break;
+                }
             }
+            drop(reader_live);
         }));
     }
+    drop(reader_live);
     let child = Arc::new(Mutex::new(child));
     let waited = child.clone();
     std::thread::spawn(move || {
-        for r in readers {
-            let _ = r.join();
+        if !relayed {
+            for r in readers {
+                let _ = r.join();
+            }
         }
+        // Wrapper output can stay open after the game itself has exited.
         let status = loop {
             if let Some(s) = waited.lock().unwrap().try_wait().transpose() {
                 break s;
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         };
+        if relayed {
+            // Exit can overtake the pumps. Give buffered final diagnostics time to reach
+            // the log, but don't wait for the wrapper or its descendants to close a pipe.
+            let _ = readers_done.recv_timeout(std::time::Duration::from_millis(200));
+        }
+        *forwarding.lock().unwrap() = false;
+        if relayed {
+            if let Err(error) = status {
+                let _ = tx.send(Msg::ClientObservationLost(
+                    crate::process::child::unconfirmed_exit(error),
+                ));
+                return;
+            }
+        }
         let result = match status {
-            Ok(s) if s.success() => Ok(()),
-            Ok(s) => Err(format!("Exited with {s}")),
+            Ok(s) => {
+                runtime.game_exited();
+                if s.success() {
+                    Ok(())
+                } else {
+                    Err(format!("Exited with {s}"))
+                }
+            }
             Err(e) => Err(e.to_string()),
         };
-        drop(runtime);
         if group {
             crate::process::owned::CHILDREN.release(pid);
         }
         drop(hold);
         let _ = tx.send(Msg::Exit(job, result));
     });
-    Ok(Running { child, stdin })
+    Running { child, stdin }
 }
 
 /// The launcher's appearance, as older launchers saved it: a theme is one look now, and a saved
@@ -4343,6 +4565,15 @@ pub const MAX_CORNER_RADIUS: u8 = 30;
 pub const PANEL_OPACITY_MIN: u8 = 82;
 pub const PANEL_OPACITY_MAX: u8 = 100;
 
+/// Explicit permission to build one GitHub source mod. A rename within the same owner
+/// retains consent; a change of owner, repository ID or mod ID never does.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SourceModGrant {
+    pub repo_id: u64,
+    pub owner: String,
+    pub id: String,
+}
+
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
     pub selected: Option<String>,
@@ -4354,15 +4585,10 @@ pub struct Settings {
     pub instance: Option<String>,
     pub minecraft_dir: Option<PathBuf>,
     pub server_dir: Option<PathBuf>,
-    /// Unset means on: only a player who turned it off has `false` here. 0.1.1 wrote its
-    /// `auto_install` (off by default) for everyone, so this is a new key and that one is ignored.
-    #[serde(default)]
-    pub install_new_versions: Option<bool>,
-    /// Unset means on: after an install the launcher deletes the release versions nothing needs
-    /// (`prune_old_versions`). Only a player who turned it off has `false` here.
+    /// Unset means on: after an install the launcher deletes unused old automatic downloads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prune_old_versions: Option<bool>,
-    /// How many of the newest release versions pruning keeps. Unset means [`KEEP_NEWEST`].
+    /// How many of the newest release versions pruning keeps. Unset means [`version_storage::KEEP_NEWEST`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep_versions: Option<usize>,
     /// Off by default, so the opening animation shows unless the player turns it off.
@@ -4445,13 +4671,11 @@ pub struct Settings {
     /// The window's language. Unset follows the system's (`i18n::Language::system`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<crate::i18n::Language>,
-    /// Whether what the browser installed from Sunrise's registry updates by itself, at start
-    /// and before Play (`browser::sunrise::auto`). Unset is on.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mods_auto_update: Option<bool>,
     /// First-use native code permission for this launcher install, Unix seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_mods_allowed_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_mod_grants: Vec<SourceModGrant>,
     /// Managed cache limit in GiB (unset: 25; zero: no automatic cleanup). Player data isn't cache.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_limit_gib: Option<u64>,
@@ -4589,6 +4813,11 @@ impl Settings {
             {
                 fields.remove("sidebar_expanded");
             }
+            if fields.get("source_mod_grants").is_some_and(|grants| {
+                serde_json::from_value::<Vec<SourceModGrant>>(grants.clone()).is_err()
+            }) {
+                fields.remove("source_mod_grants");
+            }
             look_settings::tidy(fields);
             // A language this launcher doesn't have yet follows the system's.
             if fields.get("language").is_some_and(|l| {
@@ -4617,10 +4846,6 @@ impl Settings {
     pub fn language(&self) -> crate::i18n::Language {
         self.language.unwrap_or_else(crate::i18n::Language::system)
     }
-    /// Whether new Sunrise versions are installed automatically.
-    pub fn auto_install(&self) -> bool {
-        self.install_new_versions.unwrap_or(true)
-    }
     /// Whether old versions are deleted after an install.
     pub fn auto_prune(&self) -> bool {
         self.prune_old_versions.unwrap_or(true)
@@ -4646,13 +4871,11 @@ impl Settings {
     pub fn reduced_graphics(&self) -> bool {
         self.reduced_graphics.unwrap_or(false)
     }
-    /// Registry mods update by themselves ([`Settings::mods_auto_update`]): on unless turned off.
-    pub fn auto_updates_mods(&self) -> bool {
-        self.mods_auto_update.unwrap_or(true)
-    }
     /// How many of the newest release versions pruning keeps: at least the newest.
     pub fn keep_newest(&self) -> usize {
-        self.keep_versions.unwrap_or(KEEP_NEWEST).max(1)
+        self.keep_versions
+            .unwrap_or(version_storage::KEEP_NEWEST)
+            .max(1)
     }
 }
 
@@ -4747,19 +4970,17 @@ mod tests {
     }
 
     #[test]
-    fn a_build_folder_made_by_another_account_is_passed_over() {
+    fn build_folder_candidates_try_the_base_then_the_numbered_alternatives() {
         let base = Path::new("C:/ProgramData/sunrise-launcher-1a2b3c4d");
-        // The first two are taken by another account; the third is free.
-        let claimed = first_claimed_dir(base, |dir| {
-            let name = dir.file_name().unwrap().to_str().unwrap();
-            name.ends_with("-3")
-        });
-        assert_eq!(
-            claimed,
-            Some(PathBuf::from("C:/ProgramData/sunrise-launcher-1a2b3c4d-3"))
-        );
-        assert_eq!(first_claimed_dir(base, |_| true), Some(base.to_path_buf()));
-        assert_eq!(first_claimed_dir(base, |_| false), None);
+        let mut candidates = build_dir_candidates(base);
+        assert_eq!(candidates.next(), Some(base.to_path_buf()));
+        for n in 2..=9 {
+            assert_eq!(
+                candidates.next(),
+                Some(base.with_file_name(format!("sunrise-launcher-1a2b3c4d-{n}")))
+            );
+        }
+        assert_eq!(candidates.next(), None);
     }
 
     #[test]
@@ -5285,9 +5506,16 @@ pub fn {f}("
         assert!(prepare_lock(&base).is_ok());
         // Preparing a native build runs the base's preparer, and says so when it can't.
         let try_prepare = || {
-            preparer(&native, Path::new("."), MinecraftFrom::Install, &|_| {})
-                .map(|_| ())
-                .unwrap_err()
+            let preparation = prepare_lock(&native).unwrap();
+            preparer(
+                &native,
+                Path::new("."),
+                MinecraftFrom::Install,
+                &|_| {},
+                &preparation,
+            )
+            .map(|_| ())
+            .unwrap_err()
         };
         assert_eq!(try_prepare(), crate::preparer::too_old(&base));
         fs::remove_file(base_dir.join(COMPLETE)).unwrap();
@@ -5298,7 +5526,7 @@ pub fn {f}("
         );
         fs::write(base_dir.join(COMPLETE), "").unwrap();
         fs::remove_dir_all(version_dir(&sibling)).unwrap();
-        assert!(crate::native_mods::resource_dependents(&base));
+        assert!(crate::native_mods::resource_dependent(&base).is_some());
         assert!(remove_version(&base).is_err());
         assert!(remove(&base).is_err());
         assert!(base_dir.join(COMPLETE).exists());
@@ -5306,7 +5534,7 @@ pub fn {f}("
         let error = need_prepared(&native).unwrap_err();
         assert!(error.contains(&base), "{error}");
         fs::remove_dir_all(&native_dir).unwrap();
-        assert!(!crate::native_mods::resource_dependents(&base));
+        assert!(crate::native_mods::resource_dependent(&base).is_none());
     }
 
     #[test]
@@ -5386,26 +5614,27 @@ pub fn {f}("
              "published_at": "2026-11-13T10:00:00Z", "assets": asset(SNAPSHOT)},
             {"tag_name": "nightly", "name": "Nightly 2026-11-12 · aaaaaaa", "prerelease": true,
              "published_at": "2026-11-12T10:00:00Z", "assets": asset("nightly")},
-            {"tag_name": "v0.2.81", "name": "v0.2.81", "published_at": "2026-10-01T10:00:00Z",
-             "assets": asset("v0.2.81")},
+            {"tag_name": "26.3-0.1.81", "name": "26.3-0.1.81", "published_at": "2026-10-01T10:00:00Z",
+             "assets": asset("26.3-0.1.81")},
         ]);
         let releases = game_releases_with(&list, Some(zip), None);
         assert_eq!(
             releases.iter().map(|r| r.tag.as_str()).collect::<Vec<_>>(),
-            ["nightly-2026-11-12-aaaaaaa", "v0.2.81"]
+            ["nightly-2026-11-12-aaaaaaa", "26.3-0.1.81"]
         );
         for installed in [vec![], vec![SNAPSHOT.to_owned()]] {
-            let update = sunrise_update(&releases, &installed).unwrap();
+            let update =
+                sunrise_update(&releases, &installed, crate::instances::Channel::Nightly).unwrap();
             assert_eq!(update.tag, "nightly-2026-11-12-aaaaaaa", "{installed:?}");
         }
         // A snapshot the developer selected stays selected when that Nightly installs as an
         // update, whether it is the only version installed or beside a release.
         for installed in [
             vec![SNAPSHOT.to_owned()],
-            vec![SNAPSHOT.to_owned(), "v0.2.81".into()],
+            vec![SNAPSHOT.to_owned(), "26.3-0.1.81".into()],
         ] {
             assert!(
-                !select_after_update(Some(SNAPSHOT), &installed),
+                !select_after_update(Some(SNAPSHOT), &installed, "nightly-2026-11-12-aaaaaaa"),
                 "{installed:?}"
             );
         }
@@ -5419,12 +5648,12 @@ pub fn {f}("
         let (arm, x64) = ("sunrise-windows-arm64.zip", "sunrise-windows-x64.zip");
         let asset = |name: &str, url: &str| serde_json::json!({"name": name, "browser_download_url": url, "size": 1});
         let list = serde_json::json!([
-            {"tag_name": "v2026.11.05", "assets": [
+            {"tag_name": "26.3-0.1.5", "assets": [
                 asset(x64, "https://example.test/v2026.11.05/sunrise-windows-x64.zip"),
                 asset(arm, "https://example.test/v2026.11.05/sunrise-windows-arm64.zip")]},
-            {"tag_name": "v2026.11.04", "assets": [
+            {"tag_name": "26.3-0.1.4", "assets": [
                 asset(x64, "https://example.test/v2026.11.04/sunrise-windows-x64.zip")]},
-            {"tag_name": "v2026.11.03", "assets": []},
+            {"tag_name": "26.3-0.1.3", "assets": []},
         ]);
         let releases = game_releases_with(&list, Some(arm), Some(x64));
         let urls: Vec<_> = releases
@@ -5539,9 +5768,9 @@ pub fn {f}("
         let x64 = "sunrise-windows-x64.zip";
         let asset = |name: &str| serde_json::json!({"name": name, "browser_download_url": format!("https://example.test/{name}"), "size": 1});
         let list = serde_json::json!([
-            {"tag_name": "v2026.11.05", "assets": [asset(x64), asset(arm)]},
-            {"tag_name": "v2026.11.04", "assets": [asset(x64)]},
-            {"tag_name": "v2026.11.03", "assets": []}
+            {"tag_name": "26.3-0.1.5", "assets": [asset(x64), asset(arm)]},
+            {"tag_name": "26.3-0.1.4", "assets": [asset(x64)]},
+            {"tag_name": "26.3-0.1.3", "assets": []}
         ]);
 
         let arm_choice = game_releases_with(&list, Some(arm), Some(x64));
@@ -5614,43 +5843,6 @@ pub fn {f}("
     }
 
     #[test]
-    fn updates_reinstall_only_when_the_selected_game_architecture_needs_a_new_build() {
-        let arm_fallback = InstalledGameArchitecture {
-            requested: GameArchitecture::Arm64,
-            binary: GameArchitecture::X64,
-        };
-        let old_x64 = InstalledGameArchitecture {
-            requested: GameArchitecture::X64,
-            binary: GameArchitecture::X64,
-        };
-        let arm = InstalledGameArchitecture {
-            requested: GameArchitecture::Arm64,
-            binary: GameArchitecture::Arm64,
-        };
-
-        assert!(!game_architecture_install_needed(
-            GameArchitecture::Arm64,
-            GameArchitecture::X64,
-            Some(arm_fallback),
-        ));
-        assert!(game_architecture_install_needed(
-            GameArchitecture::Arm64,
-            GameArchitecture::X64,
-            Some(old_x64),
-        ));
-        assert!(game_architecture_install_needed(
-            GameArchitecture::Arm64,
-            GameArchitecture::Arm64,
-            Some(arm_fallback),
-        ));
-        assert!(!game_architecture_install_needed(
-            GameArchitecture::Arm64,
-            GameArchitecture::Arm64,
-            Some(arm),
-        ));
-    }
-
-    #[test]
     fn native_mod_builds_report_when_the_selected_game_has_no_matching_compiler() {
         assert_eq!(
             native_mod_architecture_message(GameArchitecture::X64, GameArchitecture::Arm64),
@@ -5668,6 +5860,107 @@ pub fn {f}("
             native_mod_architecture_message(GameArchitecture::Arm64, GameArchitecture::Arm64),
             None
         );
+    }
+
+    #[test]
+    fn architecture_reinstall_repairs_only_a_still_offered_exact_game() {
+        use GameArchitecture::{Arm64, X64};
+        let arm = "sunrise-windows-arm64.zip";
+        let x64 = "sunrise-windows-x64.zip";
+        let current = "26.3-0.1.0";
+        let next = "26.3-0.1.1";
+        let release = |tag: &str, file: &str| Release {
+            tag: tag.into(),
+            name: String::new(),
+            body: String::new(),
+            date: String::new(),
+            time: String::new(),
+            asset: Some((format!("https://example.invalid/{file}"), 1)),
+            prerelease: false,
+            nightly: None,
+        };
+        let have = |requested, binary| Some(InstalledGameArchitecture { requested, binary });
+        let exact = [
+            release(next, arm),
+            release(current, arm),
+            release("v2026.10.13", arm),
+        ];
+        let repair =
+            |tag, installed| architecture_reinstall_for(&exact, tag, Arm64, "x86_64", installed);
+        assert_eq!(
+            repair(current, have(X64, X64)).map(|r| r.tag.as_str()),
+            Some(current)
+        );
+        assert!(repair(current, have(Arm64, Arm64)).is_none());
+        assert!(repair("26.3-0.0.9", have(X64, X64)).is_none());
+        assert!(repair("v2026.10.13", have(X64, X64)).is_none());
+        assert!(
+            repair(current, have(Arm64, X64)).is_some(),
+            "promote when the real ARM64 build exists"
+        );
+        let fallback = [release(current, x64)];
+        let repair_fallback =
+            |installed| architecture_reinstall_for(&fallback, current, Arm64, "x86_64", installed);
+        assert!(
+            repair_fallback(have(X64, X64)).is_some(),
+            "record the requested fallback"
+        );
+        assert!(
+            repair_fallback(have(Arm64, X64)).is_none(),
+            "do not re-offer an accepted fallback"
+        );
+        assert!(
+            architecture_reinstall_for(&exact, current, X64, "x86_64", have(Arm64, Arm64))
+                .is_none(),
+            "a stale ARM64 catalogue cannot repair to x64"
+        );
+    }
+
+    #[test]
+    fn architecture_launch_guidance_never_offers_an_unavailable_repair() {
+        use GameArchitecture::{Arm64, X64};
+        let stable = "26.3-0.1.0";
+        let nightly = "nightly-2026-11-20-aaaaaaa";
+        let release = |tag: &str, nightly: Option<String>| Release {
+            tag: tag.into(),
+            name: String::new(),
+            body: String::new(),
+            date: String::new(),
+            time: String::new(),
+            asset: Some((
+                "https://example.invalid/sunrise-windows-arm64.zip".into(),
+                1,
+            )),
+            prerelease: false,
+            nightly,
+        };
+        let catalogue = [
+            release(stable, None),
+            release(nightly, Some("nightly".into())),
+        ];
+        let installed = Some(InstalledGameArchitecture {
+            requested: X64,
+            binary: X64,
+        });
+        for tag in ["v2026.10.13", "nightly-2026-11-19-bbbbbbb"] {
+            let help =
+                architecture_mismatch_for(tag, &catalogue, Arm64, "x86_64", installed).unwrap();
+            assert!(!help.contains("version picker"), "{help}");
+            assert!(help.contains("Switch back to the installed architecture or Automatic, or choose another available build."), "{help}");
+        }
+        for tag in [stable, nightly] {
+            assert!(
+                architecture_mismatch_for(tag, &catalogue, Arm64, "x86_64", installed)
+                    .unwrap()
+                    .contains("Reinstall it from the version picker beside Play")
+            );
+            assert!(
+                !architecture_mismatch_for(tag, &[], Arm64, "x86_64", installed)
+                    .unwrap()
+                    .contains("version picker")
+            );
+        }
+        assert!(architecture_mismatch_for(stable, &catalogue, X64, "x86_64", installed).is_none());
     }
 
     #[test]
@@ -5832,26 +6125,11 @@ pub fn {f}("
     }
 
     #[test]
-    fn tags_never_mix() {
-        assert!(is_game_tag("v2026.10.13"));
-        assert!(is_game_tag("v0.2.0"));
-        assert!(!is_game_tag("launcher@1.0.0"));
-        assert!(!is_game_tag("vnext"));
+    fn launcher_tags_keep_their_original_grammar() {
         assert_eq!(launcher_version("v1.2.0"), Some("1.2.0"));
         assert_eq!(launcher_version("vnext"), None);
         assert_eq!(launcher_version("launcher@1.0.0"), None);
-        // Each list comes from its own repository: the game's still carries `launcher@1.0.0`, never a game release.
-        let file = |name: &str| serde_json::json!([{"name": name, "browser_download_url": "u", "size": 1}]);
-        let game_list = serde_json::json!([
-            {"tag_name": "v2026.10.12", "assets": file("sunrise-linux-x86_64.tar.gz")},
-            {"tag_name": "launcher@1.0.0", "assets": file("sunrise-launcher-linux-x86_64.tar.gz")},
-            {"tag_name": "v2026.10.13", "assets": []},
-        ]);
-        let game: Vec<_> = parse_releases(&game_list, ASSET, is_game_tag)
-            .into_iter()
-            .map(|r| r.tag)
-            .collect();
-        assert_eq!(game, ["v2026.10.13", "v2026.10.12"]);
+        let file = |name: &str| serde_json::json!([{"name": name, "size": 1}]);
         let launcher_list = serde_json::json!([
             {"tag_name": "v1.1.0", "assets": file("sunrise-launcher-linux-x86_64.tar.gz")},
             {"tag_name": "v1.0.9", "draft": true, "assets": []},
@@ -5869,55 +6147,25 @@ pub fn {f}("
     fn withdrawn_release_is_never_offered() {
         let asset = ASSET.unwrap_or("sunrise-linux-x86_64.tar.gz");
         let list = serde_json::json!([
-            {"tag_name": "v2026.10.15.1", "draft": true, "assets": [{"name": asset, "browser_download_url": "bad", "size": 1}]},
-            {"tag_name": "v2026.10.15", "assets": [{"name": asset, "browser_download_url": "good", "size": 1}]},
-            {"tag_name": "v2026.10.14", "assets": [{"name": asset, "browser_download_url": "old", "size": 1}]},
+            {"tag_name": "26.3-0.1.2", "draft": true, "assets": [{"name": asset, "browser_download_url": "bad", "size": 1}]},
+            {"tag_name": "26.3-0.1.1", "assets": [{"name": asset, "browser_download_url": "good", "size": 1}]},
+            {"tag_name": "26.3-0.1.0", "assets": [{"name": asset, "browser_download_url": "old", "size": 1}]},
         ]);
         let releases = parse_releases(&list, Some(asset), is_game_tag);
-        assert!(releases.iter().all(|r| r.tag != "v2026.10.15.1"));
+        assert!(releases.iter().all(|r| r.tag != "26.3-0.1.2"));
         assert_eq!(
             latest(&releases).map(|r| r.tag.as_str()),
-            Some("v2026.10.15")
+            Some("26.3-0.1.1")
         );
         let offered = |installed: &[&str]| {
             let installed: Vec<String> = installed.iter().map(|t| t.to_string()).collect();
-            sunrise_update(&releases, &installed).map(|r| r.tag)
+            sunrise_update(&releases, &installed, crate::instances::Channel::Stable)
+                .map(|r| r.tag.clone())
         };
-        assert_eq!(offered(&["v2026.10.14"]), Some("v2026.10.15".into()));
-        assert_eq!(offered(&[]), Some("v2026.10.15".into()));
+        assert_eq!(offered(&["26.3-0.1.0"]), Some("26.3-0.1.1".into()));
+        assert_eq!(offered(&[]), Some("26.3-0.1.1".into()));
         // Who installed the withdrawn one is not told to "update" to an older version.
-        assert_eq!(offered(&["v2026.10.15.1", "v2026.10.14"]), None);
-    }
-
-    /// Every release is published as the release, and launchers update to it. The pre-releases
-    /// of the old Alpha channel (v0.2.1 on) are only installed by hand: a launcher that
-    /// had one installed waits for the next release instead of going back.
-    #[test]
-    fn updates_follow_every_release_and_leave_the_old_alpha_ones_out() {
-        let asset = ASSET.unwrap_or("sunrise-linux-x86_64.tar.gz");
-        let list = serde_json::json!([
-            {"tag_name": "v0.2.13", "assets": [{"name": asset, "browser_download_url": "n", "size": 1}]},
-            {"tag_name": "v0.2.12", "prerelease": true, "assets": [{"name": asset, "browser_download_url": "a", "size": 1}]},
-            {"tag_name": "v0.2.0", "assets": [{"name": asset, "browser_download_url": "s", "size": 1}]},
-        ]);
-        let releases = parse_releases(&list, Some(asset), is_game_tag);
-        assert_eq!(
-            releases.iter().map(|r| r.prerelease).collect::<Vec<_>>(),
-            [false, true, false]
-        );
-        let offered = |releases: &[Release], installed: &[&str]| {
-            let installed: Vec<String> = installed.iter().map(|t| t.to_string()).collect();
-            sunrise_update(&installable_updates(releases), &installed).map(|r| r.tag)
-        };
-        assert_eq!(offered(&releases, &[]), Some("v0.2.13".into()));
-        assert_eq!(offered(&releases, &["v0.2.0"]), Some("v0.2.13".into()));
-        assert_eq!(offered(&releases, &["v0.2.12"]), Some("v0.2.13".into()));
-        assert_eq!(offered(&releases, &["v0.2.13"]), None);
-        // Before the first release of the single channel: the old Alpha one stays where it is.
-        let before = &releases[1..];
-        assert_eq!(offered(before, &["v0.2.0"]), None);
-        assert_eq!(offered(before, &["v0.2.12", "v0.2.0"]), None);
-        assert_eq!(CHECK_EVERY.as_secs(), 30 * 60);
+        assert_eq!(offered(&["26.3-0.1.2", "26.3-0.1.0"]), None);
     }
 
     #[test]
@@ -5973,6 +6221,17 @@ pub fn {f}("
         }
         let here = WhilePlaying::Hide.here();
         assert_eq!(here == WhilePlaying::Hide, cfg!(target_os = "macos"));
+    }
+
+    #[test]
+    fn the_retired_auto_install_setting_is_ignored_on_a_normal_settings_round_trip() {
+        let settings = Settings::parse(
+            r#"{"install_new_versions":true,"selected":"26.3-0.1.0","skip_opening":true}"#,
+        );
+        let saved = serde_json::to_value(settings).unwrap();
+        assert_eq!(saved["selected"], "26.3-0.1.0");
+        assert_eq!(saved["skip_opening"], true);
+        assert!(saved.get("install_new_versions").is_none());
     }
 
     #[test]
@@ -6181,39 +6440,6 @@ pub fn {f}("
             parse_version_output(&format!("{}{VERSION}\n", crate::identity::VERSION_PREFIX)),
             Some(VERSION)
         );
-    }
-
-    #[test]
-    fn an_older_nightly_installs_as_a_rollback_with_a_warning() {
-        let nightly = |tag: &str| Release {
-            tag: tag.into(),
-            name: String::new(),
-            body: String::new(),
-            date: String::new(),
-            time: String::new(),
-            asset: Some(("u".into(), 1)),
-            prerelease: false,
-            nightly: Some("nightly".into()),
-        };
-        let installed = [
-            "v0.2.81".to_owned(),
-            "nightly-2026-10-28-0c02067".to_owned(),
-        ];
-        let warning =
-            nightly_downgrade(&nightly("nightly-2026-10-21-aaaaaaa"), &installed).unwrap();
-        assert!(
-            warning.contains("older than nightly-2026-10-28-0c02067"),
-            "{warning}"
-        );
-        assert!(nightly_downgrade(&nightly("nightly-2026-10-29-bbbbbbb"), &installed).is_none());
-        assert!(nightly_downgrade(&nightly("nightly-2026-10-28-0c02067"), &installed).is_none());
-        // No Nightly installed, or a release: nothing to warn about.
-        assert!(
-            nightly_downgrade(&nightly("nightly-2026-10-21-aaaaaaa"), &installed[..1]).is_none()
-        );
-        let mut release = nightly("v0.2.80");
-        release.nightly = None;
-        assert!(nightly_downgrade(&release, &installed).is_none());
     }
 
     #[test]
@@ -6485,7 +6711,7 @@ pub fn {f}("
     }
 
     #[test]
-    fn game_0_2_follows_every_date_release() {
+    fn launcher_semver_and_historical_order_stay_the_same() {
         assert_eq!(compare_versions("v0.2.0", "v2026.10.19.15"), Greater);
         assert_eq!(compare_versions("v0.2.0", "v2026.10.21"), Greater);
         assert_eq!(compare_versions("v2099.12.31.9", "v0.2.0"), Less);
@@ -6501,40 +6727,12 @@ pub fn {f}("
         assert_eq!(compare_versions("v0.3.0-beta.1", "v0.3.0-beta"), Greater);
         assert_eq!(compare_versions("v0.3.0-alpha", "v0.3.0-1"), Greater);
         assert_eq!(compare_versions("v0.2.1-beta.1", "v2026.10.21"), Greater);
-        // Launcher and game tags of 0.2 compare alike; old launcher tags stay below.
+        // The two launcher tag eras still compare in the same order.
         assert_eq!(
             compare_versions("launcher@0.2.0", "launcher-v0.16.0"),
             Greater
         );
         assert_eq!(compare_versions("launcher@0.2.0", "v0.2.0"), Equal);
-
-        let asset = ASSET.unwrap_or("sunrise-linux-x86_64.tar.gz");
-        let list = serde_json::json!([
-            {"tag_name": "v0.2.0", "prerelease": true, "assets": [{"name": asset, "browser_download_url": "b", "size": 1}]},
-            {"tag_name": "v2026.10.21", "prerelease": true, "assets": [{"name": asset, "browser_download_url": "d", "size": 1}]},
-            {"tag_name": "v2026.10.19.15", "assets": [{"name": asset, "browser_download_url": "s", "size": 1}]},
-        ]);
-        let releases = parse_releases(&list, Some(asset), is_game_tag);
-        let installed = ["v2026.10.19.15".to_string(), "v2026.10.12".to_string()];
-        // A pre-release 0.2.0 is not an update; once published as the release, it is one.
-        let offered = |releases: &[Release]| {
-            sunrise_update(&installable_updates(releases), &installed).map(|r| r.tag)
-        };
-        assert_eq!(offered(&releases), None);
-        let mut released = releases.clone();
-        released[0].prerelease = false;
-        assert_eq!(offered(&released), Some("v0.2.0".into()));
-        let mut sorted = vec![
-            "v2026.10.19.15".to_string(),
-            "v0.2.1".into(),
-            "v0.2.0".into(),
-            "v2026.10.21".into(),
-        ];
-        sorted.sort_by(|a, b| compare_versions(b, a));
-        assert_eq!(
-            sorted,
-            ["v0.2.1", "v0.2.0", "v2026.10.21", "v2026.10.19.15"]
-        );
     }
 
     #[test]
@@ -6587,7 +6785,7 @@ pub fn {f}("
     }
 
     #[test]
-    fn updates() {
+    fn launcher_updates_from_earlier_launcher_tags() {
         let r = |tag: &str| Release {
             tag: tag.into(),
             name: String::new(),
@@ -6598,137 +6796,68 @@ pub fn {f}("
             prerelease: false,
             nightly: None,
         };
-        let releases = [r("v2026.10.13"), r("v2026.10.12")];
-        assert_eq!(
-            sunrise_update(&releases, &["v2026.10.12".into()]).map(|r| r.tag),
-            Some("v2026.10.13".into())
-        );
-        assert!(sunrise_update(&releases, &["v2026.10.13".into()]).is_none());
         assert!(launcher_update(&[r("launcher-v0.0.1")]).is_none());
         assert!(launcher_update(&[r("launcher@99.0.0")]).is_some());
         assert!(launcher_update_from(&[r("launcher-v99.0.0")], "launcher-v0.16.0").is_some());
-        let installed = ["v2026.10.12".to_string(), "v2026.10.1".to_string()];
-        assert!(select_after_update(Some("v2026.10.12"), &installed));
-        assert!(!select_after_update(Some("v2026.10.1"), &installed));
-        assert!(select_after_update(None, &installed));
-        // A Nightly follows updates only from the newest one: an older pick is a rollback.
-        let nightlies = [
-            "nightly-2026-11-11-bbbbbbb".to_string(),
-            "nightly-2026-11-10-aaaaaaa".to_string(),
-        ];
-        assert!(select_after_update(
-            Some("nightly-2026-11-11-bbbbbbb"),
-            &nightlies
-        ));
-        assert!(!select_after_update(
-            Some("nightly-2026-11-10-aaaaaaa"),
-            &nightlies
-        ));
-        assert!(!select_after_update(Some("developer-abc"), &[]));
-        assert!(!select_after_update(Some("developer-abc"), &installed));
-        assert!(!select_after_update(
-            Some("imported-2026-11-01-abcdef0"),
-            &["imported-2026-11-01-abcdef0".to_string()]
-        ));
     }
 
-    /// The Nightly is the only build Sunrise ships (docs/release-flow.md): every launcher takes the
-    /// current one as its update, over every release; the last week's are listed, never offered.
     #[test]
-    fn every_launcher_updates_to_the_current_nightly() {
-        let asset = ASSET.unwrap_or("sunrise-linux-x86_64.tar.gz");
-        let build = |url: &str| serde_json::json!([{"name": asset, "browser_download_url": url, "size": 1}]);
-        let list = serde_json::json!([
-            {"tag_name": "nightly", "name": "Nightly 2026-10-28 · 9b772b2", "prerelease": true,
-             "published_at": "2026-10-28T09:58:01Z", "assets": build("n")},
-            {"tag_name": "launcher@0.2.21", "assets": []},
-            {"tag_name": "v0.2.95", "assets": build("r")},
-            {"tag_name": "nightly-2026-10-28", "name": "Nightly 2026-10-28 · 83f15fa", "prerelease": true,
-             "published_at": "2026-10-28T07:54:57Z", "assets": build("d")},
-            {"tag_name": "nightly-2026-10-27", "name": "Nightly 2026-10-27 · 7954902", "prerelease": true,
-             "published_at": "2026-10-28T00:15:40Z", "assets": build("e")},
-        ]);
-        let releases = game_releases(&list);
-        let listed: Vec<_> = releases
-            .iter()
-            .map(|r| (r.tag.as_str(), r.nightly.as_deref(), r.prerelease))
-            .collect();
+    fn published_builds_and_updates_are_channel_scoped() {
+        use crate::instances::Channel::{Nightly, Stable};
+        let asset = "sunrise-linux-x86_64.tar.gz";
+        let files = serde_json::json!([{"name": asset, "size": 1}]);
+        let releases = game_releases_with(
+            &serde_json::json!([
+                {"tag_name": "nightly", "name": "Nightly 2026-11-20 · aaaaaaa", "prerelease": true, "assets": files},
+                {"tag_name": "nightly-2026-11-19", "assets": files},
+                {"tag_name": "v2026.10.13", "assets": files},
+                {"tag_name": "v1.0.0", "assets": files},
+                {"tag_name": "launcher@0.2.21", "assets": files},
+                {"tag_name": "26.3-0.1.0", "assets": files},
+                {"tag_name": "26.3-0.1.2", "prerelease": true, "assets": files},
+                {"tag_name": "26.3-0.1.3-rc.1", "assets": files},
+                {"tag_name": "26.3-0.1.4", "draft": true, "assets": files},
+                {"tag_name": "26.3-0.1.1", "assets": files},
+            ]),
+            Some(asset),
+            None,
+        );
+        let nightly = "nightly-2026-11-20-aaaaaaa";
         assert_eq!(
-            listed,
-            [
-                ("nightly-2026-10-28-9b772b2", Some("nightly"), false),
-                (
-                    "nightly-2026-10-28-83f15fa",
-                    Some("nightly-2026-10-28"),
-                    true
-                ),
-                (
-                    "nightly-2026-10-27-7954902",
-                    Some("nightly-2026-10-27"),
-                    true
-                ),
-                ("v0.2.95", None, false),
-            ]
+            releases.iter().map(|r| r.tag.as_str()).collect::<Vec<_>>(),
+            [nightly, "26.3-0.1.1", "26.3-0.1.0"]
         );
-        let offered = |installed: &[&str]| {
-            let installed: Vec<String> = installed.iter().map(|t| t.to_string()).collect();
-            sunrise_update(&installable_updates(&releases), &installed).map(|r| r.tag)
+        assert_eq!(
+            releases[1].asset.as_ref().unwrap().0,
+            format!("https://github.com/sunrise-org/sunrise/releases/download/26.3-0.1.1/{asset}")
+        );
+        let offered = |catalogue: &[Release], installed: &[&str], channel| {
+            let installed = installed.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+            sunrise_update(catalogue, &installed, channel).map(|r| r.tag.clone())
         };
-        let current = Some("nightly-2026-10-28-9b772b2".to_string());
-        // A player of the release channel, a new player, one on an older Nightly of the same day.
-        assert_eq!(offered(&["v0.2.95", "v0.2.94"]), current);
-        assert_eq!(offered(&[]), current);
-        assert_eq!(offered(&["nightly-2026-10-28-83f15fa", "v0.2.95"]), current);
-        assert_eq!(offered(&["nightly-2026-10-28-9b772b2"]), None);
-        // Nightlies come after every release in every list.
-        assert!(compare_versions("nightly-2026-10-27-7954902", "v0.2.95").is_gt());
-        assert!(
-            compare_versions("nightly-2026-10-28-9b772b2", "nightly-2026-10-27-7954902").is_gt()
+        assert_eq!(
+            offered(&releases, &[nightly, "26.3-0.1.0"], Stable),
+            Some("26.3-0.1.1".into())
         );
-    }
-
-    /// Players move to the Nightly at their next check: whoever was on the newest release, on a
-    /// Nightly, or on nothing. A release picked by hand stays picked.
-    #[test]
-    fn players_of_the_newest_release_move_to_the_nightly() {
-        let installed = [
-            "nightly-2026-10-27-7954902".to_string(),
-            "v0.2.95".into(),
-            "v0.2.90".into(),
-        ];
-        assert!(select_after_update(Some("v0.2.95"), &installed));
-        assert!(select_after_update(
-            Some("nightly-2026-10-27-7954902"),
-            &installed
-        ));
-        assert!(select_after_update(None, &installed));
-        assert!(!select_after_update(Some("v0.2.90"), &installed));
-        assert!(select_after_update(
-            Some("v0.2.95"),
-            &["v0.2.95".to_string()]
-        ));
-    }
-
-    #[test]
-    fn new_versions_install_automatically_unless_turned_off() {
-        // No settings file, an old one that never mentioned it, and 0.1.1's default `false`.
-        assert!(Settings::parse("").auto_install());
-        assert!(Settings::parse("{}").auto_install());
-        assert!(
-            Settings::parse(r#"{"selected": "v2026.10.13", "auto_install": false}"#).auto_install()
+        assert_eq!(
+            offered(
+                &releases,
+                &["26.3-0.1.1", "nightly-2026-11-20-bbbbbbb"],
+                Nightly
+            ),
+            Some(nightly.into())
         );
-        assert!(Settings::parse(r#"{"install_new_versions": true}"#).auto_install());
-        assert!(!Settings::parse(r#"{"install_new_versions": false}"#).auto_install());
-        // Saving after the player turned it off keeps it off.
-        let off = Settings {
-            install_new_versions: Some(false),
-            ..Settings::default()
-        };
-        assert!(!Settings::parse(&serde_json::to_string(&off).unwrap()).auto_install());
-        // The selection rule is unchanged: the new version is selected only from the newest.
-        let installed = ["v2026.10.12".to_string(), "v2026.10.1".to_string()];
-        assert!(select_after_update(Some("v2026.10.12"), &installed));
-        assert!(!select_after_update(Some("v2026.10.1"), &installed));
+        assert_eq!(offered(&releases, &[nightly, "26.3-0.1.1"], Stable), None);
+        assert_eq!(offered(&releases[..1], &["26.3-0.1.0"], Stable), None);
+        assert_eq!(
+            offered(&releases[1..], &["nightly-2026-11-19-aaaaaaa"], Nightly),
+            None
+        );
+        assert_eq!(
+            offered(&releases, &["nightly-2026-11-21-aaaaaaa"], Nightly),
+            None
+        );
+        assert_eq!(offered(&releases, &["26.4-0.1.0"], Stable), None);
     }
 
     #[test]
@@ -7282,8 +7411,8 @@ esac"#
         };
 
         let root = version("v1", true, &preparer);
-        complete_assets_in(&versions, "v1", folders, &log);
-        complete_assets_in(&versions, "v1", folders, &log);
+        complete_assets_in(&versions, "v1", folders, &log, None);
+        complete_assets_in(&versions, "v1", folders, &log, None);
         assert_eq!(
             *lines.borrow(),
             [
@@ -7315,7 +7444,13 @@ esac"#
             r#"printf '%s\n' '{"format": 1, "prepared": true, "missing": []}'"#,
         );
         for tag in ["v0", "v2", "v3"] {
-            complete_assets_in(&versions, tag, || unreachable!("no folder is needed"), &log);
+            complete_assets_in(
+                &versions,
+                tag,
+                || unreachable!("no folder is needed"),
+                &log,
+                None,
+            );
         }
         assert!(lines.borrow().is_empty(), "{:?}", lines.borrow());
         let _ = fs::remove_dir_all(&dir);
@@ -7482,104 +7617,6 @@ esac"#
         names.sort();
         assert_eq!(names, ["new", "sunrise-launcher"]);
         let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn pruning_keeps_the_newest_and_the_protected() {
-        let tags = |t: &[&str]| t.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        let installed = tags(&[
-            "v0.2.91", "v0.2.90", "v0.2.88", "v0.2.85", "v0.2.80", "nightly",
-        ]);
-        assert_eq!(
-            stale_versions(&installed, 2, &tags(&["v0.2.85"]), |_| false),
-            tags(&["v0.2.88", "v0.2.80"])
-        );
-        // A protected version among the newest still leaves the newest `keep` in place.
-        assert_eq!(
-            stale_versions(&installed, 2, &tags(&["v0.2.91"]), |_| false),
-            tags(&["v0.2.88", "v0.2.85", "v0.2.80"])
-        );
-        assert!(stale_versions(&installed, 9, &[], |_| false).is_empty());
-    }
-
-    #[test]
-    fn pruning_removes_unused_nightlies_when_the_instance_follows_updates() {
-        let installed = [
-            "nightly-2026-11-05-f319701",
-            "nightly-2026-11-04-6475f62",
-            "nightly-2026-11-03-f42ef42",
-            "nightly-2026-10-31-d91cab6",
-        ]
-        .map(String::from);
-        // The default instance follows the selected version, so it adds no pin.
-        let protected = [installed[0].clone()];
-        assert_eq!(
-            stale_versions(&installed, 2, &protected, |_| true),
-            ["nightly-2026-11-03-f42ef42", "nightly-2026-10-31-d91cab6"]
-        );
-    }
-
-    #[test]
-    fn pruning_keeps_selected_and_instance_pinned_nightlies() {
-        let installed = [
-            "nightly-2026-11-05-f319701",
-            "nightly-2026-11-04-6475f62",
-            "nightly-2026-11-03-f42ef42",
-            "nightly-2026-11-01-c9d474d",
-            "nightly-2026-10-31-d91cab6",
-        ]
-        .map(String::from);
-        // A manual selection and a different instance's pin both survive the keep limit.
-        let protected = [installed[2].clone(), installed[4].clone()];
-        assert_eq!(
-            stale_versions(&installed, 1, &protected, |_| true),
-            ["nightly-2026-11-04-6475f62", "nightly-2026-11-01-c9d474d"]
-        );
-        assert!(stale_versions(&installed, 5, &protected, |_| true).is_empty());
-    }
-
-    #[test]
-    fn pruning_keeps_releases_separate_from_nightlies_and_local_builds() {
-        let installed = [
-            "native-local-build",
-            "imported-2026-11-05-abcdef0",
-            "nightly-2026-11-05-f319701",
-            "nightly-2026-11-04-6475f62",
-            "v0.2.91",
-            "v0.2.90",
-        ]
-        .map(String::from);
-        assert!(stale_versions(&installed, 2, &[], |_| true).is_empty());
-        assert_eq!(
-            stale_versions(&installed, 1, &[], |_| true),
-            ["nightly-2026-11-04-6475f62", "v0.2.90"]
-        );
-    }
-
-    #[test]
-    fn pruning_preserves_manual_and_legacy_nightlies() {
-        let root =
-            std::env::temp_dir().join(format!("sunrise-prune-origin-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let installed = [
-            "nightly-2026-11-05-aaaaaaa", // automatically updated, selected
-            "nightly-2026-11-04-bbbbbbb", // installed manually
-            "nightly-2026-11-03-ccccccc", // automatically updated
-            "nightly-2026-11-02-ddddddd", // from an older launcher; origin unknown
-            "nightly-2026-11-01-eeeeeee", // automatically updated
-        ]
-        .map(String::from);
-        for tag in [&installed[0], &installed[2], &installed[4]] {
-            let dir = root.join(tag);
-            fs::create_dir_all(&dir).unwrap();
-            fs::write(dir.join(AUTO_INSTALLED), "").unwrap();
-        }
-        let auto = |tag: &str| root.join(tag).join(AUTO_INSTALLED).is_file();
-        assert_eq!(
-            stale_versions(&installed, 2, &[installed[0].clone()], auto),
-            [installed[4].clone()]
-        );
-        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

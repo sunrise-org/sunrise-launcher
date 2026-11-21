@@ -143,6 +143,7 @@ pub(super) fn about_link(id: &'static str, key: &'static str) -> Stateful<Div> {
 
 impl Launcher {
     pub(super) fn project(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        self.ui.mods.build_button_drawn = false;
         let back_to = self
             .ui
             .mods
@@ -167,7 +168,7 @@ impl Launcher {
             .child(
                 back(back_label).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     match &parent {
-                        Some(collection) => this.mods_load_page(collection.clone(), back_to),
+                        Some(collection) => this.mods_load_page(collection.clone(), back_to, None),
                         None => this.ui.page = back_to,
                     }
                     cx.notify();
@@ -181,30 +182,42 @@ impl Launcher {
             .gap(px(14.))
             .p(px(24.))
             .text_color(c(palette().text));
-        if self
-            .ui
-            .mods
-            .open
-            .as_ref()
-            .is_some_and(|o| self.is_collection(&o.id))
-        {
+        let Some(open) = self.ui.mods.open.as_ref() else {
+            return page
+                .child(header)
+                .child(muted(tr("No mod is open.")))
+                .into_any_element();
+        };
+        if open.collection {
             return self.collection_page(header, page, cx);
         }
-        let loaded = self.ui.mods.open.as_ref().map(|o| o.page.clone());
-        let p = match loaded {
-            None => {
+        let (rows, labels) = self.labeled_installed_rows();
+        let installed = rows.iter().position(|row| match &open.installed {
+            Some(InstalledProject::Local(file)) => {
+                row.id == open.id && row.local.as_ref().is_some_and(|local| &local.file == file)
+            }
+            Some(InstalledProject::Registry) | None => row
+                .entry
+                .as_ref()
+                .is_some_and(|entry| entry.project == open.id),
+        });
+        let installed_row = installed.map(|i| &rows[i]);
+        let p = match (&open.page, installed_row) {
+            (_, None) if open.installed.is_some() => {
                 return page
                     .child(header)
                     .child(muted(tr("No mod is open.")))
-                    .into_any_element()
+                    .into_any_element();
             }
-            Some(None) => {
+            (Some(Ok(p)), _) => (**p).clone(),
+            (_, Some(row)) => row.installed_details(),
+            (None, None) => {
                 return page
                     .child(header)
                     .child(muted(tr("Loading…")))
-                    .into_any_element()
+                    .into_any_element();
             }
-            Some(Some(Err(e))) => {
+            (Some(Err(e)), None) => {
                 return page
                     .child(header)
                     .child(
@@ -212,19 +225,16 @@ impl Launcher {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(tr("This mod can't be shown")),
                     )
-                    .child(note(e))
-                    .into_any_element()
+                    .child(note(e.clone()))
+                    .into_any_element();
             }
-            Some(Some(Ok(p))) => p,
         };
-
-        let installed_here = self
-            .ui
-            .mods
-            .snapshot
-            .as_ref()
-            .and_then(|s| s.entries.iter().find(|e| e.project == p.id))
-            .map(|e| e.number.clone());
+        let title = installed.map_or(&p.name, |i| labels[i].as_ref().unwrap_or(&rows[i].title));
+        let installed_here = installed_row.map(|row| row.version.as_str());
+        let registry_card = installed_row
+            .and_then(|row| row.entry.as_ref().map(|_| row.id.as_str()))
+            .unwrap_or(&p.id);
+        let uses_registry = !matches!(open.installed, Some(InstalledProject::Local(_)));
         let picture = p
             .icon
             .clone()
@@ -237,7 +247,7 @@ impl Launcher {
             .flex()
             .items_center()
             .gap(px(16.))
-            .child(tile(picture, &p.id, &p.name, 64.))
+            .child(tile(picture, &p.id, title, 64.))
             .child(
                 div()
                     .flex_1()
@@ -249,7 +259,7 @@ impl Launcher {
                         div()
                             .text_size(px(tokens::DISPLAY))
                             .font_weight(FontWeight::BOLD)
-                            .child(crate::selectable::selectable(p.name.clone())),
+                            .child(crate::selectable::selectable(title.clone())),
                     )
                     .child(
                         div()
@@ -259,7 +269,7 @@ impl Launcher {
                             .gap_x(px(8.))
                             .gap_y(px(4.))
                             .child(note(credit))
-                            .child(tag(p.make.label()))
+                            .children(p.make.map(|make| tag(make.label())))
                             .children(p.categories.first().map(|k| {
                                 div()
                                     .flex_none()
@@ -271,7 +281,7 @@ impl Launcher {
                                     .text_color(c(palette().muted))
                                     .child(sunrise_launcher::browser::details::category_label(k))
                             }))
-                            .child(
+                            .children(p.about.as_ref().map(|about| {
                                 div()
                                     .flex_none()
                                     .px(px(6.))
@@ -280,16 +290,28 @@ impl Launcher {
                                     .border_color(c(palette().line))
                                     .text_size(px(tokens::CAPTION))
                                     .text_color(c(palette().muted))
-                                    .child(p.side),
-                            ),
+                                    .child(about.side)
+                            })),
                     ),
             );
 
         let gallery = self.gallery(p.screenshots.clone(), cx);
         let about = prose(self.theme, &p.description);
 
+        let unavailable =
+            (installed_here.is_none() && p.fit.fits() && p.make == Some(Make::Native))
+                .then(|| {
+                    let index = sunrise::known_index()?;
+                    let profile = self.selected_instance()?;
+                    let base = self.version_of(profile).map(String::as_str);
+                    let game = self.mods_game();
+                    sunrise::NativeInstallReadiness::for_profile(&profile.home, base, &game)
+                        .block(&index, &p.id, &game)
+                })
+                .flatten();
+        let can_install = unavailable.is_none();
         let versions = card().children(p.versions.iter().enumerate().map(|(i, v)| {
-            let installed = installed_here.as_deref() == Some(v.number.as_str());
+            let installed = installed_here == Some(v.number.as_str());
             let will = p
                 .will_install
                 .as_ref()
@@ -325,12 +347,18 @@ impl Launcher {
                             (_, true, _) => div()
                                 .text_color(c(palette().success))
                                 .child(tr("Installed")),
-                            (None, _, true) => div()
+                            (None, _, true) if can_install => div()
                                 .text_color(c(palette().success))
                                 .child(tr("Fits your game · what Install adds")),
-                            (None, _, false) => div()
-                                .text_color(c(palette().success))
-                                .child(tr("Fits your game")),
+                            (None, _, _) => {
+                                div()
+                                    .text_color(c(palette().success))
+                                    .child(if can_install {
+                                        tr("Fits your game")
+                                    } else {
+                                        tr("Matches the game version")
+                                    })
+                            }
                             (Some(why), _, _) => {
                                 div().text_color(c(palette().muted)).child(why.clone())
                             }
@@ -339,88 +367,112 @@ impl Launcher {
         }));
 
         // The right column: the action and what it changes, then the facts.
-        let native_allowed = self.settings.native_mods_allowed_at.is_some();
-        let busy = self.mods_busy();
-        let native = p.make == Make::Native;
+        let busy = self.mods_busy()
+            || self.mods_locked().is_some()
+            || self
+                .ui
+                .mods
+                .snapshot
+                .as_ref()
+                .is_none_or(|snapshot| !snapshot.ready());
         let requires = p.requires.clone();
-        // An update is offered here too: the version Add would install, over the one installed.
-        let update = match (&installed_here, &p.will_install) {
-            (Some(have), Some(will)) if p.fit.fits() && *have != will.number => {
-                Some((have.clone(), will.number.clone()))
-            }
-            _ => None,
-        };
-        let action: AnyElement = match (&installed_here, &p.fit, &p.will_install) {
-            (Some(_), ..) if update.is_some() => {
-                let (from, to) = update.clone().unwrap_or_default();
-                let b = primary(
-                    "alt-project-update",
-                    trf("Update {from} → {to}", &[("from", &from), ("to", &to)]),
-                )
-                .w_full()
-                .h(px(tokens::ACTION));
-                if busy {
-                    dim(b).into_any_element()
-                } else {
-                    let id = p.id.clone();
-                    b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.update_mod(&id);
-                        cx.notify();
-                    }))
+        let cells = installed_row.map(|row| {
+            model::cells(
+                row,
+                self.ui.mods.errors.get(&row.id).map(String::as_str),
+                self.build_here()
+                    .filter(|_| row.on)
+                    .and_then(|run| run.state_of(&row.id, &row.version)),
+                self.settings.native_mods_allowed_at.is_some(),
+            )
+        });
+        let update = installed_row
+            .zip(cells.as_ref())
+            .filter(|(_, cells)| cells.action == Some(model::RowAction::Update))
+            .and_then(|(row, _)| row.update.as_ref().map(|to| (row, to)));
+        let action: AnyElement = if let Some(progress) = uses_registry
+            .then(|| {
+                self.registry_card_control(registry_card, |label| {
+                    dim(primary("alt-project-add", label)
+                        .w_full()
+                        .h(px(tokens::ACTION)))
                     .into_any_element()
-                }
-            }
-            (Some(_), ..) => div()
-                .h(px(tokens::ACTION))
-                .flex()
-                .items_center()
-                .justify_center()
-                .gap(px(8.))
-                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-                .border_1()
-                .border_color(c(palette().divider))
-                .text_color(c(palette().success))
-                .child(blocks::icon("check", 14., c(palette().success)))
-                .child(tr("Installed"))
-                .into_any_element(),
-            (None, fit, Some(_)) if fit.fits() => {
-                let label = match (native, native_allowed) {
-                    (true, false) => tr("Install…"),
-                    _ => tr("Install"),
-                };
-                let b = primary("alt-project-add", label)
+                })
+            })
+            .flatten()
+        {
+            progress
+        } else {
+            match (installed_here, update, &p.fit, &p.will_install) {
+                (_, Some((row, to)), ..) => {
+                    let b = primary(
+                        "alt-project-update",
+                        trf(
+                            "Update {from} → {to}",
+                            &[("from", &row.version), ("to", to)],
+                        ),
+                    )
                     .w_full()
                     .h(px(tokens::ACTION));
-                if busy {
-                    dim(b).into_any_element()
-                } else {
-                    let id = p.id.clone();
-                    let name = p.name.clone();
-                    b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.add(id.clone(), name.clone());
-                        cx.notify();
-                    }))
-                    .into_any_element()
+                    if busy {
+                        dim(b).into_any_element()
+                    } else {
+                        let row = row.clone();
+                        b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            if nightly::installed_source(&row).is_some() {
+                                this.submit_source_update(&row.id);
+                            } else {
+                                this.update_one(&row);
+                            }
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                    }
                 }
+                (Some(_), ..) => div()
+                    .h(px(tokens::ACTION))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(8.))
+                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                    .border_1()
+                    .border_color(c(palette().divider))
+                    .text_color(c(palette().success))
+                    .child(blocks::icon("check", 14., c(palette().success)))
+                    .child(tr("Installed"))
+                    .into_any_element(),
+                (None, _, fit, Some(_)) if fit.fits() && can_install => {
+                    let b = primary("alt-project-add", self.registry_install_label())
+                        .w_full()
+                        .h(px(tokens::ACTION));
+                    if busy {
+                        dim(b).into_any_element()
+                    } else {
+                        let id = p.id.clone();
+                        b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.add(id.clone());
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                    }
+                }
+                (None, _, fit, _) => div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(dim(primary("alt-project-add", tr("Install"))
+                        .w_full()
+                        .h(px(tokens::ACTION))))
+                    .child(note(unavailable.or_else(|| fit.reason()).unwrap_or_else(
+                        || tr("No version fits this build.").to_string(),
+                    )))
+                    .into_any_element(),
             }
-            (None, fit, _) => div()
-                .flex()
-                .flex_col()
-                .gap(px(6.))
-                .child(dim(primary("alt-project-add", tr("Install"))
-                    .w_full()
-                    .h(px(tokens::ACTION))))
-                .child(note(fit.reason().unwrap_or_else(|| {
-                    tr("No version fits this build.").to_string()
-                })))
-                .into_any_element(),
         };
         // The version this panel is about: what would be installed, else what is.
-        let shown_version = p
-            .will_install
-            .as_ref()
-            .map(|w| w.number.clone())
-            .or_else(|| installed_here.clone());
+        let shown_version =
+            installed_here.or_else(|| p.will_install.as_ref().map(|w| w.number.as_str()));
         // ---- the facts, as chips: a glyph, a few words, the whole sentence on hover and
         // under Details.
         let fact = |id: &'static str, icon: &'static str, label: String, tip: String, tone: u32| {
@@ -453,12 +505,12 @@ impl Launcher {
                 palette().muted,
             ));
         }
-        facts = facts.child(match p.make {
+        facts = facts.children(p.make.map(|make| match make {
             Make::Native => fact(
                 "alt-fact-code",
                 "shield",
                 tr("Native code").into(),
-                tr("Native code: it is built into the game on this computer and runs with full access to your computer. Its source was reviewed before it was listed.").into(),
+                tr("Native code: it is built into the game on this computer and runs with full access to your computer.").into(),
                 palette().accent_ink,
             ),
             Make::Content => fact(
@@ -468,8 +520,8 @@ impl Launcher {
                 tr("Content only: it adds no native code.").into(),
                 palette().muted,
             ),
-        });
-        if !p.signed {
+        }));
+        if p.about.as_ref().is_some_and(|about| !about.signed) {
             facts = facts.child(fact(
                 "alt-fact-signed",
                 "information-circle",
@@ -488,7 +540,7 @@ impl Launcher {
                 palette().muted,
             ));
         }
-        let game_line = p.another_build.then(|| {
+        let game_line = (p.another_build && can_install).then(|| {
             div()
                 .flex()
                 .items_start()
@@ -519,7 +571,9 @@ impl Launcher {
                 )
                 .child(note(detail).flex_none())
         };
-        let pending = installed_here.is_none() || update.is_some();
+        let pending = installed_here.is_none()
+            || update
+                .is_some_and(|(_, to)| p.will_install.as_ref().is_some_and(|v| v.number == *to));
         let changes = (pending && !requires.is_empty()).then(|| {
             let mut list = div().flex().flex_col().child(
                 div()
@@ -532,15 +586,15 @@ impl Launcher {
                     )),
             );
             list = list.child(match &update {
-                Some((from, to)) => change(
+                Some((row, to)) => change(
                     "refresh",
                     p.name.clone(),
-                    trf("{from} → {to}", &[("from", from), ("to", to)]),
+                    trf("{from} → {to}", &[("from", &row.version), ("to", to)]),
                 ),
                 None => change(
                     "plus-sign",
                     p.name.clone(),
-                    shown_version.clone().unwrap_or_default(),
+                    shown_version.unwrap_or_default().to_owned(),
                 ),
             });
             for (name, version) in &requires {
@@ -580,8 +634,11 @@ impl Launcher {
         let details = open.then(|| {
             let facts_line = p.will_install.as_ref().map(|w| {
                 let code = match p.make {
-                    Make::Native => tr("native code, built on this computer after you allow it"),
-                    Make::Content => tr("content only, no native code"),
+                    Some(Make::Native) if can_install => {
+                        tr("native code, built on this computer after you allow it")
+                    }
+                    Some(Make::Native) => tr("native code"),
+                    _ => tr("content only, no native code"),
                 };
                 trf(
                     "Version {version} · {size} to download · {code}",
@@ -623,14 +680,147 @@ impl Launcher {
                             .font_weight(FontWeight::BOLD)
                             .child(p.name.clone()),
                     )
-                    .children(shown_version.clone().map(|v| {
+                    .children(shown_version.map(|v| {
                         div()
                             .text_size(px(tokens::SMALL))
                             .font_family(crate::theme::MONO)
                             .text_color(c(palette().muted))
-                            .child(v)
+                            .child(v.to_owned())
                     })),
             );
+        let installed_controls = installed_row.zip(cells.as_ref()).map(|(row, cells)| {
+            use crate::frame::button;
+            use sunrise_launcher::browser::sunrise::SourceError;
+            let origin = nightly::installed_source(row);
+            let problem = origin.and_then(|_| {
+                self.source_outcome(&row.id)
+                    .and_then(|status| status.as_ref().err())
+                    .or_else(|| self.source_update_issue(&row.id))
+            });
+            let problem_line = problem.and_then(|error| nightly::source_error(error, None));
+            let problem_log = match problem {
+                Some(SourceError::Build { log: Some(log), .. }) => Some(log.clone()),
+                _ => None,
+            };
+            let provenance = origin.map(nightly::source_provenance);
+            let release = origin
+                .and_then(|origin| origin.tag.as_deref())
+                .map(|tag| trf("Release: {tag}", &[("tag", tag)]));
+            let hold = self
+                .ui
+                .mods
+                .snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.switch_held.get(&row.id))
+                .cloned();
+            let status = if let Some(hold) = &hold {
+                Some(note(hold.label()))
+            } else if cells.popover {
+                row.unfit
+                    .clone()
+                    .map(|unfit| self.unfit(0, row, unfit, busy, cx))
+            } else {
+                cells.status.as_ref().map(|status| note(status.tip.clone()))
+            };
+            let allow = (cells.action == Some(model::RowAction::Allow)).then(|| {
+                let b = button("alt-project-allow", tr("Allow…"));
+                if busy {
+                    dim(b)
+                } else {
+                    b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.allow();
+                        cx.notify();
+                    }))
+                }
+            });
+            let toggle = ui::switch("alt-project-switch", row.on);
+            let toggle = if busy || hold.is_some() || !cells.switch {
+                dim(toggle)
+            } else {
+                let row = row.clone();
+                toggle.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.toggle(&row);
+                    cx.notify();
+                }))
+            };
+            let github_update = row
+                .local
+                .as_ref()
+                .and_then(|local| local.github.clone())
+                .filter(|origin| origin.is_release_asset())
+                .map(|origin| {
+                    if let Some(progress) = self.registry_card_control(&row.id, |label| {
+                        dim(button("alt-project-github-progress", label)).into_any_element()
+                    }) {
+                        return progress;
+                    }
+                    let button = button("alt-project-github-update", tr("Check for update"));
+                    if busy {
+                        dim(button).into_any_element()
+                    } else {
+                        button
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.open_github_add(Some(origin.clone()));
+                                cx.notify();
+                            }))
+                            .into_any_element()
+                    }
+                });
+            let remove = row.selectable_archive().then(|| {
+                let b = button("alt-project-remove", tr("Remove")).text_color(c(palette().danger));
+                if busy {
+                    dim(b)
+                } else {
+                    let names = super::installed_view::remove_names(&rows, &labels);
+                    let id = row.id.clone();
+                    let home = self.mods_home();
+                    b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.ask_remove(&home, vec![id.clone()], names.clone());
+                        cx.notify();
+                    }))
+                }
+            });
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .children(provenance.map(note))
+                .children(release.map(note))
+                .children(problem_line.map(note))
+                .children(problem_log.map(|log| self.nightly_log_button(&row.title, log, cx)))
+                .children(status)
+                .children(
+                    hold.as_ref()
+                        .and_then(|reason| reason.detail())
+                        .map(|detail| note(detail.to_owned())),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(toggle)
+                        .child(note(if row.on {
+                            tr("Turned on")
+                        } else {
+                            tr("Turned off")
+                        }))
+                        .children(allow)
+                        .children(github_update)
+                        .children(remove),
+                )
+        });
+        let source_button = match &p.source {
+            Some(model::SourceLink::GitHub(url)) => {
+                let url = url.clone();
+                Some(
+                    crate::frame::button("alt-project-github", tr("Open on GitHub"))
+                        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))),
+                )
+            }
+            _ => None,
+        };
         let scroll = crate::frame::scrolls("project");
         let right = div()
             .flex()
@@ -644,14 +834,20 @@ impl Launcher {
                     .gap(px(12.))
                     .child(panel_head)
                     .child(action)
-                    .child(facts)
+                    .children(
+                        uses_registry
+                            .then(|| self.registry_card_outcome(registry_card, cx))
+                            .flatten(),
+                    )
+                    .children(installed_controls)
+                    .when(p.make.is_some(), |d| d.child(facts))
                     .children(game_line)
                     .children(changes)
-                    .child(details_toggle)
+                    .children(source_button)
+                    .when(p.about.is_some(), |d| d.child(details_toggle))
                     .children(details),
             )
-            .child({
-                let row = about_row;
+            .children(p.about.as_ref().map(|about| {
                 let source = p.source.clone();
                 card()
                     .p(px(16.))
@@ -664,15 +860,18 @@ impl Launcher {
                             .pb(px(6.))
                             .child(tr("ABOUT")),
                     )
-                    .child(row(tr("Downloads"), p.downloads.to_string()))
-                    .child(row(tr("Updated"), p.updated.clone()))
-                    .child(row(tr("Licence"), p.license.clone()))
-                    .children((source.starts_with("https://")).then(|| {
-                        about_link("alt-project-source", tr("Source code")).on_click(cx.listener(
-                            move |_, _: &ClickEvent, _, cx| Launcher::open_url(&source, cx),
-                        ))
-                    }))
-            });
+                    .child(about_row(tr("Downloads"), about.downloads.to_string()))
+                    .child(about_row(tr("Updated"), about.updated.clone()))
+                    .child(about_row(tr("Licence"), about.license.clone()))
+                    .children(match source {
+                        Some(model::SourceLink::Other(url)) => Some(
+                            about_link("alt-project-source", tr("Source code")).on_click(
+                                cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)),
+                            ),
+                        ),
+                        _ => None,
+                    })
+            }));
 
         // A narrow window has one column: the action stays near the top. Beside the column, the
         // panel stays in view while the page scrolls.
@@ -698,14 +897,16 @@ impl Launcher {
             .child(head)
             .children(above)
             .children(gallery)
-            .child(about)
-            .child(
-                div()
-                    .text_size(px(tokens::HEADING))
-                    .font_weight(FontWeight::BOLD)
-                    .child(tr("Versions")),
-            )
-            .child(versions);
+            .when(!p.description.is_empty(), |d| d.child(about))
+            .when(!p.versions.is_empty(), |d| {
+                d.child(
+                    div()
+                        .text_size(px(tokens::HEADING))
+                        .font_weight(FontWeight::BOLD)
+                        .child(tr("Versions")),
+                )
+                .child(versions)
+            });
         page.child(
             div()
                 .id("alt-project-scroll")

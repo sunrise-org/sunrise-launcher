@@ -28,7 +28,7 @@ pub(super) fn install(
     // The index's claims plan the versions first: an unsatisfiable set is refused with the planner's
     // reason before anything downloads, and each dependency is fetched at the version it chose.
     let held = super::held_mods(&installed.entries);
-    let planned = resolve::install(
+    let planned = resolve::install_with_messages(
         install.index,
         &[Request {
             id: project.id.clone(),
@@ -38,6 +38,7 @@ pub(super) fn install(
         &version.game,
         Side::Both,
         |_, v| super::fits_game(v, &version.game),
+        trf,
     );
     if let Some(RequestResult::Refused { reason }) = planned.requested.get(&project.id) {
         return Err(format!("{} can't be installed: {reason}", project.name));

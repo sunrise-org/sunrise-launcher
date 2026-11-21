@@ -481,14 +481,28 @@ impl Launcher {
         let Some(row) = self.rows().into_iter().find(|r| r.id == id) else {
             return;
         };
-        let (tx, game) = (self.ui.mods.tx.clone(), self.mods_game());
+        let base = self
+            .ui
+            .mods
+            .snapshot
+            .as_ref()
+            .and_then(|snap| snap.rows.managed.as_ref())
+            .map(|managed| managed.active.base().to_owned());
+        let game = base
+            .as_deref()
+            .map_or_else(|| self.mods_game(), backend::game_version);
+        let tx = self.ui.mods.tx.clone();
         let project = row.entry.as_ref().map(|e| e.project.clone());
         std::thread::spawn(move || {
             let found = sunrise::refreshed_index().map(|index| {
+                let unfit_updates = base
+                    .as_deref()
+                    .map(sunrise::known_unfit_updates)
+                    .unwrap_or_default();
                 project
                     .as_deref()
                     .and_then(|id| index.project(id))
-                    .and_then(|p| model::newer(&index, p, &row.version, &game))
+                    .and_then(|p| model::newer(&index, p, &row.version, &game, &unfit_updates))
             });
             let _ = tx.send(Event::Checked(row.title, found));
         });

@@ -1,30 +1,54 @@
-//! Whether automatic updates may change the explicit base selection.
-use super::*;
+//! An explicit game update can advance a followed build, not change its channel.
+use super::compare_game_versions;
+use crate::instances::Channel;
 
-/// Whether a version installed as an update becomes the selected one: when the player had none,
-/// was on the newest installed Nightly (an older one picked on Versions stays), or on the newest
-/// installed release (so a player of the release channel moves
-/// to the Nightly at the first check, docs/release-flow.md). An older release picked by hand
-/// stays, and so does an imported build (`build_import`) or a snapshot (installed by its tag
-/// alone); an instance pinned to a version keeps it either way.
-pub fn select_after_update(selected: Option<&str>, installed_before: &[String]) -> bool {
-    match selected {
-        None => true,
-        Some(s) if crate::nightly::date_of(s).is_some() => installed_before
+/// An unselected launcher can select its first build. Otherwise, move only from the latest
+/// install on the same channel. Legacy, imported, developer and snapshot choices stay put.
+pub fn select_after_update(
+    selected: Option<&str>,
+    installed_before: &[String],
+    target: &str,
+) -> bool {
+    let Some(channel) = Channel::of_build(target) else {
+        return false;
+    };
+    let Some(selected) = selected else {
+        return true;
+    };
+    Channel::of_build(selected) == Some(channel)
+        && installed_before
             .iter()
-            .find(|t| crate::nightly::date_of(t).is_some())
-            .is_none_or(|newest| newest == s),
-        Some(s)
-            if crate::build_import::is_imported(s)
-                || crate::developer_install::uses_developer(s)
-                || sunrise_launcher_release_verify::Channel::of(s)
-                    == Some(sunrise_launcher_release_verify::Channel::Snapshot) =>
-        {
-            false
-        }
-        Some(s) => installed_before
-            .iter()
-            .find(|t| is_game_tag(t))
-            .is_none_or(|newest| newest == s),
+            .filter(|tag| Channel::of_build(tag) == Some(channel))
+            .all(|tag| compare_game_versions(selected, tag).is_ge())
+        && compare_game_versions(target, selected).is_ge()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stable_selection_stays_stable() {
+        let installed = ["nightly-2026-11-20-aaaaaaa".into(), "26.3-0.1.0".into()];
+        assert!(!select_after_update(
+            Some("26.3-0.1.0"),
+            &installed,
+            "nightly-2026-11-21-aaaaaaa"
+        ));
+        assert!(select_after_update(
+            Some("26.3-0.1.0"),
+            &installed,
+            "26.3-0.1.1"
+        ));
+        assert!(!select_after_update(
+            Some("nightly-2026-11-20-aaaaaaa"),
+            &installed,
+            "26.3-0.1.1"
+        ));
+        assert!(!select_after_update(
+            Some("v0.2.95"),
+            &installed,
+            "26.3-0.1.1"
+        ));
     }
 }

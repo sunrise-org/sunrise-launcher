@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod claims;
-pub use claims::ClaimProblem;
+pub use claims::{ClaimProblem, portable_ascii_component};
 
 pub const MANIFEST: &str = "mod-browser.json";
 pub const PENDING: &str = ".mod-browser.pending.json";

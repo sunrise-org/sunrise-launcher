@@ -152,6 +152,39 @@ fn missing_optional_files_are_allowed_but_invalid_json_is_not_replaced() {
     assert_eq!(fs::read(path).unwrap(), b"{invalid settings");
 }
 
+#[test]
+fn relocation_refuses_an_identity_bound_first_play_before_copying() {
+    use crate::profile_txn::{Admission, Bootstrap};
+    let fixture = Fixture::new();
+    let source = fixture.roots("source");
+    fs::create_dir_all(&source.game).unwrap();
+    let mut profile = Admission::open(&source.game, None).unwrap();
+    let tag = "v0.1.7".to_owned();
+    profile
+        .bind_bootstrap(
+            || {
+                Ok(Bootstrap::new(
+                    tag.clone(),
+                    tag,
+                    [1; 16],
+                    [2; 32],
+                    json!({}),
+                ))
+            },
+            |_| Ok(()),
+        )
+        .unwrap();
+    drop(profile);
+    let target = fixture.0.join("destination");
+    let error = data_location::migrate(&source, &target, &fixture.0.join("location.json"), |_| {})
+        .unwrap_err();
+    assert!(error.contains("still preparing its first game"), "{error}");
+    assert!(!target.exists());
+    let refs = crate::profile_txn::references(&source.game).unwrap();
+    assert!(refs.targets.contains("v0.1.7"));
+    assert!(refs.pointer.is_none());
+}
+
 #[cfg(windows)]
 #[test]
 fn windows_managed_paths_are_matched_without_case_sensitive_prefixes() {

@@ -4,33 +4,37 @@ use super::*;
 /// Who and what Play was accepted for, before any install, preparation or build.
 pub(crate) struct PlayIntent {
     pub instance: String,
+    pub incarnation: Option<instances::Incarnation>,
     pub account: Option<String>,
 }
 
 impl PlayIntent {
-    pub fn new(instance: String, selected: Option<&account::Account>) -> Self {
+    pub fn new(instance: &instances::Instance, selected: Option<&account::Account>) -> Self {
         Self {
-            instance,
+            instance: instance.id.clone(),
+            incarnation: instance.incarnation,
             account: selected.map(|a| a.uuid.clone()),
         }
     }
+
+    pub(super) fn matches_profile(&self, current: &instances::Instance) -> bool {
+        current.id == self.instance && current.incarnation == self.incarnation
+    }
 }
 
-/// Registry update reports are notices, not an authorization step in Play.
+/// An older update ledger is advisory, never an authorization step or updater in Play.
 fn continue_after_assets(
     tag: &str,
     accepted: Option<&str>,
-    auto: Option<mods_page::AutoTarget>,
-    auto_enabled: bool,
+    legacy_home: Option<&std::path::Path>,
     tx: &std::sync::mpsc::Sender<Msg>,
     mods_tx: &std::sync::mpsc::Sender<mods_page::Event>,
 ) {
-    if let Some(auto) = auto {
-        backend::play_step("updating registry mods");
+    if let Some(home) = legacy_home {
+        backend::play_step("checking the legacy mod backup ledger");
         let _ = tx.send(Msg::PlayStep(backend::PlayStep::Mods));
-        let lines = mods_page::auto_update(&[auto], auto_enabled);
-        if !lines.is_empty() {
-            let _ = mods_tx.send(mods_page::Event::AutoUpdated(lines));
+        if let Err(notice) = sunrise_launcher::browser::sunrise::auto::recover(home) {
+            let _ = mods_tx.send(mods_page::Event::LegacyBackupNotice(notice));
         }
     }
     backend::play_step("reading the sign-in");
@@ -126,6 +130,10 @@ impl Launcher {
         let Some(tag) = self.selected().cloned() else {
             return;
         };
+        self.prepare_version(tag, from);
+    }
+
+    pub(crate) fn prepare_version(&mut self, tag: String, from: backend::MinecraftFrom) {
         sunrise_launcher::mojang::CANCEL.store(false, Ordering::Relaxed);
         let minecraft = self
             .settings
@@ -149,8 +157,8 @@ impl Launcher {
                     return;
                 }
             };
-            let result = backend::preparer(&tag, &minecraft, from, &log)
-                .inspect(|(_, minecraft)| backend::sounds(&tag, minecraft, &log))
+            let result = backend::preparer(&tag, &minecraft, from, &log, &lock)
+                .inspect(|(_, minecraft)| backend::sounds(&tag, minecraft, &log, &lock))
                 .map(|(p, _)| {
                     backend::set_prepare_step(backend::PrepareStep::Prepare);
                     p
@@ -167,6 +175,12 @@ impl Launcher {
     }
 
     pub(super) fn play(&mut self, intent: PlayIntent) {
+        if !self
+            .selected_instance()
+            .is_some_and(|current| intent.matches_profile(current))
+        {
+            return;
+        }
         // A press that starts nothing says why, where Play's errors show: the button can look
         // ready when it is not (a version prepared elsewhere and since removed, a debug preview).
         let Some(tag) = self.selected().cloned() else {
@@ -204,14 +218,117 @@ impl Launcher {
         starts_now(backend::is_prepared(tag), self.preparing, running)
     }
 
-    /// Starts the game: the session first (a network round trip when the token needs
-    /// renewing), then `drain` starts the process when it arrives.
+    pub(super) fn start_managed_client(
+        &mut self,
+        instance: instances::Instance,
+        intent: PlayIntent,
+    ) {
+        use sunrise_launcher::managed_play::{Client, FirstBuild, Progress};
+        let target = self.profile_target(&instance);
+        let release = target
+            .as_deref()
+            .and_then(|tag| self.release_to_install(tag));
+        let absent = match &self.releases {
+            Load::Loading => {
+                tr("Checking available builds. Press Play when the list is ready.").into()
+            }
+            Load::Failed(error) => error.clone(),
+            Load::Ready(_) => {
+                tr("No downloadable build matches this profile. Choose a game build.").into()
+            }
+        };
+        let destination = self.quick_play.take();
+        let invite = self.joining.take();
+        self.starting_pack = None;
+        self.play_install_recovery = None;
+        self.native_error = None;
+        self.prepare_log.clear();
+        self.client_started =
+            Some(std::time::SystemTime::now() - std::time::Duration::from_secs(2));
+        self.play_pressed = Some(Instant::now());
+        self.starting_client = Some(target.clone().unwrap_or_default());
+        self.play_step = Some(backend::PlayStep::Assets);
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let result = Client {
+                instance: &instance,
+                accepted_account: intent.account.as_deref(),
+                explicit_account: false,
+                piped: true,
+            }
+            .start(
+                || {
+                    if let Some(tag) = target
+                        .as_deref()
+                        .filter(|tag| backend::installed().iter().any(|found| found == tag))
+                    {
+                        FirstBuild::installed(tag)
+                    } else if let Some(release) = release {
+                        FirstBuild::download(&release)
+                    } else {
+                        Err(absent)
+                    }
+                },
+                |cmd| {
+                    if let Some(code) = invite {
+                        backend::join_friend(cmd, &code)?;
+                    }
+                    if let Some((flag, value)) = destination {
+                        cmd.arg(flag).arg(value);
+                    }
+                    backend::append_game_args(cmd);
+                    Ok(())
+                },
+                |cmd| {
+                    jar_launch::with_consent(&tx, |permission| {
+                        sunrise_launcher::jars::prepare_for_command(cmd, permission)
+                    })
+                    .map_err(|error| error.to_string())
+                },
+                Some(&|inventory: &native_mods::Consent| {
+                    let (reply, answer) = std::sync::mpsc::channel();
+                    tx.send(Msg::NativeRegistryConsent(inventory.clone(), reply))
+                        .is_ok()
+                        && answer.recv().unwrap_or(false)
+                }),
+                |progress| {
+                    let msg = match progress {
+                        Progress::Download(_) => Msg::PlayStep(backend::PlayStep::Download),
+                        Progress::Prepare => Msg::PlayStep(backend::PlayStep::Prepare),
+                        Progress::Native(_) => Msg::PlayStep(backend::PlayStep::Native),
+                        Progress::SignIn => Msg::PlayStep(backend::PlayStep::SignIn),
+                        Progress::Line(line) | Progress::HookLine(line) => {
+                            Msg::Line(Job::Prepare, line)
+                        }
+                    };
+                    let _ = tx.send(msg);
+                },
+            );
+            if let Err(std::sync::mpsc::SendError(Msg::ManagedClient { result, .. })) =
+                tx.send(Msg::ManagedClient {
+                    instance: Box::new(instance),
+                    result: Box::new(result),
+                })
+            {
+                if let Ok(game) = *result {
+                    // The admitted child owns its claims now. Closing the window does
+                    // not stop it; drain its streams until this launcher exits.
+                    backend::monitor_game(game.child, tx, game.runtime);
+                }
+            }
+        });
+    }
+
+    /// Starts a pack's game through its legacy route. Ordinary profiles use the admitted worker.
     fn start_client(&mut self, tag: String, intent: PlayIntent) {
         self.client_error = None;
         self.crash = None;
         // Refuse revoked permission early as well as at spawn. The prepared command's
         // compiled inventory is checked off-thread once its actual profile has been applied.
-        if let Err(error) = native_status::check_permission(&tag) {
+        let refusal =
+            backend::game_architecture_launch_error_with_catalogue(&tag, self.game_releases())
+                .or_else(|| native_status::check_permission(&tag).err());
+        if let Some(error) = refusal {
             self.client_error = Some(error);
             self.starting_pack = None;
             self.joining = None;
@@ -230,25 +347,27 @@ impl Launcher {
         let accepted = intent.account.clone();
         self.play_pressed = Some(Instant::now());
         let tx = self.tx.clone();
-        let auto = self
+        let legacy_home = self
             .instances
             .list
             .iter()
-            .find(|i| i.id == intent.instance)
+            .find(|i| i.id == intent.instance && i.kind != instances::Kind::Pack)
             .filter(|_| self.starting_pack.is_none())
-            .map(|i| mods_page::AutoTarget {
-                instance: i.clone(),
-                game: backend::played_version_id_by(Some(&tag)),
-            });
+            .map(|i| i.home.clone());
         let mods_tx = self.mods.tx.clone();
-        let auto_enabled = self.settings.auto_updates_mods();
         self.starting_play = Some(intent);
         std::thread::spawn(move || {
             // One line per step: a terminal run shows where Play stops (#12179).
             backend::play_step("checking the game's assets");
             let _ = tx.send(Msg::PlayStep(backend::PlayStep::Assets));
             backend::complete_assets(&tag);
-            continue_after_assets(&tag, accepted.as_deref(), auto, auto_enabled, &tx, &mods_tx);
+            continue_after_assets(
+                &tag,
+                accepted.as_deref(),
+                legacy_home.as_deref(),
+                &tx,
+                &mods_tx,
+            );
         });
     }
 
@@ -431,36 +550,11 @@ mod tests {
         .unwrap();
         let game_journal = home.join("mod-browser/install-journal.json");
         std::fs::write(&game_journal, b"separate journal").unwrap();
-        let instance = instances::Instance {
-            id: "sunrise".into(),
-            name: "Sunrise".into(),
-            kind: instances::Kind::Default,
-            work: home.into(),
-            home: home.into(),
-            icon: None,
-            group: None,
-            version: None,
-            channel: Default::default(),
-            native_profile: Default::default(),
-            played: Default::default(),
-            last_played: None,
-            launch: Default::default(),
-        };
         let (tx, events) = std::sync::mpsc::channel();
         let (mods_tx, notices) = std::sync::mpsc::channel();
-        continue_after_assets(
-            "v0.0.0-legacy-fixture",
-            None,
-            Some(mods_page::AutoTarget {
-                instance,
-                game: "1.21.11".into(),
-            }),
-            false,
-            &tx,
-            &mods_tx,
-        );
+        continue_after_assets("v0.0.0-legacy-fixture", None, Some(home), &tx, &mods_tx);
         assert!(
-            matches!(notices.try_recv().unwrap(), mods_page::Event::AutoUpdated(lines) if lines[0].contains("You can still play"))
+            matches!(notices.try_recv().unwrap(), mods_page::Event::LegacyBackupNotice(notice) if notice.contains("You can still play"))
         );
         assert!(matches!(
             events.try_recv().unwrap(),
@@ -489,7 +583,11 @@ mod tests {
             });
         }
         accounts.selected = Some("first".into());
-        let intent = PlayIntent::new("sunrise".into(), accounts.selected());
+        let intent = PlayIntent {
+            instance: "sunrise".into(),
+            incarnation: None,
+            account: accounts.selected().map(|a| a.uuid.clone()),
+        };
         // A sign-out in flight when Play was pressed completes during preparation.
         accounts.accounts.remove(0);
         accounts.selected = Some("second".into());

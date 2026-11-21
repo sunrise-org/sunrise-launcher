@@ -102,9 +102,20 @@ impl Endpoint {
     }
     /// Consumes the sole listener: no second client can ever be accepted.
     pub fn accept(&mut self, deadline: Instant) -> io::Result<Stream> {
+        self.accept_while(deadline, || true)
+    }
+
+    pub fn accept_while(
+        &mut self,
+        deadline: Instant,
+        pending: impl Fn() -> bool,
+    ) -> io::Result<Stream> {
         let listener = self.listener.take().ok_or(io::ErrorKind::NotConnected)?;
         loop {
             check_deadline(deadline)?;
+            if !pending() {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            }
             match listener.accept() {
                 Ok((stream, _)) => {
                     peer(&stream)?;

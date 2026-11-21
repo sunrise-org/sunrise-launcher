@@ -50,6 +50,40 @@ SAME_BYTES = (
 SAME_CODE = (
     ("crates/sunrise-port-pack/src/net.rs", "src/net.rs", (
         ("pub(crate) fn get_from_hosts", "pub fn get_from_hosts"),
+        # Nightly sources reuse the same proxy-aware, no-redirect request for their own fetches.
+        ("""let agent = keep(
+            "port-pack-no-redirect",
+            spec_for(address).as_deref(),
+            |proxy| {
+                let builder = ureq::AgentBuilder::new().redirects(0);
+                match proxy {
+                    Some(proxy) => builder.proxy(proxy).build(),
+                    None => builder.build(),
+                }
+            },
+        );
+        match agent
+            .get(address)
+            .set("User-Agent", crate::modrinth::AGENT)
+            .call()""", "match anonymous_get_no_redirect(address).call()"),
+        ("/// GET from allowed HTTPS hosts, validating every redirect before contacting it.",
+         """/// Anonymous GET with the configured proxy, leaving redirects and status to the caller.
+pub(crate) fn anonymous_get_no_redirect(address: &str) -> ureq::Request {
+    let agent = keep(
+        "port-pack-no-redirect",
+        spec_for(address).as_deref(),
+        |proxy| {
+            let builder = ureq::AgentBuilder::new().redirects(0);
+            match proxy {
+                Some(proxy) => builder.proxy(proxy).build(),
+                None => builder.build(),
+            }
+        },
+    );
+    agent.get(address).set("User-Agent", crate::modrinth::AGENT)
+}
+
+/// GET from allowed HTTPS hosts, validating every redirect before contacting it."""),
         ('.set("User-Agent", crate::modrinth::AGENT)',
          '.set("User-Agent", concat!("sunrise-launcher/", env!("CARGO_PKG_VERSION")))'),
     )),
@@ -99,6 +133,9 @@ MIRRORED = (
      "ce65c921695767d21d8c3047d36b48b58d843a78ac4b56d2f77117c68a016430", "src/native_mods/build_log.rs failure"),
     ("crates/sunrise-native-build/src/lib.rs", "unpack_archive",
      "08b67ddd8289e49ed1ce5c81ff77ee25bfca94a9d6cbf0b85df68a28e203eb0c", "src/github_mods.rs unpack_archive"),
+    # The launcher's unpacker is stricter (size, duplicate and Windows-reserved paths, cancellation).
+    ("crates/sunrise-native-build/src/lib.rs", "unpack_source",
+     "356c9c82b888214518bbf5c6949f4ebfd4963e24993dda7bc11db877a33b2187", "src/github_mods.rs unpack_bounded"),
     ("crates/sunrise-native-build/src/package.rs", "read",
      "94d760c8ea6f5452f20a6a816d88207675ed454e44cc0973240cff8069aaecf0",
      "src/native_mods/bundle/package.rs read"),
@@ -161,7 +198,6 @@ SAME_FUNCTIONS = (
     )),
     ("crates/sunrise-native-build/src/prebuilt.rs", "src/native_mods/build_log.rs", ("compiling",)),
     ("crates/sunrise-native-build/src/prebuilt.rs", "src/native_mods/sdk_cache.rs", ("at",)),
-    ("crates/sunrise-native-build/src/lib.rs", "src/github_mods.rs", ("unpack_source",)),
     ("crates/sunrise-native-build/src/rust.rs", "src/rust_toolchain.rs", ("scrubbed", "low_priority")),
     ("crates/sunrise-mod-surface/src/uses.rs", "src/native_mods/uses.rs", ("item",)),
     ("crates/sunrise-mod-surface/src/lib.rs", "src/native_mods/uses.rs", ("leaf",)),

@@ -5,6 +5,7 @@
 //! files found elsewhere are linked into that layout in the launcher's data folder, with the
 //! pinned version JSON from Mojang when the other launcher keeps its own rewrite of it.
 
+use crate::i18n::{tr, trf};
 use serde_json::Value;
 use sha1::{Digest, Sha1};
 use std::fs;
@@ -351,22 +352,42 @@ pub fn not_found(version: &str, checked: &[(PathBuf, String)], chosen: &Path) ->
     for (dir, missing) in checked {
         text += &format!("\n  {} ({missing})", dir.display());
     }
-    text += "\nTo fix it:";
+    let manifest = chosen
+        .join("versions")
+        .join(version)
+        .join(format!("{version}.json"));
+    if manifest.try_exists().is_ok_and(|exists| !exists) {
+        text += "\n";
+        text += &missing_version_file(&manifest);
+    }
+    text += "\nTo fix it:\n  • ";
     text += &match launcher_of(chosen) {
-        Some(launcher) => format!(
-            "\n  • Launch the {version} instance once in {launcher} so it downloads the game, \
-             then prepare again.\n  \
-             • Or choose the folder {launcher} keeps Minecraft {version} in (Minecraft folder › \
-             Choose… in the launcher, --minecraft on the command line)."
+        Some(launcher) => trf(
+            "Play {version} once in {launcher} so it downloads the game, then prepare again.",
+            &[("version", version), ("launcher", launcher)],
         ),
-        None => format!(
-            "\n  • Play {version} once in the official Minecraft launcher, or in Prism Launcher, \
-             MultiMC, the Modrinth App, ATLauncher, GDLauncher or Dawn Client, then prepare again.\n  \
-             • Or choose the folder where your launcher keeps Minecraft {version} (Minecraft \
-             folder › Choose… in the launcher, --minecraft on the command line)."
+        None => trf(
+            "Play {version} once in the official Minecraft launcher, or in Prism Launcher, MultiMC, the Modrinth App, ATLauncher, GDLauncher or Dawn Client, then prepare again.",
+            &[("version", version)],
         ),
     };
+    text += &prepare_advice();
     text
+}
+
+pub(crate) fn missing_version_file(path: &Path) -> String {
+    trf(
+        "Minecraft version file not found: {path}",
+        &[("path", &path.to_string_lossy())],
+    )
+}
+
+pub(crate) fn prepare_advice() -> String {
+    format!(
+        "\n  • {}\n  • {}",
+        tr("Choose an existing Minecraft folder with --minecraft PATH on the command line, or Minecraft folder › Choose… in the app."),
+        tr("On a computer with no Minecraft install, run sunrise-launcher account sign-in, then sunrise-launcher prepare --download."),
+    )
 }
 
 /// Fetches a URL's body (from several threads for a download).
@@ -588,7 +609,7 @@ fn junction_command(target: &Path, link: &Path) -> JunctionCommand {
 /// Makes `link` a junction to the folder `target` (no admin rights needed, unlike a symlink). The
 /// error carries cmd's own message ("Access is denied", "The system cannot find the path…").
 #[cfg(windows)]
-pub(crate) fn junction(target: &Path, link: &Path) -> std::io::Result<()> {
+pub fn junction(target: &Path, link: &Path) -> std::io::Result<()> {
     use std::os::windows::process::CommandExt;
     let line = junction_command(target, link);
     let mut cmd = crate::process::command("cmd");

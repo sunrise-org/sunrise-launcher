@@ -19,6 +19,12 @@ const LAUNCHER_STATE: [&str; 7] = [
     "servers",
 ];
 
+/// What a game folder holds that the game makes again: its content cache (under the earlier
+/// launcher's name or this one's), compiled scripts and downloads. Not copied: a Horizon game
+/// folder's `.horizon-cache` is most of its files, and its entries are links into the earlier
+/// launcher's game builds, which a copy refuses.
+const GAME_CACHES: [&str; 4] = [".horizon-cache", ".sunrise-cache", "wasm-cache", "cache"];
+
 /// The file that says the stage holds the whole copy, written before the first rename.
 const COMPLETE: &str = "complete";
 
@@ -84,16 +90,14 @@ pub fn carry_over(data: &Path, config: &Path) -> Result<bool, String> {
         build: stage.join("launcher"),
     };
     fs::create_dir_all(&staged.launcher).map_err(|e| format!("{}: {e}", stage.display()))?;
-    // Nothing to skip: the copy never runs inside this launcher's own location folder.
-    let bootstrap = stage.join("location.json");
     let mut quiet = |_: &str| {};
     for name in LAUNCHER_STATE {
         let from = source.launcher.join(name);
         if from.exists() {
-            data_location::copy_tree(&from, &staged.launcher.join(name), &bootstrap, &mut quiet)?;
+            data_location::copy_tree(&from, &staged.launcher.join(name), &[], &mut quiet)?;
         }
     }
-    data_location::copy_tree(&source.game, &staged.game, &bootstrap, &mut quiet)?;
+    data_location::copy_tree_except(&source.game, &staged.game, &[], &GAME_CACHES, &mut quiet)?;
     let target = Roots {
         launcher: launcher.clone(),
         game: game.clone(),
@@ -250,6 +254,22 @@ mod tests {
         fs::write(from_launcher.join("cache/big.bin"), [7; 64]).unwrap();
         fs::write(from_game.join("saves/World/level.dat"), [1, 2, 3]).unwrap();
         fs::write(from_game.join("instances/modded/options.txt"), "fov:90").unwrap();
+        // A Horizon game folder's cache: files and links into the earlier launcher's builds.
+        fs::create_dir_all(from_game.join(".horizon-cache/mod-content")).unwrap();
+        fs::write(
+            from_game.join(".horizon-cache/mod-content/blocks.json"),
+            "{}",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(
+            from_launcher.join("settings.json"),
+            from_game.join(".horizon-cache/mod-content/link.json"),
+        )
+        .unwrap();
+        // Only the game folder's own caches stay behind: a folder of that name deeper is copied.
+        fs::create_dir_all(from_game.join("instances/modded/cache")).unwrap();
+        fs::write(from_game.join("instances/modded/cache/kept.txt"), "kept").unwrap();
         let before = (files(&from_launcher), files(&from_game));
 
         assert_eq!(carry_over(&data, &config), Ok(true));
@@ -270,6 +290,14 @@ mod tests {
         );
         assert!(launcher.join("accounts.json").is_file());
         assert!(!launcher.join("cache").exists(), "caches are made again");
+        assert!(
+            !game.join(".horizon-cache").exists(),
+            "the game's cache is made again"
+        );
+        assert_eq!(
+            fs::read_to_string(game.join("instances/modded/cache/kept.txt")).unwrap(),
+            "kept"
+        );
         // A path into the earlier game folder now names the copy.
         let copied: serde_json::Value =
             serde_json::from_slice(&fs::read(launcher.join("settings.json")).unwrap()).unwrap();
@@ -479,6 +507,177 @@ mod tests {
         assert!(!stage.exists());
         assert_eq!(fs::read(game.join("saves/level.dat")).unwrap(), [2]);
         assert_eq!(fs::read(launcher.join("accounts.json")).unwrap(), b"{}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Links the folder `link` to the folder `target`: a symlink, or a junction on Windows.
+    #[cfg(any(unix, windows))]
+    fn link_dir(target: &Path, link: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+        #[cfg(windows)]
+        crate::sources::junction(target, link).unwrap();
+    }
+
+    /// Removes the link `link_dir` made, never what it points to.
+    #[cfg(any(unix, windows))]
+    fn unlink_dir(link: &Path) {
+        #[cfg(unix)]
+        fs::remove_file(link).unwrap();
+        #[cfg(windows)]
+        fs::remove_dir(link).unwrap();
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn an_earlier_game_folder_that_is_a_link_is_refused_and_left_untouched() {
+        let Some(&(old_launcher, old_game, _)) = crate::identity::EARLIER.first() else {
+            return;
+        };
+        let (data, config, base) = scratch("linked-root");
+        let elsewhere = base.join("elsewhere");
+        fs::create_dir_all(elsewhere.join("saves/World")).unwrap();
+        fs::write(elsewhere.join("saves/World/level.dat"), [1, 2, 3]).unwrap();
+        fs::create_dir_all(data.join(old_launcher)).unwrap();
+        fs::write(data.join(old_launcher).join("accounts.json"), "{}").unwrap();
+        let linked = data.join(old_game);
+        link_dir(&elsewhere, &linked);
+        let before = files(&elsewhere);
+
+        let error = carry_over(&data, &config).unwrap_err();
+        assert!(
+            error.contains("Symbolic links and reparse points"),
+            "{error}"
+        );
+        assert!(error.contains(&linked.display().to_string()), "{error}");
+        assert_eq!(files(&elsewhere), before, "the linked folder is unchanged");
+        assert!(!crate::identity::launcher_folder_in(&data).exists());
+        assert!(!crate::identity::game_folder_in(&data).exists());
+        unlink_dir(&linked);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn a_link_above_the_earlier_folders_is_followed() {
+        let Some(&(old_launcher, old_game, _)) = crate::identity::EARLIER.first() else {
+            return;
+        };
+        let (_, config, base) = scratch("linked-parent");
+        let real = base.join("real");
+        fs::create_dir_all(real.join(old_launcher)).unwrap();
+        fs::write(real.join(old_launcher).join("accounts.json"), "{}").unwrap();
+        fs::create_dir_all(real.join(old_game).join("saves/World")).unwrap();
+        fs::write(real.join(old_game).join("saves/World/level.dat"), [1, 2, 3]).unwrap();
+        // The whole data folder is reached through a link, as when it lives on another disk.
+        let data = base.join("data");
+        link_dir(&real, &data);
+
+        assert_eq!(carry_over(&data, &config), Ok(true));
+        assert_eq!(
+            fs::read(crate::identity::game_folder_in(&real).join("saves/World/level.dat")).unwrap(),
+            [1, 2, 3]
+        );
+        unlink_dir(&data);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_restricted_earlier_game_folder_stays_restricted() {
+        use std::os::unix::fs::PermissionsExt;
+        let Some(&(old_launcher, old_game, _)) = crate::identity::EARLIER.first() else {
+            return;
+        };
+        let (data, config, base) = scratch("restricted");
+        let from_game = data.join(old_game);
+        fs::create_dir_all(data.join(old_launcher)).unwrap();
+        fs::create_dir_all(from_game.join("saves")).unwrap();
+        fs::write(from_game.join("saves/level.dat"), [1]).unwrap();
+        fs::create_dir_all(from_game.join(".horizon-cache")).unwrap();
+        fs::set_permissions(&from_game, fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert_eq!(carry_over(&data, &config), Ok(true));
+        let game = crate::identity::game_folder_in(&data);
+        assert_eq!(
+            fs::metadata(&game).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[cfg(windows)]
+    fn acl_script(path: &Path, script: &str) -> (bool, String) {
+        let output = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command"])
+            .arg(format!("$ErrorActionPreference = 'Stop'; {script}"))
+            .env("SUNRISE_CARRY_ACL_PATH", path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "ACL fixture for {path:?}: {output:?}"
+        );
+        let sddl = String::from_utf8(output.stdout).unwrap();
+        let sddl = sddl.trim();
+        assert!(sddl.starts_with("D:"), "expected DACL SDDL, got {sddl:?}");
+        // Compare protection and every ACE, but not the auto-inheritance bookkeeping flags.
+        let (flags, rules) = sddl.split_at(sddl.find('(').unwrap_or(sddl.len()));
+        (flags.contains('P'), rules.to_owned())
+    }
+
+    #[cfg(windows)]
+    fn access_rules(path: &Path) -> (bool, String) {
+        acl_script(
+            path,
+            "(Get-Acl -LiteralPath $env:SUNRISE_CARRY_ACL_PATH).GetSecurityDescriptorSddlForm('Access')",
+        )
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_restricted_earlier_game_folder_keeps_its_access_rules() {
+        let Some(&(old_launcher, old_game, _)) = crate::identity::EARLIER.first() else {
+            return;
+        };
+        let (data, config, base) = scratch("restricted-acl");
+        let from_game = data.join(old_game);
+        let default_sibling = data.join(old_launcher);
+        fs::create_dir_all(&default_sibling).unwrap();
+        fs::create_dir(&from_game).unwrap();
+        // Replace the whole DACL: protected, with one inheritable grant to the current SID.
+        let restricted = acl_script(
+            &from_game,
+            "$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; \
+             if ($sid -in 'S-1-5-18', 'S-1-5-32-544') { throw 'Run the ACL fixture as a user account'; }; \
+             $sddl = 'D:P(A;OICI;FA;;;' + $sid + ')'; \
+             $acl = Get-Acl -LiteralPath $env:SUNRISE_CARRY_ACL_PATH; \
+             $acl.SetSecurityDescriptorSddlForm($sddl, 'Access'); \
+             Set-Acl -LiteralPath $env:SUNRISE_CARRY_ACL_PATH -AclObject $acl; \
+             [System.Security.AccessControl.RawSecurityDescriptor]::new($sddl).GetSddlForm('Access')",
+        );
+        assert!(restricted.0, "fixture DACL must be protected");
+        assert_eq!(access_rules(&from_game), restricted, "restricted source");
+        assert_ne!(
+            access_rules(&default_sibling).1,
+            restricted.1,
+            "source ACEs must differ from the default ACL"
+        );
+        fs::create_dir(from_game.join("saves")).unwrap();
+        fs::write(from_game.join("saves/level.dat"), [1]).unwrap();
+        fs::create_dir(from_game.join(".horizon-cache")).unwrap();
+        let stage = data.join("acl-probe");
+        let mut copied = 0;
+        data_location::copy_tree_except(&from_game, &stage, &[], &GAME_CACHES, &mut |_| {
+            copied += 1;
+            assert_eq!(access_rules(&stage), restricted, "during the copy");
+        })
+        .unwrap();
+        assert_eq!(copied, 1);
+
+        assert_eq!(carry_over(&data, &config), Ok(true));
+        let game = crate::identity::game_folder_in(&data);
+        assert_eq!(access_rules(&game), restricted, "after carry-over rename");
         let _ = fs::remove_dir_all(&base);
     }
 }

@@ -120,10 +120,9 @@ impl Entry {
 }
 
 /// The rows of Settings found by name, as their sections title them.
-const SETTINGS_ROWS: [(&str, Section); 16] = [
+const SETTINGS_ROWS: [(&str, Section); 18] = [
     ("While you play", Section::Game),
     ("Minecraft folder", Section::Game),
-    ("Remove old game builds", Section::Game),
     ("Profiles", Section::Game),
     ("Theme", Section::Appearance),
     ("Accent", Section::Appearance),
@@ -132,6 +131,9 @@ const SETTINGS_ROWS: [(&str, Section); 16] = [
     ("Your themes", Section::Appearance),
     ("Show the cat", Section::Appearance),
     ("Native code", Section::Mods),
+    ("Installed game builds", Section::Storage),
+    ("Import a game build", Section::Storage),
+    ("Remove old game builds automatically", Section::Storage),
     ("Game files and worlds", Section::Storage),
     ("Downloads kept for reuse", Section::Storage),
     ("Keep at most", Section::Storage),
@@ -148,7 +150,6 @@ pub(crate) fn destinations() -> Vec<Entry> {
         Entry::page(tr("Packs").to_string(), "package", Page::Packs),
         Entry::page(under("Servers", "Join"), "globe", Page::Join),
         Entry::page(under("Servers", "Host"), "server", Page::Hosting),
-        Entry::page(tr("Versions").to_string(), "download", Page::Versions),
         Entry::page(tr("Settings").to_string(), "sliders", Page::Settings),
     ];
     all.extend(Section::ALL.map(|section| Entry {
@@ -852,7 +853,6 @@ mod tests {
                 "Packs",
                 "Servers › Join",
                 "Servers › Host",
-                "Versions",
                 "Settings",
                 "Sunrise",
                 "Wildflower Valley",
@@ -938,12 +938,28 @@ mod tests {
         assert_eq!(entries[i].hint, "Settings › Launcher");
     }
 
+    #[test]
+    fn build_management_search_goes_to_storage() {
+        let entries = sample();
+        for query in [
+            "installed game builds",
+            "import a game build",
+            "remove old game builds",
+        ] {
+            let entry = &entries[results(&entries, query)[0]];
+            assert_eq!(entry.group, Group::Settings);
+            assert_eq!(entry.hint, "Settings › Storage");
+            assert!(entry.target == Target::Section(Section::Storage));
+        }
+    }
+
     /// The rows named here must be the ones Settings draws.
     #[test]
     fn the_settings_rows_are_the_ones_settings_has() {
         let source = concat!(
             include_str!("settings.rs"),
-            include_str!("settings/appearance.rs")
+            include_str!("settings/appearance.rs"),
+            include_str!("storage_builds.rs")
         );
         for (title, _) in SETTINGS_ROWS {
             assert!(source.contains(&format!("tr(\"{title}\")")), "{title}");
@@ -969,25 +985,24 @@ mod tests {
     fn nothing_retired_is_listed() {
         let places: Vec<String> = destinations().into_iter().map(|e| e.label).collect();
         assert_eq!(
-            places[..7],
+            places[..6],
             [
                 "Home",
                 "Mods",
                 "Packs",
                 "Servers › Join",
                 "Servers › Host",
-                "Versions",
                 "Settings"
             ]
         );
-        assert_eq!(places.len(), 7 + Section::ALL.len() + SETTINGS_ROWS.len());
+        assert_eq!(places.len(), 6 + Section::ALL.len() + SETTINGS_ROWS.len());
         let entries = sample();
         for gone in [
             "java",
             "modrinth",
-            "port",
-            "import",
+            "port a modpack",
             "export",
+            "versions",
             "console",
             "screenshot",
             "shop",
@@ -1026,7 +1041,7 @@ mod tests {
         );
         assert!(press(&mut search, "down") == Press::Stay);
         assert_eq!(on(&search), "Home");
-        for _ in 0..7 {
+        for _ in 0..6 {
             press(&mut search, "down");
         }
         assert_eq!(on(&search), "Sunrise", "from the pages into the profiles");

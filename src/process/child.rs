@@ -3,6 +3,13 @@
 use std::io::{self, Read, Write};
 use std::process::{self, ExitStatus};
 
+pub fn unconfirmed_exit(error: io::Error) -> String {
+    crate::i18n::trf(
+        "Sunrise started, but the launcher couldn't confirm that it stopped. Close the game if it's still open.\n{reason}",
+        &[("reason", &error.to_string())],
+    )
+}
+
 pub struct Child {
     process: Handle,
     pub stdin: Option<Box<dyn Write + Send>>,
@@ -12,6 +19,7 @@ pub struct Child {
 
 enum Handle {
     Std(process::Child),
+    Relayed(super::relay_lifetime::RelayedGame),
     #[cfg(windows)]
     Windows(super::leases::WindowsChild),
 }
@@ -28,6 +36,19 @@ impl From<process::Child> for Child {
 }
 
 impl Child {
+    pub(super) fn relayed(game: super::relay_lifetime::RelayedGame, wrapper: &mut Self) -> Self {
+        Self {
+            process: Handle::Relayed(game),
+            stdin: wrapper.stdin.take(),
+            stdout: wrapper.stdout.take(),
+            stderr: wrapper.stderr.take(),
+        }
+    }
+
+    pub(crate) fn is_relayed(&self) -> bool {
+        matches!(self.process, Handle::Relayed(_))
+    }
+
     #[cfg(windows)]
     pub(super) fn windows(
         child: super::leases::WindowsChild,
@@ -53,14 +74,31 @@ impl Child {
     #[cfg(windows)]
     pub(crate) fn compiler_job(&self) -> Option<std::sync::Arc<super::leases::CompilerJob>> {
         match &self.process {
-            Handle::Std(_) => None,
+            Handle::Std(_) | Handle::Relayed(_) => None,
             Handle::Windows(child) => child.compiler_job(),
+        }
+    }
+
+    #[cfg(windows)]
+    pub(super) fn wrapper_job(&self) -> Option<std::sync::Arc<super::leases::WrapperJob>> {
+        match &self.process {
+            Handle::Std(_) | Handle::Relayed(_) => None,
+            Handle::Windows(child) => child.wrapper_job(),
+        }
+    }
+
+    #[cfg(windows)]
+    pub(super) fn wrapper_leader_exited(&self) -> io::Result<bool> {
+        match &self.process {
+            Handle::Std(_) | Handle::Relayed(_) => Err(io::ErrorKind::InvalidInput.into()),
+            Handle::Windows(child) => child.wrapper_leader_exited(),
         }
     }
 
     pub fn id(&self) -> u32 {
         match &self.process {
             Handle::Std(child) => child.id(),
+            Handle::Relayed(child) => child.id(),
             #[cfg(windows)]
             Handle::Windows(child) => child.id(),
         }
@@ -69,6 +107,7 @@ impl Child {
     pub fn kill(&mut self) -> io::Result<()> {
         match &mut self.process {
             Handle::Std(child) => child.kill(),
+            Handle::Relayed(child) => child.kill(),
             #[cfg(windows)]
             Handle::Windows(child) => child.kill(),
         }
@@ -78,6 +117,7 @@ impl Child {
         drop(self.stdin.take());
         match &mut self.process {
             Handle::Std(child) => child.wait(),
+            Handle::Relayed(child) => child.wait(),
             #[cfg(windows)]
             Handle::Windows(child) => child.wait(),
         }
@@ -86,6 +126,7 @@ impl Child {
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         match &mut self.process {
             Handle::Std(child) => child.try_wait(),
+            Handle::Relayed(child) => child.try_wait(),
             #[cfg(windows)]
             Handle::Windows(child) => child.try_wait(),
         }

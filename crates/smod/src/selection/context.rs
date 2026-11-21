@@ -78,7 +78,14 @@ impl LaunchArguments {
         let env = |key: &str| {
             command
                 .get_envs()
-                .find(|(name, _)| *name == key)
+                .find(|(name, _)| {
+                    if cfg!(windows) {
+                        name.to_str()
+                            .is_some_and(|name| name.eq_ignore_ascii_case(key))
+                    } else {
+                        *name == key
+                    }
+                })
                 .map_or_else(
                     || std::env::var_os(key),
                     |(_, value)| value.map(OsStr::to_owned),

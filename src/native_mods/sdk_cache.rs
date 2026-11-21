@@ -190,7 +190,7 @@ fn megabytes(bytes: u64) -> String {
     )
 }
 
-/// A build as people read it: as the Versions page names its Nightly ("the Nov 13 update"),
+/// A build as people read it: using the Nightly’s update name ("the Nov 13 update"),
 /// found from an installed version when the index has no name, else "your Sunrise version"
 /// (an imported build or a snapshot), never a commit. Anything but a build id (a mod's manifest
 /// may say anything) is shown as it is, cut where a character ends.
@@ -219,7 +219,7 @@ pub(super) fn nightly_of(commit: &str) -> Option<String> {
         })
 }
 
-/// Build `commit`'s name as the Versions page gives it, when it is known here (a kept index, or
+/// Build `commit`'s display name when it is known here (a kept index, or
 /// an installed version). `commit` may come from a mod's manifest: anything but a build id is
 /// never looked up.
 pub fn name_of(commit: &str) -> Option<String> {
@@ -252,6 +252,8 @@ pub(super) enum Base {
 enum Unread {
     /// No connection.
     Offline,
+    /// Local SDK mirror I/O, not evidence that a file is missing.
+    Local(String),
     /// Any other failure, said.
     Failed(String),
 }
@@ -294,7 +296,7 @@ impl Base {
                 match fs::File::open(&path) {
                     Ok(file) => Ok(Some(Box::new(file))),
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-                    Err(error) => Err(Unread::Failed(format!("{}: {error}", path.display()))),
+                    Err(error) => Err(Unread::Local(format!("{}: {error}", path.display()))),
                 }
             }
         }
@@ -308,7 +310,13 @@ impl Base {
         let mut bytes = Vec::new();
         body.take(SMALL + 1)
             .read_to_end(&mut bytes)
-            .map_err(|error| Unread::Failed(format!("{name}: {error}")))?;
+            .map_err(|error| {
+                let why = format!("{name}: {error}");
+                match self {
+                    Self::Folder(_) => Unread::Local(why),
+                    Self::Url(_) => Unread::Failed(why),
+                }
+            })?;
         if bytes.len() as u64 > SMALL {
             return Err(Unread::Failed(trf(
                 "{name} is larger than {size}",
@@ -394,11 +402,15 @@ fn index_in(root: &Path, base: &Base, commit: &str, keys: &[PublicKey]) -> Resul
     }
     let dir = root.join(commit);
     let kept = dir.join(INDEX);
-    if let Ok(bytes) = fs::read(&kept) {
-        // Written only once verified: read as the same checks would, without the signature.
-        if let Ok(sdk) = checked(&bytes, commit, dir.clone()) {
-            return Ok(sdk);
+    match fs::read(&kept) {
+        Ok(bytes) => {
+            // Written only once verified: read as the same checks would, without the signature.
+            if let Ok(sdk) = checked(&bytes, commit, dir.clone()) {
+                return Ok(sdk);
+            }
         }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(Refusal::Cache(format!("{}: {error}", kept.display()))),
     }
     let tag = tag(commit);
     let read = |name: &str| {
@@ -407,6 +419,7 @@ fn index_in(root: &Path, base: &Base, commit: &str, keys: &[PublicKey]) -> Resul
                 build: build.clone(),
                 bytes: None,
             },
+            Unread::Local(why) => Refusal::Cache(why),
             Unread::Failed(why) => Refusal::Refused {
                 build: build.clone(),
                 why,
@@ -503,7 +516,10 @@ pub(super) fn surface_file(sdk: &Sdk, base: &Base) -> Result<PathBuf, Refusal> {
     let listed = sdk.index.asset(NAME).map_err(|r| refused(r.to_string()))?;
     match fs::read(&kept) {
         // Kept only once verified; a size that changed since is fetched again.
-        Ok(bytes) if bytes.len() as u64 == listed.size => {}
+        Ok(bytes) if bytes.len() as u64 == listed.size => return Ok(kept),
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            return Err(Refusal::Cache(format!("{}: {error}", kept.display())));
+        }
         _ => {
             let tag = tag(sdk.commit());
             let body = base
@@ -513,13 +529,17 @@ pub(super) fn surface_file(sdk: &Sdk, base: &Base) -> Result<PathBuf, Refusal> {
                         build: build.clone(),
                         bytes: Some(listed.size),
                     },
+                    Unread::Local(why) => Refusal::Cache(why),
                     Unread::Failed(why) => refused(why),
                 })?
                 .ok_or_else(|| refused(sdk::Refusal::Missing(vec![NAME.into()]).to_string()))?;
             let mut bytes = Vec::new();
             body.take(listed.size.saturating_add(1))
                 .read_to_end(&mut bytes)
-                .map_err(|error| refused(error.to_string()))?;
+                .map_err(|error| match base {
+                    Base::Folder(_) => Refusal::Cache(format!("{NAME}: {error}")),
+                    Base::Url(_) => refused(error.to_string()),
+                })?;
             sdk.index
                 .verify(NAME, bytes.as_slice())
                 .map_err(|r| refused(r.to_string()))?;
@@ -841,7 +861,15 @@ fn fetch_into(
     let tag = tag(sdk.commit());
     let start = fetched.done;
     let (archive, downloaded) = match base.local(&tag, name) {
-        Some(path) => (path, None),
+        Some(path) => match path.try_exists() {
+            Ok(true) => (path, None),
+            Ok(false) => {
+                return Err(refused(
+                    sdk::Refusal::Missing(vec![name.into()]).to_string(),
+                ))
+            }
+            Err(error) => return Err(Refusal::Cache(format!("{}: {error}", path.display()))),
+        },
         None => {
             let body = base
                 .open(&tag, name)
@@ -850,6 +878,7 @@ fn fetch_into(
                         build: build.clone(),
                         bytes: Some(fetched.total.saturating_sub(fetched.done).max(size)),
                     },
+                    Unread::Local(why) => Refusal::Cache(why),
                     Unread::Failed(why) => refused(why),
                 })?
                 .ok_or_else(|| refused(sdk::Refusal::Missing(vec![name.into()]).to_string()))?;
@@ -871,7 +900,10 @@ fn fetch_into(
                     });
                 },
             )
-            .map_err(refused)?;
+            .map_err(|error| match error {
+                crate::backend::SaveCheckedError::Download(error) => refused(error),
+                crate::backend::SaveCheckedError::Local(error) => cache(error),
+            })?;
             (file.clone(), Some(file))
         }
     };
@@ -880,12 +912,14 @@ fn fetch_into(
         let _ = fs::remove_file(file);
     }
     unpacked.map_err(|refusal| match refusal {
-        sdk::Refusal::Missing(_) | sdk::Refusal::Io(_) if !archive.is_file() => {
-            refused(sdk::Refusal::Missing(vec![name.into()]).to_string())
-        }
-        sdk::Refusal::Busy(_) | sdk::Refusal::NoLocks(_) | sdk::Refusal::Rename { .. } => {
-            Refusal::Cache(refusal.to_string())
-        }
+        // The SDK extractor also uses Archive for destination I/O during extraction.
+        // Do not publish a reduced Switch candidate after an ambiguous unpack error.
+        sdk::Refusal::Archive { .. }
+        | sdk::Refusal::Io(_)
+        | sdk::Refusal::Busy(_)
+        | sdk::Refusal::NoLocks(_)
+        | sdk::Refusal::Exists(_)
+        | sdk::Refusal::Rename { .. } => Refusal::Cache(refusal.to_string()),
         other => refused(other.to_string()),
     })?;
     let files = listing(into).ok_or_else(|| {
@@ -935,10 +969,17 @@ fn build_of_in(
         )));
     }
     let file = kept.join(version);
-    if let Ok(text) = fs::read_to_string(&file) {
-        if super::is_revision(text.trim()) {
-            return Ok(text.trim().to_owned());
+    match fs::read_to_string(&file) {
+        Ok(text) if super::is_revision(text.trim()) => return Ok(text.trim().to_owned()),
+        Err(error)
+            if !matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidData
+            ) =>
+        {
+            return Err(Refusal::Cache(format!("{}: {error}", file.display())));
         }
+        _ => {}
     }
     // A build of a channel (a Nightly, or a snapshot installed by its tag) is read from its
     // channel only: the version's own prefix, checked whole, names it, never a release's title.
@@ -968,8 +1009,8 @@ fn build_of_in(
                 bytes = Some(found);
                 break;
             }
-            // Offline is offline whichever tag: no use trying the next.
-            Err(refusal @ Refusal::Offline { .. }) => return Err(refusal),
+            // Neither being offline nor local I/O failure can be resolved by another tag.
+            Err(refusal @ (Refusal::Offline { .. } | Refusal::Cache(_))) => return Err(refusal),
             Err(refusal) => last = refusal,
         }
     }
@@ -1011,6 +1052,7 @@ fn signed_game_index(
                 build: version.to_owned(),
                 bytes: None,
             },
+            Unread::Local(why) => Refusal::Cache(why),
             Unread::Failed(why) => Refusal::Refused {
                 build: version.to_owned(),
                 why,

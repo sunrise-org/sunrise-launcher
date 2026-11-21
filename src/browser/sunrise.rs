@@ -57,6 +57,7 @@ struct Loaded {
     at: Instant,
     index: Arc<Index>,
     fetched: bool,
+    official: bool,
 }
 
 impl Loaded {
@@ -67,6 +68,55 @@ impl Loaded {
 }
 
 static LOADED: Mutex<Option<Loaded>> = Mutex::new(None);
+
+/// Archive authority from the built-in registry only. Neither a browser row, a cache file,
+/// nor an HTTPS developer override is a source of this authority.
+#[derive(Clone)]
+pub struct OfficialRegistry(Arc<Index>);
+
+impl OfficialRegistry {
+    #[cfg(test)]
+    pub(crate) fn fixture(index: &Index) -> Self {
+        Self(Arc::new(index.clone()))
+    }
+
+    pub fn proves_archive(&self, id: &str, actual_sha256: &str) -> bool {
+        self.0.project(id).is_some_and(|project| {
+            matches!(project.kind, index::Kind::Mod | index::Kind::NativeMod)
+                && project
+                    .versions
+                    .iter()
+                    .any(|release| release.file.sha256.eq_ignore_ascii_case(actual_sha256))
+        })
+    }
+}
+
+fn official_endpoint(source: &str, override_set: bool) -> bool {
+    source == INDEX_URL && !override_set
+}
+
+/// Provenance belongs to this exact live response, not another caller's index.
+pub(crate) fn fetched_official_index(index: &Arc<Index>) -> Option<OfficialRegistry> {
+    LOADED.lock().unwrap().as_ref().and_then(|loaded| {
+        (loaded.official && Arc::ptr_eq(index, &loaded.index))
+            .then(|| OfficialRegistry(index.clone()))
+    })
+}
+
+/// Freeze the index and its provenance at the response boundary for staged mutation decisions.
+pub fn fetch_with_official(
+    source: &str,
+    local: bool,
+) -> Result<(Index, String, Option<OfficialRegistry>), String> {
+    let (index, text) = fetch_index(source, local)?;
+    let authority = response_authority(source, local, &index);
+    Ok((index, text, authority))
+}
+
+fn response_authority(source: &str, local: bool, index: &Index) -> Option<OfficialRegistry> {
+    (!local && official_endpoint(source, std::env::var_os("SUNRISE_MOD_INDEX").is_some()))
+        .then(|| OfficialRegistry(Arc::new(index.clone())))
+}
 
 /// The index, asked for again now whatever was read last: "Check for update".
 pub fn refreshed_index() -> Result<Arc<Index>, String> {
@@ -96,6 +146,75 @@ pub fn fits_game(version: &index::Version, game: &str) -> bool {
     version.game == game && version.capabilities.unknown().is_empty()
 }
 
+/// Install-only evidence. A missing local record or a different published revision is not a
+/// refusal: the worker checks the verified archives and SDK. Construction reads no network.
+pub struct NativeInstallReadiness {
+    host_block: Option<String>,
+    developer_revision: Option<String>,
+}
+
+impl NativeInstallReadiness {
+    pub fn for_profile(home: &Path, selected_base: Option<&str>, catalogue_game: &str) -> Self {
+        // Install uses the committed base, not a newly offered release. If the journal
+        // is unsettled or a first attempt is already bound, only host-wide facts are known.
+        let references = crate::profile_txn::references(home).ok();
+        let active = references
+            .as_ref()
+            .and_then(|refs| refs.pointer.as_deref())
+            .and_then(|bytes| crate::managed_play::Active::parse(bytes).ok());
+        let base = active
+            .as_ref()
+            .map(crate::managed_play::Active::base)
+            .or_else(|| {
+                references
+                    .as_ref()
+                    .filter(|refs| refs.pointer.is_none() && refs.targets.is_empty())?;
+                selected_base
+            });
+        let about = base.and_then(crate::native_mods::about);
+        let origin = about.as_ref().map(|about| about.base.as_str()).or(base);
+        let developer_revision = origin
+            .filter(|tag| {
+                crate::developer_install::is_developer(tag)
+                    && crate::backend::game_version(tag) == catalogue_game
+            })
+            .and_then(|tag| match about.as_ref() {
+                Some(about) => Some(about.sunrise.clone()),
+                None => crate::developer_install::revision(tag).ok(),
+            });
+        Self {
+            host_block: crate::native_mods::known_host_block(origin),
+            developer_revision,
+        }
+    }
+
+    pub fn block(&self, index: &Index, id: &str, game: &str) -> Option<String> {
+        let project = index
+            .project(id)
+            .filter(|p| p.kind == index::Kind::NativeMod)?;
+        index.installable(project, game)?;
+        if let Some(reason) = &self.host_block {
+            return Some(reason.clone());
+        }
+        let revision = self.developer_revision.as_deref()?;
+        let all_mismatch = project
+            .versions
+            .iter()
+            .filter(|v| fits_game(v, game) && index.revoked(id, &v.file.sha256).is_none())
+            .all(|v| {
+                v.api
+                    .strip_prefix("native-1/")
+                    .and_then(|api| api.split('/').next())
+                    .filter(|pin| pin.len() == 40 && pin.bytes().all(|b| b.is_ascii_hexdigit()))
+                    .is_some_and(|pin| pin != revision)
+            });
+        all_mismatch.then(|| {
+            tr("No listed native version matches this local developer game's exact revision.")
+                .into()
+        })
+    }
+}
+
 /// Plans every one of `ids` together, once, and refuses the whole set with the planner's reason
 /// if any of them can't be installed with the others: nothing is downloaded before that.
 pub fn check_set(
@@ -111,19 +230,21 @@ pub fn check_set(
             version: None,
         })
         .collect();
-    let plan = index::resolve::install(
+    let plan = index::resolve::install_with_messages(
         index,
         &requests,
         held,
         game,
         sunrise_launcher_smod::manifest::Side::Both,
         |_, v| fits_game(v, game),
+        trf,
     );
     for id in ids {
         if let Some(index::resolve::RequestResult::Refused { reason }) = plan.requested.get(id) {
             let name = index.project(id).map_or(id.as_str(), |p| p.name.as_str());
-            return Err(format!(
-                "{name} can't be installed with the others: {reason}"
+            return Err(trf(
+                "{name} can't be installed with the others: {reason}",
+                &[("name", name), ("reason", reason)],
             ));
         }
     }
@@ -186,38 +307,55 @@ pub fn github_stars(id: &str) -> Option<u64> {
 /// The index: the one fetched in the last ten minutes, else fetched again (and kept in the game
 /// folder), else the copy kept last time.
 pub fn index() -> Result<Arc<Index>, String> {
+    with_index(|index| Ok((index.clone(), true)))
+}
+
+// Publish the shared result only after the caller has accepted it. In particular, a
+// refused legacy Pack install must not refresh the file under the game folder.
+fn with_index<T>(
+    accept: impl FnOnce(&Arc<Index>) -> Result<(T, bool), String>,
+) -> Result<T, String> {
     let at = location();
     if at.is_empty() {
         return Err("The Sunrise mod registry is not available yet.".into());
     }
-    if let Some(loaded) = LOADED.lock().unwrap().as_ref() {
+    let kept = LOADED.lock().unwrap();
+    if let Some(loaded) = kept.as_ref() {
         if loaded.at.elapsed() < FRESH {
-            return Ok(loaded.index.clone());
+            let index = loaded.index.clone();
+            drop(kept);
+            return accept(&index).map(|(value, _)| value);
         }
     }
+    drop(kept);
     let cache = crate::backend::game_home().join(CACHE);
     let local = !at.starts_with("https://");
-    let loaded = load(fetch_index(&at, local), &cache, local)?;
-    let index = loaded.index.clone();
+    let (mut loaded, text) = load(fetch_index(&at, local), &cache, local)?;
+    loaded.official =
+        loaded.fetched && official_endpoint(&at, std::env::var_os("SUNRISE_MOD_INDEX").is_some());
+    let (value, remember) = accept(&loaded.index)?;
+    if !remember {
+        return Ok(value);
+    }
+    if let Some(text) = text {
+        if let Some(dir) = cache.parent() {
+            let _ = fs::create_dir_all(dir);
+        }
+        let _ = fs::write(cache, text);
+    }
     *LOADED.lock().unwrap() = Some(loaded);
-    Ok(index)
+    Ok(value)
 }
 
-/// What [`index`] keeps: the registry's answer `fetched` (written to `cache` for next time), else
-/// the copy in `cache`, marked as not the registry's own answer.
+/// The registry's verified answer and its original text, or an offline disk copy that
+/// carries no live authority and should not be written back.
 fn load(
     fetched: Result<(Index, String), String>,
     cache: &Path,
     local: bool,
-) -> Result<Loaded, String> {
-    let (index, fetched) = match fetched {
-        Ok((index, text)) => {
-            if let Some(dir) = cache.parent() {
-                let _ = fs::create_dir_all(dir);
-            }
-            let _ = fs::write(cache, text);
-            (index, !local)
-        }
+) -> Result<(Loaded, Option<String>), String> {
+    let (index, text) = match fetched {
+        Ok((index, text)) => (index, Some(text)),
         Err(e) => {
             let kept = fs::read_to_string(cache).map_err(|_| e.clone())?;
             let index = match local {
@@ -225,36 +363,81 @@ fn load(
                 false => Index::parse(&kept),
             }
             .map_err(|_| e)?;
-            (index, false)
+            (index, None)
         }
     };
-    Ok(Loaded {
-        at: Instant::now(),
-        index: Arc::new(index),
-        fetched,
-    })
+    Ok((
+        Loaded {
+            at: Instant::now(),
+            index: Arc::new(index),
+            fetched: !local && text.is_some(),
+            official: false,
+        },
+        text,
+    ))
 }
 
 fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
+    let text = fetch_index_text(at, local, false)?;
+    let index = if local {
+        Index::parse_local(&text)?
+    } else {
+        Index::parse(&text)?
+    };
+    Ok((index, text))
+}
+
+fn fetch_index_text(at: &str, local: bool, full: bool) -> Result<String, String> {
     use std::io::Read;
-    if local {
-        let text = fs::read_to_string(at).map_err(|e| format!("{at}: {e}"))?;
-        return Ok((Index::parse_local(&text)?, text));
+    // The process fixture can count requests without a public server or signing key.
+    // Never allow this transport in a release, through a proxy, or across a redirect.
+    let loopback = cfg!(debug_assertions)
+        && local
+        && url::Url::parse(at).is_ok_and(|url| {
+            url.scheme() == "http"
+                && url.host_str() == Some("127.0.0.1")
+                && url.port().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+        });
+    if local && !loopback {
+        return fs::read_to_string(at).map_err(|e| format!("{at}: {e}"));
     }
-    let spec = crate::proxy::spec_for(at);
-    let agent = crate::net::keep("sunrise-index", spec.as_deref(), |proxy| {
-        let builder = ureq::AgentBuilder::new()
-            .https_only(true)
-            .timeout(Duration::from_secs(10));
-        match proxy {
-            Some(proxy) => builder.proxy(proxy).build(),
-            None => builder.build(),
-        }
-    });
+    let direct = !local && at == INDEX_URL;
+    let agent = if loopback {
+        ureq::AgentBuilder::new()
+            .try_proxy_from_env(false)
+            .redirects(0)
+            .timeout(Duration::from_secs(2))
+            .build()
+    } else {
+        let spec = crate::proxy::spec_for(at);
+        let slot = if direct {
+            "sunrise-index-direct"
+        } else {
+            "sunrise-index"
+        };
+        crate::net::keep(slot, spec.as_deref(), |proxy| {
+            let mut builder = ureq::AgentBuilder::new()
+                .https_only(true)
+                .timeout(Duration::from_secs(10));
+            if direct {
+                builder = builder.redirects(0);
+            }
+            match proxy {
+                Some(proxy) => builder.proxy(proxy).build(),
+                None => builder.build(),
+            }
+        })
+    };
     let response = agent.get(at).call().map_err(|e| match e {
         ureq::Error::Status(code, _) => format!("The mod registry answered {code}."),
         ureq::Error::Transport(t) => format!("The mod registry can't be reached: {t}"),
     })?;
+    if (full || direct) && (response.status() != 200 || response.header("Content-Range").is_some())
+    {
+        return Err(tr("The mod registry didn't send the full index.").into());
+    }
     let mut text = String::new();
     response
         .into_reader()
@@ -264,7 +447,36 @@ fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
     if text.len() as u64 > MAX_INDEX {
         return Err("The mod registry index is too large.".into());
     }
-    Ok((Index::parse(&text)?, text))
+    Ok(text)
+}
+
+/// Unlike Discover, neither an omitted section nor an isolated bad row is allowed
+/// to become evidence that a package has no fit or has been taken down.
+fn complete_index(
+    at: &str,
+    local: bool,
+) -> Result<(Index, String, Option<OfficialRegistry>), String> {
+    #[derive(serde::Deserialize)]
+    struct Sections {
+        schema: u32,
+        #[serde(rename = "projects")]
+        _projects: Vec<serde::de::IgnoredAny>,
+        #[serde(rename = "revoked")]
+        _revoked: Vec<serde::de::IgnoredAny>,
+    }
+    let text = fetch_index_text(at, local, true)?;
+    let sections: Sections = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    if sections.schema != index::SCHEMA {
+        return Err(tr("The mod registry didn't send the full index.").into());
+    }
+    let index: Index = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    if local {
+        index.check_local()?;
+    } else {
+        index.check()?;
+    }
+    let authority = response_authority(at, local, &index);
+    Ok((index, text, authority))
 }
 
 /// A project's ratings: 1 to 5 stars, their mean and how many.
@@ -475,7 +687,7 @@ pub fn trust_and_capabilities(
     });
     if p.kind == index::Kind::NativeMod {
         lines.push(
-            tr("Native code: it is built into the game and runs with full access to your computer. Its source was reviewed before it was listed").to_string(),
+            tr("Native code: it is built into the game and runs with full access to your computer.").to_string(),
         );
         if let Some(v) = p.versions.iter().find(|v| v.game == game) {
             let pin = v.api.split('/').nth(1).unwrap_or_default();
@@ -756,6 +968,32 @@ fn gallery_of(p: &index::Project) -> Vec<super::details::Image> {
         .collect()
 }
 
+/// Decline the old live publisher before remembering its index. Other content can reuse
+/// that same answer for version choice and downloads; managed mod installs prove their own set.
+pub fn install_project(id: &str) -> Result<Project, String> {
+    with_index(|index| {
+        let project = registry_project(index, id)?;
+        if project.kind == Kind::Modpack {
+            return Err(pack::install_unavailable());
+        }
+        let reuse = project.kind != Kind::Mod;
+        Ok((project, reuse))
+    })
+}
+
+fn registry_project(catalogue: &Index, id: &str) -> Result<Project, String> {
+    let p = catalogue
+        .project(id)
+        .ok_or_else(|| format!("{id} isn't in Sunrise's registry."))?;
+    project_of(catalogue, p, &super::game()).ok_or_else(|| {
+        format!(
+            "{} is a {} in Sunrise's registry: this launcher can't install those yet.",
+            p.name,
+            p.kind.name()
+        )
+    })
+}
+
 /// The registry as a browser source.
 pub struct Registry;
 
@@ -771,17 +1009,7 @@ impl Source for Registry {
     }
 
     fn project(&self, id: &str) -> Result<Project, String> {
-        let index = index()?;
-        let p = index
-            .project(id)
-            .ok_or_else(|| format!("{id} isn't in Sunrise's registry."))?;
-        project_of(&index, p, &super::game()).ok_or_else(|| {
-            format!(
-                "{} is a {} in Sunrise's registry: this launcher can't install those yet.",
-                p.name,
-                p.kind.name()
-            )
-        })
+        registry_project(&*index()?, id)
     }
 
     fn versions(&self, project: &Project) -> Result<Vec<Version>, String> {
@@ -944,45 +1172,63 @@ fn relative(kind: Kind, id: &str, file_name: &str) -> Result<String, String> {
         Kind::Mod => Ok(format!("{}/{id}.smod", mod_list::MODS_DIR)),
         Kind::ResourcePack => Ok(format!("resourcepacks/{file_name}")),
         Kind::Shader => Ok(format!("shaderpacks/{file_name}")),
-        Kind::Modpack => Err("A modpack installs as its own profile (pack::install).".into()),
+        Kind::Modpack => Err(pack::install_unavailable()),
         Kind::DataPack => Err("A data pack goes into a world (fetch_datapack).".into()),
     }
 }
 
-/// Installs a registry project into the game folder `home`: its newest version for this game that
-/// the game the player runs can load, downloaded into `mod-browser/downloads/`, checked against
-/// the index, then moved into place. A mod is `sunrise-mods/<id>.smod`, turned on in
-/// `sunrise-mods.txt`.
-pub fn install(
+/// Resolves the pack against the same index used to choose and publish its version.
+fn pack_project<'a>(index: &'a Index, id: &str, kind: Kind) -> Result<&'a index::Project, String> {
+    let project = index
+        .project(id)
+        .ok_or_else(|| format!("{id} isn't in Sunrise's registry."))?;
+    if kind.folder().is_none() || kind_of(&project.kind) != Some(kind) {
+        return Err(format!(
+            "{id} isn't a pack of the expected kind in Sunrise's registry."
+        ));
+    }
+    Ok(project)
+}
+
+/// Installs a registry pack. The caller holds the home lock; this route never installs mods.
+pub(super) fn install_pack(
     project: &Project,
     home: &Path,
     game: &str,
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<installed::Entry>, String> {
     let index = index()?;
-    let index = if index
-        .project(&project.id)
-        .is_some_and(|p| matches!(p.kind, index::Kind::Mod | index::Kind::NativeMod))
-    {
-        fetched_index().ok_or_else(|| {
-            tr("Connect to the Sunrise registry before installing a mod and its dependencies.")
-                .to_string()
-        })?
-    } else {
-        index
+    let p = pack_project(&index, &project.id, project.kind)?;
+    let v = newest(&index, p, game)?;
+    install_version(&index, local(), p, v, home, progress).map(|e| vec![e])
+}
+
+/// Checks or publishes a registry pack update under the caller's lock.
+pub(super) fn update_pack(
+    entry: &installed::Entry,
+    home: &Path,
+    game: &str,
+    check: bool,
+    progress: &dyn Fn(&str, f32),
+) -> Result<installed::PackUpdate, String> {
+    use installed::PackUpdate;
+    let index = index()?;
+    let p = pack_project(&index, &entry.project, entry.kind)?;
+    let Some(v) = index
+        .installable(p, game)
+        .filter(|v| v.version != entry.version)
+    else {
+        return Ok(PackUpdate::Current);
     };
-    install_from(
-        &index,
-        local(),
-        project,
-        home,
-        game,
-        crate::backend::Settings::load()
-            .native_mods_allowed_at
-            .is_some(),
-        true,
-        progress,
-    )
+    if check {
+        installed::pack_path(
+            home,
+            entry.kind,
+            &relative(entry.kind, &p.id, &v.file.name)?,
+        )?;
+        return Ok(PackUpdate::Available(v.version.clone()));
+    }
+    install_version(&index, local(), p, v, home, progress).map(|e| PackUpdate::Updated(vec![e]))
 }
 
 /// Updates an installed native mod to its newest file. A mod that is off (`turn_on` false) stays
@@ -1012,7 +1258,7 @@ pub fn update_native(
     )
 }
 
-/// [`install`] from a trusted `index`.
+/// Installs from a trusted `index`.
 #[allow(clippy::too_many_arguments)]
 fn install_from(
     index: &Index,
@@ -1141,8 +1387,17 @@ fn install_version_guarded(
         home,
         progress,
     };
-    let (entry, file, unreadable) =
-        install.prepare(p, v, &list, &claims, &home.join("mod-browser/downloads"))?;
+    // Pack downloads don't use a pre-existing staging directory or partial file.
+    let pack_stage = kind_of(&p.kind)
+        .is_some_and(|kind| kind.folder().is_some())
+        .then(|| tempfile::tempdir_in(home))
+        .transpose()
+        .map_err(|e| e.to_string())?;
+    let downloads = home.join("mod-browser/downloads");
+    let stage = pack_stage
+        .as_ref()
+        .map_or(downloads.as_path(), |dir| dir.path());
+    let (entry, file, unreadable) = install.prepare(p, v, &list, &claims, stage)?;
     let Some((path, _)) = file else {
         return Ok(entry);
     };
@@ -1263,6 +1518,12 @@ impl Install<'_> {
             false => relative(project.kind, &p.id, &v.file.name)?,
         };
         let old = list.find(SourceId::Sunrise, &p.id).cloned();
+        if project.kind.folder().is_some() {
+            installed::pack_path(self.home, project.kind, &relative)?;
+            if let Some(row) = &old {
+                installed::old_pack_path(self.home, row, project.kind)?;
+            }
+        }
         let previous = old
             .as_ref()
             .filter(|old| old.version != v.version)
@@ -1345,6 +1606,7 @@ impl Install<'_> {
             page: project.page.clone(),
             dependency: false,
             verdict: Some(trust_label(trust).into()),
+            install_hold: None,
         };
         Ok((entry, Some((path, facts)), unreadable))
     }
@@ -1439,6 +1701,15 @@ fn check_before_play(
         ]);
     };
     let lines = turn_off_revoked(&index, home)?;
+    check_baked_revocations(&index, &entries, included)?;
+    Ok(lines)
+}
+
+fn check_baked_revocations(
+    index: &Index,
+    entries: &[installed::Entry],
+    included: &[crate::native_status::Included],
+) -> Result<(), String> {
     // Switching the mod off in this profile cannot remove code from the selected binary.
     for crate::native_status::Included { id, version, .. } in included {
         let published = index
@@ -1468,11 +1739,22 @@ fn check_before_play(
             ));
         }
     }
-    Ok(lines)
+    Ok(())
 }
 
 pub mod auto;
 mod dependencies;
 pub mod pack;
+mod registry_install;
+pub mod sources;
+pub(crate) use registry_install::check_activation;
+pub use registry_install::{
+    add_github, apply_sources, checked_switch_fit, install_registry, install_target,
+    known_unfit_updates, prepare_pasted_sources, prepare_source, read_pasted_sources, remove_mods,
+    switch_build, update_github, update_registry, update_registry_and_sources, BuildNotice,
+    ChangeImpact, CombinedUpdate, InstallError, InstallHooks, InstallProgress, InstalledBatch,
+    NativeQuestion, PastedSource, PreparedSource, ResolveQuestion, SourceError, SourceHooks,
+    SourceRequest, SwitchHooks, SwitchQuestion, Switched, UpdateRequest,
+};
 #[cfg(test)]
 mod tests;

@@ -1,5 +1,6 @@
 use super::*;
 use std::{fs, io::Write as _};
+use sunrise_launcher::browser::mod_list;
 
 #[test]
 fn build_consent_binds_an_unopened_mods_page_to_the_selected_profile() {

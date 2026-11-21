@@ -206,7 +206,7 @@ pub fn install(checkout: &Path, program: &Path, trusted: bool) -> Result<String,
         .into());
     }
     let exporters_ship = crate::preparer::binary(&package)
-        .map(|binary| crate::preparer::needs(&binary, &package, &|_| {}))
+        .map(|binary| crate::preparer::needs(&binary, &package, &|_| {}, None))
         .transpose()?
         .flatten()
         .is_some_and(|needs| !needs.jdk);

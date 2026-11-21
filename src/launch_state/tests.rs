@@ -481,6 +481,14 @@ fn a_dead_connection_is_one_plain_line_with_the_address_behind_details() {
 }
 
 #[test]
+fn unconfirmed_spawn_does_not_say_the_game_could_not_start() {
+    let message = "Sunrise may have started. Close the game if it opened before trying again.\nWrapper: /some/private/path\nbroken pipe (os error 32)";
+    let view = raised(STEPS[0].0, message);
+    assert_eq!(view.said.as_deref(), Some("Sunrise may have started."));
+    assert_eq!(details(&view), message);
+}
+
+#[test]
 fn what_a_program_or_the_system_said_is_never_put_beside_play() {
     let raw = [
         // A path with the system's error, on either system, and a bare path.

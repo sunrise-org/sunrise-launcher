@@ -18,7 +18,7 @@ pub fn client(
     mut command: Command,
     tag: String,
     launch: Launch,
-    run: Option<String>,
+    run: Option<Box<sunrise_launcher::instances::Instance>>,
     account: Option<String>,
     session_file: Option<PathBuf>,
     tx: Sender<Msg>,

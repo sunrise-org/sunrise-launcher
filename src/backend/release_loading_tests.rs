@@ -1,4 +1,5 @@
 use super::*;
+use crate::instances::Channel::Stable;
 use std::cell::RefCell;
 use std::hint::black_box;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -8,7 +9,7 @@ fn fixture() -> String {
     let mut list: Vec<_> = (1..=99)
         .map(|i| {
             serde_json::json!({
-                "tag_name": format!("v2026.10.14.{i}"),
+                "tag_name": format!("26.3-0.1.{i}"),
                 "name": format!("Build {i}"), "body": "Release notes\r\n".repeat(256),
                 "published_at": "2026-10-14T12:00:00Z", "draft": i == 99,
                 "assets": [{"name": ASSET.unwrap_or("unsupported"),
@@ -25,7 +26,7 @@ fn fixture() -> String {
 }
 
 fn installed_fixture() -> Vec<String> {
-    vec!["v2026.10.14.50".into()]
+    vec!["26.3-0.1.50".into()]
 }
 
 // The former startup paths: each decodes its own response; the update path parses games again.
@@ -36,7 +37,9 @@ fn baseline(load: impl Fn() -> Result<serde_json::Value, String>) -> (Vec<Releas
         sunrise: sunrise_update(
             &parse_releases(&list, ASSET, is_game_tag),
             &installed_fixture(),
-        ),
+            Stable,
+        )
+        .cloned(),
         ..Updates::default()
     };
     (releases, updates)
@@ -47,6 +50,7 @@ fn shared(load: impl FnOnce() -> Result<serde_json::Value, String>) -> (Vec<Rele
     let updates = releases_and_updates_with(
         load,
         installed_fixture,
+        Some(Stable),
         || Ok(Vec::new()),
         |r| releases = Some(r.unwrap()),
     );
@@ -91,6 +95,7 @@ fn a_game_list_error_still_checks_the_launcher() {
         let updates = releases_and_updates_with(
             || Err(error.into()),
             || panic!("no installed scan after failure"),
+            Some(Stable),
             || Ok(newer_launcher()),
             |r| published = Some(r),
         );
@@ -106,15 +111,16 @@ fn a_game_list_error_still_checks_the_launcher() {
 fn publish_games_before_the_launcher_lookup() {
     let events = RefCell::new(Vec::new());
     let updates = releases_and_updates_with(
-        || Ok(serde_json::json!([{"tag_name": "v2026.10.14", "assets": []}])),
+        || Ok(serde_json::json!([{"tag_name": "26.3-0.1.14", "assets": []}])),
         Vec::new,
+        Some(Stable),
         || {
             assert_eq!(events.borrow().first(), Some(&"releases"));
             events.borrow_mut().push("launcher");
             Ok(newer_launcher())
         },
         |r| {
-            assert_eq!(r.unwrap()[0].tag, "v2026.10.14");
+            assert_eq!(r.unwrap()[0].tag, "26.3-0.1.14");
             events.borrow_mut().push("releases");
         },
     );
@@ -130,13 +136,14 @@ fn a_failed_launcher_list_is_reported_not_up_to_date_and_keeps_the_game_result()
         let updates = releases_and_updates_with(
             || {
                 requests.fetch_add(1, Ordering::Relaxed);
-                Ok(serde_json::json!([{"tag_name": format!("v2026.10.{day}")}]))
+                Ok(serde_json::json!([{"tag_name": format!("26.3-0.1.{day}")}]))
             },
             Vec::new,
+            Some(Stable),
             || Err("offline".into()),
             |r| published = Some(r.unwrap()),
         );
-        assert_eq!(published.unwrap()[0].tag, format!("v2026.10.{day}"));
+        assert_eq!(published.unwrap()[0].tag, format!("26.3-0.1.{day}"));
         assert!(updates.launcher.is_none());
         assert_eq!(updates.launcher_error.as_deref(), Some("offline"));
         assert!(updates.sunrise_error.is_none());
@@ -159,6 +166,7 @@ fn empty_or_prebuilt_only_fork_has_no_game_or_launcher_update() {
         let updates = releases_and_updates_with(
             || Ok(list.clone()),
             Vec::new,
+            Some(Stable),
             || Ok(Vec::new()),
             |result| games = Some(result.unwrap()),
         );
@@ -196,14 +204,14 @@ fn each_platform_download_is_bound_to_the_fork_not_the_provider_url() {
             "browser_download_url": "https://github.com/horizon-rust/horizon/releases/download/wrong/file"}))
         .collect();
     // The game's list is the game repository's, the launcher's is its own repository's.
-    let game_list = serde_json::json!([{"tag_name": "v2026.9.9", "assets": assets}]);
+    let game_list = serde_json::json!([{"tag_name": "26.3-0.1.0", "assets": assets}]);
     let launcher_list = serde_json::json!([{"tag_name": "v1.0.9", "assets": assets}]);
     for (os, arch, game, launcher) in platforms {
         let (game_asset, launcher_asset) = platform_assets(os, arch).unwrap();
         let games = parse_releases(&game_list, Some(game_asset), is_game_tag);
         let launchers = parse_launcher_releases(&launcher_list, Some(launcher_asset));
         for (parsed, repository, tag, expected) in [
-            (games, "sunrise", "v2026.9.9", game),
+            (games, "sunrise", "26.3-0.1.0", game),
             (launchers, "sunrise-launcher", "v1.0.9", launcher),
         ] {
             assert_eq!(parsed.len(), 1);
@@ -234,7 +242,7 @@ fn decoy_asset_names_never_replace_the_exact_platform_asset() {
                 {"name": decoy, "size": 1, "browser_download_url": "https://evil.test/first"},
                 {"name": asset, "size": 2, "browser_download_url": "https://evil.test/second"}
             ]}]);
-            let got = parse_releases(&list, Some(asset), is_game_tag);
+            let got = parse_releases(&list, Some(asset), |_| true);
             assert_eq!(
                 got[0].asset,
                 Some((
@@ -255,7 +263,7 @@ fn decoy_asset_names_never_replace_the_exact_platform_asset() {
         assert!(got.is_empty());
     }
     let draft = parse_releases(
-        &serde_json::json!([{"tag_name": "v1", "draft": true, "assets": [{"name": asset, "size": 1}]}]),
+        &serde_json::json!([{"tag_name": "26.3-0.1.0", "draft": true, "assets": [{"name": asset, "size": 1}]}]),
         Some(asset),
         is_game_tag,
     );
@@ -295,7 +303,9 @@ fn benchmark_shared_startup_response() {
                     sunrise: sunrise_update(
                         &parse_releases(&list, ASSET, is_game_tag),
                         &installed_fixture(),
-                    ),
+                        Stable,
+                    )
+                    .cloned(),
                     ..Updates::default()
                 }
             });

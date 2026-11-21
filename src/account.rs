@@ -2196,7 +2196,12 @@ const SESSION_FILE_LIFE: Duration = Duration::from_secs(120);
 /// deletes each as it reads it; the rest go when the game would refuse them anyway
 /// ([`SESSION_FILE_LIFE`], a game that never started or crashed first) or when the launch failed
 /// ([`discard_unread_sessions`]). Nothing with a token stays on disk.
-static UNREAD: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+struct UnreadSession {
+    path: PathBuf,
+    expire_only: bool,
+}
+
+static UNREAD: Mutex<Vec<UnreadSession>> = Mutex::new(Vec::new());
 
 /// [`write_session_file`] for a game this launcher is about to start (see [`UNREAD`]).
 fn write_launch_session_file(
@@ -2224,33 +2229,46 @@ fn write_launch_session_file(
                 }
             });
     }
-    unread.push(path.clone());
+    unread.push(UnreadSession {
+        path: path.clone(),
+        expire_only: false,
+    });
     Ok(path)
 }
 
 /// Deletes the files of `unread` older than `life` (the game would refuse them) and forgets
 /// those gone (read).
-fn reap(unread: &mut Vec<PathBuf>, life: Duration) {
-    unread.retain(|path| {
-        let waiting = std::fs::metadata(path)
+fn reap(unread: &mut Vec<UnreadSession>, life: Duration) {
+    unread.retain(|file| {
+        let waiting = std::fs::metadata(&file.path)
             .and_then(|m| m.modified())
             .is_ok_and(|m| m.elapsed().is_ok_and(|age| age <= life));
         if !waiting {
-            let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(&file.path);
         }
         waiting
     });
 }
 
+/// A managed handoff can be unresolved. Nothing but its own definite failure/exit
+/// or the game's usual expiry may delete that launch's file.
+pub(crate) fn retain_launch_session(path: Option<&Path>) {
+    if let (Some(path), Ok(mut unread)) = (path, UNREAD.lock()) {
+        if let Some(file) = unread.iter_mut().find(|file| file.path == path) {
+            file.expire_only = true;
+        }
+    }
+}
+
 /// Deletes the session files written for a launch whose game didn't start, or has ended: any it
 /// didn't read is left over (a game deletes those it reads).
 pub fn discard_unread_sessions() {
-    let files = UNREAD
+    let files: Vec<_> = UNREAD
         .lock()
-        .map(|mut unread| std::mem::take(&mut *unread))
+        .map(|mut unread| unread.extract_if(.., |file| !file.expire_only).collect())
         .unwrap_or_default();
-    for path in files {
-        let _ = std::fs::remove_file(path);
+    for file in files {
+        let _ = std::fs::remove_file(file.path);
     }
 }
 
@@ -2258,7 +2276,7 @@ pub fn discard_unread_sessions() {
 pub fn discard_launch_session(file: Option<PathBuf>) {
     if let Some(file) = file {
         if let Ok(mut unread) = UNREAD.lock() {
-            unread.retain(|p| p != &file);
+            unread.retain(|session| session.path != file);
         }
         let _ = std::fs::remove_file(file);
     }

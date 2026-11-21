@@ -24,7 +24,6 @@ fn settings_json_with_paths(
         "game_architecture": s.game_architecture.name(),
         "minecraft_dir": s.minecraft_dir,
         "server_dir": backend::server_dir(None),
-        "install_new_versions": s.install_new_versions.unwrap_or(true),
         "prune_old_versions": s.auto_prune(),
         "keep_versions": s.keep_newest(),
         "opening_animation": !s.skip_opening,

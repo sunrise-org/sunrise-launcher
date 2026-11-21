@@ -175,6 +175,8 @@ jobs:
         run: cargo build --locked -p sunrise-launcher-smod --example holder_actor
       - name: Tests
         run: cargo test --locked --workspace --lib --bins
+      - name: Real launcher Play, game relay, lifecycle and modpack fence fixtures
+        run: cargo test --locked --test ordinary_play --test managed_play_process --test lifecycle --test modpack_fence
       - name: The tests/ targets that start no process (Windows)
         if: runner.os == 'Windows'
         run: cargo test --locked --test developer_install --test storage_consent

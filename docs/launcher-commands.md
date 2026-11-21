@@ -2,7 +2,7 @@
 
 <!-- Generated from launcher/src/cli.rs by cli_tools::markdown(); a test fails when this file is out of date. Update it with: SUNRISE_WRITE_DOCS=1 cargo test --manifest-path launcher/Cargo.toml the_launcher_reference -->
 
-Every command of `sunrise-launcher`, and the tool `sunrise-launcher mcp` offers for it. A tool's arguments are the command's, in snake_case. A tool runs the command with `--json` and returns what it printed. The tools that change the player's things for good need `confirm: true`. The tools that send something or reach other people say "only when the player asks". The game's own tools, `game_*`, are in [sunrise-ctl-commands.md](https://github.com/sunrise-org/sunrise/blob/main/docs/sunrise-ctl-commands.md). For unsigned developer installations only, `SUNRISE_LAUNCHER_DEVELOPER_OFFLINE=1` enables account-free Play. Only the exact value `1` enables it. The installed base must have persisted developer provenance, and the selected game must advertise `--developer-single-player` through `--launch-api`; older games must be rebuilt and reinstalled. Signed releases, Nightlies and their native descendants keep the account check. This mode supplies no session, blocks normal external connections and LAN hosting, and preserves managed launch leases, instance settings and unsigned labels. It is not a sandbox for native mods. If direct execution reports unregistered cache directories, use Sunrise Launcher Play from the same launcher data directory with the intended instance and installed version (`sunrise-launcher play --instance <instance> --version <tag>`).
+Every command of `sunrise-launcher`, and the tool `sunrise-launcher mcp` offers for it. A tool's arguments are the command's, in snake_case. A tool runs the command with `--json` and returns what it printed. The tools that change the player's things for good need `confirm: true`. The tools that send something or reach other people say "only when the player asks". The game's own tools, `game_*`, are in [sunrise-ctl-commands.md](https://github.com/sunrise-org/sunrise/blob/main/docs/sunrise-ctl-commands.md). For unsigned developer installations only, `SUNRISE_LAUNCHER_DEVELOPER_OFFLINE=1` enables account-free Play. Only the exact value `1` enables it. The installed base must have persisted developer provenance, and the selected game must advertise `--developer-single-player` through `--launch-api`; older games must be rebuilt and reinstalled. Signed releases, Nightlies and their native descendants keep the account check. This mode supplies no session, blocks normal external connections and LAN hosting, and preserves managed launch leases, instance settings and unsigned labels. It is not a sandbox for native mods. If direct execution reports unregistered cache directories, use Sunrise Launcher Play from the same launcher data directory with the intended instance and installed version (`sunrise-launcher switch <tag> --profile <instance>`, then `sunrise-launcher play --instance <instance>`).
 
 With No AI on, `mcp` is hidden and refuses; every other command stays. See [agent-control.md](https://github.com/sunrise-org/sunrise/blob/main/docs/agent-control.md#no-ai).
 
@@ -96,7 +96,6 @@ Start the client (needs a signed-in Microsoft account that owns Minecraft: Java 
     sunrise-launcher play
 
 - `--allow-jar-downloads`: Allow missing original Java asset/data jars to be downloaded from Modrinth
-- `--version`: Installed version to play (default: profile version)
 - `--instance`: The profile to play (its name or id; default: the selected one)
 - `--world`: Open or create this world (a folder under saves) at once
 - `--creative`: Creative mode for a new world
@@ -106,6 +105,17 @@ Start the client (needs a signed-in Microsoft account that owns Minecraft: Java 
 - `--account`: Play this launch as this signed-in account (its name or UUID), without changing the one `account select` picked: several games can play as several accounts at once
 
 MCP: `play`, then the `game_*` tools.
+
+## `sunrise-launcher switch`
+
+Switch a profile to an exact installed and prepared game build.
+
+    sunrise-launcher switch <TAG>
+
+- `TAG`: The target build tag
+- `--profile`: The profile to switch (name or id; defaults to the selected profile)
+
+MCP: none: the player's switch.
 
 ## `sunrise-launcher server`
 
@@ -154,11 +164,9 @@ Native mods (docs/modding/src/how-to/native-mods.md): compile flat Rust mod proj
 - `--server-output`: Export mode: build a standalone dedicated-server engine into this folder instead of a profile's build. Needs a mod FOLDER; no profile is read or changed, and no launcher config is written
 - `--allow-jar-downloads`: Allow exact-hash jar downloads into the local cache for the server export; jar bytes are never included in the exported folder
 - `--instance`: The profile whose installed native mods to build, and which then plays the build (default: the selected one)
-- `--version`: The installed version whose game files the build reuses, and whose commit it builds on when no mod pins one (default: the one the profile plays, so a rebuild stays on its Sunrise)
-- `--update`: Move to the newest installed release or Nightly instead of the Sunrise the profile plays (rebuilds the mods for that pinned SDK)
+- `--version`: For a profile, assert its current base. In server-export mode, select the installed game build to use (defaults to the newest installed release or Nightly)
 - `--trust-native-code`: Allow native code for this install (remembered; revoke in Settings, Storage)
 - `--profile` (optimized): Native mods use the pinned SDK's optimized compilation settings. The game is never rebuilt by a mod build
-- `--leave-out-mods`: When a mod this build can't use was saved into the profile's worlds, build without it anyway: what the mod added to those worlds is lost when they are next opened (back them up in the game first). Without this the build stops and names the worlds, leaving the profile as it is
 
 MCP: none: the player's switch.
 
@@ -240,11 +248,11 @@ MCP: `account_select`.
 
 ## `sunrise-launcher settings`
 
-Show the launcher's settings, or set one (the Settings page): selected-version TAG, game-architecture auto|x64|arm64, minecraft-dir PATH, server-dir PATH ("default" resets a folder), install-new-versions on|off, prune-old-versions on|off (delete old versions after an install, keeping the selected one, the ones profiles use and the newest few), keep-versions N (how many of the newest to keep; "default" is 2), opening-animation on|off, cat on|off (the corner cat), proxy http://host:port|socks5://host:port ("default" removes it), while-playing stay|minimize|hide (what the window does while the game runs), language system|CODE (the window's language: en, fr, de, ja, pt-br... any language the launcher has; system follows the computer's; a wrong code lists them all), theme default|ID|local:SLUG (a built-in theme, or one of yours from the themes folder; "default" is Dawn; a wrong id lists them all), accent violet|blue|teal|green|amber|red|pink|#rrggbb|DEGREES (a named accent, any colour, or any hue; "theme" goes back to the theme's own), background PATH (your picture behind Home; "default" goes back to the theme's), scenery on|off (whether anything is behind the pages), panel-opacity PERCENT|default (glass panels over Home's background), reduced-graphics on|off (no glass blur or decorative motion), cache-limit-gib N (managed cache limit in GiB: 10, 25 (default), 50, 100; 0 disables automatic cleanup).
+Show the launcher's settings, or set one (the Settings page): selected-version TAG, game-architecture auto|x64|arm64, minecraft-dir PATH, server-dir PATH ("default" resets a folder), prune-old-versions on|off (delete unused old automatic downloads after an install, keeping the newest few), keep-versions N (how many of the newest to keep; "default" is 2), opening-animation on|off, cat on|off (the corner cat), proxy http://host:port|socks5://host:port ("default" removes it), while-playing stay|minimize|hide (what the window does while the game runs), language system|CODE (the window's language: en, fr, de, ja, pt-br... any language the launcher has; system follows the computer's; a wrong code lists them all), theme default|ID|local:SLUG (a built-in theme, or one of yours from the themes folder; "default" is Dawn; a wrong id lists them all), accent violet|blue|teal|green|amber|red|pink|#rrggbb|DEGREES (a named accent, any colour, or any hue; "theme" goes back to the theme's own), background PATH (your picture behind Home; "default" goes back to the theme's), scenery on|off (whether anything is behind the pages), panel-opacity PERCENT|default (glass panels over Home's background), reduced-graphics on|off (no glass blur or decorative motion), cache-limit-gib N (managed cache limit in GiB: 10, 25 (default), 50, 100; 0 disables automatic cleanup).
 
     sunrise-launcher settings [KEY] [VALUE]
 
-- `KEY` (selected-version, minecraft-dir, server-dir, install-new-versions, prune-old-versions, keep-versions, opening-animation, cat, game-architecture, proxy, while-playing, worlds, language, theme, accent, background, scenery, panel-opacity, reduced-graphics, cache-limit-gib)
+- `KEY` (selected-version, minecraft-dir, server-dir, prune-old-versions, keep-versions, opening-animation, cat, game-architecture, proxy, while-playing, worlds, language, theme, accent, background, scenery, panel-opacity, reduced-graphics, cache-limit-gib)
 - `VALUE`: The new value (with KEY)
 
 worlds rows|tiles: how Home lists the worlds under Continue playing.
@@ -406,6 +414,16 @@ The profiles, each with its game folder (* = the one Play starts).
 
 MCP: `instance_list`.
 
+## `sunrise-launcher instance show`
+
+Show a profile's committed game build (defaults to the selected profile).
+
+    sunrise-launcher instance show [PROFILE]
+
+- `PROFILE`
+
+MCP: `instance_show`.
+
 ## `sunrise-launcher instance create`
 
 Make a profile: empty but for your options and name, or a copy of another one's worlds, options and packs.
@@ -469,17 +487,6 @@ Make Play start this profile.
 - `INSTANCE`
 
 MCP: `instance_select`.
-
-## `sunrise-launcher instance version`
-
-Keep a profile on one installed Sunrise version, or "latest" to follow updates again.
-
-    sunrise-launcher instance version <INSTANCE> <VERSION>
-
-- `INSTANCE`
-- `VERSION`
-
-MCP: `instance_version`.
 
 ## `sunrise-launcher instance export`
 
@@ -750,19 +757,18 @@ MCP: `modpack_list`.
 
 ## `sunrise-launcher modpack play`
 
-Play a Sunrise modpack as its own profile.
+Playing Sunrise modpacks is temporarily unavailable.
 
     sunrise-launcher modpack play <PACK>
 
 - `PACK`
 - `--allow-jar-downloads`: Allow missing original Java asset/data jars to be downloaded from Modrinth
-- `--version`
 
 MCP: `modpack_play`.
 
 ## `sunrise-launcher modpack remove`
 
-Remove a Sunrise modpack and the profile's saves.
+Removing Sunrise modpacks is temporarily unavailable.
 
     sunrise-launcher modpack remove <PACK>
 
@@ -796,7 +802,7 @@ MCP: `mods_search`.
 
 ## `sunrise-launcher mods install`
 
-Install a pack or a Sunrise mod and what it needs into a profile, by its id or slug (checksums checked); a Sunrise modpack is installed as a profile of its own; a data pack goes into the world `--world` names.
+Install a pack or a Sunrise mod and what it needs into a profile, by its id or slug (checksums checked); a data pack goes into the world `--world` names. Installing and updating Sunrise modpacks is temporarily unavailable.
 
     sunrise-launcher mods install <PROJECT>
 
@@ -805,6 +811,7 @@ Install a pack or a Sunrise mod and what it needs into a profile, by its id or s
 - `--instance`: The profile (default: the selected one)
 - `--everything`: Allow a version made for another Minecraft version
 - `--source` (modrinth, sunrise)
+- `--trust-native-code`: Allow registry native code and the named build dependencies to run
 
 MCP: `mods_install`.
 
@@ -817,6 +824,7 @@ Update what the browser installed (or one pack).
 - `PROJECT`
 - `--check`: Only say what is newer
 - `--instance`: The profile (default: the selected one)
+- `--confirm-world-loss`: Allow an update known to drop registered definitions that saved worlds may use
 
 MCP: `mods_update`.
 
@@ -831,12 +839,13 @@ Install a native mod from a GitHub link (docs/modding/src/how-to/native-mods.md,
 - `--all`: Install every mod the link holds
 - `--instance`: The profile (default: the selected one)
 - `--trust-native-code`: Allow native code for this install (remembered; revoke in Settings, Storage)
+- `--confirm-world-loss`: Allow a replacement that could remove saved-world content when adding an already installed mod
 
 MCP: none: the player's switch.
 
 ## `sunrise-launcher mods update-github`
 
-Look for newer versions of the native mods installed from GitHub (the latest release, or the default branch's head for a mod installed from a commit), and install them.
+Check native mods from GitHub, and update those installed from a release with a matching record.
 
     sunrise-launcher mods update-github [ID]
 
@@ -844,17 +853,23 @@ Look for newer versions of the native mods installed from GitHub (the latest rel
 - `--check`: Only say what is newer
 - `--instance`: The profile (default: the selected one)
 - `--trust-native-code`: Allow native code for this install (remembered; revoke in Settings, Storage)
+- `--confirm-world-loss`: Allow proved loss of registered definitions (not needed for native mods)
+
+Before replacement, Sunrise verifies the installed archive against its recorded GitHub asset and shows its path and SHA-256. A commit install can still be checked with --check; to replace it, remove it explicitly and add the new version.
 
 MCP: none: the player's switch.
 
 ## `sunrise-launcher mods remove`
 
-Remove a pack the browser installed.
+Remove an installed mod archive or a pack the browser installed.
 
     sunrise-launcher mods remove <PROJECT>
 
-- `PROJECT`
+- `PROJECT`: An installed mod ID or a project the browser installed
 - `--instance`: The profile (default: the selected one)
+- `--confirm-world-loss`: Allow removal even if it could remove content from a saved world
+
+For a mod archive, the review names its exact file and SHA-256 before removal, and any mods that need it are turned off rather than deleted.
 
 MCP: `mods_remove`, needs `confirm: true`.
 

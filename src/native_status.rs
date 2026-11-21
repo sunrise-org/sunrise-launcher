@@ -278,6 +278,7 @@ pub struct Installed {
     pub id: String,
     /// The name its manifest gives it; its ID when the manifest can't be read.
     pub name: String,
+    pub authors: Vec<String>,
     pub version: String,
     pub internals: Vec<String>,
     pub origin: Option<crate::github_mods::Origin>,
@@ -339,9 +340,14 @@ fn untracked_in(
             let name = package
                 .as_ref()
                 .map_or_else(|_| id.clone(), |p| p.manifest.name.clone());
-            let origin = (native && path.file_stem()?.to_str()? == id)
-                .then(|| crate::github_mods::origin(home, &id))
-                .flatten();
+            let origin =
+                (native && package.is_ok() && path.file_name()?.to_str()? == format!("{id}.smod"))
+                    .then(|| crate::github_mods::origin(home, &id))
+                    .flatten()
+                    .filter(|origin| {
+                        sunrise_launcher_smod::index::sha256_file(&path)
+                            .is_ok_and(|digest| origin.matches_archive(&id, &version, &digest))
+                    });
             let internals = package
                 .as_ref()
                 .map(|p| declared_internals(&p.manifest))
@@ -350,6 +356,10 @@ fn untracked_in(
                 file,
                 id,
                 name,
+                authors: package
+                    .as_ref()
+                    .map(|p| p.manifest.authors.clone())
+                    .unwrap_or_default(),
                 version,
                 internals,
                 origin,
@@ -414,6 +424,22 @@ pub(crate) fn check_compiled_profile(included: &[Included], home: &Path) -> Resu
     if !included.is_empty() && !compiled_match(included, &enabled(home)) {
         return Err(crate::i18n::tr(
             "This build includes native mods that don't match this profile. Rebuild the mods or choose another game build.",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// Managed Play cannot silently drop additional enabled native packages, even when
+/// every linked package would individually match an enabled archive.
+pub(crate) fn check_exact_compiled_profile(
+    included: &[Included],
+    home: &Path,
+) -> Result<(), String> {
+    let enabled = enabled(home);
+    if included.len() != enabled.len() || !compiled_match(included, &enabled) {
+        return Err(crate::i18n::tr(
+            "The selected game doesn't include exactly the enabled native mods.",
         )
         .into());
     }
@@ -491,7 +517,9 @@ pub fn fingerprint(home: &Path, version: Option<&str>) -> String {
         .flat_map(|p| [p.clone(), p.with_extension("origin.json")])
         .chain([
             home.join("mod-browser.json"),
+            home.join("mod-browser/active-build.json"),
             home.join(sunrise_launcher_smod::index::browser_state::PENDING),
+            home.join(crate::profile_txn::POINTER),
         ])
     {
         let meta = fs::symlink_metadata(&path).ok();
@@ -703,7 +731,11 @@ mod tests {
             tag: None,
             commit: pin,
             asset: None,
-            sha256: "ab".repeat(32),
+            source: None,
+            sha256: sunrise_launcher_smod::index::sha256_file(
+                &home.join(native_mods::INSTALLED).join("github.smod"),
+            )
+            .unwrap(),
         };
         fs::write(
             home.join(native_mods::INSTALLED).join("github.origin.json"),
@@ -724,6 +756,7 @@ mod tests {
                 page: String::new(),
                 dependency: false,
                 verdict: None,
+                install_hold: None,
             }],
         }
         .save(&home)

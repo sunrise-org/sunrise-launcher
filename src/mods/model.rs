@@ -36,6 +36,8 @@ pub(super) enum Fit {
     OtherBuild(String),
     /// Taken down, or asks for something this Sunrise doesn't have.
     Refused(String),
+    /// No registry fit evidence, as for a local archive's details.
+    Unknown,
 }
 
 impl Fit {
@@ -48,6 +50,7 @@ impl Fit {
             Fit::Fits => None,
             Fit::OtherBuild(game) => Some(trf("Made for {game}", &[("game", game)])),
             Fit::Refused(why) => Some(why.clone()),
+            Fit::Unknown => Some(tr("Fit could not be verified").to_owned()),
         }
     }
 }
@@ -286,30 +289,78 @@ pub(super) struct VersionLine {
     pub(super) size: u64,
 }
 
-/// Everything the project page shows, read from the index in one go.
+/// A browser destination checked at the registry or installed-origin boundary.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum SourceLink {
+    GitHub(String),
+    Other(String),
+}
+
+impl SourceLink {
+    pub(super) fn read(text: &str) -> Option<Self> {
+        let (scheme, rest) = text.split_once("://")?;
+        let authority = rest.split(['/', '?', '#']).next()?;
+        if !scheme.eq_ignore_ascii_case("https")
+            || authority.is_empty()
+            || authority.contains('@')
+            || text.bytes().any(|b| b.is_ascii_control() || b == b'\\')
+        {
+            return None;
+        }
+        let url = url::Url::parse(text).ok()?;
+        if url.host_str()? != "github.com" {
+            return Some(Self::Other(url.into()));
+        }
+        // Take owner/repo before the URL parser can normalize any dot segments.
+        let path = rest.strip_prefix(authority)?.strip_prefix('/')?;
+        let mut parts = path.split(['?', '#']).next()?.split('/');
+        let owner = parts.next()?;
+        let repo = parts.next()?;
+        Self::github(owner, repo.strip_suffix(".git").unwrap_or(repo))
+    }
+
+    pub(super) fn github(owner: &str, repo: &str) -> Option<Self> {
+        let repo_part = |part: &str| {
+            !part.is_empty()
+                && !matches!(part, "." | "..")
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+        };
+        (repo_part(owner) && repo_part(repo))
+            .then(|| Self::GitHub(format!("https://github.com/{owner}/{repo}")))
+    }
+}
+
+/// Facts only the registry can provide.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct About {
+    pub(super) license: String,
+    pub(super) downloads: u64,
+    pub(super) updated: String,
+    pub(super) side: &'static str,
+    pub(super) signed: bool,
+}
+
+/// Everything the shared details screen shows, from the registry or a local archive.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Page {
     pub(super) id: String,
     pub(super) name: String,
     pub(super) authors: Vec<String>,
     pub(super) description: String,
-    pub(super) license: String,
-    pub(super) source: String,
-    pub(super) downloads: u64,
-    pub(super) updated: String,
+    pub(super) source: Option<SourceLink>,
+    pub(super) about: Option<About>,
     pub(super) categories: Vec<String>,
     pub(super) screenshots: Vec<String>,
     pub(super) icon: Option<String>,
-    pub(super) make: Make,
-    pub(super) side: &'static str,
+    pub(super) make: Option<Make>,
     pub(super) versions: Vec<VersionLine>,
     pub(super) fit: Fit,
     /// The newest version that fits: what Add installs.
     pub(super) will_install: Option<VersionLine>,
     /// What the registry says about who made it and what it may do (`trust_and_capabilities`).
     pub(super) trust: Vec<String>,
-    /// Its author signs its files.
-    pub(super) signed: bool,
     /// Native code made for another game build than the one played: checked before it runs.
     pub(super) another_build: bool,
     /// Mods the newest version lists as part of itself (a registry modpack's rule; a mod rarely has any).
@@ -351,24 +402,26 @@ pub(super) fn page(
         name: p.name.clone(),
         authors: p.authors.clone(),
         description: p.description.clone(),
-        license: p.license.clone(),
-        source: p.source.clone(),
-        downloads: p.downloads,
-        updated: lines
-            .iter()
-            .map(|l| l.published.clone())
-            .max()
-            .unwrap_or_default(),
+        source: SourceLink::read(&p.source),
+        about: Some(About {
+            license: p.license.clone(),
+            downloads: p.downloads,
+            updated: lines
+                .iter()
+                .map(|l| l.published.clone())
+                .max()
+                .unwrap_or_default(),
+            side: side_label(p.versions.first().and_then(|v| v.side.as_ref())),
+            signed: p.key.is_some(),
+        }),
         categories: p.categories.clone(),
         screenshots: p.screenshots.clone(),
         icon: p.icon.clone(),
-        make,
-        side: side_label(p.versions.first().and_then(|v| v.side.as_ref())),
+        make: Some(make),
         fit: fit_of(index, p, game),
         will_install,
         versions: lines,
         trust,
-        signed: p.key.is_some(),
         another_build,
         requires: p
             .versions
@@ -418,12 +471,14 @@ pub(super) struct Row {
     pub(super) dependency: bool,
     /// The player chose this version (`sunrise::chosen`): a batch leaves it alone.
     pub(super) pinned: bool,
-    /// Not installed by the registry; no registry update or removal.
+    /// Not installed by the registry; no registry update.
     pub(super) local: Option<Local>,
     pub(super) icon: Option<String>,
     pub(super) entry: Option<Entry>,
     /// It can't run on the game this setup plays: the build left it out.
     pub(super) unfit: Option<Unfit>,
+    /// The exact Switch receipt keeps the native archive off until a proved update.
+    pub(super) held_for: Option<String>,
     /// The build left it out for another reason (it didn't build, it needs a mod that was left
     /// out, it clashes with another): what the player reads, in a sentence.
     pub(super) left_out: Option<Omission>,
@@ -575,7 +630,17 @@ pub(super) fn cells(
         ),
         Some(Need::Build) | None => {}
     }
-    if let Some(unfit) = &row.unfit {
+    if let Some(build) = &row.held_for {
+        say(
+            "information-circle",
+            tr("Needs an update from its author").into(),
+            Tone::Warning,
+            trf(
+                "{mod} needs an update from its author for {build}.",
+                &[("mod", &row.title), ("build", build)],
+            ),
+        );
+    } else if let Some(unfit) = &row.unfit {
         say(
             "information-circle",
             tr("Needs an update").into(),
@@ -640,24 +705,30 @@ pub(super) fn cells(
             "refresh",
             trf("{version} is out", &[("version", to)]),
             Tone::Info,
-            match update_refusal(row, native_allowed) {
-                Some(why) => trf(
-                    "Version {version} is out. {why}",
-                    &[("version", to), ("why", &why)],
-                ),
-                None => trf("Version {version} is out", &[("version", to)]),
+            if row.pinned {
+                trf(
+                    "Version {version} is out. You chose its version: update it on its own.",
+                    &[("version", to)],
+                )
+            } else if row.native() && !native_allowed {
+                trf(
+                    "Version {version} is out. Updating may ask you to allow native code.",
+                    &[("version", to)],
+                )
+            } else {
+                trf("Version {version} is out", &[("version", to)])
             },
         );
     }
     if let Some(local) = &row.local {
         say(
             "folder-01",
-            match local.github {
+            match local.github.is_some() {
                 true => tr("From GitHub").into(),
                 false => tr("Local file").into(),
             },
             Tone::Muted,
-            match local.github {
+            match local.github.is_some() {
                 true => tr("Get updates from GitHub, not the registry.").into(),
                 false => tr("Replace the local file to update this mod.").into(),
             },
@@ -682,9 +753,11 @@ pub(super) fn cells(
             (_, Some(_)) => Some(RowAction::Update),
             _ => None,
         },
-        switch: !matches!(row.need, Some(Need::TakenDown(_)))
+        switch: row.held_for.is_none()
+            && !matches!(row.need, Some(Need::TakenDown(_)))
             && !row.local.as_ref().is_some_and(|l| l.unreadable),
-        unavailable: row.unfit.is_some()
+        unavailable: row.held_for.is_some()
+            || row.unfit.is_some()
             || row.left_out.is_some()
             || matches!(
                 building,
@@ -694,8 +767,37 @@ pub(super) fn cells(
 }
 
 impl Row {
+    pub(super) fn installed_details(&self) -> Page {
+        Page {
+            id: self.id.clone(),
+            name: self.title.clone(),
+            authors: Vec::new(),
+            description: String::new(),
+            source: self
+                .local
+                .as_ref()
+                .and_then(|local| local.github.as_ref())
+                .and_then(|origin| SourceLink::github(&origin.owner, &origin.repo)),
+            about: None,
+            categories: Vec::new(),
+            screenshots: Vec::new(),
+            icon: self.icon.clone(),
+            make: self.make,
+            versions: Vec::new(),
+            fit: Fit::Unknown,
+            will_install: None,
+            trust: Vec::new(),
+            another_build: false,
+            requires: Vec::new(),
+        }
+    }
+
     pub(super) fn native(&self) -> bool {
         self.make == Some(Make::Native)
+    }
+
+    pub(super) fn selectable_archive(&self) -> bool {
+        self.local.as_ref().is_none_or(|local| !local.unreadable)
     }
 }
 
@@ -708,7 +810,7 @@ pub(super) enum Group {
 
 impl Row {
     pub(super) fn group(&self) -> Group {
-        if self.need.is_some() {
+        if self.need.is_some() || self.held_for.is_some() {
             Group::NeedsYou
         } else if self.update.is_some() {
             Group::Updates
@@ -722,6 +824,8 @@ impl Row {
 pub(super) struct World<'a> {
     pub(super) index: Option<&'a Index>,
     pub(super) game: &'a str,
+    /// Verified archive hashes already rejected by the SDK for this base build.
+    pub(super) unfit_updates: &'a BTreeSet<String>,
     pub(super) enabled: &'a HashSet<String>,
     /// Native mods whose build isn't made.
     pub(super) unbuilt: &'a HashSet<String>,
@@ -737,9 +841,11 @@ pub(super) struct World<'a> {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Local {
     pub(super) id: String,
+    /// The exact row, even if another archive claims the same mod ID.
+    pub(super) file: String,
     pub(super) name: String,
     pub(super) version: String,
-    pub(super) github: bool,
+    pub(super) github: Option<sunrise_launcher::github_mods::Origin>,
     /// Native code, which needs permission and a build, rather than content only.
     pub(super) native: bool,
     /// The file can't be read: it has no id of its own (the id is only its file name), so it is
@@ -779,7 +885,7 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
             let update = w
                 .index
                 .zip(p)
-                .and_then(|(i, p)| newer(i, p, &e.version, w.game));
+                .and_then(|(i, p)| newer(i, p, &e.version, w.game, w.unfit_updates));
             Some(Row {
                 title: p.map_or_else(|| id.clone(), |p| p.name.clone()),
                 id,
@@ -796,6 +902,7 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
                 icon: p.and_then(|p| p.icon.clone()),
                 entry: Some(e.clone()),
                 unfit: None,
+                held_for: None,
                 left_out: None,
             })
         })
@@ -823,6 +930,7 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
             icon: None,
             entry: None,
             unfit: None,
+            held_for: None,
             left_out: None,
         }
     }));
@@ -848,17 +956,47 @@ impl Ord for Group {
     }
 }
 
-/// The version an update would install: the newest for `game` that wasn't taken down, if it is
-/// newer than `installed` (the index lists newest first).
+/// A catalogue offer, not native fit proof. Exclude releases already proved not to fit.
 pub(super) fn newer(
     index: &Index,
     p: &index::Project,
     installed: &str,
     game: &str,
+    unfit_updates: &BTreeSet<String>,
 ) -> Option<String> {
-    let target = index.installable(p, game)?;
-    let at = |v: &str| p.versions.iter().position(|w| w.version == v);
-    (at(&target.version)? < at(installed)?).then(|| target.version.clone())
+    p.versions.iter().find(|v| v.version == installed)?;
+    newer_for_hold(index, p, installed, game, unfit_updates)
+}
+
+/// A Switch hold may name a version older than the catalogue retains. The Update worker
+/// still checks the old archive against the receipt and proves the selected replacement.
+pub(super) fn newer_for_hold(
+    index: &Index,
+    p: &index::Project,
+    installed: &str,
+    game: &str,
+    unfit_updates: &BTreeSet<String>,
+) -> Option<String> {
+    use sunrise_launcher_smod::dependencies::parse_version;
+    let old = parse_version(installed).ok()?;
+    p.versions
+        .iter()
+        .rev()
+        .filter_map(|v| {
+            if !sunrise_launcher::browser::sunrise::fits_game(v, game)
+                || index.revoked(&p.id, &v.file.sha256).is_some()
+                || unfit_updates.contains(&v.file.sha256.to_ascii_lowercase())
+            {
+                return None;
+            }
+            let version = parse_version(&v.version).ok()?;
+            version
+                .cmp_precedence(&old)
+                .is_gt()
+                .then_some((version, &v.version))
+        })
+        .max_by(|(a, _), (b, _)| a.cmp_precedence(b))
+        .map(|(_, version)| version.clone())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -895,6 +1033,16 @@ pub(super) fn build_in_head(rows: &[Row], visible: &[usize]) -> Option<usize> {
 }
 
 /// Indexes into `rows` that pass the filter; the order of `rows` (grouped, by name) is kept.
+pub(super) fn visible_count(rows: &[Row], visible: &[usize]) -> String {
+    trf(
+        "{shown} of {total} mods shown",
+        &[
+            ("shown", &visible.len().to_string()),
+            ("total", &rows.len().to_string()),
+        ],
+    )
+}
+
 pub(super) fn visible(rows: &[Row], f: &RowFilter) -> Vec<usize> {
     let words: Vec<String> = f.text.split_whitespace().map(str::to_lowercase).collect();
     (0..rows.len())
@@ -914,61 +1062,9 @@ pub(super) fn visible(rows: &[Row], f: &RowFilter) -> Vec<usize> {
 
 // ---------------------------------------------------------------- batches
 
-/// What "Update N mods" would do, shown before anything is downloaded.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub(super) struct UpdatePlan {
-    pub(super) included: Vec<Included>,
-    pub(super) skipped: Vec<(String, String)>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct Included {
-    pub(super) id: String,
-    pub(super) title: String,
-    pub(super) from: String,
-    pub(super) to: String,
-    pub(super) native: bool,
-}
-
-/// Why a batch leaves out `r`'s update, if it does.
-pub(super) fn update_refusal(r: &Row, native_allowed: bool) -> Option<String> {
-    if r.pinned {
-        Some(tr("you chose its version: update it on its own").to_string())
-    } else if r.native() && !native_allowed {
-        Some(tr("native code: allow it first, then update this mod on its own").to_string())
-    } else {
-        None
-    }
-}
-
-/// The whole pack's compatible updates, not only the visible rows. Native code is only updated
-/// with the player's permission, and a version the player chose stays. A mod taken down is
-/// updated: the new file is checked like any install and replaces the one that was taken down.
-pub(super) fn plan_updates(rows: &[Row], native_allowed: bool) -> UpdatePlan {
-    let mut plan = UpdatePlan::default();
-    for r in rows.iter().filter(|r| r.local.is_none()) {
-        let Some(to) = &r.update else { continue };
-        // A mod that is off is updated like any other and stays off: downloading a newer checked
-        // file never switches a mod on, and a native mod that is off builds when it is turned on.
-        if let Some(why) = update_refusal(r, native_allowed) {
-            plan.skipped.push((r.title.clone(), why));
-        } else {
-            plan.included.push(Included {
-                id: r.id.clone(),
-                title: r.title.clone(),
-                from: r.version.clone(),
-                to: to.clone(),
-                native: r.native(),
-            });
-        }
-    }
-    plan
-}
-
-/// The count on the "Update N mods" button: what [`plan_updates`] would really include, and no
-/// button (`None`) when that is nothing.
-pub(super) fn update_all_button(rows: &[Row], native_allowed: bool) -> Option<usize> {
-    Some(plan_updates(rows, native_allowed).included.len()).filter(|n| *n > 0)
+/// A version the player chose stays in a bulk update; its own Update remains explicit.
+pub(super) fn bulk_updatable(r: &Row) -> bool {
+    r.local.is_none() && !r.pinned && r.update.is_some()
 }
 
 /// Which of the chosen mods can be turned on now, and which can't (and why).
@@ -990,37 +1086,6 @@ pub(super) fn turn_on_plan<'a>(
         }
     }
     (ok, no)
-}
-
-/// Installed mods that are not being removed but whose newest registry version lists a removed
-/// mod among what it needs: "(name, [needed names])".
-pub(super) fn dependents(
-    rows: &[Row],
-    removing: &HashSet<String>,
-    index: Option<&Index>,
-) -> Vec<(String, Vec<String>)> {
-    let Some(index) = index else {
-        return Vec::new();
-    };
-    rows.iter()
-        .filter(|r| !removing.contains(&r.id))
-        .filter_map(|r| {
-            let e = r.entry.as_ref()?;
-            let p = index.project(&e.project)?;
-            let v = p.versions.iter().find(|v| v.version == e.version)?;
-            let needed: Vec<String> = v
-                .requires
-                .iter()
-                .filter(|q| removing.contains(&q.id))
-                .map(|q| {
-                    index
-                        .project(&q.id)
-                        .map_or(q.id.clone(), |m| m.name.clone())
-                })
-                .collect();
-            (!needed.is_empty()).then(|| (r.title.clone(), needed))
-        })
-        .collect()
 }
 
 #[cfg(test)]

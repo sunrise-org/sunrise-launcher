@@ -5,7 +5,9 @@
 //! checksum. Files the player put there themselves are never touched: the browser only replaces
 //! or removes what it lists.
 use super::{pick, safe_name, Kind, Project, Source, SourceId, Support, Version};
+use crate::i18n::{tr, trf};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -94,6 +96,46 @@ pub struct Entry {
     /// What a Sunrise mod's trust was when it was installed (`trust_label`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verdict: Option<String>,
+    /// A retained install's verified source stays off until the player can address this failure.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "launcher_install_hold"
+    )]
+    pub install_hold: Option<InstallHold>,
+}
+
+/// Why verified bytes are intentionally installed but off after a partial native install.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InstallHold {
+    Compile,
+    Needs { name: String },
+}
+
+impl InstallHold {
+    pub fn label(&self) -> String {
+        match self {
+            Self::Compile => tr("Installed, couldn't build").into(),
+            Self::Needs { name } => trf("Needs {mod}", &[("mod", name)]),
+        }
+    }
+
+    pub fn short_reason(&self) -> String {
+        match self {
+            Self::Compile => tr("Couldn't build").into(),
+            Self::Needs { .. } => self.label(),
+        }
+    }
+
+    pub fn detail(&self) -> String {
+        match self {
+            Self::Compile => tr("Its code couldn't build on your computer.").into(),
+            Self::Needs { name } => {
+                trf("It needs {mod} to be on and compatible.", &[("mod", name)])
+            }
+        }
+    }
 }
 
 /// Whether `file` names something inside one of the folders the browser installs into, made of
@@ -170,7 +212,11 @@ impl Installed {
         let part = home.join(format!(".{MANIFEST}.{}-{id}.part", std::process::id()));
         let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
         fs::create_dir_all(home).map_err(|e| format!("{}: {e}", home.display()))?;
-        let res = fs::write(&part, text).and_then(|()| fs::rename(&part, &path));
+        let mut file =
+            fs::File::create_new(&part).map_err(|e| format!("{}: {e}", part.display()))?;
+        let written = std::io::Write::write_all(&mut file, text.as_bytes());
+        drop(file);
+        let res = written.and_then(|()| fs::rename(&part, &path));
         if let Err(e) = res {
             let _ = fs::remove_file(&part);
             return Err(format!("{}: {e}", path.display()));
@@ -184,12 +230,157 @@ impl Installed {
             .find(|e| e.source == source && e.project == project)
     }
 
+    fn single(&self, source: SourceId, project: &str) -> Result<Option<&Entry>, String> {
+        let mut rows = self
+            .entries
+            .iter()
+            .filter(|e| e.source == source && e.project == project);
+        let first = rows.next();
+        if rows.next().is_some() {
+            return Err(format!("Several browser entries claim {project}."));
+        }
+        Ok(first)
+    }
+
     /// By project id or slug, as the CLI takes them.
     pub fn lookup(&self, name: &str) -> Option<&Entry> {
         self.entries
             .iter()
             .find(|e| e.project == name || e.slug == name)
     }
+}
+
+/// Display metadata, not proof that a package may be updated or removed.
+#[derive(Clone, Copy)]
+pub enum ModLabelSource {
+    Registry,
+    Github,
+    Local,
+}
+
+pub struct ModLabel<'a> {
+    /// The manifest ID, used only to order ordinals (never displayed).
+    pub id: &'a str,
+    pub name: &'a str,
+    pub authors: &'a [String],
+    pub version: &'a str,
+    pub source: ModLabelSource,
+}
+
+impl ModLabel<'_> {
+    fn with_author(&self) -> Option<String> {
+        let mut authors: Vec<_> = self
+            .authors
+            .iter()
+            .map(|a| a.trim())
+            .filter(|a| !a.is_empty())
+            .collect();
+        authors.sort_unstable();
+        authors.dedup();
+        (!authors.is_empty()).then(|| {
+            trf(
+                "{name} · by {authors}",
+                &[("name", self.name), ("authors", &authors.join(", "))],
+            )
+        })
+    }
+
+    fn with_version(&self, name: &str) -> Option<String> {
+        (!self.version.is_empty()).then(|| {
+            trf(
+                "{name} · {version}",
+                &[("version", self.version), ("name", name)],
+            )
+        })
+    }
+
+    fn with_source(&self, name: &str) -> String {
+        let source = match self.source {
+            ModLabelSource::Registry => tr("Sunrise registry"),
+            ModLabelSource::Github => tr("GitHub"),
+            ModLabelSource::Local => tr("Local file"),
+        };
+        trf("{name} · {source}", &[("source", source), ("name", name)])
+    }
+}
+
+/// Player-facing labels for equal display names, returned in input order. A unique
+/// name needs no replacement. For namesakes, try author, version and source alone,
+/// then combine them. Break remaining ties with just the name and a number, ordered
+/// by manifest ID, not display order.
+pub fn colliding_mod_labels<'a>(
+    mods: impl IntoIterator<Item = ModLabel<'a>>,
+) -> Vec<Option<String>> {
+    let mods: Vec<_> = mods.into_iter().collect();
+    let mut names = HashMap::new();
+    for item in &mods {
+        *names.entry(item.name).or_insert(0) += 1;
+    }
+    let mut used = HashSet::new();
+    let mut pending = Vec::new();
+    let mut labels = vec![None; mods.len()];
+    for (i, item) in mods.iter().enumerate() {
+        if names[item.name] == 1 {
+            used.insert(item.name.to_owned());
+        } else {
+            pending.push(i);
+        }
+    }
+
+    // Compare rendered labels, not just the fields: e.g. one author named "A, B"
+    // displays the same as two authors named "A" and "B".
+    let mut assign = |candidate: &dyn Fn(&ModLabel<'_>) -> Option<String>| {
+        let mut proposals = HashMap::new();
+        for &i in &pending {
+            if let Some(label) = candidate(&mods[i]) {
+                proposals
+                    .entry(label)
+                    .and_modify(|slot| *slot = None)
+                    .or_insert(Some(i));
+            }
+        }
+        for (label, row) in proposals {
+            if let Some(i) = row {
+                if used.insert(label.clone()) {
+                    labels[i] = Some(label);
+                }
+            }
+        }
+        pending.retain(|&i| labels[i].is_none());
+    };
+    assign(&|item| item.with_author());
+    assign(&|item| item.with_version(item.name));
+    assign(&|item| Some(item.with_source(item.name)));
+    assign(&|item| {
+        item.with_author()
+            .and_then(|author| item.with_version(&author))
+    });
+    let all_details = |item: &ModLabel<'_>| {
+        let author = item.with_author();
+        let detail = author.as_deref().unwrap_or(item.name);
+        let version = item.with_version(detail);
+        item.with_source(version.as_deref().unwrap_or(detail))
+    };
+    assign(&|item| Some(all_details(item)));
+
+    pending.sort_by_key(|&i| mods[i].id);
+    let mut ordinals = HashMap::new();
+    for i in pending {
+        let name = mods[i].name;
+        let ordinal = ordinals.entry(name).or_insert(0usize);
+        loop {
+            *ordinal += 1;
+            let label = trf(
+                "{label} · {n}",
+                &[("n", &ordinal.to_string()), ("label", name)],
+            );
+            if used.insert(label.clone()) {
+                labels[i] = Some(label);
+                break;
+            }
+        }
+    }
+    labels
 }
 
 /// One file to install: the project, the version chosen and why it was pulled in.
@@ -291,34 +482,74 @@ pub fn install(
 ) -> Result<Vec<Entry>, String> {
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
     if project.source == SourceId::Sunrise {
-        return super::sunrise::install(project, home, game, progress);
+        return super::sunrise::install_pack(project, home, game, progress);
     }
+    recover_game_install(home)?;
+    let installed = Installed::read(home)?;
     let steps = plan(source, project, everything, game)?;
-    put(
-        source,
-        steps,
-        home,
-        &|kind| kind.folder().expect("plan keeps folder kinds"),
-        progress,
-    )
+    put_packs(source, steps, home, installed, progress)
 }
 
-/// Downloads each step's file into `home`, in the folder `folder` names for its kind, and lists
-/// it: what was already there at that version is kept, an older version replaced.
-pub(super) fn put(
+/// Checks a legacy destination under the home lock. Only a plain file directly in its own
+/// kind's pack folder is admissible, without symlinks or Windows junctions in the way.
+pub(super) fn pack_path(home: &Path, kind: Kind, file: &str) -> Result<PathBuf, String> {
+    let (folder, name) = file
+        .split_once('/')
+        .filter(|(folder, name)| kind.folder() == Some(*folder) && safe_name(name).is_some())
+        .ok_or_else(|| format!("{file} isn't a pack file in its expected folder."))?;
+    let dir = home.join(folder);
+    let path = dir.join(name);
+    for (part, is_dir) in [(&dir, true), (&path, false)] {
+        match fs::symlink_metadata(part) {
+            Ok(meta) => {
+                #[cfg(windows)]
+                {
+                    use std::os::windows::fs::MetadataExt;
+                    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+                    if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                        return Err(format!("{file} goes through a filesystem link."));
+                    }
+                }
+                let plain = if is_dir {
+                    meta.is_dir()
+                } else {
+                    meta.is_file()
+                };
+                if !plain {
+                    return Err(format!("{file} isn't a pack file in a plain pack folder."));
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(format!("{}: {e}", part.display())),
+        }
+    }
+    Ok(path)
+}
+
+/// A live row must still match the pack kind selected by the caller or resolved from the source.
+pub(super) fn old_pack_path(home: &Path, entry: &Entry, kind: Kind) -> Result<PathBuf, String> {
+    if entry.kind != kind {
+        return Err(format!("{} has a different installed kind.", entry.title));
+    }
+    pack_path(home, kind, &entry.file)
+}
+
+/// Publishes a planned Modrinth pack set. The caller holds the home lock from before the read.
+fn put_packs(
     source: &dyn Source,
     steps: Vec<Step>,
     home: &Path,
-    folder: &dyn Fn(Kind) -> &'static str,
+    mut installed: Installed,
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<Entry>, String> {
-    let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
-    recover_game_install(home)?;
-    let mut installed = Installed::read(home)?;
     let mut done = Vec::new();
     for step in steps {
         let p = &step.project;
-        let old = installed.find(p.source, &p.id).cloned();
+        let old = installed.single(p.source, &p.id)?.cloned();
+        let previous = old
+            .as_ref()
+            .map(|row| old_pack_path(home, row, p.kind))
+            .transpose()?;
         if old.as_ref().is_some_and(|o| o.version == step.version.id) {
             done.push(old.expect("checked"));
             continue;
@@ -327,13 +558,14 @@ pub(super) fn put(
             .version
             .file()
             .expect("pick keeps versions with a file");
-        let folder_name = folder(p.kind);
+        let folder_name = p.kind.folder().expect("plan keeps folder kinds");
         let name = safe_name(&file.name)
             .ok_or_else(|| format!("{:?} isn't a plain file name.", file.name))?;
         let relative = format!("{folder_name}/{name}");
+        let target = pack_path(home, p.kind, &relative)?;
         let owner = installed.entries.iter().find(|e| e.file == relative);
         let ours = owner.is_some_and(|e| e.source == p.source && e.project == p.id);
-        if home.join(&relative).exists() && !ours {
+        if target.exists() && !ours {
             return Err(match owner {
                 Some(e) => format!(
                     "{relative} belongs to {}, installed from the browser.",
@@ -346,12 +578,15 @@ pub(super) fn put(
             });
         }
         let line = format!("{} {}", p.title, step.version.number);
-        let path = source.fetch(file, &home.join(folder_name), &|f| progress(&line, f))?;
+        // Stage on the destination filesystem without trusting a pre-existing partial file.
+        let dir = home.join(folder_name);
+        fs::create_dir_all(&dir).map_err(|e| format!("{folder_name}: {e}"))?;
+        let stage = tempfile::tempdir_in(dir).map_err(|e| e.to_string())?;
+        let path = source.fetch(file, stage.path(), &|f| progress(&line, f))?;
         let (algo, hash) = file.checksum().expect("fetch checks for one");
-        if let Some(old) = &old {
-            if let Some(file) = old.path(home).filter(|_| old.file != relative) {
-                let _ = fs::remove_file(file);
-            }
+        fs::rename(path, &target).map_err(|e| format!("{relative}: {e}"))?;
+        if let Some(old) = previous.filter(|path| path != &target) {
+            let _ = fs::remove_file(old);
         }
         let entry = Entry {
             source: p.source,
@@ -367,8 +602,8 @@ pub(super) fn put(
             // Asked for by the player once: it stays theirs.
             dependency: step.dependency && old.as_ref().is_none_or(|o| o.dependency),
             verdict: None,
+            install_hold: None,
         };
-        debug_assert!(path.ends_with(name));
         installed
             .entries
             .retain(|e| !(e.source == p.source && e.project == p.id));
@@ -439,7 +674,75 @@ pub fn remove(home: &Path, name: &str) -> Result<Entry, String> {
     Ok(entry)
 }
 
-/// The newer version `entry` can be updated to on the Minecraft version `game`, if any.
+/// Removes a CLI-selected pack, never a mod. The unlocked CLI selection is only a lookup key.
+pub fn remove_pack(home: &Path, selected: &Entry) -> Result<Entry, String> {
+    let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
+    recover_game_install(home)?;
+    let mut installed = Installed::read(home)?;
+    let entry = installed
+        .single(selected.source, &selected.project)?
+        .cloned()
+        .ok_or_else(|| format!("{} wasn't installed by the browser.", selected.title))?;
+    let path = old_pack_path(home, &entry, selected.kind)?;
+    match fs::remove_file(path) {
+        Ok(()) => (),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+        Err(e) => return Err(format!("{}: {e}", entry.file)),
+    }
+    installed
+        .entries
+        .retain(|e| !(e.source == entry.source && e.project == entry.project));
+    installed.save(home)?;
+    Ok(entry)
+}
+
+pub enum PackUpdate {
+    Current,
+    Available(String),
+    Updated(Vec<Entry>),
+}
+
+/// Check or update an installed resource or shader pack. Data packs are managed within worlds.
+pub fn update_pack(
+    home: &Path,
+    selected: &Entry,
+    game: &str,
+    check: bool,
+    progress: &dyn Fn(&str, f32),
+) -> Result<PackUpdate, String> {
+    let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
+    if !check {
+        recover_game_install(home)?;
+    }
+    let installed = Installed::read(home)?;
+    let entry = installed
+        .single(selected.source, &selected.project)?
+        .ok_or_else(|| format!("{} wasn't installed by the browser.", selected.title))?;
+    old_pack_path(home, entry, selected.kind)?;
+    if entry.source == SourceId::Sunrise {
+        return super::sunrise::update_pack(entry, home, game, check, progress);
+    }
+    let source = super::modrinth::Modrinth;
+    let project = source.project(&entry.project)?;
+    if project.kind != entry.kind {
+        return Err(format!("{} has a different installed kind.", entry.title));
+    }
+    let versions = source.versions(&project)?;
+    let Some(newer) = pick(project.kind, &versions, true, game).filter(|v| v.id != entry.version)
+    else {
+        return Ok(PackUpdate::Current);
+    };
+    if check {
+        let folder = entry.kind.folder().expect("checked pack kind");
+        let file = newer.file().expect("pick keeps versions with a file");
+        pack_path(home, entry.kind, &format!("{folder}/{}", file.name))?;
+        return Ok(PackUpdate::Available(newer.number.clone()));
+    }
+    let steps = plan(&source, &project, true, game)?;
+    put_packs(&source, steps, home, installed, progress).map(PackUpdate::Updated)
+}
+
+/// Read-only version lookup. The CLI uses `update_pack` for checks on the pack exception.
 pub fn update_for(
     source: &dyn Source,
     entry: &Entry,

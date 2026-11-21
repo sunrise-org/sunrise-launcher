@@ -424,11 +424,18 @@ fn unread_session_files_go_once_the_game_would_refuse_them() {
         .unwrap();
     // A game that started took its file (and deleted it).
     std::fs::remove_file(&read).unwrap();
-    let mut unread = vec![waiting.clone(), stale.clone(), read];
+    let mut unread = [waiting.clone(), stale.clone(), read]
+        .into_iter()
+        .map(|path| UnreadSession {
+            path,
+            expire_only: true,
+        })
+        .collect();
     reap(&mut unread, SESSION_FILE_LIFE);
     assert!(waiting.exists(), "a game may still take it");
     assert!(!stale.exists(), "no token left behind");
-    assert_eq!(unread, std::slice::from_ref(&waiting));
+    assert_eq!(unread.len(), 1);
+    assert_eq!(unread[0].path, waiting);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

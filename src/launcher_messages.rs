@@ -2,6 +2,12 @@
 use super::*;
 
 impl Launcher {
+    pub(super) fn refresh_installed(&mut self) {
+        (self.installed, self.known_nightly) =
+            backend::play_installations(self.settings.selected.as_deref());
+        self.refresh_open_storage_builds();
+    }
+
     pub(crate) fn drain(&mut self, window: gpui::AnyWindowHandle, cx: &mut Context<Self>) {
         let mut changed = false;
         self.perf.tick();
@@ -21,7 +27,7 @@ impl Launcher {
                 changed = true;
             }
             Some(perf::Step::Scroll) => {
-                self.go(Page::Versions);
+                self.open_versions();
                 changed = true;
             }
             Some(perf::Step::Quit) => cx.quit(),
@@ -34,19 +40,17 @@ impl Launcher {
                     if let (Ok(_), Some(checked)) = (&r, self.checked) {
                         self.perf.record_since("launcher.release_list_ms", checked);
                     }
-                    if let Ok(list) = &r {
-                        sunrise_launcher::nightly::note_published(list);
-                    }
+                    let loaded = r.is_ok();
                     self.releases = r.map_or_else(Load::Failed, Load::Ready);
-                    // Once the list is in (or failed), each instance resolves to the build it plays.
-                    if !self.mods.auto_updated {
-                        self.mods.auto_updated = true;
-                        self.mods_auto_update();
+                    if loaded {
+                        self.refresh_installed();
+                    } else {
+                        self.refresh_open_storage_builds();
                     }
                 }
                 Msg::Links(links) => self.links = links,
                 // The page reads is_prepared when drawn; `changed` redraws it.
-                Msg::Reused(_) => self.installed = backend::installed(),
+                Msg::Reused(_) => self.refresh_installed(),
                 Msg::Keychain(said) => self.keychain = said,
                 Msg::Owner(owns) => self.owner = Some(owns),
                 Msg::AccountHead(uuid, url, face, failed) => {
@@ -97,13 +101,69 @@ impl Launcher {
                         self.play_step = Some(step);
                     }
                 }
+                Msg::ManagedClient { instance, result } => {
+                    use sunrise_launcher::managed_play::StartError;
+                    self.starting_client = None;
+                    self.play_step = None;
+                    self.accounts = Accounts::load();
+                    self.load_auth_statuses(false);
+                    match *result {
+                        Ok(game) => {
+                            self.client_error = game.notice;
+                            self.play_registry_notices = game.registry_notices;
+                            for notice in &self.play_registry_notices {
+                                console_page::keep_line(
+                                    &mut self.prepare_log,
+                                    &mut self.log_revision,
+                                    notice.clone(),
+                                );
+                            }
+                            if game.owner {
+                                self.owner = Some(true);
+                            }
+                            self.refresh_installed();
+                            self.client_home = Some(game.instance.home.clone());
+                            self.client_run = Some((game.instance, Instant::now()));
+                            self.client = Some(backend::monitor_game(
+                                game.child,
+                                self.tx.clone(),
+                                game.runtime,
+                            ));
+                            if self.play_registry_notices.is_empty() {
+                                self.step_aside(cx);
+                            }
+                        }
+                        Err(StartError::Journal(problem)) => {
+                            self.play_install_recovery = Some((instance.home, problem.details()));
+                        }
+                        Err(StartError::Account(refused)) => {
+                            if refused.keyring.is_none() {
+                                self.owner = Some(false);
+                                self.owner_screen_open = true;
+                            }
+                            self.client_error = Some(refused.in_window());
+                        }
+                        Err(StartError::Native(native_mods::Failed::NoConsent)) => {
+                            self.request_native_build_consent();
+                        }
+                        Err(StartError::Native(error)) => {
+                            self.native_for = Some(instance.id);
+                            self.native_failed(error.to_string(), &[]);
+                        }
+                        Err(StartError::Hook(error)) => self.client_error = Some(error.to_string()),
+                        Err(StartError::UnknownSpawn(error) | StartError::Other(error)) => {
+                            self.client_error = Some(error);
+                        }
+                    }
+                }
+                Msg::PlayRecorded => self.reload_instances(),
                 Msg::PlayAdmission(home, result) => {
                     let Some(intent) = self.play_admission.take() else {
                         continue;
                     };
                     if self
                         .selected_instance()
-                        .is_none_or(|i| i.home != home || i.id != intent.instance)
+                        .is_none_or(|i| i.home != home || !intent.matches_profile(i))
                     {
                         continue;
                     }
@@ -115,11 +175,11 @@ impl Launcher {
                         }
                     }
                 }
-                Msg::PinnedBuild {
-                    home,
-                    result,
-                    close_versions,
-                } => self.finish_build_pin(&home, result, close_versions),
+                Msg::PinnedBuild { home, result } => self.finish_build_pin(&home, result),
+                Msg::SwitchProgress(stage) => self.switch_progress(stage),
+                Msg::SwitchQuestion(question, reply) => self.switch_question(question, reply),
+                Msg::Switched(home, result) => self.switch_finished(&home, *result),
+                Msg::ReceiptAcknowledged(home, result) => self.receipt_acknowledged(&home, result),
                 Msg::Session(session) => self.handle_game_session(session),
                 Msg::JarConsent { jars, reply } => jar_launch::consent(window, jars, reply, cx),
                 Msg::JarClient {
@@ -154,7 +214,7 @@ impl Launcher {
                     match started {
                         Ok(r) => {
                             self.client = Some(r);
-                            self.client_run = run.map(|id| (id, Instant::now()));
+                            self.client_run = run.map(|instance| (*instance, Instant::now()));
                             // Do not hide or minimize the window when the registry has
                             // something the player needs to see about this run.
                             if self.play_registry_notices.is_empty() {
@@ -175,16 +235,27 @@ impl Launcher {
                 Msg::Installed(tag, result) => {
                     self.installing = None;
                     self.bar = (0., 0.);
-                    self.installed = backend::installed();
-                    let as_update = self.update_install.take().filter(|t| *t == tag);
+                    self.refresh_installed();
+                    if let Some(warning) = self.record_nightly_receipt_outcome(&tag, &result) {
+                        glass_toast::say(trf(
+                            "{warning} Try again in Settings → Storage.",
+                            &[("warning", &warning)],
+                        ));
+                    }
+                    if self.finish_switch_download(&tag, &result) {
+                        self.install_started = None;
+                        if let Some(next) = self.install_next.take() {
+                            self.install_for_instance(next);
+                        }
+                        continue;
+                    }
+                    let receipt_only =
+                        matches!(&result, Ok(backend::InstallOutcome::ReceiptOnly(_)));
+                    let result = result.map(|_| ());
+                    let repair = self.architecture_reinstall.take().is_some_and(|t| t == tag);
                     let for_instance = self.instance_install.take_if(|t| *t == tag).is_some();
                     if let (Ok(()), Some(started)) = (&result, self.install_started.take()) {
-                        let name = if as_update.is_some() {
-                            "launcher.update_ms"
-                        } else {
-                            "launcher.install_ms"
-                        };
-                        self.perf.record_since(name, started);
+                        self.perf.record_since("launcher.install_ms", started);
                     }
                     let resume = self
                         .ui
@@ -192,41 +263,27 @@ impl Launcher {
                         .take()
                         .filter(|(_, wanted)| result.is_ok() && *wanted == tag);
                     match result {
+                        Ok(()) if repair || receipt_only => {}
                         Ok(()) => {
-                            if as_update.is_some()
-                                && sunrise_launcher::nightly::date_of(&tag).is_some()
-                            {
-                                if let Err(e) = backend::mark_auto_installed(&tag) {
-                                    eprintln!("Could not mark updated Nightly {tag}: {e}");
-                                }
-                            }
                             if self.updates.sunrise.as_ref().is_some_and(|r| r.tag == tag) {
                                 self.updates.sunrise = None;
                             }
-                            // An instance's own version leaves the other instances on theirs.
-                            // Judged now, not when the download started: a version picked on
-                            // Versions meanwhile stays picked.
-                            let before: Vec<String> = self
-                                .installed
-                                .iter()
-                                .filter(|t| **t != tag)
-                                .cloned()
-                                .collect();
-                            let select = as_update.is_none_or(|_| {
-                                backend::select_after_update(
-                                    self.settings.selected.as_deref(),
-                                    &before,
-                                )
-                            }) && (!for_instance || self.launcher_version().is_none());
+                            // An instance's own download leaves other selections alone.
+                            let select = !for_instance || self.launcher_version().is_none();
                             if select {
                                 self.settings.selected = Some(tag.clone());
                             }
                             // Pruning reads settings from disk: protect the selection only once
                             // it has been saved there. A failed save leaves all versions in place.
-                            if self.save_settings() {
+                            if self.save_settings() && self.settings.auto_prune() {
                                 let tx = self.tx.clone();
+                                let releases = self.game_releases().to_vec();
+                                let installed = tag.clone();
                                 std::thread::spawn(move || {
-                                    let _ = tx.send(Msg::Pruned(backend::prune_old_versions()));
+                                    let errors = backend::version_storage::prune_old_versions(
+                                        &releases, &installed,
+                                    );
+                                    let _ = tx.send(Msg::Pruned(errors));
                                 });
                             }
                         }
@@ -241,35 +298,19 @@ impl Launcher {
                         self.install_for_instance(next);
                     }
                 }
-                Msg::Removed(tag, result) => {
-                    self.removing.retain(|t| *t != tag);
-                    self.installed = backend::installed();
-                    let selected = if self.settings_save_error.is_some() {
-                        self.settings.selected.take()
-                    } else {
-                        Settings::load().selected
-                    };
-                    self.settings.selected = selection_after_removal(&self.installed, selected);
-                    if let Err(e) = result {
-                        self.install_error = Some((tag, e));
+                Msg::NightlyReceiptRetried(warning, result) => {
+                    if result.is_ok() {
+                        self.refresh_installed();
                     }
+                    self.finish_nightly_receipt_retry(&warning, result);
                 }
-                Msg::DiskUse(disk) => self.disk = disk,
+                Msg::Removed(errors) => self.storage_builds_removed(errors),
+                Msg::BuildInventory(generation, rows) => {
+                    self.storage_builds_arrived(generation, rows)
+                }
                 Msg::Storage(result) => self.storage_arrived(result),
-                Msg::Imported(result) => {
-                    self.importing_build = false;
-                    self.installed = backend::installed();
-                    match result {
-                        // `build_import::import` saved the selection; this keeps the window's copy.
-                        Ok(tag) => self.settings.selected = Some(tag),
-                        Err(e) => self.import_error = Some(e),
-                    }
-                }
-                Msg::Pruned(gone) => {
-                    if !gone.is_empty() {
-                        self.installed = backend::installed();
-                    }
-                }
+                Msg::Imported(result) => self.storage_build_imported(result),
+                Msg::Pruned(errors) => self.storage_builds_pruned(errors),
                 Msg::Updates(updates) => {
                     self.checking_updates = false;
                     self.launcher_checked_now = None;
@@ -277,9 +318,6 @@ impl Launcher {
                         settings::log_launcher_check_failure(error, |line| eprintln!("{line}"));
                     }
                     self.updates = *updates;
-                    if self.settings.auto_install() {
-                        self.install_update();
-                    }
                     if let Some(release) = self.updates.launcher.clone() {
                         self.update_launcher(release);
                     }
@@ -325,7 +363,7 @@ impl Launcher {
                     // have been picked, or its version changed, meanwhile).
                     let wanted = self.play_after_build.take();
                     let cancelled = matches!(&result, Err(native_mods::Failed::Other(error)) if error == native_mods::CANCELLED);
-                    self.installed = backend::installed();
+                    self.refresh_installed();
                     self.reload_instances();
                     // No permission: the question is the answer, not the refusal's words.
                     let no_consent = matches!(result, Err(native_mods::Failed::NoConsent));
@@ -423,6 +461,13 @@ impl Launcher {
                         );
                     }
                 }
+                Msg::ClientObservationLost(error) => {
+                    self.client = None;
+                    self.client_run = None;
+                    self.client_started = None;
+                    self.come_back(cx);
+                    self.client_error = Some(error);
+                }
                 Msg::Exit(job, result) => {
                     // A preparation (or a build) ended: the disk may have changed under the pages.
                     backend::forget_prepared();
@@ -430,6 +475,7 @@ impl Launcher {
                     match job {
                         Job::Prepare => {
                             self.preparing = false;
+                            self.refresh_open_storage_builds();
                             // Play pressed before the version was prepared plays now.
                             if let Some((tag, intent)) = self.play_when_prepared.take() {
                                 if error.is_none()
@@ -456,6 +502,7 @@ impl Launcher {
                         }
                         Job::Client => {
                             self.client = None;
+                            self.refresh_open_storage_builds();
                             // Any session file the game didn't read (it crashed first).
                             account::discard_unread_sessions();
                             self.come_back(cx);
@@ -464,25 +511,37 @@ impl Launcher {
                             self.multiplayer.stale();
                             self.screenshots.stale();
                             self.game_packs.stale();
-                            let vars = std::mem::take(&mut self.client_vars);
                             let mut other_profile = None;
-                            if let Some((id, started)) = self.client_run.take() {
-                                if let Err(e) = instances::record_play(&id, started.elapsed()) {
-                                    eprintln!("Play time not saved: {e}");
+                            if let Some((played, started)) = self.client_run.take() {
+                                if self.selected_instance().is_some_and(|selected| {
+                                    selected.id != played.id
+                                        || selected.incarnation != played.incarnation
+                                }) {
+                                    other_profile = Some(played.name.clone());
                                 }
-                                if let Some(i) = instances::list().into_iter().find(|i| i.id == id)
-                                {
-                                    if self
-                                        .selected_instance()
-                                        .is_some_and(|selected| selected.id != id)
+                                let tx = self.tx.clone();
+                                let elapsed = started.elapsed();
+                                std::thread::spawn(move || {
+                                    if let Err(error) =
+                                        instances::finish_play(&played, elapsed, || {
+                                            let _ = tx.send(Msg::PlayRecorded);
+                                            sunrise_launcher::launch::run_after_exit(
+                                                &played.launch,
+                                                &played.home,
+                                                &played.vars(),
+                                            );
+                                        })
                                     {
-                                        other_profile = Some(i.name);
+                                        eprintln!(
+                                            "{}",
+                                            trf(
+                                                "Play time not saved: {error}",
+                                                &[("error", &error)]
+                                            )
+                                        );
+                                        let _ = tx.send(Msg::PlayRecorded);
                                     }
-                                    sunrise_launcher::launch::run_after_exit(
-                                        &i.launch, &i.home, &vars,
-                                    );
-                                }
-                                self.reload_instances();
+                                });
                             }
                             // The run's own game folder: an instance's or a pack's keeps its reports.
                             let home = self.client_home.clone().unwrap_or_else(backend::game_home);
@@ -555,13 +614,14 @@ impl Launcher {
                         self.settings.owner_notice_seen = true;
                         self.save_settings();
                     }
-                    if let Some(instance) = self.ui.after_sign_in.take().filter(|asked| {
+                    if let Some(mut intent) = self.ui.after_sign_in.take().filter(|asked| {
                         account_chip::plays_after_sign_in(
-                            Some(asked.clone()),
+                            Some(asked.instance.clone()),
                             self.selected_instance().map(|i| i.id.as_str()),
                         )
                     }) {
-                        self.resume_play(launcher_play::PlayIntent::new(instance, Some(account)));
+                        intent.account = Some(account.uuid.clone());
+                        self.resume_play(intent);
                     }
                 }
                 changed = true;

@@ -1,6 +1,6 @@
 //! Serialize native grant changes, general settings writes and native work admission. Only the
 //! two permission fields change merge policy; other Settings fields retain their existing rules.
-use super::{data_dir, write_private, Settings};
+use super::{data_dir, write_private, Settings, SourceModGrant};
 use crate::i18n::tr;
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -12,6 +12,7 @@ use std::{
 const SETTINGS: &str = "settings.json";
 const ALLOWED: &str = "native_mods_allowed_at";
 const REVISION: &str = "native_consent_revision";
+const SOURCE_GRANTS: &str = "source_mod_grants";
 
 #[derive(Deserialize, Default)]
 #[serde(default)]
@@ -113,7 +114,7 @@ impl Settings {
         let Value::Object(mut now) = serde_json::to_value(self).map_err(|e| e.to_string())? else {
             unreachable!("Settings serializes as an object");
         };
-        for key in [ALLOWED, REVISION] {
+        for key in [ALLOWED, REVISION, SOURCE_GRANTS] {
             if let Some(value) = live.get(key) {
                 now.insert(key.into(), value.clone());
             } else {
@@ -121,6 +122,58 @@ impl Settings {
             }
         }
         file.write(&now)
+    }
+
+    /// Persist the exact source grants and, on first use, the introductory native grant
+    /// in the same fenced settings write. Do not replay another launcher's permissions.
+    pub fn allow_source_mods(&mut self, approved: Vec<SourceModGrant>) -> Result<(), String> {
+        self.allow_source_mods_in(&data_dir(), approved)
+    }
+
+    fn allow_source_mods_in(
+        &mut self,
+        data: &Path,
+        approved: Vec<SourceModGrant>,
+    ) -> Result<(), String> {
+        if approved.is_empty() {
+            return Err(tr("The source could not be verified.").into());
+        }
+        let file = PermissionFence::open(data)?;
+        let mut live: Map<String, Value> = file.read()?;
+        let prior: Permission = serde_json::from_value(Value::Object(live.clone()))
+            .map_err(|e| format!("{SETTINGS}: {e}"))?;
+        let mut grants: Vec<SourceModGrant> = live
+            .remove(SOURCE_GRANTS)
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default();
+        for grant in approved {
+            if !grants.contains(&grant) {
+                grants.push(grant);
+            }
+        }
+        let time = if let Some(current) = prior.native_mods_allowed_at {
+            current
+        } else {
+            let time = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_secs();
+            let revision = prior
+                .native_consent_revision
+                .checked_add(1)
+                .ok_or_else(|| tr("Native mod permission could not be saved.").to_owned())?;
+            live.insert(ALLOWED.into(), time.into());
+            live.insert(REVISION.into(), revision.into());
+            time
+        };
+        live.insert(
+            SOURCE_GRANTS.into(),
+            serde_json::to_value(&grants).map_err(|error| error.to_string())?,
+        );
+        file.write(&live)?;
+        self.native_mods_allowed_at = Some(time);
+        self.source_mod_grants = grants;
+        Ok(())
     }
 
     pub fn revoke_native_mods(&mut self) -> Result<(), String> {
@@ -155,6 +208,46 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_grants_use_repo_id_owner_and_mod_and_survive_stale_settings_saves() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data = tmp.path();
+        let stale = Settings::default();
+        let mut editor = Settings::default();
+        let grant = |repo_id, owner: &str, id: &str| SourceModGrant {
+            repo_id,
+            owner: owner.into(),
+            id: id.into(),
+        };
+        let first = grant(1, "river", "trail");
+        editor
+            .allow_source_mods_in(data, vec![first.clone()])
+            .unwrap();
+        let time = editor
+            .native_mods_allowed_at
+            .expect("first source grant also grants native permission");
+        let initial = PermissionFence::open(data).unwrap().grant().unwrap();
+        for different in [
+            grant(2, "river", "trail"),
+            grant(1, "grove", "trail"),
+            grant(1, "river", "camp"),
+        ] {
+            assert!(!editor.source_mod_grants.contains(&different));
+        }
+        let second = grant(1, "river", "camp");
+        editor
+            .allow_source_mods_in(data, vec![first.clone(), second.clone()])
+            .unwrap();
+        stale.save_to(data).unwrap();
+        let loaded = Settings::load_from(data);
+        assert_eq!(loaded.source_mod_grants, [first, second]);
+        assert_eq!(loaded.native_mods_allowed_at, Some(time));
+        assert_eq!(
+            PermissionFence::open(data).unwrap().grant().unwrap(),
+            initial
+        );
+    }
 
     #[test]
     fn old_settings_writers_cannot_replay_permission_and_new_grants_do_not_authorize_old_work() {

@@ -16,6 +16,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+pub(crate) mod lifecycle;
+use crate::managed_play::{Profile as ManagedProfile, ReferencePublication};
+use crate::profile_txn::{durable, Identity, NameGate};
+use lifecycle::{initial_choices, GATES, INITIAL, RETIRED};
+
 /// The default instance's id: the game's home itself.
 pub const DEFAULT: &str = "sunrise";
 const FILE: &str = "instances.json";
@@ -204,16 +209,31 @@ pub enum Channel {
 }
 
 impl Channel {
-    /// The channel a game release belongs to. Old versioned pre-releases can be pinned,
-    /// but are not followed. The rolling Nightly is a Nightly even when marked for updates.
+    /// Publication channels, not a classifier for arbitrary tags the player has on disk.
     pub fn of_release(release: &backend::Release) -> Option<Self> {
-        if release.nightly.is_some() || sunrise_launcher_release_verify::is_nightly(&release.tag) {
+        match release.nightly.as_deref() {
+            Some(sunrise_launcher_release_verify::NIGHTLY) => Some(Self::Nightly),
+            None if !release.prerelease && backend::is_game_tag(&release.tag) => Some(Self::Stable),
+            _ => None,
+        }
+    }
+
+    /// Installed Nightlies keep their date and optional commit in their local directory name.
+    pub fn of_build(tag: &str) -> Option<Self> {
+        if crate::nightly::date_of(tag).is_some() {
             Some(Self::Nightly)
-        } else if !release.prerelease && backend::is_game_tag(&release.tag) {
+        } else if backend::is_game_tag(tag) {
             Some(Self::Stable)
         } else {
             None
         }
+    }
+
+    /// The installed build on this channel, from the newest-first on-disk list.
+    pub fn newest_installed(self, installed: &[String]) -> Option<&String> {
+        installed
+            .iter()
+            .find(|tag| Self::of_build(tag) == Some(self))
     }
 
     /// The downloadable releases on this channel, in catalogue order (newest first).
@@ -221,6 +241,38 @@ impl Channel {
         releases
             .iter()
             .filter(move |r| r.asset.is_some() && Self::of_release(r) == Some(self))
+    }
+
+    /// The target of an unpinned profile: stay on an installed build until the player updates.
+    /// A Stable install keeps working without the catalogue. Before there is one, the profile
+    /// can play Nightly while there is no downloadable Stable, without changing its channel.
+    pub fn play_target<'a>(
+        self,
+        releases: &'a [backend::Release],
+        installed: &'a [String],
+        nightly: Option<&'a String>,
+        selected: Option<&'a String>,
+    ) -> Option<&'a String> {
+        let latest = self.builds(releases).next().map(|release| &release.tag);
+        let have = match self {
+            Self::Stable => self.newest_installed(installed),
+            Self::Nightly => nightly,
+        };
+        match (have, latest) {
+            // The rolling build wins a same-day tie once it is actually on disk.
+            (Some(have), Some(latest))
+                if installed.contains(latest)
+                    && backend::compare_game_versions(latest, have).is_ge() =>
+            {
+                Some(latest)
+            }
+            (Some(have), _) => Some(have),
+            (None, Some(latest)) => Some(latest),
+            (None, None) if self == Self::Stable => {
+                Self::Nightly.play_target(releases, installed, nightly, selected)
+            }
+            (None, None) => selected.filter(|tag| Self::of_build(tag).is_none()),
+        }
     }
 
     /// What an unpinned profile follows for now. Without a Stable download it plays Nightly
@@ -290,6 +342,8 @@ pub struct Meta {
     /// meanwhile: kept as it was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub java_kept: Option<serde_json::Value>,
+    #[serde(flatten)]
+    other: BTreeMap<String, serde_json::Value>,
 }
 
 impl Instance {
@@ -308,32 +362,174 @@ fn is_zero(n: &u64) -> bool {
 struct Store {
     #[serde(default)]
     instances: BTreeMap<String, Meta>,
+    #[serde(flatten)]
+    other: BTreeMap<String, serde_json::Value>,
 }
 
 impl Store {
     fn load(data: &Path) -> Store {
-        fs::read_to_string(data.join(FILE))
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_default()
+        Self::read(data).unwrap_or_default()
     }
+
+    fn read(data: &Path) -> Result<Store, String> {
+        let path = data.join(FILE);
+        let error = |e: std::io::Error| format!("{FILE}: {e}");
+        match fs::symlink_metadata(&path) {
+            Ok(meta) if meta.is_file() && !crate::native_cache::linked(&meta) => (),
+            Ok(_) => return Err(error(std::io::ErrorKind::InvalidInput.into())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(e) => return Err(error(e)),
+        }
+        let bytes = fs::read(path).map_err(error)?;
+        serde_json::from_slice(&bytes).map_err(|e| format!("{FILE}: {e}"))
+    }
+
     fn save(&self, data: &Path) -> Result<(), String> {
-        fs::create_dir_all(data).map_err(|e| format!("{}: {e}", data.display()))?;
+        let bytes = serde_json::to_vec_pretty(self).map_err(|e| format!("{FILE}: {e}"))?;
+        crate::profile_txn::durable::replace(data, &data.join(FILE), &bytes)
+            .map_err(|e| format!("{FILE}: {e}"))
+    }
+
+    fn mutate<T>(
+        data: &Path,
+        change: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        Self::locked(data, |store| {
+            let result = change(store)?;
+            store.save(data)?;
+            Ok(result)
+        })
+    }
+
+    fn locked<T>(
+        data: &Path,
+        run: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        Self::under_lock(data, || {
+            Self::read(data).and_then(|mut store| run(&mut store))
+        })?
+    }
+
+    fn under_lock<T>(data: &Path, run: impl FnOnce() -> T) -> Result<T, String> {
+        let lock_error = |e: std::io::Error| format!("{FILE}: {e}");
+        fs::create_dir_all(data).map_err(lock_error)?;
+        let gate = data.join(".instances.lock");
+        match fs::symlink_metadata(&gate) {
+            Ok(meta) if meta.is_file() && !crate::native_cache::linked(&meta) => (),
+            Ok(_) => return Err(lock_error(std::io::ErrorKind::InvalidInput.into())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(lock_error(e)),
+        }
+        let lock = fs::File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(gate)
+            .map_err(lock_error)?;
+        lock.lock().map_err(lock_error)?;
+        let result = run();
+        let _ = lock.unlock();
+        Ok(result)
+    }
+}
+
+/// Filesystem identity observed when the profile was listed, not just its reusable slug.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Incarnation {
+    work: Identity,
+    home: Identity,
+}
+
+impl Incarnation {
+    pub(crate) fn of(work: &Path, home: &Path) -> Result<Self, String> {
+        let id = Identity::of(work)?;
+        Ok(Self {
+            work: id,
+            home: if work == home {
+                id
+            } else {
+                Identity::of(home)?
+            },
+        })
+    }
+
+    fn at_detachment(self, instance: &Instance, detached: &Path) -> Result<(), String> {
+        let inner = instance
+            .home
+            .strip_prefix(&instance.work)
+            .map_err(|_| lifecycle::changed())?;
+        let home = if inner.as_os_str().is_empty() {
+            detached.to_owned()
+        } else {
+            detached.join(inner)
+        };
+        if Self::of(detached, &home).ok() != Some(self) {
+            return Err(lifecycle::changed());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn check(self, instance: &Instance, actual: Identity) -> Result<(), String> {
+        if actual != self.home
+            || (instance.work != instance.home && Identity::of(&instance.work)? != self.work)
+        {
+            return Err(lifecycle::changed());
+        }
+        Ok(())
+    }
+}
+
+/// Write the first profile choice before settings can be saved. An older launcher could have
+/// used the implicit Sunrise profile without ever writing `instances.json`.
+pub fn initialize_default() -> Result<(), String> {
+    initialize_default_in(&backend::game_home(), &backend::data_dir())
+}
+
+fn initialize_default_in(game_home: &Path, data: &Path) -> Result<(), String> {
+    use std::io::ErrorKind::NotFound;
+    let missing = |p: &Path| fs::symlink_metadata(p).is_err_and(|e| e.kind() == NotFound);
+    let empty = |p: &Path| match fs::read_dir(p) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(e) => e.kind() == NotFound,
+    };
+    if ![FILE, "settings.json", "accounts.json"]
+        .iter()
+        .all(|f| missing(&data.join(f)))
+        || !empty(game_home)
+        || !empty(&data.join("versions"))
+    {
+        return Ok(());
+    }
+    Store::under_lock(data, || {
+        use std::io::Write as _;
+
+        let store = Store {
+            instances: BTreeMap::from([(
+                DEFAULT.to_owned(),
+                Meta {
+                    channel: Some(Channel::Stable),
+                    ..Meta::default()
+                },
+            )]),
+            ..Store::default()
+        };
+        let bytes = serde_json::to_vec_pretty(&store).map_err(|e| format!("{FILE}: {e}"))?;
         let write = || -> std::io::Result<()> {
-            use std::io::Write as _;
-            let data = data.canonicalize()?;
-            // Own this file before writing to it. A failed save drops just this attempt's
-            // file; a successful one replaces the store whole.
             let mut part = tempfile::Builder::new()
                 .prefix(".instances-")
-                .tempfile_in(&data)?;
-            let text = serde_json::to_string_pretty(self).unwrap();
-            part.write_all(text.as_bytes())?;
-            part.persist(data.join(FILE))?;
+                .tempfile_in(data)?;
+            part.write_all(&bytes)?;
+            part.as_file().sync_all()?;
+            match part.persist_noclobber(data.join(FILE)) {
+                Ok(_) => (),
+                Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => (),
+                Err(e) => return Err(e.error),
+            }
             Ok(())
         };
         write().map_err(|e| format!("{FILE}: {e}"))
-    }
+    })?
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -346,6 +542,8 @@ pub struct Instance {
     pub work: PathBuf,
     /// The game folder it plays in: saves, options.txt, packs.
     pub home: PathBuf,
+    #[doc(hidden)]
+    pub incarnation: Option<Incarnation>,
     pub icon: Option<Icon>,
     pub group: Option<String>,
     /// Its pinned Sunrise version, if any (`Meta::version`).
@@ -361,18 +559,40 @@ pub struct Instance {
 }
 
 impl Instance {
-    /// The installed version this instance plays: its pinned one, else `requested` (the
-    /// command line's `--version`) or the launcher's (`backend::resolve_version`).
+    /// Preserve the accepted selection, or stamp the default directory created by first Play.
+    pub(crate) fn after_admission(&self, home: Identity) -> Self {
+        let mut instance = self.clone();
+        instance
+            .incarnation
+            .get_or_insert(Incarnation { work: home, home });
+        instance
+    }
+
+    /// The installed version this instance plays: an explicit request or pin wins, then the
+    /// newest installed build on its channel, with an offline fallback.
     pub fn resolve_version(&self, requested: Option<&str>) -> Result<String, String> {
         match (requested, &self.version) {
             (None, Some(pinned)) => backend::resolve_version(Some(pinned)).map_err(|_| {
-                format!(
-                    "{} plays {pinned}, which is not installed: install it, or sunrise-launcher \
-                     instance version \"{}\" latest",
-                    self.name, self.name
+                crate::i18n::trf(
+                    "{profile} uses {build}, which is not installed. Install it, or use Switch to choose another build.",
+                    &[("profile", &self.name), ("build", pinned)],
                 )
             }),
-            _ => backend::resolve_version(requested),
+            (Some(tag), _) => backend::resolve_version(Some(tag)),
+            (None, None) => {
+                let selected = backend::Settings::load().selected;
+                let (installed, nightly) = backend::play_installations(selected.as_deref());
+                let selected = selected.filter(|tag| installed.contains(tag));
+                self.channel
+                    .play_target(
+                        &[],
+                        &installed,
+                        nightly.as_ref(),
+                        selected.as_ref().or(installed.first()),
+                    )
+                    .cloned()
+                    .ok_or_else(backend::no_version_installed)
+            }
         }
     }
 }
@@ -395,8 +615,96 @@ pub fn list() -> Vec<Instance> {
     list_in(&backend::game_home(), &backend::data_dir())
 }
 
+/// Read the atomic metadata snapshot without housekeeping or taking a profile gate.
+pub(crate) fn list_for_storage() -> Result<Vec<Instance>, String> {
+    let data = backend::data_dir();
+    let store = Store::read(&data)?;
+    Ok(list_snapshot(
+        &backend::game_home(),
+        &data,
+        store,
+        true,
+        false,
+    ))
+}
+
+/// Read the profile directories without the migrations or housekeeping of `list`.
+pub(crate) fn profile_homes_strict(game: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut homes = Vec::new();
+    for (directory, pack) in [(OWN, false), ("sunrise-packs", true)] {
+        let root = game.join(directory);
+        let error = |e: std::io::Error| format!("{}: {e}", root.display());
+        let entries = match fs::read_dir(&root) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => match fs::symlink_metadata(&root)
+            {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                _ => return Err(error(e)),
+            },
+            Err(e) => return Err(error(e)),
+        };
+        let directory = |path: &Path, meta: fs::Metadata| -> Result<bool, String> {
+            if sunrise_launcher_smod::runtime_leases::linked(&meta) {
+                // Skip links only when their target is known not to be a directory.
+                return Ok(fs::metadata(path).map_err(error)?.is_dir());
+            }
+            Ok(meta.is_dir())
+        };
+        for entry in entries {
+            let path = entry.map_err(error)?.path();
+            if !directory(&path, fs::symlink_metadata(&path).map_err(error)?)? {
+                continue;
+            }
+            if pack {
+                let home = registry_pack::home(&path);
+                match fs::symlink_metadata(&home) {
+                    Ok(meta) => {
+                        if directory(&home, meta)? {
+                            homes.push(home);
+                        }
+                    }
+                    // The work folder below already covers a not-yet-created home.
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                    Err(e) => return Err(error(e)),
+                }
+            }
+            homes.push(path);
+        }
+    }
+    Ok(homes)
+}
+
 fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
-    let mut store = Store::load(data);
+    list_with_snapshot(game_home, data, true, || {})
+}
+
+fn list_with_snapshot(
+    game_home: &Path,
+    data: &Path,
+    housekeeping: bool,
+    after_read: impl FnOnce(),
+) -> Vec<Instance> {
+    match Store::under_lock(data, || {
+        let stored = Store::read(data);
+        after_read();
+        match stored {
+            Ok(store) => list_snapshot(game_home, data, store, true, housekeeping),
+            Err(_) => list_snapshot(game_home, data, Store::default(), false, false),
+        }
+    }) {
+        Ok(instances) => instances,
+        // Keep the listing usable, but don't authorize mutation with unpaired choices.
+        Err(_) => list_snapshot(game_home, data, Store::load(data), false, false),
+    }
+}
+
+fn list_snapshot(
+    game_home: &Path,
+    data: &Path,
+    mut store: Store,
+    admitted: bool,
+    housekeeping: bool,
+) -> Vec<Instance> {
     let mut found = vec![(
         DEFAULT.to_string(),
         "Sunrise".to_string(),
@@ -412,16 +720,30 @@ fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
         .filter_map(|e| e.file_name().into_string().ok())
         .collect();
     own.sort();
-    // An own instance whose folder is gone (deleted outside the launcher) is forgotten, so a new
-    // one of that name starts clean. Only when the folder of instances itself can be read.
-    if game_home.join(OWN).is_dir() {
+    // Directory renames and metadata snapshots share the lock. Play/Delete need the initial
+    // choices even after an interrupted create, but a refused request must not save the store.
+    if admitted {
+        let parent = game_home.join(OWN);
         let before = store.instances.len();
-        store
-            .instances
-            .retain(|id, _| id == DEFAULT || id.contains(':') || own.contains(id));
-        if store.instances.len() != before {
-            if let Err(e) = store.save(data) {
-                eprintln!("Sunrise: instances.json is not saved: {e}");
+        if housekeeping && parent.is_dir() {
+            store.instances.retain(|id, _| {
+                id == DEFAULT
+                    || crate::browser::safe_name(id) != Some(id)
+                    || !fs::symlink_metadata(parent.join(id))
+                        .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+            });
+        }
+        let retained = store.instances.len();
+        for id in &own {
+            if !store.instances.contains_key(id) {
+                if let Some(meta) = initial_choices(&parent.join(id)) {
+                    store.instances.insert(id.clone(), meta);
+                }
+            }
+        }
+        if housekeeping && (retained != before || store.instances.len() != retained) {
+            if let Err(error) = store.save(data) {
+                eprintln!("Sunrise: instances.json is not saved: {error}");
             }
         }
     }
@@ -456,6 +778,9 @@ fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
                 launch: meta.launch,
                 id,
                 kind,
+                incarnation: admitted
+                    .then(|| Incarnation::of(&work, &home).ok())
+                    .flatten(),
                 work,
                 home,
             }
@@ -515,20 +840,107 @@ fn delete_in(
     query: &str,
     trash: &dyn Fn(&Path) -> Result<(), String>,
 ) -> Result<Instance, String> {
-    let instance = find_in(&list_in(game_home, data), query)?;
+    let instance = find_in(&list_with_snapshot(game_home, data, false, || {}), query)?;
+    if instance.kind == Kind::Pack {
+        return Err(registry_pack::remove_unavailable());
+    }
     if instance.kind == Kind::Default {
-        return Err(format!(
-            "{} is the game's own folder: it can't be deleted.",
-            instance.name
+        return Err(crate::i18n::trf(
+            "{name} is the game's own folder: it can't be deleted.",
+            &[("name", &instance.name)],
         ));
     }
-    trash(&instance.work)
-        .map_err(|e| format!("{} could not go to the Trash: {e}", instance.name))?;
-    let mut store = Store::load(data);
-    if store.instances.remove(&instance.id).is_some() {
-        store.save(data)?;
+    delete_selected(game_home, data, instance, trash)
+}
+
+fn delete_selected(
+    game_home: &Path,
+    data: &Path,
+    instance: Instance,
+    trash: &dyn Fn(&Path) -> Result<(), String>,
+) -> Result<Instance, String> {
+    delete_selected_at(
+        game_home,
+        data,
+        instance,
+        durable::move_new_directory,
+        trash,
+    )
+}
+
+fn delete_selected_at(
+    game_home: &Path,
+    data: &Path,
+    instance: Instance,
+    detach: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+    trash: &dyn Fn(&Path) -> Result<(), String>,
+) -> Result<Instance, String> {
+    let work = &instance.work;
+    let expected = instance.incarnation.ok_or_else(lifecycle::changed)?;
+    let profile =
+        ManagedProfile::open_instance(game_home, data, &instance).map_err(String::from)?;
+    let problem = |error: &dyn std::fmt::Display| {
+        crate::i18n::trf(
+            "{name} could not go to the Trash: {error}",
+            &[("name", &instance.name), ("error", &error.to_string())],
+        )
+    };
+    let root = game_home.canonicalize().map_err(|e| problem(&e))?;
+    let retired = creation_parent(&root, RETIRED).map_err(|e| problem(&e))?;
+    let private = tempfile::tempdir_in(&retired).map_err(|e| problem(&e))?;
+    // From this point neither an ancillary error nor a destructor may empty the detached
+    // folder. If Trash is unavailable, preserve the whole profile in the recovery folder.
+    let private = private.keep();
+    let gone = private.join(work.file_name().ok_or_else(lifecycle::changed)?);
+    let detached = (|| {
+        let _references = ReferencePublication::begin_at(data, game_home, profile.home())?;
+        Store::mutate(data, |store| {
+            detach(work, &gone).map_err(|e| problem(&e))?;
+            if let Err(changed) = expected.at_detachment(&instance, &gone) {
+                // The name still belongs to this operation, but an external writer may
+                // have filled it. Never restore by overwriting that directory.
+                return match durable::move_new_directory(&gone, work) {
+                    Ok(()) => Err(changed),
+                    Err(error) => Err(crate::i18n::trf(
+                        "The profile changed and could not be restored: {error}. Check {folder} for the detached profile.",
+                        &[("error", &error.to_string()), ("folder", &gone.to_string_lossy())],
+                    )),
+                };
+            }
+            store.instances.remove(&instance.id);
+            Ok(())
+        })
+    })();
+    if let Err(error) = detached {
+        let _ = fs::remove_dir(&private); // Never recursive: rename may already have won.
+        return Err(error);
     }
+    let trashed = trash(&gone).map_err(|error| {
+        crate::i18n::trf(
+            "{name} was moved to {folder}, but could not go to the Trash: {error}",
+            &[
+                ("name", &instance.name),
+                ("folder", &gone.to_string_lossy()),
+                ("error", &error),
+            ],
+        )
+    });
+    let _ = fs::remove_dir(&private);
+    trashed?;
     Ok(instance)
+}
+
+/// Resolve headless Play without repairing unrelated profile metadata on a refused request.
+pub fn for_play(query: Option<&str>) -> Result<Instance, String> {
+    let all = list_with_snapshot(&backend::game_home(), &backend::data_dir(), false, || {});
+    let found = match query {
+        Some(name) => find_in(&all, name),
+        None => selection_in(&all, backend::Settings::load().instance.as_deref()),
+    }?;
+    if found.kind == Kind::Pack {
+        return Err(registry_pack::play_unavailable());
+    }
+    Ok(found)
 }
 
 /// The instance Play starts: the one picked in the launcher, else Sunrise.
@@ -568,6 +980,14 @@ pub fn retired_selection_message(id: &str) -> String {
 
 /// The instance a command without `--instance` acts on: [`selected`], except that a retired
 /// selection is an error naming it, so nothing is written to Sunrise's setup in its place.
+pub fn read_profile(query: Option<&str>) -> Result<Instance, String> {
+    let all = list_with_snapshot(&backend::game_home(), &backend::data_dir(), false, || {});
+    match query {
+        Some(name) => find_in(&all, name),
+        None => selection_in(&all, backend::Settings::load().instance.as_deref()),
+    }
+}
+
 pub fn selection() -> Result<Instance, String> {
     selection_in(&list(), backend::Settings::load().instance.as_deref())
 }
@@ -614,6 +1034,11 @@ const NOT_COPIED: &[&str] = &[
     "crash-reports",
     "sessions",
     "mod-browser",
+    ".mod-browser.lock",
+    ".install-txn.lock",
+    GATES,
+    INITIAL,
+    RETIRED,
     ".sunrise-cache",
     // Far terrain's copies of what servers sent, rebuilt as the instance plays.
     "server-terrain",
@@ -626,27 +1051,81 @@ const PLAYER_FILES: &[&str] = &["options.txt", "sunrise-player.txt"];
 /// Creates an instance named `name`: empty but for the player's options and offline name, or a
 /// copy of `from`'s game folder (its worlds, options and packs). Nothing of `from` changes.
 pub fn create(name: &str, from: Option<&str>) -> Result<Instance, String> {
-    create_with(name, from, None, |_| {})
-}
-
-/// [`create`], with everything else the New Profile dialog chose, as one step: `picture` (None
-/// keeps what a copy brought, `Some(None)` leaves it without one) and `choose`, which sets the
-/// rest of its choices. An instance appears only once its folder, picture and choices are all in
-/// place; a failure leaves nothing behind, so the same name can be tried again.
-pub fn create_with(
-    name: &str,
-    from: Option<&str>,
-    picture: Option<Option<&[u8]>>,
-    choose: impl FnOnce(&mut Meta),
-) -> Result<Instance, String> {
     let from = from.map(find).transpose()?;
     create_whole_in(
         &backend::game_home(),
         &backend::data_dir(),
         name,
         from.as_ref(),
+        None,
+        |_| {},
+    )
+}
+
+/// The directory and build the creation picker told the player it would duplicate.
+#[derive(Clone)]
+pub struct CopyPreview {
+    instance: Instance,
+    base: Option<String>,
+}
+
+impl CopyPreview {
+    /// Read only; the worker rechecks both the directory and this build under admission.
+    pub fn read(instance: &Instance) -> Result<Self, String> {
+        let refs = crate::profile_txn::references(&instance.home)?;
+        let base = refs
+            .pointer
+            .as_deref()
+            .map(crate::managed_play::Active::parse)
+            .transpose()?
+            .map(|active| active.base().to_owned());
+        if let Some(expected) = instance.incarnation {
+            expected.check(instance, Identity::of(&instance.home)?)?;
+        }
+        Ok(Self {
+            instance: instance.clone(),
+            base,
+        })
+    }
+
+    pub fn base(&self) -> Option<&str> {
+        self.base.as_deref()
+    }
+}
+
+#[derive(Clone, Copy)]
+enum CopyFrom<'a> {
+    Selected(&'a Instance),
+    Preview(&'a CopyPreview),
+}
+
+impl<'a> CopyFrom<'a> {
+    fn instance(self) -> &'a Instance {
+        match self {
+            Self::Selected(selected) => selected,
+            Self::Preview(preview) => &preview.instance,
+        }
+    }
+}
+
+/// [`create`], with everything else the New Profile dialog chose, as one step: `picture` (None
+/// keeps what a copy brought, `Some(None)` leaves it without one) and `choose`, which sets the
+/// rest of its choices. An instance appears only once its folder, picture and choices are all in
+/// place. Once visible, its initial choices can be recovered even if the launcher exits.
+pub fn create_with(
+    name: &str,
+    from: Option<&CopyPreview>,
+    picture: Option<Option<&[u8]>>,
+    choose: impl FnOnce(&mut Meta),
+) -> Result<Instance, String> {
+    create_with_publish(
+        &backend::game_home(),
+        &backend::data_dir(),
+        name,
+        from.map(CopyFrom::Preview),
         picture,
         choose,
+        |_| {},
     )
 }
 
@@ -666,17 +1145,43 @@ fn create_whole_in(
     picture: Option<Option<&[u8]>>,
     choose: impl FnOnce(&mut Meta),
 ) -> Result<Instance, String> {
+    create_with_publish(
+        game_home,
+        data,
+        name,
+        from.map(CopyFrom::Selected),
+        picture,
+        choose,
+        |_| {},
+    )
+}
+
+fn create_with_publish(
+    game_home: &Path,
+    data: &Path,
+    name: &str,
+    copy: Option<CopyFrom<'_>>,
+    picture: Option<Option<&[u8]>>,
+    choose: impl FnOnce(&mut Meta),
+    after_visible: impl FnOnce(&Path),
+) -> Result<Instance, String> {
     let name = name.trim();
     if name.is_empty() {
         return Err("A profile needs a name.".into());
     }
+    let from = copy.map(CopyFrom::instance);
     if let Some(from) = from.filter(|f| f.kind == Kind::Pack) {
         return Err(format!(
             "{} plays its pack's mods: import the pack again for a second copy.",
             from.name
         ));
     }
-    let create_error = |e| format!("Could not make profile {name}: {e}");
+    let create_error = |e: std::io::Error| {
+        crate::i18n::trf(
+            "Could not make profile {name}: {error}",
+            &[("name", name), ("error", &e.to_string())],
+        )
+    };
     fs::create_dir_all(game_home).map_err(create_error)?;
     let root = game_home.canonicalize().map_err(create_error)?;
     let own = creation_parent(&root, OWN).map_err(create_error)?;
@@ -702,51 +1207,94 @@ fn create_whole_in(
     let dir = own.join(&slug);
     // Each attempt owns one private directory. Move its child, not the temp directory's
     // own path, so dropping the guard can never clean up a reused path after publication.
+    Store::read(data)?;
     let stage = tempfile::tempdir_in(&staging).map_err(create_error)?;
     let contents = stage.path().join("home");
-    let staged = || -> std::io::Result<()> {
-        if let Some(from) = from {
-            copy_home(&from.home, &contents)?;
-        } else {
-            fs::create_dir(&contents)?;
-            for f in PLAYER_FILES {
-                let source = game_home.join(f);
-                if source.is_file() {
-                    fs::copy(source, contents.join(f))?;
-                }
+    let source = from
+        .map(|from| ManagedProfile::open_instance(game_home, data, from).map_err(String::from))
+        .transpose()?;
+    let active = if let Some(source) = &source {
+        let _inputs = source.lock_inputs()?;
+        let active = source.active()?;
+        if let Some(CopyFrom::Preview(preview)) = copy {
+            if active.as_ref().map(crate::managed_play::Active::base) != preview.base() {
+                return Err(lifecycle::changed());
             }
         }
-        let icon = contents.join(PICTURE);
-        match picture {
-            Some(Some(png)) => fs::write(icon, png)?,
-            Some(None) if icon.is_file() => fs::remove_file(icon)?,
-            _ => {}
+        let worlds = crate::worlds::SavedWorlds::claim(&source.home().join("saves"))?;
+        copy_home(source.home(), &contents, &worlds).map_err(create_error)?;
+        active
+            .map(|active| source.stage_copy(active, &contents))
+            .transpose()?
+    } else {
+        fs::create_dir(&contents).map_err(create_error)?;
+        for f in PLAYER_FILES {
+            let source = game_home.join(f);
+            if source.is_file() {
+                fs::copy(source, contents.join(f)).map_err(create_error)?;
+            }
         }
-        creation_parent(&root, OWN)?;
-        publish_new_folder(&contents, &dir)
+        None
     };
-    staged().map_err(create_error)?;
-    let recorded = crate::run_leases::publish(&dir)
-        .map_err(crate::native_mods::cache_error)
-        .and_then(|()| {
-            let mut store = Store::load(data);
-            // A folder removed outside the launcher may still have metadata. A new folder
-            // never inherits its launch settings. Do not rewrite the old entry just by listing it.
-            store.instances.remove(&slug);
-            let meta = store.instances.entry(slug.clone()).or_default();
-            meta.name = (name != slug).then(|| name.to_string());
-            meta.icon = from.and_then(|f| f.icon.clone());
-            meta.group = from.and_then(|f| f.group.clone());
-            choose(meta);
-            store.save(data)
-        });
-    if let Err(e) = recorded {
-        // A no-replace rename put this attempt's folder here. Don't follow a redirected parent
-        // even on the failure path.
-        if creation_parent(&root, OWN).is_ok() {
-            let _ = fs::remove_dir_all(&dir);
+    let icon = contents.join(PICTURE);
+    match picture {
+        Some(Some(png)) => fs::write(icon, png).map_err(create_error)?,
+        Some(None) if icon.is_file() => fs::remove_file(icon).map_err(create_error)?,
+        _ => {}
+    }
+    let mut choices = Meta {
+        name: (name != slug).then(|| name.to_string()),
+        icon: from.and_then(|f| f.icon.clone()),
+        group: from.and_then(|f| f.group.clone()),
+        ..Meta::default()
+    };
+    choose(&mut choices);
+    if let Some(active) = &active {
+        choices.version = Some(active.base().to_owned());
+    }
+    let bytes = serde_json::to_vec(&choices).map_err(|e| e.to_string())?;
+    fs::write(contents.join(INITIAL), bytes).map_err(create_error)?;
+    durable::flush_tree(&contents).map_err(create_error)?;
+    let _name = NameGate::open(&lifecycle::gate_path(&root, OWN, slug.as_ref())?)?;
+    if list_in(game_home, data)
+        .iter()
+        .any(|i| i.name.eq_ignore_ascii_case(name))
+    {
+        return Err(name_taken(name));
+    }
+    match fs::symlink_metadata(&dir) {
+        Ok(_) => return Err(name_taken(name)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+        Err(e) => return Err(create_error(e)),
+    }
+    {
+        let _references = ReferencePublication::begin_at(data, game_home, &root)?;
+        if let Some(active) = &active {
+            active.verify_artifacts()?;
         }
-        return Err(e);
+        crate::run_leases::publish_at(&own, data).map_err(crate::native_mods::cache_error)?;
+        crate::run_leases::publish_at(&contents, data).map_err(crate::native_mods::cache_error)?;
+        creation_parent(&root, OWN).map_err(create_error)?;
+        Store::locked(data, |store| {
+            // Clear the old incarnation's row before the new folder can be observed, and
+            // don't let another metadata writer fill that slot before publication.
+            if store.instances.remove(&slug).is_some() {
+                store.save(data)?;
+            }
+            durable::move_new_directory(&contents, &dir).map_err(create_error)?;
+            after_visible(&dir);
+            store.instances.insert(slug.clone(), choices);
+            match store.save(data) {
+                Ok(()) => {
+                    let _ = fs::remove_file(dir.join(INITIAL));
+                }
+                Err(error) => {
+                    // The sidecar is already durable. Do not unpublish or discard it.
+                    eprintln!("Sunrise: instances.json is not saved: {error}");
+                }
+            }
+            Ok(())
+        })?;
     }
     find_in(&list_in(game_home, data), &slug)
 }
@@ -759,7 +1307,8 @@ fn creation_parent(root: &Path, name: &str) -> std::io::Result<PathBuf> {
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(e) => return Err(e),
     }
-    if !path.symlink_metadata()?.is_dir() || path.canonicalize()? != path {
+    let meta = path.symlink_metadata()?;
+    if !meta.is_dir() || crate::native_cache::linked(&meta) || path.canonicalize()? != path {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             format!(
@@ -772,7 +1321,8 @@ fn creation_parent(root: &Path, name: &str) -> std::io::Result<PathBuf> {
 }
 
 /// Publish atomically without replacing another attempt's folder, even if it is empty.
-fn publish_new_folder(from: &Path, to: &Path) -> std::io::Result<()> {
+#[cfg(not(windows))]
+pub(crate) fn publish_new_folder(from: &Path, to: &Path) -> std::io::Result<()> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         use std::ffi::CString;
@@ -799,63 +1349,44 @@ fn publish_new_folder(from: &Path, to: &Path) -> std::io::Result<()> {
             Err(std::io::Error::last_os_error())
         }
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt as _;
-        let wide = |path: &Path| {
-            path.as_os_str()
-                .encode_wide()
-                .chain([0])
-                .collect::<Vec<_>>()
-        };
-        let (from, to) = (wide(from), wide(to));
-        // SAFETY: both pointers name owned, null-terminated path strings for the call.
-        let result = unsafe {
-            windows_sys::Win32::Storage::FileSystem::MoveFileW(from.as_ptr(), to.as_ptr())
-        };
-        if result != 0 {
-            Ok(())
-        } else {
-            Err(std::io::Error::last_os_error())
-        }
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = (from, to);
         Err(std::io::ErrorKind::Unsupported.into())
     }
 }
 
-fn copy_home(from: &Path, to: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(to)?;
-    for entry in fs::read_dir(from)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        if NOT_COPIED.iter().any(|n| name == *n) {
-            continue;
+fn copy_home(from: &Path, to: &Path, worlds: &crate::worlds::SavedWorlds) -> std::io::Result<()> {
+    let saves = from.join("saves");
+    let mut pending = vec![(from.to_owned(), to.to_owned())];
+    while let Some((source, target)) = pending.pop() {
+        if source.parent() == Some(&saves) {
+            worlds.verify(&source)?;
         }
-        let path = entry.path();
-        if entry.file_type()?.is_dir() {
-            copy_dir(&path, &to.join(&name))?;
-        } else {
-            fs::copy(&path, to.join(&name))?;
+        fs::create_dir(&target)?;
+        for entry in fs::read_dir(&source)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            if (source == from && NOT_COPIED.iter().any(|n| name == *n))
+                || (source.parent() == Some(&saves) && name == crate::worlds::LOCK)
+            {
+                continue;
+            }
+            let path = entry.path();
+            let meta = path.symlink_metadata()?;
+            if crate::native_cache::linked(&meta) {
+                return Err(std::io::ErrorKind::InvalidData.into());
+            }
+            if meta.is_dir() {
+                pending.push((path, target.join(name)));
+            } else if meta.is_file() {
+                fs::copy(path, target.join(name))?;
+            } else {
+                return Err(std::io::ErrorKind::InvalidData.into());
+            }
         }
     }
-    Ok(())
-}
-
-fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(to)?;
-    for entry in fs::read_dir(from)? {
-        let entry = entry?;
-        let target = to.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_dir(&entry.path(), &target)?;
-        } else {
-            fs::copy(entry.path(), target)?;
-        }
-    }
-    Ok(())
+    worlds.verify_all()
 }
 
 /// Changes what the player chose about an instance: its name, icon or group. No folder moves.
@@ -871,38 +1402,77 @@ fn edit_in(
 ) -> Result<Instance, String> {
     let all = list_in(game_home, data);
     let instance = find_in(&all, query)?;
-    let mut store = Store::load(data);
-    let meta = store.instances.entry(instance.id.clone()).or_default();
-    change(meta);
-    meta.name = meta.name.take().map(|n| n.trim().to_string());
-    meta.group = meta
-        .group
-        .take()
-        .map(|g| g.trim().to_string())
-        .filter(|g| !g.is_empty());
-    if let Some(name) = &meta.name {
-        if name.is_empty() {
-            return Err("A profile needs a name.".into());
+    Store::mutate(data, |store| {
+        let meta = store
+            .instances
+            .entry(instance.id.clone())
+            .or_insert_with(|| initial_choices(&instance.home).unwrap_or_default());
+        change(meta);
+        meta.name = meta.name.take().map(|n| n.trim().to_string());
+        meta.group = meta
+            .group
+            .take()
+            .map(|g| g.trim().to_string())
+            .filter(|g| !g.is_empty());
+        if let Some(name) = meta.name.clone() {
+            if name.is_empty() {
+                return Err(crate::i18n::tr("A profile needs a name.").into());
+            }
+            // Only a new name is checked: an import can share a name, and changing anything
+            // else about it must still work.
+            let renamed = !name.eq_ignore_ascii_case(&instance.name);
+            if renamed
+                && all.iter().any(|i| {
+                    i.id != instance.id
+                        && store
+                            .instances
+                            .get(&i.id)
+                            .and_then(|m| m.name.as_deref())
+                            .unwrap_or(&i.name)
+                            .eq_ignore_ascii_case(&name)
+                })
+            {
+                return Err(name_taken(&name));
+            }
         }
-        // Only a new name is checked: an import can share a name, and changing anything
-        // else about it must still work.
-        let renamed = !name.eq_ignore_ascii_case(&instance.name);
-        if renamed
-            && all
-                .iter()
-                .any(|i| i.id != instance.id && i.name.eq_ignore_ascii_case(name))
-        {
-            return Err(name_taken(name));
-        }
-    }
-    store.save(data)?;
+        Ok(())
+    })?;
     find_in(&list_in(game_home, data), &instance.id)
 }
 
 /// Adds a finished run of the game to the instance's play time (by id: a renamed instance keeps
 /// it).
-pub fn record_play(id: &str, played: Duration) -> Result<(), String> {
-    record_play_in(&backend::data_dir(), id, played, SystemTime::now())
+/// Complete the accepted run, not the profile (if any) currently using its name.
+/// The callback must run synchronously so the profile cannot be replaced during the hook.
+pub fn finish_play(
+    instance: &Instance,
+    played: Duration,
+    hook: impl FnOnce(),
+) -> Result<(), String> {
+    finish_play_in(
+        &backend::game_home(),
+        &backend::data_dir(),
+        instance,
+        played,
+        hook,
+    )
+}
+
+fn finish_play_in(
+    game: &Path,
+    data: &Path,
+    instance: &Instance,
+    played: Duration,
+    hook: impl FnOnce(),
+) -> Result<(), String> {
+    let expected = instance.incarnation.ok_or_else(lifecycle::changed)?;
+    let owner = lifecycle::owner_file(game, &instance.home)?;
+    let profile =
+        crate::profile_txn::Admission::claim_after_exit(&instance.home, owner.as_deref())?;
+    expected.check(instance, profile.identity())?;
+    let saved = record_play_in(data, &instance.id, played, SystemTime::now());
+    hook();
+    saved
 }
 
 fn record_play_in(
@@ -911,11 +1481,12 @@ fn record_play_in(
     played: Duration,
     ended: SystemTime,
 ) -> Result<(), String> {
-    let mut store = Store::load(data);
-    let meta = store.instances.entry(id.to_string()).or_default();
-    meta.played_secs = meta.played_secs.saturating_add(played.as_secs());
-    meta.last_played = ended.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs());
-    store.save(data)
+    Store::mutate(data, |store| {
+        let meta = store.instances.entry(id.to_string()).or_default();
+        meta.played_secs = meta.played_secs.saturating_add(played.as_secs());
+        meta.last_played = ended.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs());
+        Ok(())
+    })
 }
 
 /// "12 min", "3 h 05 min", "140 h": the play time as players read it.
@@ -941,7 +1512,7 @@ pub fn apply(cmd: &mut Command, instance: &Instance) -> Result<(), String> {
             cmd.current_dir(&instance.home)
                 .env("SUNRISE_HOME", &instance.home);
         }
-        Kind::Pack => registry_pack::apply(cmd, &instance.work)?,
+        Kind::Pack => return Err(registry_pack::play_unavailable()),
     }
     follow_player(&backend::game_home(), &instance.home);
     Ok(())

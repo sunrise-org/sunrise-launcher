@@ -1,5 +1,5 @@
 //! Resolve the mixins tool pins of native projects before handing them to an SDK's tool.
-use super::{sdk_cache, Bundle, MIXINS_REV, NATIVE_MANIFEST};
+use super::{sdk_cache, Bundle, Failed, MIXINS_REV, NATIVE_MANIFEST};
 use std::{collections::HashMap, fs, path::Path};
 
 /// The revisions of the native mods in order. An explicit pin never needs the mod's SDK;
@@ -9,7 +9,7 @@ pub(super) fn pins(
     build_sdk: Option<&sdk_cache::Sdk>,
     base: &sdk_cache::Base,
     local: Option<&Path>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, Failed> {
     let keys = sunrise_launcher_release_verify::sdk_keys_for(crate::backend::GAME_REPO);
     resolve(mods, |pin| {
         if let Some(sdk) = build_sdk.filter(|sdk| sdk.commit() == pin) {
@@ -24,19 +24,17 @@ pub(super) fn pins(
                     return Ok(index.mixins.rev);
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(format!("{}: {e}", path.display())),
+                Err(e) => return Err(format!("{}: {e}", path.display()).into()),
             }
         }
-        sdk_cache::index(base, pin, &keys)
-            .map(|sdk| sdk.index.mixins.rev)
-            .map_err(super::refused)
+        Ok(sdk_cache::index(base, pin, &keys)?.index.mixins.rev)
     })
 }
 
 fn resolve(
     mods: &[Bundle],
-    mut sdk_revision: impl FnMut(&str) -> Result<String, String>,
-) -> Result<Vec<String>, String> {
+    mut sdk_revision: impl FnMut(&str) -> Result<String, Failed>,
+) -> Result<Vec<String>, Failed> {
     let mut by_build = HashMap::<&str, String>::new();
     mods.iter()
         .map(|bundle| {
@@ -54,10 +52,16 @@ fn resolve(
                             if super::bundle::is_revision(&rev) {
                                 Ok(rev)
                             } else {
-                                Err(format!("sdk.json mixins.rev {rev:?} is not a 40-digit lowercase hex commit"))
+                                Err(format!("sdk.json mixins.rev {rev:?} is not a 40-digit lowercase hex commit").into())
                             }
                         })
-                        .map_err(|e| format!("{}: could not resolve [native] mixins: {e}", bundle.manifest.id))?;
+                        .map_err(|e| match e {
+                            Failed::Sdk { refusal, .. } => Failed::Sdk {
+                                refusal,
+                                mod_id: Some(bundle.manifest.id.clone()),
+                            },
+                            other => format!("{}: could not resolve [native] mixins: {other}", bundle.manifest.id).into(),
+                        })?;
                     Ok(entry.insert(pin).clone())
                 }
             }

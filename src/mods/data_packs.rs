@@ -284,10 +284,10 @@ impl Launcher {
         if !self.guard() {
             return;
         }
-        let Some(home) = self
+        let Some(instance) = self
             .selected_instance()
             .filter(|_| !self.location_unavailable)
-            .map(|i| i.home.clone())
+            .cloned()
         else {
             self.ui.mods.notice = Some(Err(tr("Select a Sunrise profile first.").to_string()));
             return;
@@ -299,7 +299,7 @@ impl Launcher {
             .data
             .list
             .iter()
-            .filter(|l| l.home == home)
+            .filter(|l| l.home == instance.home)
             .flat_map(|l| &l.worlds)
             .filter(|(w, packs)| pick.ticked.contains(&w.path) && !pick.what.in_world(w, packs))
             .map(|(w, _)| w.clone())
@@ -311,9 +311,12 @@ impl Launcher {
         self.ui.mods.busy = Some((tr("Adding the data pack…").into(), 0.));
         let (tx, game) = (self.ui.mods.tx.clone(), self.mods_game());
         std::thread::spawn(move || {
-            let result = add_to_worlds(&pick.what, &home, &worlds, &game, &|f| {
-                let _ = tx.send(Event::Progress(pick.what.title().to_owned(), f));
-            });
+            let result = sunrise_launcher::managed_play::Profile::open_selected(&instance)
+                .and_then(|profile| {
+                    add_to_worlds(&pick.what, profile.home(), &worlds, &game, &|f| {
+                        let _ = tx.send(Event::Progress(pick.what.title().to_owned(), f));
+                    })
+                });
             let _ = tx.send(Event::PackDone(result));
         });
     }
@@ -329,18 +332,23 @@ impl Launcher {
         if !self.guard() {
             return;
         }
-        let home = self.mods_home();
         let (world, file) = key;
-        let result = match browser::try_lock_home(&home) {
-            None => Err(tr("This profile is busy. Try again when the operation finishes.").into()),
-            Some(_guard) => check_world(&home, &world).and_then(|_| {
-                let pack = datapacks::list(&world)
-                    .into_iter()
-                    .find(|p| p.file == file)
-                    .ok_or_else(|| tr("This pack changed. Check the refreshed list."))?;
-                datapacks::remove(&world, &pack)
-            }),
-        };
+        let result = (|| {
+            let instance = self
+                .selected_instance()
+                .ok_or_else(|| tr("Select a Sunrise profile first."))?;
+            let profile = sunrise_launcher::managed_play::Profile::open_selected(instance)?;
+            let home = profile.home();
+            let _guard = browser::try_lock_home(home).ok_or_else(|| {
+                tr("This profile is busy. Try again when the operation finishes.")
+            })?;
+            check_world(home, &world)?;
+            let pack = datapacks::list(&world)
+                .into_iter()
+                .find(|p| p.file == file)
+                .ok_or_else(|| tr("This pack changed. Check the refreshed list."))?;
+            datapacks::remove(&world, &pack)
+        })();
         self.ui.mods.notice = result.err().map(Err);
         self.world_packs.reread();
     }

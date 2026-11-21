@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use subtle::ConstantTimeEq;
 const LIMIT: u64 = 64 * 1024;
 mod gc;
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Reference {
     #[serde(deserialize_with = "crate::local_control::version")]

@@ -302,8 +302,11 @@ impl Launcher {
                 .into_any_element();
         };
         self.load_worlds(instance.home.clone(), cx);
+        let viewport = window.viewport_size();
+        let compact = !crate::home_mods::side_by_side(f32::from(viewport.width))
+            && f32::from(viewport.height) < 700.;
         let header = self.profile_header(&instance, window, cx);
-        let body = self.continue_playing(&instance, window, cx);
+        let body = self.continue_playing(&instance, window, compact, cx);
         let notice = self.launcher_update_notice(cx);
         div()
             .id("alt-home")
@@ -312,8 +315,8 @@ impl Launcher {
             .track_scroll(&crate::frame::scrolls("home"))
             .flex()
             .flex_col()
-            .gap(px(GAP))
-            .pt(px(24.))
+            .gap(px(if compact { 14. } else { GAP }))
+            .pt(px(if compact { 16. } else { 24. }))
             // The profile sits on the scene, inset like the text of the panel under it.
             .child(header.flex_none().px(px(INSET)))
             .children(notice)
@@ -327,7 +330,7 @@ impl Launcher {
                     .flex()
                     .flex_col()
                     .gap(px(16.))
-                    .p(px(22.))
+                    .p(px(if compact { 16. } else { 22. }))
                     .rounded(crate::tokens::r(crate::tokens::R_PANEL))
                     .bg(palette().chrome_plate())
                     .border_1()
@@ -450,11 +453,22 @@ impl Launcher {
                     .truncate()
                     .child(played),
             );
+        let receipt =
+            instance.kind != instances::Kind::Pack && self.check_build_changes(&instance.home, cx);
         div()
             .flex()
             .flex_col()
             .child(self.ui.home.shade_behind(labels, scenery))
             .child(self.play_row(instance, window, cx).mt(px(18.)))
+            .children(receipt.then(|| {
+                crate::frame::button("home-build-changes", tr("Build changes"))
+                    .self_start()
+                    .mt(px(10.))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.open_build_changes(cx);
+                        cx.notify();
+                    }))
+            }))
     }
 
     /// Play, the build picker and profile shortcuts, then Play's status and the cat's lane.
@@ -582,9 +596,10 @@ impl Launcher {
         let other_running = self
             .client_run
             .as_ref()
-            .filter(|(id, _)| id != &instance.id)
-            .and_then(|(id, _)| self.instances.list.iter().find(|profile| &profile.id == id))
-            .map(|profile| trf("Playing: {profile}", &[("profile", &profile.name)]));
+            .filter(|(running, _)| {
+                running.id != instance.id || running.incarnation != instance.incarnation
+            })
+            .map(|(running, _)| trf("Playing: {profile}", &[("profile", &running.name)]));
         let says = div()
             // As wide as what it says: the rest of the row is the cat's.
             .min_w_0()
@@ -620,6 +635,22 @@ impl Launcher {
         // The cat walks the empty stretch and stands on the panel's edge. It stays in while a
         // button stands in its way.
         let (lane, _) = self.cat(act.is_none(), false, window, cx);
+        // The update target is part of the offer. On a narrow Home, put the whole offer
+        // below Play instead of squeezing the target between the button and the edge.
+        let narrow_update = matches!(&view.act, Some(crate::launch_state::Act::Update))
+            && f32::from(window.viewport_size().width) < 920.;
+        let (act, says, update_below) = if narrow_update {
+            let line = div()
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .mt(px(8.))
+                .children(act)
+                .child(says);
+            (None, None, Some(line))
+        } else {
+            (act, Some(says), None)
+        };
         let tall = tokens::PLAY;
         let controls = div()
             .flex()
@@ -636,13 +667,14 @@ impl Launcher {
                     .child(mods)
                     .child(folder)
                     .children(act)
-                    .child(says),
+                    .children(says),
             )
             .child(lane.ml(px(12.)).mb(px(-GAP - crate::cat::BELOW_FEET)));
         div()
             .flex()
             .flex_col()
             .child(controls)
+            .children(update_below)
             .children(recovery.map(|line| line.mt(px(8.))))
     }
 
@@ -656,32 +688,19 @@ impl Launcher {
         // A game built with mods reads as the build it was made from; the tooltip names
         // the actual tag, including when a pin isn't installed yet.
         let made_from = version
+            .as_ref()
             .filter(|t| native_mods::is_native(t))
             .and_then(|t| crate::glass_instance::native_base(t));
-        let build = match version {
-            Some(tag) => {
-                let base = made_from.as_ref().unwrap_or(tag);
-                match sunrise_launcher::nightly::date_of(base) {
-                    Some(date) => {
-                        let time =
-                            sunrise_launcher::nightly::same_day_time(base).unwrap_or_default();
-                        trf(
-                            "Sunrise · {build}",
-                            &[("build", &crate::glass_versions::published(date, &time))],
-                        )
-                    }
-                    None => self.version_label(tag),
-                }
-            }
-            None => tr("Sunrise").into(),
-        };
+        let build = version.as_ref().map_or_else(
+            || tr("Sunrise").into(),
+            |tag| self.version_label(made_from.as_ref().unwrap_or(tag)),
+        );
         let at = self.ui.home.picker.clone();
         div()
             .id("alt-build")
-            .when_some(version.cloned(), |d, tag| {
-                d.tooltip(crate::glass_ui::tip(tag))
-            })
-            .flex_none()
+            .when_some(version, |d, tag| d.tooltip(crate::glass_ui::tip(tag)))
+            .min_w_0()
+            .max_w(px(340.))
             .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
             .border_1()
             .border_color(palette().input_edge())
@@ -697,16 +716,18 @@ impl Launcher {
             .pr(px(14.))
             .child(
                 div()
+                    .min_w_0()
+                    .truncate()
                     .text_size(px(tokens::BODY))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(rgb(palette().text))
                     .child(build),
             )
-            .child(blocks::icon(
+            .child(div().flex_none().child(blocks::icon(
                 "chevron-down",
                 13.,
                 rgb(palette().muted).into(),
-            ))
+            )))
             .child(
                 gpui::canvas(
                     move |bounds, window, cx| {
@@ -737,6 +758,7 @@ impl Launcher {
         &mut self,
         instance: &instances::Instance,
         window: &Window,
+        compact: bool,
         cx: &mut Context<Self>,
     ) -> Div {
         let list: Vec<World> = self.worlds.list.clone();
@@ -806,7 +828,7 @@ impl Launcher {
         let first_start = self.accounts.selected().is_none() && self.worlds.list.is_empty();
         let worlds = div().flex_1().min_w_0().flex().flex_col().gap(px(10.));
         let worlds = if first_start {
-            worlds.child(self.welcome(cx))
+            worlds.child(self.welcome(compact, cx))
         } else {
             worlds.child(top).child(body)
         };
@@ -816,7 +838,7 @@ impl Launcher {
         let both = div()
             .flex_grow(1.)
             .flex()
-            .gap(px(22.))
+            .gap(px(if compact { 14. } else { 22. }))
             .child(worlds)
             .child(mods);
         if crate::home_mods::side_by_side(f32::from(window.viewport_size().width)) {
@@ -1049,13 +1071,13 @@ impl Launcher {
 
     /// The first start: signed out, nothing to play yet. Nothing is read from outside the
     /// launcher's own data.
-    fn welcome(&mut self, cx: &mut Context<Self>) -> Div {
+    fn welcome(&mut self, compact: bool, cx: &mut Context<Self>) -> Div {
         div()
             .flex()
             .flex_col()
-            .gap(px(10.))
+            .gap(px(if compact { 6. } else { 10. }))
             .pr(px(12.))
-            .py(px(8.))
+            .py(px(if compact { 0. } else { 8. }))
             .child(
                 div()
                     .text_size(px(tokens::DISPLAY))

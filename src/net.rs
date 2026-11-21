@@ -46,28 +46,29 @@ pub fn agent(url: &str) -> ureq::Agent {
     })
 }
 
+/// Anonymous GET with the configured proxy, leaving redirects and status to the caller.
+pub(crate) fn anonymous_get_no_redirect(address: &str) -> ureq::Request {
+    let agent = keep(
+        "port-pack-no-redirect",
+        spec_for(address).as_deref(),
+        |proxy| {
+            let builder = ureq::AgentBuilder::new().redirects(0);
+            match proxy {
+                Some(proxy) => builder.proxy(proxy).build(),
+                None => builder.build(),
+            }
+        },
+    );
+    agent.get(address).set(
+        "User-Agent",
+        concat!("sunrise-launcher/", env!("CARGO_PKG_VERSION")),
+    )
+}
+
 /// GET from allowed HTTPS hosts, validating every redirect before contacting it.
 pub fn get_from_hosts(url: &str, hosts: &[&str]) -> Result<Option<ureq::Response>, String> {
     follow(url, hosts, |address| {
-        let agent = keep(
-            "port-pack-no-redirect",
-            spec_for(address).as_deref(),
-            |proxy| {
-                let builder = ureq::AgentBuilder::new().redirects(0);
-                match proxy {
-                    Some(proxy) => builder.proxy(proxy).build(),
-                    None => builder.build(),
-                }
-            },
-        );
-        match agent
-            .get(address)
-            .set(
-                "User-Agent",
-                concat!("sunrise-launcher/", env!("CARGO_PKG_VERSION")),
-            )
-            .call()
-        {
+        match anonymous_get_no_redirect(address).call() {
             Ok(response) => Ok(Some(response)),
             Err(ureq::Error::Status(404, _)) => Ok(None),
             Err(error) => Err(format!("{address}: {error}")),

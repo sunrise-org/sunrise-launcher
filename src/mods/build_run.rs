@@ -388,6 +388,7 @@ fn left_out(left: &native_mods::LeftOut, on: &str) -> State {
                 details: detail.changes,
             }
         }
+        Why::Unproved(_) => State::Skipped(left.label()),
         Why::Needs(other) => State::Skipped(trf(
             "Waits for {other}, which is not in this build.",
             &[("other", other)],
@@ -624,6 +625,7 @@ mod tests {
         assert_eq!(run.headline(), "Getting ready to play");
         let press_play = || PlayIntent {
             instance: "autumn".into(),
+            incarnation: None,
             account: Some("original-account".into()),
         };
         let built = Ok("native-abc".to_owned());

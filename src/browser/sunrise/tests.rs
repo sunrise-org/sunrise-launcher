@@ -41,6 +41,95 @@ fn put(index: &Index, local: bool, home: &Path) -> Result<Vec<installed::Entry>,
 }
 
 #[test]
+fn native_install_readiness_changes_the_action_without_changing_catalogue_fit() {
+    let mut index = sample();
+    let project = index
+        .projects
+        .iter_mut()
+        .find(|p| p.id == "coords_hud")
+        .unwrap();
+    project.kind = index::Kind::NativeMod;
+    let local = "a".repeat(40);
+    let other = "b".repeat(40);
+    project.versions[0].api = format!("native-1/{other}");
+    let id = "coords_hud";
+    let catalogue_fits = || fits_game(&index.project(id).unwrap().versions[0], GAME);
+    assert!(catalogue_fits());
+    let published = NativeInstallReadiness {
+        host_block: None,
+        developer_revision: None,
+    };
+    assert!(published.block(&index, id, GAME).is_none());
+    let host = NativeInstallReadiness {
+        host_block: Some("No managed host".into()),
+        developer_revision: None,
+    };
+    assert_eq!(
+        host.block(&index, id, GAME).as_deref(),
+        Some("No managed host")
+    );
+    assert!(host.block(&index, id, "another game").is_none());
+    let developer = NativeInstallReadiness {
+        host_block: None,
+        developer_revision: Some(local.clone()),
+    };
+    assert!(developer.block(&index, id, GAME).is_some());
+    assert!(catalogue_fits());
+
+    let project = index.projects.iter_mut().find(|p| p.id == id).unwrap();
+    let mut older = project.versions[0].clone();
+    older.version = "0.1.0".into();
+    older.api = format!("native-1/{local}");
+    project.versions.push(older);
+    assert!(
+        developer.block(&index, id, GAME).is_none(),
+        "an older archive may work"
+    );
+    index
+        .projects
+        .iter_mut()
+        .find(|p| p.id == id)
+        .unwrap()
+        .versions[1]
+        .api = "unrecognized".into();
+    assert!(
+        developer.block(&index, id, GAME).is_none(),
+        "unrecognized pins belong to the worker"
+    );
+}
+
+#[test]
+fn only_the_builtin_reply_can_prove_a_published_id_and_archive_hash() {
+    assert!(official_endpoint(INDEX_URL, false));
+    assert!(!official_endpoint(INDEX_URL, true));
+    assert!(!official_endpoint(
+        "https://example.invalid/index.json",
+        false
+    ));
+
+    // Published checksums for vanilla_bestiary 0.1.2 and 0.1.1. The older release
+    // still proves origin for those bytes; this is independent of a display row.
+    let old = "2fc5befa05c4190656bb9a9109fb6e15999e33801b13484f73a74f9abbfd00d4";
+    let mut project = sample().project("coords_hud").unwrap().clone();
+    project.id = "vanilla_bestiary".into();
+    project.kind = index::Kind::NativeMod;
+    let mut newest = project.versions[0].clone();
+    newest.version = "0.1.2".into();
+    newest.file.sha256 = "9281fccab1b489924a9291052bd52c62422b7b2c619714a316cf2bc53af1f6ec".into();
+    let mut previous = newest.clone();
+    previous.version = "0.1.1".into();
+    previous.file.sha256 = old.into();
+    project.versions = vec![newest, previous];
+    let authority = OfficialRegistry::fixture(&Index {
+        projects: vec![project],
+        ..Index::default()
+    });
+    assert!(authority.proves_archive("vanilla_bestiary", old));
+    assert!(!authority.proves_archive("foreign_bestiary", old));
+    assert!(!authority.proves_archive("vanilla_bestiary", &"7".repeat(64)));
+}
+
+#[test]
 fn a_required_mod_is_installed_once_and_refusals_leave_the_profile_intact() {
     let dir = tempfile::tempdir().unwrap();
     let mut index = sample();
@@ -758,6 +847,7 @@ fn a_registry_data_pack_is_checked_then_goes_into_a_world() {
         fetch_datapack_from(&index, true, &p, &dir.join("dl"), GAME, &|_| {}).unwrap();
     assert_eq!(number, "1.0.0");
     let world = dir.join("world");
+    fs::create_dir(&world).unwrap();
     let pack = crate::datapacks::add(&world, &zip).unwrap();
     assert!(world.join("datapacks").join(&pack.file).is_file());
 
@@ -884,7 +974,8 @@ fn installs_combined_native_content_as_one_smod() {
     let cache = home.join(CACHE);
     fs::create_dir_all(cache.parent().unwrap()).unwrap();
     fs::write(&cache, serde_json::to_string(&forged).unwrap()).unwrap();
-    let kept = load(Err("offline".into()), &cache, false).unwrap();
+    let (kept, fetched) = load(Err("offline".into()), &cache, false).unwrap();
+    assert!(fetched.is_none());
     assert_eq!(
         named(&kept.index),
         as_registry,
@@ -898,7 +989,8 @@ fn installs_combined_native_content_as_one_smod() {
     );
     // The registry's own answer is asked, and does not list that file.
     let text = serde_json::to_string(&index).unwrap();
-    let answered = load(Ok((index, text)), &cache, false).unwrap();
+    let (answered, fetched) = load(Ok((index, text.clone())), &cache, false).unwrap();
+    assert_eq!(fetched.as_deref(), Some(text.as_str()));
     let checked = crate::native_status::build_inputs(&home, answered.fetched().as_deref());
     assert_eq!(
         checked[0].registry,
@@ -967,7 +1059,7 @@ fn registry_play_warns_for_disk_cache_and_turns_off_only_from_a_live_index() {
     let text = fs::read_to_string(fixtures().join("index-v1.json")).unwrap();
     fs::create_dir_all(cache.parent().unwrap()).unwrap();
     fs::write(&cache, &text).unwrap();
-    let offline = load(Err("offline".into()), &cache, false).unwrap();
+    let (offline, _) = load(Err("offline".into()), &cache, false).unwrap();
     assert!(offline.index.project("coords_hud").is_some());
     assert!(offline.fetched().is_none());
     assert_eq!(
@@ -984,7 +1076,7 @@ fn registry_play_warns_for_disk_cache_and_turns_off_only_from_a_live_index() {
         date: String::new(),
     });
     let text = serde_json::to_string(&index).unwrap();
-    let local = load(Ok((index.clone(), text.clone())), &cache, true).unwrap();
+    let (local, _) = load(Ok((index.clone(), text.clone())), &cache, true).unwrap();
     assert!(local.fetched().is_none());
     assert_eq!(
         check_before_play(home, &[], || local.fetched()).unwrap(),
@@ -992,7 +1084,7 @@ fn registry_play_warns_for_disk_cache_and_turns_off_only_from_a_live_index() {
     );
     assert!(mod_list::is_enabled(home, "coords_hud"));
 
-    let live = load(Ok((index, text)), &cache, false).unwrap();
+    let (live, _) = load(Ok((index, text)), &cache, false).unwrap();
     assert!(live.fetched().is_some());
     assert_eq!(
         check_before_play(home, &[], || live.fetched()).unwrap(),
@@ -1319,7 +1411,7 @@ fn registry_play_refuses_a_taken_down_mod_baked_into_a_build() {
     }];
     let loaded = |index: Index| {
         let text = serde_json::to_string(&index).unwrap();
-        load(Ok((index, text)), &cache, false).unwrap().fetched()
+        load(Ok((index, text)), &cache, false).unwrap().0.fetched()
     };
     // Even if the installed-list entry and the enable flag are already gone, the build holds it.
     let error = check_before_play(home, &built, || loaded(index.clone())).unwrap_err();

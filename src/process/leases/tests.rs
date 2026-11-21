@@ -1,16 +1,19 @@
 use super::*;
 #[cfg(unix)]
-use std::{io::BufRead, process::Stdio};
-use std::{io::Write, process::Command};
+use std::process::Stdio;
+use std::{
+    io::{BufRead, Write},
+    process::Command,
+};
 
 fn directory(path: &Path) -> Dir {
     std::fs::create_dir_all(path).unwrap();
     Dir::open_ambient_dir(path, cap_std::ambient_authority()).unwrap()
 }
 
-#[cfg(unix)]
 fn released(registry: &std::sync::Arc<Registry>, tree: &Dir) {
-    // Another parallel fork can briefly retain an untouched CLOEXEC copy until its exec.
+    // Windows may still be closing inherited handles after wait returns. On Unix an
+    // unrelated parallel fork can briefly retain an untouched CLOEXEC copy until exec.
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
     loop {
         match registry.lock(tree, LockMode::Exclusive) {
@@ -133,9 +136,71 @@ fn child_keeps_gate_and_tree_after_creator_closes_its_copies() {
 mod windows_tests;
 
 #[test]
+fn one_game_child_keeps_profile_and_cache_claims_without_mixing_their_handles() {
+    use crate::profile_txn::Admission;
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let data = root.path().join("data");
+    let trees = [directory(&root.path().join("build"))];
+    let profile = Admission::open(&home, None).unwrap();
+    let claims = ChildLeases::acquire(&data, &trees).unwrap();
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "process::leases::tests::bridge_actor",
+            "--nocapture",
+        ])
+        .env("SUNRISE_LEASE_BRIDGE_ACTOR", "1")
+        .env(
+            "SUNRISE_EXPECTED_CACHE_HANDLES",
+            claims.files().len().to_string(),
+        );
+    let mut child = claims.spawn_game(command, profile.handoff(), true).unwrap();
+    drop(profile);
+    let mut output = io::BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    while !line.contains("BRIDGE-READY") {
+        assert_ne!(
+            output.read_line(&mut line).unwrap(),
+            0,
+            "actor exited before handoff proof"
+        );
+    }
+    let registry = Registry::with_release(&data, Release::Unlock).unwrap();
+    assert!(matches!(
+        registry.lock(&trees[0], LockMode::Exclusive),
+        Err(Error::Busy)
+    ));
+    assert!(Admission::open(&home, None).is_err());
+    child.stdin.take().unwrap().write_all(b"exit\n").unwrap();
+    assert!(child.wait().unwrap().success());
+    released(&registry, &trees[0]);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while Admission::open(&home, None).is_err() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "game exit did not release the profile"
+        );
+        std::thread::yield_now();
+    }
+}
+
+#[test]
 fn bridge_actor() {
     if std::env::var_os("SUNRISE_LEASE_BRIDGE_ACTOR").is_none() {
         return;
+    }
+    if let Ok(expected) = std::env::var("SUNRISE_EXPECTED_CACHE_HANDLES") {
+        #[cfg(unix)]
+        let key = "SUNRISE_RUNTIME_LEASE_FDS";
+        #[cfg(windows)]
+        let key = "SUNRISE_RUNTIME_LEASE_HANDLES";
+        assert_eq!(
+            std::env::var(key).unwrap().split(',').count(),
+            expected.parse::<usize>().unwrap()
+        );
     }
     println!("BRIDGE-READY");
     std::io::stdout().flush().unwrap();

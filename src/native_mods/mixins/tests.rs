@@ -61,7 +61,9 @@ fn only_omitted_pins_look_up_their_own_sdk() {
         .unwrap(),
         FROM_SDK
     );
-    let error = resolve(&mods, |_| Err("SDK unavailable".into())).unwrap_err();
+    let error = resolve(&mods, |_| Err(String::from("SDK unavailable").into()))
+        .unwrap_err()
+        .to_string();
     assert!(
         error.contains("implicit") && error.contains("SDK unavailable"),
         "{error}"
@@ -78,7 +80,9 @@ fn an_inherited_revision_must_be_an_exact_commit() {
         "F".repeat(40),
         "g".repeat(40),
     ] {
-        let err = resolve(std::slice::from_ref(&package), |_| Ok(rev.clone())).unwrap_err();
+        let err = resolve(std::slice::from_ref(&package), |_| Ok(rev.clone()))
+            .unwrap_err()
+            .to_string();
         assert!(
             err.contains("implicit") && err.contains("mixins.rev"),
             "{err}"

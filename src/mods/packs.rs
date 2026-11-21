@@ -15,7 +15,6 @@ impl Launcher {
         m.row_filter.text.clear();
         m.selection.clear();
         m.anchor = None;
-        m.confirm = None;
         self.dismiss_notice();
         self.game_packs.confirm_remove = None;
         self.game_packs.stale();

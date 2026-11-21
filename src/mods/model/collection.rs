@@ -222,13 +222,14 @@ fn plan(
     held: &[InstalledMod],
     game: &str,
 ) -> InstallPlan {
-    resolve::install(
+    resolve::install_with_messages(
         index,
         &c.requests(chosen),
         held,
         game,
         Side::Both,
         |_, v| sunrise_launcher::browser::sunrise::fits_game(v, game),
+        sunrise_launcher::i18n::trf,
     )
 }
 
@@ -495,26 +496,4 @@ pub(in crate::mods) fn installed(c: &Collection, cards: &[Card], have: &HashSet<
         .filter(|id| cards.iter().any(|card| card.id == *id && card.fit.fits()))
         .collect();
     !wanted.is_empty() && wanted.iter().all(|id| have.contains(*id))
-}
-
-/// Whether installing `ids` first asks for permission to run native code.
-pub(crate) fn needs_consent(
-    ids: &[String],
-    allowed: bool,
-    is_native: impl Fn(&str) -> bool,
-) -> bool {
-    !allowed && ids.iter().any(|id| is_native(id))
-}
-
-/// Runs `one` for each of `ids` in order, with its position, collecting what each says it
-/// installed. The first failure stops the rest and is returned; the ones before it stay done.
-pub(crate) fn run_in_order(
-    ids: &[String],
-    mut one: impl FnMut(usize, &str) -> Result<Vec<String>, String>,
-) -> Result<Vec<String>, String> {
-    let mut done = Vec::new();
-    for (i, id) in ids.iter().enumerate() {
-        done.extend(one(i, id)?);
-    }
-    Ok(done)
 }

@@ -156,6 +156,24 @@ fn ensure_idle(source: &Roots) -> Result<(), String> {
     Ok(())
 }
 
+/// Resolve recoverable transactions before copying profile directories under the location lock.
+pub(crate) fn admit_idle_profiles(source: &Roots) -> Result<(), String> {
+    let homes = crate::instances::lifecycle::profile_paths(&source.game)?;
+    for home in homes {
+        if !crate::instances::lifecycle::needs_settlement(&source.game, &home)? {
+            continue;
+        }
+        let profile = crate::managed_play::Profile::open_at(&source.game, &source.launcher, &home)?;
+        if profile.has_pending_bootstrap()? {
+            return Err(crate::i18n::tr(
+                "A profile is still preparing its first game. Finish preparing it before moving the data folder.",
+            ).into());
+        }
+        profile.active()?;
+    }
+    Ok(())
+}
+
 /// Handled before normal startup, so this process owns no shared data-location lease.
 pub fn run_worker() -> Option<i32> {
     let mut args = std::env::args_os().skip(1);
@@ -170,7 +188,7 @@ pub fn run_worker() -> Option<i32> {
         let source = Roots {
             launcher: backend::data_dir(),
             game: backend::game_home(),
-            build: backend::build_dir(),
+            build: backend::relocation_build_dir(),
         };
         ensure_idle(&source)?;
         let backup = format!(

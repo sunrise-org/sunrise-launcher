@@ -9,8 +9,12 @@ pub const ENV: &str = "SUNRISE_LAUNCHER_DEVELOPER_OFFLINE";
 pub const FLAG: &str = "--developer-single-player";
 pub const NOTICE: &str = "Offline developer session: single-player only; no account features.";
 
+pub fn requested() -> bool {
+    std::env::var_os(ENV).as_deref() == Some(std::ffi::OsStr::new("1"))
+}
+
 pub fn enabled(tag: &str) -> bool {
-    if std::env::var_os(ENV).as_deref() != Some(std::ffi::OsStr::new("1")) {
+    if !requested() {
         return false;
     }
     let native = crate::native_mods::about(tag);

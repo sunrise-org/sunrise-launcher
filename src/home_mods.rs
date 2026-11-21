@@ -241,6 +241,11 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
             id: file.id,
         }
     }));
+    if let Ok(Some(active)) = sunrise_launcher::managed_play::Active::read_pointer(home) {
+        // A Switch hold is shown in Installed, not as a Home mod or in its off count.
+        let held: HashSet<_> = active.holds().map(|hold| hold.id()).collect();
+        mods.retain(|item| !held.contains(item.id.as_str()));
+    }
     mods.sort_by_key(|item| item.name.to_lowercase());
     let pack = |pack: packs::Pack| Item {
         kind: Kind::of(pack.kind),
@@ -277,7 +282,6 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
 struct Query {
     home: PathBuf,
     version: Option<String>,
-    newest: Option<String>,
 }
 
 /// Just the facts about installed mods needed to draw Play and its strip. The launch and
@@ -285,7 +289,6 @@ struct Query {
 #[derive(Default)]
 pub(crate) struct LaunchSummary {
     pub(crate) mods_off: usize,
-    pub(crate) update_check: Option<String>,
 }
 
 #[derive(Default)]
@@ -318,12 +321,6 @@ fn read_changed(query: &Query, known: &str) -> Option<(String, Snapshot)> {
         .version
         .as_deref()
         .and_then(native_status::Build::read);
-    let update_check = build
-        .as_ref()
-        .zip(query.newest.as_deref())
-        .filter(|(build, next)| backend::compare_versions(next, &build.base).is_gt())
-        .filter(|_| !native_status::enabled(&query.home).is_empty())
-        .map(|(_, next)| crate::sheets::check_key(&query.home, next));
     let left_out = match build {
         Some(build) => build.left_out,
         None => query.version.as_deref().map_or_else(Vec::new, |version| {
@@ -348,10 +345,7 @@ fn read_changed(query: &Query, known: &str) -> Option<(String, Snapshot)> {
         stamp,
         Snapshot {
             column: column(items),
-            launch: LaunchSummary {
-                mods_off,
-                update_check,
-            },
+            launch: LaunchSummary { mods_off },
         },
     ))
 }
@@ -481,7 +475,6 @@ impl Launcher {
         let query = Query {
             home: instance.home.clone(),
             version: self.version_of(instance).cloned(),
-            newest: native_mods::newest_installed(&self.installed).cloned(),
         };
         let mods = &mut self.ui.home.mods;
         if mods.query.as_ref() != Some(&query) {
@@ -571,9 +564,11 @@ impl Launcher {
             None if snapshot.is_none() => div(),
             None => div()
                 .flex()
+                .flex_wrap()
                 .items_center()
-                .gap(px(8.))
-                .py(px(8.))
+                .gap_x(px(8.))
+                .gap_y(px(4.))
+                .py(px(4.))
                 .child(muted(tr("No mods yet")))
                 .child(
                     link("alt-home-browse-mods", tr("Browse mods").to_string())
@@ -802,7 +797,6 @@ mod tests {
         Query {
             home: path.into(),
             version: None,
-            newest: None,
         }
     }
 

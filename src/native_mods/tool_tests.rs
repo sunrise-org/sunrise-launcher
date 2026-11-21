@@ -14,6 +14,12 @@ fn fake(dir: &Path, events: &[&str]) -> std::process::Command {
             "CONSENT" => script.push_str(
                 "echo '{\"event\":\"consent\",\"added_crates\":2,\"build_scripts\":[\"syn\"],\"proc_macros\":[]}'\nread answer\necho \"$answer\" > \"$(dirname \"$0\")/answer\"\n",
             ),
+            "QUIET" => script.push_str(
+                "echo '{\"event\":\"consent\",\"added_crates\":3,\"build_scripts\":[],\"proc_macros\":[]}'\nread answer\necho \"$answer\" > \"$(dirname \"$0\")/answer\"\n",
+            ),
+            "MACRO" => script.push_str(
+                "echo '{\"event\":\"consent\",\"added_crates\":1,\"build_scripts\":[],\"proc_macros\":[\"serde_derive\"]}'\nread answer\necho \"$answer\" > \"$(dirname \"$0\")/answer\"\n",
+            ),
             "ERRORS" => script.push_str("printf 'warming up\\n\\377 unknown contract\\n' >&2\n"),
             "EXIT1" => script.push_str("exit 1\n"),
             "EXIT2" => script.push_str("exit 2\n"),
@@ -58,6 +64,7 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         &on_mod,
         &Cancellation::default(),
         None,
+        None,
     )
     .unwrap();
     assert_eq!(
@@ -83,6 +90,7 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         &on_mod,
         &Cancellation::default(),
         None,
+        None,
     )
     .unwrap_err();
     assert_eq!(
@@ -100,6 +108,7 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
             &on_mod,
             &Cancellation::default(),
             None,
+            None,
         )
         .unwrap_err()
         .blame
@@ -112,6 +121,7 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         &on_mod,
         &Cancellation::default(),
         None,
+        None,
     )
     .unwrap_err();
     assert!(
@@ -120,6 +130,99 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         silent.error
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Crates with no build script and no proc macro run nothing while building, so the player is
+/// not asked about them and the tool is told yes (#104).
+#[cfg(unix)]
+#[test]
+fn crates_that_run_nothing_while_building_are_not_asked_about() {
+    let dir = tempfile::tempdir().unwrap();
+    let built = r#"{"event":"built","route":"prebuilt","binary":"/b/game","libraries":[],"records":[],"mods":[],"internals":{},"mixins":"x","used":[]}"#;
+    run(
+        fake(dir.path(), &["QUIET", built]),
+        "{}",
+        Some(&|_: &Consent| unreachable!("nothing runs while building")),
+        &|_, _, _| {},
+        &Cancellation::default(),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("answer"))
+            .unwrap()
+            .trim(),
+        "true"
+    );
+
+    // A proc macro alone still runs while building, so it is asked about.
+    let macros = tempfile::tempdir().unwrap();
+    let asked = RefCell::new(Vec::new());
+    run(
+        fake(macros.path(), &["MACRO", built]),
+        "{}",
+        Some(&|question: &Consent| {
+            asked.borrow_mut().extend(question.proc_macros.clone());
+            false
+        }),
+        &|_, _, _| {},
+        &Cancellation::default(),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(*asked.borrow(), ["serde_derive"]);
+    assert_eq!(
+        std::fs::read_to_string(macros.path().join("answer"))
+            .unwrap()
+            .trim(),
+        "false"
+    );
+}
+
+/// The yes given without asking is bound to the attempt's original permission like an asked
+/// one: a revoke and regrant before the question refuses it (#104 on #157).
+#[test]
+#[cfg(unix)]
+fn a_regrant_refuses_the_yes_given_without_asking() {
+    let _scratch = super::super::tests::scratch_state();
+    let settings = RefCell::new(crate::backend::Settings::default());
+    settings.borrow_mut().allow_native_mods().unwrap();
+    let current = Cancellation::default();
+    current.admit_native_work().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let failure = run(
+        fake(
+            dir.path(),
+            &[
+                r#"{"event":"mod","id":"greeter","done":1,"total":1}"#,
+                "QUIET",
+                "EXIT1",
+            ],
+        ),
+        "{}",
+        Some(&|_: &Consent| unreachable!("nothing runs while building")),
+        &|_, _, _| {
+            settings.borrow_mut().revoke_native_mods().unwrap();
+            settings.borrow_mut().allow_native_mods().unwrap();
+        },
+        &current,
+        None,
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        failure.error.contains("Native mod permission changed"),
+        "{}",
+        failure.error
+    );
+    assert_ne!(
+        std::fs::read_to_string(dir.path().join("answer"))
+            .unwrap_or_default()
+            .trim(),
+        "true"
+    );
 }
 
 #[test]
@@ -157,6 +260,7 @@ fn a_regrant_cannot_admit_a_stale_sdk_check_or_registry_yes() {
         Some(&consent),
         &|_, _, _| unreachable!(),
         &current,
+        None,
         None,
     )
     .unwrap_err();
@@ -207,6 +311,7 @@ fn not_starting_a_worker_does_not_retain_its_staged_directory() {
             &|_, _, _| unreachable!(),
             cancellation,
             Some(&mut workspace),
+            None,
         )
         .unwrap_err();
         assert!(failure.error.contains(expected), "{}", failure.error);
@@ -250,6 +355,7 @@ exit 125
                     &|_, _, _| unreachable!(),
                     &active,
                     Some(&mut workspace),
+                    None,
                 )
                 .unwrap_err()
                 .error
@@ -331,6 +437,7 @@ fn the_runner_refuses_duplicate_terminal_events_and_wrong_or_extra_check_replies
         &|_, _, _| unreachable!(),
         &Cancellation::default(),
         None,
+        None,
     )
     .unwrap_err();
     assert!(
@@ -355,6 +462,7 @@ fn leader_success_or_blamed_failure_is_not_a_compiler_handoff() {
                 None,
                 &|_, _, _| unreachable!(),
                 &Cancellation::default(),
+                None,
                 None,
             )
         };
@@ -424,11 +532,18 @@ printf '%s\n' '{"event":"built","route":"prebuilt-api","binary":"unused","librar
         r#"#!/bin/sh
 set -eu
 read -r plan
-printf '%s\n' '{"event":"consent","added_crates":1,"build_scripts":[],"proc_macros":[]}'
+printf '%s\n' '{"event":"consent","added_crates":1,"build_scripts":["syn"],"proc_macros":[]}'
 read -r answer
 printf '%s' "$answer" > "$TMPDIR/answer"
 "#,
     );
+    use crate::profile_txn::{Admission, Intent};
+    let home = root.path().join("game");
+    fs::create_dir(&home).unwrap();
+    let mut profile = Admission::open(&home, None).unwrap();
+    let stage = profile
+        .reserve(Intent::Install, Default::default())
+        .unwrap();
     let build_fixture = |program: &Path,
                          workspace: &mut Workspace,
                          cancellation: &Cancellation,
@@ -453,6 +568,7 @@ printf '%s' "$answer" > "$TMPDIR/answer"
             consent,
             on_mod,
             cancellation,
+            Some(stage.handoff()),
         )
     };
     let mut settings = crate::backend::Settings::default();
@@ -505,6 +621,12 @@ printf '%s' "$answer" > "$TMPDIR/answer"
         !old.join("tmp/finished").exists(),
         "retry finished independently"
     );
+    // The escaped SDK writer inherited the admitted profile through the real
+    // Linux subreaper. Neither cancellation nor the launcher's last copy unlocks it.
+    let stage_root = stage.path().to_owned();
+    drop(stage);
+    drop(profile);
+    assert!(Admission::open(&home, None).is_err());
     fs::write(old.join("tmp/release"), b"release").unwrap();
     let until = Instant::now() + Duration::from_secs(10);
     while !old.join("tmp/finished").exists() && Instant::now() < until {
@@ -518,6 +640,14 @@ printf '%s' "$answer" > "$TMPDIR/answer"
             b"retry"
         );
     }
+    let until = Instant::now() + Duration::from_secs(10);
+    while Admission::open(&home, None).is_err() && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !stage_root.exists(),
+        "only reclaim after the real staged writer exits"
+    );
     let clean = retry.path().to_owned();
     drop(retry);
     assert!(!clean.exists());
@@ -589,6 +719,7 @@ fn a_tool_on_another_contract_says_to_update_the_launcher_and_logs_its_errors() 
         None,
         &|_, _, _| {},
         &Cancellation::default(),
+        None,
         None,
     )
     .unwrap_err();
@@ -708,11 +839,17 @@ fn a_check_by_a_tool_on_another_contract_or_from_before_the_command_says_which_t
     let _ = std::fs::remove_dir_all(&dir);
     let plan = serde_json::json!({"contract": CONTRACT});
     fake(&dir, &["ERRORS", "EXIT3"]);
-    let newer = check(&dir.join("tool"), &plan, &Cancellation::default()).unwrap_err();
-    assert!(newer.contains("update the launcher"), "{newer}");
+    let newer = check(&dir.join("tool"), &plan, &Cancellation::default(), None).unwrap_err();
+    assert!(
+        matches!(&newer, CheckFailure::Refused(text) if text.contains("update the launcher")),
+        "{newer:?}"
+    );
     fake(&dir, &["ERRORS"]);
-    let older = check(&dir.join("tool"), &plan, &Cancellation::default()).unwrap_err();
-    assert!(older.contains("install a newer version"), "{older}");
+    let older = check(&dir.join("tool"), &plan, &Cancellation::default(), None).unwrap_err();
+    assert!(
+        matches!(&older, CheckFailure::Refused(text) if text.contains("install a newer version")),
+        "{older:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

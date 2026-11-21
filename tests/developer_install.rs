@@ -42,7 +42,7 @@ fn instance_status_and_runtime_keep_developer_provenance() {
         let folder = backend::version_dir(tag);
         fs::create_dir_all(&folder).unwrap();
         fs::write(folder.join(record), value.to_string()).unwrap();
-        assert!(!backend::select_after_update(Some(tag), &[]));
+        assert!(!backend::select_after_update(Some(tag), &[], "26.3-0.1.1"));
         for prepared in [false, true] {
             let status = developer_install::instance_status(tag, prepared).unwrap();
             assert!(
@@ -55,10 +55,15 @@ fn instance_status_and_runtime_keep_developer_provenance() {
                 "{status}"
             );
         }
-        for command in [
-            backend::client_command(tag),
-            backend::server_command(tag, home.path()),
-        ] {
+        let server = backend::server_command(tag, &home.path().join("server"));
+        let client = backend::client_command(tag);
+        let mut commands = vec![client];
+        if tag == native {
+            assert!(server.is_err());
+        } else {
+            commands.push(server.unwrap());
+        }
+        for command in commands {
             assert!(command
                 .get_envs()
                 .any(|(key, value)| key == "SUNRISE_TELEMETRY_URL"
@@ -66,5 +71,9 @@ fn instance_status_and_runtime_keep_developer_provenance() {
         }
     }
     assert!(developer_install::instance_status("v2026.11.10", true).is_none());
-    assert!(!backend::select_after_update(Some(developer), &[]));
+    assert!(!backend::select_after_update(
+        Some(developer),
+        &[],
+        "nightly-2026-11-20-aaaaaaa"
+    ));
 }

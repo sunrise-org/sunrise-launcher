@@ -49,13 +49,18 @@ impl Launcher {
                 let _ = sunrise_launcher::desktop::repair(backend::exe_path());
             });
         }
-        let installed = backend::installed();
+        let (installed, known_nightly) = backend::play_installations(settings.selected.as_deref());
         if settings
             .selected
             .as_ref()
             .is_none_or(|s| !installed.contains(s))
         {
-            settings.selected = installed.first().cloned();
+            settings.selected = known_nightly.clone().or_else(|| {
+                installed
+                    .iter()
+                    .find(|tag| sunrise_launcher::nightly::date_of(tag).is_none())
+                    .cloned()
+            });
         }
         // Pin the window's chrome (macOS title bar) to the choice before the theme reads
         // `window.appearance()`, so both draw the same look.
@@ -73,7 +78,6 @@ impl Launcher {
             settings_nav_open: false,
             mods_sticky: sticky::Sticky::default(),
             settings_sticky: sticky::Sticky::default(),
-            long_list: cull::Cull::default(),
             updates: Updates::default(),
             checked: None,
             checking_updates: false,
@@ -82,15 +86,16 @@ impl Launcher {
             // The installer the last Update started could not put the new launcher in place.
             self_update: sunrise_launcher::update_handoff::take_failure()
                 .map_or(SelfUpdate::Idle, |e| SelfUpdate::Stuck(Some(e))),
-            update_install: None,
+            architecture_reinstall: None,
             instance_install: None,
             install_next: None,
             bar: (0., 0.),
             releases: Load::Loading,
             installed,
+            known_nightly,
             installing: None,
             removing: Vec::new(),
-            disk: Vec::new(),
+            storage_builds: Default::default(),
             storage_report: None,
             storage_pending: false,
             storage_confirm: None,
@@ -102,7 +107,6 @@ impl Launcher {
             native_consent_build: None,
             install_error: None,
             importing_build: false,
-            import_error: None,
             native_step: None,
             native_progress: None,
             native_cancellation: None,
@@ -192,7 +196,6 @@ impl Launcher {
             joining: None,
             quick_play: None,
             client_run: None,
-            client_vars: Vec::new(),
             collection: collection::Collection::load(),
             playing: None,
             tx,
@@ -260,9 +263,6 @@ impl Launcher {
     /// Keeps the current choices in memory if writing fails; every page offers the same retry.
     pub(crate) fn save_settings(&mut self) -> bool {
         self.settings_save_error = self.settings.save().err();
-        if self.settings_save_error.is_none() {
-            self.mods.settings_saved();
-        }
         self.settings_save_error.is_none()
     }
 
@@ -348,7 +348,6 @@ impl Launcher {
             self.page = page;
             self.switches += 1;
             self.content_scroll = Scrollbar::default();
-            self.long_list = cull::Cull::default();
             self.mods_sticky.reset();
             self.settings_sticky.reset();
             if page == Page::Mods {
@@ -370,6 +369,13 @@ impl Launcher {
             let message = match check {
                 UpdateCheck::Startup => {
                     let updates = backend::releases_and_updates(|releases| {
+                        if let Ok(list) = &releases {
+                            if let Err(error) = backend::note_play_catalogue(list) {
+                                eprintln!(
+                                    "Could not remember the current installed Nightly: {error}"
+                                );
+                            }
+                        }
                         let _ = tx.send(Msg::Releases(releases));
                     });
                     Msg::Updates(Box::new(updates))
@@ -443,19 +449,6 @@ impl Launcher {
             Ok(false) => self.self_update = SelfUpdate::Failed(backend::restart()),
             Err(e) => self.self_update = SelfUpdate::Failed(e),
         }
-    }
-
-    /// Installs the Sunrise version the last check found, keeping the player's choice of
-    /// version unless they were on the newest one.
-    pub(crate) fn install_update(&mut self) {
-        let Some(release) = self.updates.sunrise.clone() else {
-            return;
-        };
-        if self.installing.is_some() || self.removing.contains(&release.tag) {
-            return;
-        }
-        self.update_install = Some(release.tag.clone());
-        self.install(&release);
     }
 
     /// What installed native build `version` was made from (`native_status::Build`), read once.

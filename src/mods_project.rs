@@ -16,11 +16,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use std::sync::Arc;
-use sunrise_launcher::browser::{
-    self,
-    details::{Details, Filters},
-    images, Project, SourceId, Version,
-};
+use sunrise_launcher::browser::{self, details::Details, images, Project, SourceId, Version};
 
 /// The open project page.
 pub(super) struct Opened {
@@ -34,7 +30,6 @@ pub(super) struct Opened {
 #[derive(Default)]
 pub(super) struct Browse {
     pub(super) open: Option<Opened>,
-    pub(super) filters: Filters,
     /// Images on disk, by URL and size; `None` while they load or when they failed.
     images: HashMap<(String, u32), Option<PathBuf>>,
     image_queue: Option<std::sync::mpsc::Sender<(String, u32)>>,

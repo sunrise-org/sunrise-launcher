@@ -3,6 +3,45 @@ use sunrise_launcher::browser::{installed::Entry, mod_list};
 
 const GAME: &str = "26.3";
 
+#[test]
+fn source_links_only_trim_repositories_on_github() {
+    for (source, expected) in [
+        (
+            "https://github.com/Hollowfen/Trail-Markers.git/tree/main/mods?tab=readme#install",
+            Some(SourceLink::GitHub(
+                "https://github.com/Hollowfen/Trail-Markers".into(),
+            )),
+        ),
+        (
+            "https://github.com/Hollowfen/Trail-Markers/blob/main/README.md",
+            Some(SourceLink::GitHub(
+                "https://github.com/Hollowfen/Trail-Markers".into(),
+            )),
+        ),
+        (
+            "https://github.com.example.test/owner/repo.git/tree/main?keep=1#readme",
+            Some(SourceLink::Other(
+                "https://github.com.example.test/owner/repo.git/tree/main?keep=1#readme".into(),
+            )),
+        ),
+        (
+            "https://code.example.test/owner/repo?keep=1#readme",
+            Some(SourceLink::Other(
+                "https://code.example.test/owner/repo?keep=1#readme".into(),
+            )),
+        ),
+        ("https://github.com/owner", None),
+        ("https://github.com/owner/../real/repo", None),
+        ("https://@github.com/owner/repo", None),
+        ("https://user:pass@github.com/owner/repo", None),
+        ("http://github.com/owner/repo", None),
+        ("https:///owner/repo", None),
+        ("", None),
+    ] {
+        assert_eq!(SourceLink::read(source), expected, "{source}");
+    }
+}
+
 fn project(
     id: &str,
     kind: &str,
@@ -49,6 +88,7 @@ const B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
 static NO_PINS: std::sync::LazyLock<std::collections::BTreeMap<String, String>> =
     std::sync::LazyLock::new(Default::default);
+static NO_UNFIT_UPDATES: BTreeSet<String> = BTreeSet::new();
 
 fn world<'a>(
     index: &'a Index,
@@ -59,6 +99,7 @@ fn world<'a>(
     World {
         index: Some(index),
         game: GAME,
+        unfit_updates: &NO_UNFIT_UPDATES,
         enabled,
         unbuilt,
         native_allowed: allowed,
@@ -155,7 +196,7 @@ fn the_page_names_the_version_add_installs() {
         Some("2.0.0")
     );
     assert_eq!(p.versions[1].fit, Fit::OtherBuild("25.1".into()));
-    assert_eq!(p.side, "Not needed on servers");
+    assert_eq!(p.about.unwrap().side, "Not needed on servers");
     assert!(page(&idx, "missing", GAME, vec![], false).is_none());
 }
 
@@ -171,17 +212,55 @@ fn an_update_is_only_ever_forward_to_what_fits() {
         vec![],
     );
     let p = idx.project("zoom").unwrap();
-    assert_eq!(newer(&idx, p, "2.0.0", GAME), Some("3.0.0".into()));
-    assert_eq!(newer(&idx, p, "3.0.0", GAME), None);
     assert_eq!(
-        newer(&idx, p, "0.9.0", GAME),
+        newer(&idx, p, "2.0.0", GAME, &NO_UNFIT_UPDATES),
+        Some("3.0.0".into())
+    );
+    assert_eq!(newer(&idx, p, "3.0.0", GAME, &NO_UNFIT_UPDATES), None);
+    assert_eq!(
+        newer(&idx, p, "0.9.0", GAME, &NO_UNFIT_UPDATES),
         None,
         "a version the index doesn't list is left alone"
     );
     assert_eq!(
-        newer(&idx, p, "2.0.0", "25.1"),
+        newer_for_hold(&idx, p, "0.9.0", GAME, &NO_UNFIT_UPDATES),
+        Some("3.0.0".into()),
+        "a typed hold can offer a reviewed replacement for a delisted older archive"
+    );
+    assert_eq!(
+        newer(&idx, p, "2.0.0", "25.1", &NO_UNFIT_UPDATES),
         None,
         "nothing for another build"
+    );
+}
+
+#[test]
+fn known_unfit_archives_are_not_offered_as_updates() {
+    let idx = index(
+        vec![project(
+            "zoom",
+            "native-mod",
+            &[("3.0.0", GAME, B), ("2.0.0", GAME, A), ("1.0.0", GAME, A)],
+            serde_json::json!({}),
+        )],
+        vec![],
+    );
+    let on = HashSet::from(["zoom".to_owned()]);
+    let unbuilt = HashSet::new();
+    let known = BTreeSet::from([B.to_owned()]);
+    let w = World {
+        unfit_updates: &known,
+        ..world(&idx, &on, &unbuilt, true)
+    };
+    let latest = rows(&[entry("zoom", "2.0.0", true, A)], &w).remove(0);
+    assert!(latest.on);
+    assert!(latest.update.is_none() && !bulk_updatable(&latest));
+    let older = rows(&[entry("zoom", "1.0.0", true, A)], &w).remove(0);
+    assert_eq!(older.update.as_deref(), Some("2.0.0"));
+    assert!(bulk_updatable(&older));
+    assert_eq!(
+        newer_for_hold(&idx, idx.project("zoom").unwrap(), "0.9.0", GAME, &known).as_deref(),
+        Some("2.0.0")
     );
 }
 
@@ -219,6 +298,18 @@ fn pack() -> (Index, Vec<Entry>) {
         entry("bad", "1.0.0", false, A),
     ];
     (idx, entries)
+}
+
+#[test]
+fn a_held_source_is_grouped_with_rows_that_need_attention() {
+    let (idx, entries) = pack();
+    let enabled = HashSet::new();
+    let unbuilt = HashSet::new();
+    let mut assembled = rows(&entries, &world(&idx, &enabled, &unbuilt, true));
+    let quiet = assembled.iter_mut().find(|row| row.id == "quiet").unwrap();
+    assert_eq!(quiet.group(), Group::Rest);
+    quiet.held_for = Some("nightly-test".into());
+    assert_eq!(quiet.group(), Group::NeedsYou);
 }
 
 #[test]
@@ -341,81 +432,46 @@ fn filters_narrow_the_shown_rows_and_never_reorder_them() {
 }
 
 #[test]
-fn update_all_covers_the_whole_pack_and_names_what_it_leaves_out() {
+fn update_all_includes_off_and_native_rows_but_not_a_player_pin() {
     let (idx, entries) = pack();
     let none = HashSet::new();
-    let on: HashSet<String> = ["zoom", "bad", "deep"].map(String::from).into();
-    let r = rows(&entries, &world(&idx, &on, &none, false));
-    let plan = plan_updates(&r, false);
-    let ids: Vec<&str> = plan.included.iter().map(|i| i.id.as_str()).collect();
-    assert_eq!(
-        ids,
-        ["bad", "zoom"],
-        "a taken-down mod is updated to a file that wasn't"
-    );
-    assert_eq!(plan.skipped.len(), 1, "{:?}", plan.skipped);
-    assert!(plan
-        .skipped
-        .iter()
-        .any(|(t, why)| t == "DEEP" && why.contains("native")));
-    let with = plan_updates(&r, true);
-    assert!(with.included.iter().any(|i| i.id == "deep" && i.native));
-    assert!(with.skipped.is_empty());
-
-    // A version the player chose is never moved by a batch.
-    let pins = std::collections::BTreeMap::from([("zoom".to_string(), "1.0.0".to_string())]);
-    let w = World {
-        chosen: &pins,
-        ..world(&idx, &on, &none, true)
-    };
-    let pinned = plan_updates(&rows(&entries, &w), true);
-    assert!(pinned.included.iter().all(|i| i.id != "zoom"));
-    assert!(pinned.skipped.iter().any(|(t, _)| t == "ZOOM"));
-}
-
-#[test]
-fn a_mod_that_is_off_is_in_the_plan() {
-    let (idx, entries) = pack();
     let on: HashSet<String> = ["zoom".to_string()].into();
-    let none = HashSet::new();
-    let r = rows(&entries, &world(&idx, &on, &none, true));
-    assert!(r
+    let unpinned = world(&idx, &on, &none, false);
+    let offered = rows(&entries, &unpinned);
+    let updates = offered
         .iter()
-        .any(|r| r.id == "bad" && !r.on && r.update.is_some()));
-    let plan = plan_updates(&r, true);
-    let mut ids: Vec<&str> = plan.included.iter().map(|i| i.id.as_str()).collect();
-    ids.sort();
-    assert_eq!(ids, ["bad", "deep", "zoom"]);
-    assert!(plan.skipped.is_empty(), "{:?}", plan.skipped);
+        .filter(|r| bulk_updatable(r))
+        .map(|r| r.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(updates, ["bad", "deep", "zoom"]);
+    assert!(offered
+        .iter()
+        .any(|r| r.id == "bad" && !r.on && bulk_updatable(r)));
+
+    let pins = std::collections::BTreeMap::from([("zoom".into(), "1.0.0".into())]);
+    let pinned = rows(
+        &entries,
+        &World {
+            chosen: &pins,
+            ..unpinned
+        },
+    );
+    assert!(pinned
+        .iter()
+        .any(|r| r.id == "zoom" && r.update.is_some() && !bulk_updatable(r)));
 }
 
 #[test]
-fn the_update_button_counts_only_what_the_plan_includes() {
-    let (idx, entries) = pack();
-    let on: HashSet<String> = ["zoom", "bad", "deep"].map(String::from).into();
-    let none = HashSet::new();
-    let r = rows(&entries, &world(&idx, &on, &none, false));
-    // "deep" is native and not allowed: it is left out, so the button counts two, not three.
-    assert_eq!(r.iter().filter(|r| r.update.is_some()).count(), 3);
-    assert_eq!(update_all_button(&r, false), Some(2));
-    assert_eq!(update_all_button(&r, true), Some(3));
-    // Nothing the plan can update: no button at all, not "Update 0 mods".
-    let only_deep: Vec<Row> = r.into_iter().filter(|r| r.id == "deep").collect();
-    assert_eq!(update_all_button(&only_deep, false), None);
-    assert_eq!(update_all_button(&[], true), None);
-}
-
-#[test]
-fn a_skipped_native_row_says_why() {
+fn a_native_update_can_request_consent() {
     let (idx, entries) = pack();
     let on: HashSet<String> = ["deep"].map(String::from).into();
     let none = HashSet::new();
     let r = rows(&entries, &world(&idx, &on, &none, false));
     let deep = r.iter().find(|r| r.id == "deep").unwrap();
     let tip = cells(deep, None, None, false).status.unwrap().tip;
-    assert!(tip.contains("native code: allow it first"), "{tip}");
+    assert!(tip.contains("may ask you to allow native code"), "{tip}");
     let tip = cells(deep, None, None, true).status.unwrap().tip;
-    assert!(!tip.contains("allow it first"), "{tip}");
+    assert!(!tip.contains("may ask you to allow native code"), "{tip}");
 }
 
 #[test]
@@ -430,12 +486,12 @@ fn a_row_the_plan_cannot_update_says_why() {
     };
     let r = rows(&entries, &w);
     let zoom = r.iter().find(|r| r.id == "zoom").unwrap();
-    assert!(update_refusal(zoom, true).is_some_and(|w| w.contains("you chose")));
+    assert!(!bulk_updatable(zoom));
     let tip = cells(zoom, None, None, true)
         .status
         .expect("says something")
         .tip;
-    assert!(tip.contains("you chose its version"), "{tip}");
+    assert!(tip.contains("You chose its version"), "{tip}");
 }
 
 #[test]
@@ -446,17 +502,19 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
     let local = [
         Local {
             id: "mine".into(),
+            file: "mine".to_owned(),
             name: "mine".into(),
             version: "0.3".into(),
-            github: false,
+            github: None,
             native: true,
             unreadable: false,
         },
         Local {
             id: "by_hand".into(),
+            file: "by_hand".to_owned(),
             name: "By Hand".into(),
             version: "1.0".into(),
-            github: false,
+            github: None,
             native: false,
             unreadable: false,
         },
@@ -479,10 +537,10 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
     assert_eq!((content.title.as_str(), content.on), ("By Hand", true));
     assert_eq!((content.make, &content.need), (None, &None));
     assert!(content.local.is_some() && content.entry.is_none());
-    assert!(plan_updates(&r, true)
-        .included
-        .iter()
-        .all(|i| i.id != "mine"));
+    assert!(!bulk_updatable(mine));
+    let shown = visible(&r, &RowFilter::default());
+    assert_eq!(shown.len(), 6, "four managed mods and two hand-added mods");
+    assert_eq!(visible_count(&r, &shown), "6 of 6 mods shown");
 }
 
 #[test]
@@ -492,9 +550,10 @@ fn turning_on_a_local_native_file_exposes_permission_then_build() {
     let id = "example";
     let local = [Local {
         id: id.into(),
+        file: format!("{id}.smod"),
         name: "Example".into(),
         version: "1.0".into(),
-        github: false,
+        github: None,
         native: true,
         unreadable: false,
     }];
@@ -510,6 +569,7 @@ fn turning_on_a_local_native_file_exposes_permission_then_build() {
             &World {
                 index: None,
                 game: GAME,
+                unfit_updates: &NO_UNFIT_UPDATES,
                 enabled: &enabled,
                 unbuilt: &unbuilt,
                 native_allowed: allowed,
@@ -547,41 +607,6 @@ fn turning_on_skips_what_is_taken_down_or_needs_permission() {
 }
 
 #[test]
-fn removing_a_mod_names_what_still_needs_it() {
-    let mut idx = index(
-        vec![
-            project("lib", "mod", &[("1.0.0", GAME, A)], serde_json::json!({})),
-            project(
-                "uses_lib",
-                "mod",
-                &[("1.0.0", GAME, B)],
-                serde_json::json!({}),
-            ),
-        ],
-        vec![],
-    );
-    idx.projects[1].versions[0].requires = vec![index::Requirement {
-        id: "lib".into(),
-        version: "1.0.0".into(),
-        sha256: A.into(),
-    }];
-    let entries = vec![
-        entry("lib", "1.0.0", false, A),
-        entry("uses_lib", "1.0.0", false, B),
-    ];
-    let none = HashSet::new();
-    let r = rows(&entries, &world(&idx, &none, &none, true));
-    let removing: HashSet<String> = ["lib".to_string()].into();
-    assert_eq!(
-        dependents(&r, &removing, Some(&idx)),
-        [("USES_LIB".to_string(), vec!["LIB".to_string()])]
-    );
-    let both: HashSet<String> = ["lib", "uses_lib"].map(String::from).into();
-    assert!(dependents(&r, &both, Some(&idx)).is_empty());
-    assert!(dependents(&r, &removing, None).is_empty());
-}
-
-#[test]
 fn counts_read_short() {
     assert_eq!(size(2048), "2.0 KiB");
     assert_eq!(size(3 << 20), "3.0 MiB");
@@ -597,9 +622,10 @@ fn every_reason_a_build_left_a_mod_out_is_shown_and_counted() {
     let none = HashSet::new();
     let local = ["lib", "addon", "old", "fine"].map(|id| Local {
         id: id.into(),
+        file: format!("{id}.smod"),
         name: id.into(),
         version: "1.0".into(),
-        github: false,
+        github: None,
         native: true,
         unreadable: false,
     });
@@ -657,9 +683,20 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
     let unbuilt: HashSet<String> = ["addon".to_string()].into();
     let local = ["lib", "addon", "old", "fine"].map(|id| Local {
         id: id.into(),
+        file: format!("{id}.smod"),
         name: id.into(),
         version: "1.0".into(),
-        github: id == "lib",
+        github: (id == "lib").then(|| sunrise_launcher::github_mods::Origin {
+            id: id.to_owned(),
+            version: "1.0".into(),
+            owner: "publisher".into(),
+            repo: "source".into(),
+            tag: Some("v1.0".into()),
+            commit: "a".repeat(40),
+            asset: Some("lib.smod".into()),
+            source: None,
+            sha256: "b".repeat(64),
+        }),
         native: true,
         unreadable: false,
     });
@@ -684,6 +721,17 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
         |tag| tag.to_owned(),
     );
     let row = |id: &str| r.iter().find(|r| r.id == id && r.local.is_some()).unwrap();
+    let github_details = row("lib").installed_details();
+    assert_eq!(
+        github_details.source,
+        Some(SourceLink::GitHub(
+            "https://github.com/publisher/source".into()
+        ))
+    );
+    assert_eq!(github_details.fit, Fit::Unknown);
+    assert!(github_details.about.is_none() && github_details.will_install.is_none());
+    assert_eq!(row("addon").installed_details().source, None);
+
     // Every row has a kind and a version for the same two columns.
     for row in &r {
         let cells = cells(row, None, None, true);
@@ -780,9 +828,10 @@ fn the_build_button_is_only_counted_as_drawn_when_its_group_is_shown() {
     let unbuilt: HashSet<String> = ["addon".to_string()].into();
     let local = ["lib", "addon", "fine"].map(|id| Local {
         id: id.into(),
+        file: format!("{id}.smod"),
         name: id.into(),
         version: "1.0".into(),
-        github: false,
+        github: None,
         native: true,
         unreadable: false,
     });
@@ -1177,34 +1226,6 @@ fn install_is_given_only_the_ticked_mods_not_yet_installed_and_stops_at_the_firs
         ["pig"],
         "not cow (installed), owl (unticked) or lib (a library)"
     );
-
-    let ids: Vec<String> = ["a", "b", "c"].map(str::to_owned).to_vec();
-    let mut seen = Vec::new();
-    let said = collection::run_in_order(&ids, |i, id| {
-        seen.push((i, id.to_owned()));
-        match id {
-            "b" => Err("b didn't install".into()),
-            _ => Ok(vec![id.to_uppercase()]),
-        }
-    });
-    assert_eq!(said, Err("b didn't install".into()));
-    assert_eq!(
-        seen,
-        [(0, "a".to_owned()), (1, "b".to_owned())],
-        "c is never tried"
-    );
-    assert_eq!(
-        collection::run_in_order(&ids, |_, id| Ok(vec![id.into()])).unwrap(),
-        ["a", "b", "c"]
-    );
-
-    let native = |id: &str| id == "b";
-    assert!(collection::needs_consent(&ids, false, native));
-    assert!(
-        !collection::needs_consent(&ids, true, native),
-        "once allowed, never asked"
-    );
-    assert!(!collection::needs_consent(&ids[..1], false, native));
 }
 
 #[test]
@@ -1311,9 +1332,10 @@ fn an_unreadable_file_is_never_on_and_cannot_switch_a_working_mod_of_its_name() 
     let (idx, _) = pack();
     let file = |unreadable| Local {
         id: "ruby".into(),
+        file: "ruby".to_owned(),
         name: "ruby".into(),
         version: String::new(),
-        github: false,
+        github: None,
         native: true,
         unreadable,
     };

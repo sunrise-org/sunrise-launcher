@@ -25,7 +25,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use sunrise_launcher::browser::{
     installed::{self, Entry},
-    mod_list, sunrise, Source, SourceId,
+    mod_list, sunrise, Kind, SourceId,
 };
 
 mod actions;
@@ -36,6 +36,7 @@ mod data_packs;
 mod discover;
 mod installed_view;
 mod model;
+mod nightly;
 mod pack_discover;
 mod pack_project;
 mod packs;
@@ -43,7 +44,6 @@ mod project;
 mod search;
 mod ui;
 pub(crate) use data_packs::names;
-pub(crate) use model::collection::{needs_consent, run_in_order};
 pub(crate) use search::Installed;
 mod viewer;
 use std::rc::Rc;
@@ -66,20 +66,38 @@ enum Catalog {
     Failed(String),
 }
 
-/// A batch the player asked for and has to confirm: named, counted, nothing started yet.
-enum Confirm {
-    /// (mod id, project id, title)
-    Remove(Vec<(String, String, String)>),
-    Update(model::UpdatePlan),
+#[derive(PartialEq, Eq)]
+struct OpenScope {
+    profile: Option<String>,
+    home: PathBuf,
+    target: Option<String>,
+    game: String,
+}
+
+enum InstalledProject {
+    Registry,
+    Local(String),
 }
 
 struct Open {
     id: String,
+    installed: Option<InstalledProject>,
+    collection: bool,
+    request: u64,
+    scope: OpenScope,
     /// The screen Back returns to.
     from: Page,
     page: Option<Result<Box<model::Page>, String>>,
     /// The collection's page this mod's was opened from: Back returns to it.
     parent: Option<String>,
+}
+
+impl Open {
+    fn finish(&mut self, request: u64, scope: &OpenScope, page: Result<Box<model::Page>, String>) {
+        if self.request == request && &self.scope == scope && self.page.is_none() {
+            self.page = Some(page);
+        }
+    }
 }
 
 /// The ids switched on among the registry entries and the hand-placed packages.
@@ -101,12 +119,26 @@ fn enabled_ids(home: &Path, entries: &[Entry], local: &[model::Local]) -> HashSe
     enabled
 }
 
+struct ArchiveName {
+    name: String,
+    authors: Vec<String>,
+    version: String,
+}
+
 #[derive(Default)]
 struct InstalledRows {
     entries: Vec<Entry>,
+    archive_names: HashMap<String, ArchiveName>,
     enabled: HashSet<String>,
     chosen: std::collections::BTreeMap<String, String>,
     local: Vec<model::Local>,
+    managed: Option<Box<ManagedRows>>,
+    switch_held: std::collections::HashMap<String, sunrise_launcher::managed_play::HeldReason>,
+}
+
+struct ManagedRows {
+    active: sunrise_launcher::managed_play::Active,
+    unbuilt: HashSet<String>,
 }
 
 #[derive(Debug)]
@@ -115,8 +147,12 @@ enum InstalledReadError {
     Other(String),
 }
 
+type InstalledRead = Result<Option<(InstalledRows, Option<String>)>, InstalledReadError>;
+
 impl InstalledRows {
-    fn read(home: &Path) -> Result<(Self, Option<String>), InstalledReadError> {
+    fn read(home: &Path) -> InstalledRead {
+        use sunrise_launcher::managed_play::{try_display_active, DisplayActiveError};
+
         // Resolve the hard game journal before the advisory or the visible rows.
         let _lock = sunrise_launcher::browser::lock_home(home)
             .map_err(|error| InstalledReadError::Other(error.to_string()))?;
@@ -125,18 +161,57 @@ impl InstalledRows {
         let entries = installed::Installed::read(home)
             .map_err(InstalledReadError::Other)?
             .entries;
-        let local = read_local(home);
+        // Display metadata only; catalogue status and action authority still use their own proofs.
+        let mut archive_names: HashMap<_, _> = entries
+            .iter()
+            .filter(|entry| entry.source == SourceId::Sunrise && entry.kind == Kind::Mod)
+            .filter_map(|entry| {
+                let id = sunrise::mod_id(entry)?;
+                let manifest = sunrise_launcher_smod::manifest::Package::read(&entry.path(home)?)
+                    .ok()?
+                    .manifest;
+                (manifest.id == id).then_some((
+                    manifest.id,
+                    ArchiveName {
+                        name: manifest.name,
+                        authors: manifest.authors,
+                        version: manifest.version,
+                    },
+                ))
+            })
+            .collect();
+        let local = read_local(home, &mut archive_names);
         let enabled = enabled_ids(home, &entries, &local);
         let chosen = sunrise::chosen(home);
-        Ok((
+        let active = match try_display_active(home) {
+            Ok(active) => active,
+            Err(DisplayActiveError::Publishing) => return Ok(None),
+            Err(DisplayActiveError::Read(error)) => return Err(InstalledReadError::Other(error)),
+        };
+        let switch_held = active
+            .iter()
+            .flat_map(|active| active.holds())
+            .map(|hold| (hold.id().to_owned(), hold.reason().clone()))
+            .collect();
+        let managed = active.map(|active| {
+            let built = native_status::built(active.executable());
+            let unbuilt = native_status::unbuilt(&native_status::enabled(home), built.as_deref())
+                .into_iter()
+                .collect();
+            Box::new(ManagedRows { active, unbuilt })
+        });
+        Ok(Some((
             Self {
                 entries,
+                archive_names,
                 enabled,
                 chosen,
                 local,
+                managed,
+                switch_held,
             },
             backup_notice,
-        ))
+        )))
     }
 }
 
@@ -158,16 +233,25 @@ impl std::ops::Deref for Snapshot {
 }
 
 impl Snapshot {
-    fn finish(&mut self, result: Result<(InstalledRows, Option<String>), InstalledReadError>) {
-        self.reading = false;
+    fn finish(&mut self, result: InstalledRead) -> bool {
+        self.reading = matches!(result, Ok(None));
         self.error = match result {
-            Ok((rows, backup_notice)) => {
+            Ok(Some((rows, backup_notice))) => {
                 self.rows = rows;
                 self.backup_notice = backup_notice;
                 None
             }
+            Ok(None) => {
+                self.key.clear(); // Publication was busy; ask again without publishing guessed rows.
+                None
+            }
             Err(error) => Some(error),
         };
+        self.ready()
+    }
+
+    fn ready(&self) -> bool {
+        !self.reading && self.error.is_none()
     }
 }
 
@@ -191,12 +275,16 @@ impl InstalledRefresh<'_> {
 
 enum Event {
     /// Installed rows read for the requested folder and fingerprint, off the window thread.
-    Local(
-        String,
-        Result<(InstalledRows, Option<String>), InstalledReadError>,
+    Local(String, InstalledRead),
+    Enabled(
+        PathBuf,
+        actions::EnableNotice,
+        Result<actions::EnabledMods, String>,
+        Option<u64>,
     ),
-    Catalog(Result<(Vec<Card>, Vec<String>), String>),
-    Page(String, Result<Box<model::Page>, String>),
+    Catalog(String, Result<(Vec<Card>, Vec<String>), String>),
+    Page(u64, Result<Box<model::Page>, String>),
+    Nightly(nightly::Event),
     Progress(String, f32),
     /// A pack search's answer, by the number of the search that asked.
     Packs(u64, Result<Vec<sunrise_launcher::browser::Project>, String>),
@@ -236,6 +324,7 @@ pub(crate) struct ModsState {
     tx: Sender<Event>,
     rx: Receiver<Event>,
     catalog: Catalog,
+    catalog_game: Option<String>,
     find: LineEdit,
     find_focus: Option<FocusHandle>,
     have: LineEdit,
@@ -252,11 +341,10 @@ pub(crate) struct ModsState {
     selection: BTreeSet<String>,
     /// The row last clicked, for Shift-click ranges (an index into the visible rows).
     anchor: Option<usize>,
-    confirm: Option<Confirm>,
-    /// The folder the open confirmation was made for.
-    reviewed_home: Option<PathBuf>,
     snapshot: Option<Snapshot>,
     open: Option<Open>,
+    page_request: u64,
+    nightly: nightly::State,
     /// The collection whose page is open and the members ticked on it.
     picks: Option<collection::Picks>,
     /// My own batch (update or remove): its line and fraction.
@@ -309,6 +397,7 @@ impl Default for ModsState {
             tx,
             rx,
             catalog: Catalog::Idle,
+            catalog_game: None,
             find: LineEdit::default(),
             find_focus: None,
             have: LineEdit::default(),
@@ -321,10 +410,10 @@ impl Default for ModsState {
             data: Default::default(),
             selection: BTreeSet::new(),
             anchor: None,
-            confirm: None,
-            reviewed_home: None,
             snapshot: None,
             open: None,
+            page_request: 0,
+            nightly: Default::default(),
             picks: None,
             busy: None,
             notice: None,
@@ -346,25 +435,34 @@ impl Default for ModsState {
 }
 
 /// The mods placed by hand in `home`: every package is opened and read.
-fn read_local(home: &Path) -> Vec<model::Local> {
-    let local = |native: bool| {
-        move |f: native_status::Installed| model::Local {
-            id: f.id,
-            name: f.name,
-            version: f.version,
-            github: f.origin.is_some(),
-            native,
-            unreadable: f.icon.is_err(),
-        }
-    };
+fn read_local(home: &Path, archive_names: &mut HashMap<String, ArchiveName>) -> Vec<model::Local> {
     native_status::untracked(home)
         .into_iter()
-        .map(local(true))
+        .map(|file| (file, true))
         .chain(
             native_status::untracked_content(home)
                 .into_iter()
-                .map(local(false)),
+                .map(|file| (file, false)),
         )
+        .map(|(file, native)| {
+            let unreadable = file.icon.is_err();
+            if !unreadable {
+                archive_names.entry(file.id.clone()).or_insert(ArchiveName {
+                    name: file.name.clone(),
+                    authors: file.authors,
+                    version: file.version.clone(),
+                });
+            }
+            model::Local {
+                id: file.id,
+                file: file.file,
+                name: file.name,
+                version: file.version,
+                github: file.origin,
+                native,
+                unreadable,
+            }
+        })
         .collect()
 }
 
@@ -373,6 +471,7 @@ impl Launcher {
     pub(crate) fn mods(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.mods_drain();
         self.mods_refresh();
+        self.refresh_nightly_scope();
         if self.ui.page == Page::Packs {
             return self.pack_page(window, cx);
         }
@@ -386,16 +485,42 @@ impl Launcher {
             .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
             .clone();
         match self.ui.page {
-            Page::Project => self.project(cx),
+            Page::Project if self.ui.mods.nightly.open.is_some() => self.nightly_project(cx),
+            Page::Project => {
+                let scope = self.mods_page_scope();
+                if self
+                    .ui
+                    .mods
+                    .open
+                    .as_ref()
+                    .is_some_and(|open| open.scope != scope)
+                {
+                    let open = self.ui.mods.open.take().expect("different open scope");
+                    self.ui.mods.picks = None;
+                    if open.installed.is_some()
+                        && (scope.profile != open.scope.profile || scope.home != open.scope.home)
+                    {
+                        self.ui.page = Page::Installed;
+                        return self.installed(window, &have_focus, cx);
+                    }
+                    self.mods_load_page(open.id, open.from, open.installed);
+                    if let Some(now) = self.ui.mods.open.as_mut() {
+                        now.parent = open.parent;
+                    }
+                }
+                self.project(cx)
+            }
             Page::Installed => self.installed(window, &have_focus, cx),
             Page::PackFind => self.pack_find(window, &find_focus, cx),
             Page::PackProject => self.pack_project(cx),
+            _ if self.nightly_selected() => self.nightly_discover(window, &find_focus, cx),
             _ => self.discover(window, &find_focus, cx),
         }
     }
 
     /// Opens a mod's page, from Home or anywhere else. Its details are read in a worker.
     pub(crate) fn mods_show_project(&mut self, id: String) {
+        self.ui.mods.nightly.open = None;
         let from = match self.ui.page {
             Page::Project => self
                 .ui
@@ -410,20 +535,40 @@ impl Launcher {
         if self.is_collection(&id) && self.ui.page != Page::Project {
             self.ui.mods.picks = None;
         }
-        let parent = (self.ui.page == Page::Project)
-            .then(|| self.ui.mods.open.as_ref().map(|o| o.id.clone()))
-            .flatten()
-            .filter(|open| self.is_collection(open));
+        let parent = self
+            .ui
+            .mods
+            .open
+            .as_ref()
+            .filter(|open| self.ui.page == Page::Project && open.collection)
+            .map(|open| open.id.clone());
         self.ui.page = Page::Project;
-        self.mods_load_page(id, from);
+        self.mods_load_page(id, from, None);
         if let Some(open) = self.ui.mods.open.as_mut() {
             open.parent = parent;
         }
     }
 
+    fn mods_show_installed_project(&mut self, row: &Row) {
+        self.ui.mods.nightly.open = None;
+        let (id, installed) = match &row.local {
+            Some(local) => (row.id.clone(), InstalledProject::Local(local.file.clone())),
+            None => (
+                row.entry
+                    .as_ref()
+                    .map_or(&row.id, |entry| &entry.project)
+                    .clone(),
+                InstalledProject::Registry,
+            ),
+        };
+        self.ui.page = Page::Project;
+        self.mods_load_page(id, Page::Installed, Some(installed));
+    }
+
     fn is_collection(&self, id: &str) -> bool {
         matches!(&self.ui.mods.catalog, Catalog::Ready(cards, _)
             if cards.iter().any(|c| c.id == id && c.members.is_some()))
+            || sunrise::known_index().is_some_and(|index| index.collection(id).is_some())
     }
 
     /// The installed mods `ids` as people read them: each one's name, and the newer version the
@@ -522,13 +667,13 @@ impl Launcher {
     /// Discover or Installed, chosen on the header's switch: remembered for the session.
     fn choose_view(&mut self, page: Page) {
         let m = &mut self.ui.mods;
+        m.nightly.open = None;
         match page {
             Page::Discover | Page::Installed => m.last_mods = Some(page),
             _ => m.last_packs = Some(page),
         }
         m.selection.clear();
         m.anchor = None;
-        m.confirm = None;
         m.menu = None;
         m.reveal = None;
         self.game_packs.confirm_remove = None;
@@ -563,7 +708,7 @@ impl Launcher {
             - 48.
     }
 
-    fn mods_home(&self) -> PathBuf {
+    pub(crate) fn mods_home(&self) -> PathBuf {
         self.selected_instance()
             .map(|i| i.home.clone())
             .unwrap_or_else(backend::game_home)
@@ -576,26 +721,33 @@ impl Launcher {
             changed = true;
             let m = &mut self.ui.mods;
             match event {
-                Event::Catalog(Ok((cards, categories))) => {
-                    m.catalog = Catalog::Ready(cards, categories)
+                Event::Catalog(game, result) => {
+                    if m.catalog_game.as_ref() == Some(&game) {
+                        m.catalog = match result {
+                            Ok((cards, categories)) => Catalog::Ready(cards, categories),
+                            Err(error) => Catalog::Failed(error),
+                        };
+                    }
                 }
-                Event::Catalog(Err(e)) => m.catalog = Catalog::Failed(e),
                 Event::Local(key, result) => {
                     if let Some(snap) = m.snapshot.as_mut().filter(|s| s.key == key) {
-                        let refreshed = result.is_ok();
-                        snap.finish(result);
-                        if refreshed {
+                        if snap.finish(result) {
                             let rows: HashSet<String> =
                                 self.rows().into_iter().map(|r| r.id).collect();
                             self.ui.mods.selection.retain(|id| rows.contains(id));
                         }
                     }
                 }
-                Event::Page(id, page) => {
-                    if let Some(open) = m.open.as_mut().filter(|o| o.id == id) {
-                        open.page = Some(page);
+                Event::Enabled(home, notice, result, allowed_at) => {
+                    self.enabled_mods(&home, notice, result, allowed_at);
+                }
+                Event::Page(request, page) => {
+                    let scope = self.mods_page_scope();
+                    if let Some(open) = self.ui.mods.open.as_mut() {
+                        open.finish(request, &scope, page);
                     }
                 }
+                Event::Nightly(event) => self.nightly_event(event),
                 Event::Progress(line, f) => m.busy = Some((line, f)),
                 Event::Packs(seq, result) => self.pack_answer(seq, result),
                 Event::PackPage(key, page) => self.pack_page_answer(key, page),
@@ -649,8 +801,6 @@ impl Launcher {
         if moved {
             // Another setup: nothing reviewed or selected for the old one carries over.
             let m = &mut self.ui.mods;
-            m.confirm = None;
-            m.reviewed_home = None;
             m.selection.clear();
             m.anchor = None;
             m.errors.clear();
@@ -670,7 +820,12 @@ impl Launcher {
             let (tx, worker_home, worker_key) =
                 (self.ui.mods.tx.clone(), home.clone(), key.clone());
             std::thread::spawn(move || {
-                let _ = tx.send(Event::Local(worker_key, InstalledRows::read(&worker_home)));
+                let result = InstalledRows::read(&worker_home);
+                if matches!(result, Ok(None)) {
+                    // Delay just the busy display retry, without holding any profile/cache lock.
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                let _ = tx.send(Event::Local(worker_key, result));
             });
             self.ui.mods.snapshot = Some(Snapshot {
                 key,
@@ -694,50 +849,88 @@ impl Launcher {
     }
 
     pub(crate) fn ensure_mod_catalog(&mut self) {
-        if !matches!(self.ui.mods.catalog, Catalog::Idle) {
+        let game = self.mods_game();
+        if self.ui.mods.catalog_game.as_ref() == Some(&game)
+            && !matches!(self.ui.mods.catalog, Catalog::Idle)
+        {
             return;
         }
+        self.ui.mods.catalog_game = Some(game.clone());
         self.ui.mods.catalog = Catalog::Loading;
         let tx = self.ui.mods.tx.clone();
-        let version = self
-            .selected_instance()
-            .map(|i| self.version_of(i).cloned());
         std::thread::spawn(move || {
-            let game = version.map_or_else(sunrise_launcher::browser::game, |v| {
-                backend::played_version_id_by(v.as_deref())
-            });
             let result = sunrise::index().map(|index| {
                 let cards = model::cards(&index, &game);
                 let categories = model::categories(&cards);
                 (cards, categories)
             });
-            let _ = tx.send(Event::Catalog(result));
+            let _ = tx.send(Event::Catalog(game, result));
         });
     }
 
-    fn mods_load_page(&mut self, id: String, from: Page) {
+    fn mods_page_scope(&self) -> OpenScope {
+        let instance = self.selected_instance();
+        OpenScope {
+            profile: instance.map(|i| i.id.clone()),
+            home: self.mods_home(),
+            target: instance.and_then(|i| self.profile_target(i)),
+            game: self.mods_game(),
+        }
+    }
+
+    fn mods_load_page(&mut self, id: String, from: Page, installed: Option<InstalledProject>) {
+        self.ui.mods.facts_open = false;
+        let collection = installed.is_none() && self.is_collection(&id);
+        let load = !collection && !matches!(installed, Some(InstalledProject::Local(_)));
+        let scope = self.mods_page_scope();
+        let game = scope.game.clone();
+        self.ui.mods.page_request += 1;
+        let request = self.ui.mods.page_request;
         self.ui.mods.open = Some(Open {
             id: id.clone(),
+            installed,
+            collection,
+            request,
+            scope,
             from,
             page: None,
             parent: None,
         });
-        // A collection's page reads the index when it draws.
-        if self.is_collection(&id) {
+        // Collections and local archives render from state already held by the launcher.
+        if !load {
             return;
         }
-        let (tx, game) = (self.ui.mods.tx.clone(), self.mods_game());
-        let instance = instances::selected();
+        let tx = self.ui.mods.tx.clone();
+        let instance = self.selected_instance().cloned();
         std::thread::spawn(move || {
             let result = sunrise::index().and_then(|index| {
-                let trust = sunrise::trust_and_capabilities(&id, Some(&instance), &game);
-                let another = sunrise::made_for_another_build(&id, &instance, &game);
+                let trust = sunrise::trust_and_capabilities(&id, instance.as_ref(), &game);
+                let another = instance
+                    .as_ref()
+                    .is_some_and(|instance| sunrise::made_for_another_build(&id, instance, &game));
                 model::page(&index, &id, &game, trust, another)
                     .map(Box::new)
                     .ok_or_else(|| trf("{id} isn't a mod in Sunrise's registry.", &[("id", &id)]))
             });
-            let _ = tx.send(Event::Page(id, result));
+            let _ = tx.send(Event::Page(request, result));
         });
+    }
+
+    pub(crate) fn registry_install_hold(&self, id: &str) -> Option<installed::InstallHold> {
+        let snap = self
+            .ui
+            .mods
+            .snapshot
+            .as_ref()
+            .filter(|snap| snap.home == self.mods_home())?;
+        if snap.enabled.contains(id) {
+            return None;
+        }
+        snap.entries
+            .iter()
+            .find(|entry| entry.source == SourceId::Sunrise && entry.project == id)?
+            .install_hold
+            .clone()
     }
 
     /// The installed mods as rows. Uses only the index served over HTTPS this run for registry
@@ -746,31 +939,48 @@ impl Launcher {
         let Some(snap) = &self.ui.mods.snapshot else {
             return Vec::new();
         };
-        let unbuilt: HashSet<String> = match !snap.rows.local.is_empty()
+        let unbuilt: HashSet<String> = if let Some(managed) = &snap.rows.managed {
+            managed.unbuilt.clone()
+        } else if !snap.rows.local.is_empty()
             || snap
                 .rows
                 .entries
                 .iter()
                 .any(|e| native_status::is_native_file(&e.file))
         {
-            true => {
-                self.native_mod_unbuilt("");
-                self.mods
-                    .native_state
-                    .borrow()
-                    .as_ref()
-                    .map(|(_, _, ids)| ids.iter().cloned().collect())
-                    .unwrap_or_default()
-            }
-            false => HashSet::new(),
+            self.native_mod_unbuilt("");
+            self.mods
+                .native_state
+                .borrow()
+                .as_ref()
+                .map(|(_, _, ids)| ids.iter().cloned().collect())
+                .unwrap_or_default()
+        } else {
+            HashSet::new()
         };
         let index = sunrise::fetched_index();
-        let game = self.mods_game();
+        let game = snap.rows.managed.as_ref().map_or_else(
+            || self.mods_game(),
+            |managed| sunrise_launcher::backend::game_version(managed.active.base()),
+        );
+        let unfit_updates = snap
+            .rows
+            .managed
+            .as_ref()
+            .map_or_else(BTreeSet::new, |managed| {
+                sunrise::known_unfit_updates(managed.active.base())
+            });
+        let local_offers = if cfg!(debug_assertions) && sunrise::local() {
+            sunrise::known_index()
+        } else {
+            None
+        };
         let mut rows = model::rows(
             &snap.rows.entries,
             &model::World {
                 index: index.as_deref(),
                 game: &game,
+                unfit_updates: &unfit_updates,
                 enabled: &snap.rows.enabled,
                 unbuilt: &unbuilt,
                 native_allowed: self.settings.native_mods_allowed_at.is_some(),
@@ -778,8 +988,44 @@ impl Launcher {
                 local: &snap.rows.local,
             },
         );
+        let mut regroup = false;
+        for row in &mut rows {
+            let held = snap.rows.switch_held.get(&row.id);
+            if let Some(reason) = held {
+                row.held_for = Some(crate::sheets::build_name(reason.build()));
+                row.on = false;
+                if !matches!(row.need, Some(model::Need::TakenDown(_))) {
+                    row.need = None;
+                }
+                regroup = true;
+            }
+            // An unsigned developer catalogue can offer an action, not vouch for an archive.
+            if let Some((offers, project)) =
+                local_offers.as_ref().or(index.as_ref()).and_then(|offers| {
+                    row.entry.as_ref().and_then(|entry| {
+                        offers
+                            .project(&entry.project)
+                            .map(|project| (offers, project))
+                    })
+                })
+            {
+                if local_offers.is_some() {
+                    row.title.clone_from(&project.name);
+                    row.update = model::newer(offers, project, &row.version, &game, &unfit_updates);
+                    regroup = true;
+                }
+                if held.is_some() {
+                    row.update =
+                        model::newer_for_hold(offers, project, &row.version, &game, &unfit_updates);
+                }
+            }
+        }
         // A mod the game was made without isn't waiting for a build: it waits for its author.
-        let left = self.native_left_out();
+        let left = if snap.rows.managed.is_none() {
+            self.native_left_out()
+        } else {
+            Vec::new()
+        };
         if !left.is_empty() {
             let on = self
                 .selected_instance()
@@ -787,7 +1033,9 @@ impl Launcher {
                 .map(|tag| crate::sheets::build_name(tag))
                 .unwrap_or_default();
             model::mark_left_out(&mut rows, &left, &on, crate::sheets::build_name);
-            // A row that no longer needs the player moves out of that group.
+            regroup = true;
+        }
+        if regroup {
             model::sort(&mut rows);
         }
         rows
@@ -801,7 +1049,7 @@ impl Launcher {
     /// Whether a mod change is in progress (mine or the shared install's), for the shared Play
     /// and setup gates. Reads only the Mods busy flags, never the launch state.
     pub(super) fn mutating(&self) -> bool {
-        self.ui.mods.busy.is_some() || self.mods.busy.is_some()
+        self.ui.mods.busy.is_some() || self.registry_stage().is_some()
     }
 
     /// Build… on a row: the one native build path, which asks for permission first. The player
@@ -839,14 +1087,8 @@ impl Launcher {
     /// The strip shown above either list: progress, or the last result.
     fn strip(&self, cx: &mut Context<Self>) -> Option<Div> {
         use ui::{c, muted};
-        let busy = self.ui.mods.busy.clone().or_else(|| {
-            self.mods
-                .busy
-                .as_ref()
-                .map(|(_, line, f)| (line.clone(), *f))
-        });
-        // A build is of mods: its strip is Mods' own. The play bar shows it on every page.
-        if let Some((line, f)) = busy {
+        // Registry installs use the global strip and the clicked card, not a third bar here.
+        if let Some((line, f)) = self.ui.mods.busy.clone() {
             return Some(
                 div()
                     .flex()
@@ -913,6 +1155,7 @@ impl Launcher {
         let focused = focus.is_focused(window);
         let packs = matches!(self.ui.page, Page::Packs | Page::PackFind);
         let placeholder: SharedString = match (packs, installed) {
+            (false, false) if self.nightly_selected() => tr("Search Nightly mods"),
             (false, false) => tr("Search mods"),
             (false, true) => tr("Search your mods"),
             (true, false) => match self.ui.mods.packs.scope {
@@ -981,6 +1224,7 @@ impl Launcher {
                             m.anchor = None;
                         } else {
                             m.filters.text = text;
+                            m.nightly.limit = 0;
                         }
                     }
                     _ => {}
@@ -1027,13 +1271,66 @@ impl Launcher {
                 Launcher::choose_view,
                 cx,
             ))
-            .child(field)
+            .child(if installed && !packs {
+                div()
+                    .flex()
+                    .flex_1()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(field)
+                    .child(self.github_add_button(cx))
+                    .into_any_element()
+            } else {
+                field.into_any_element()
+            })
     }
 }
 
 #[cfg(test)]
 mod enabled_tests {
     use super::*;
+
+    #[test]
+    fn reopening_the_same_mod_discards_previous_detail_replies() {
+        let scope = |profile: &str, target: &str, game: &str| OpenScope {
+            profile: Some(profile.into()),
+            home: PathBuf::from(profile),
+            target: Some(target.into()),
+            game: game.into(),
+        };
+        let current = scope("current", "new-build", "26.3");
+        let mut open = Open {
+            id: "ruby".into(),
+            installed: Some(InstalledProject::Registry),
+            collection: false,
+            request: 2,
+            scope: scope("current", "new-build", "26.3"),
+            from: Page::Installed,
+            page: None,
+            parent: None,
+        };
+        open.finish(1, &current, Err("earlier request".into()));
+        open.finish(
+            2,
+            &scope("old", "new-build", "26.3"),
+            Err("old profile".into()),
+        );
+        open.finish(
+            2,
+            &scope("current", "old-build", "26.3"),
+            Err("old build".into()),
+        );
+        open.finish(
+            2,
+            &scope("current", "new-build", "26.2"),
+            Err("old game".into()),
+        );
+        assert!(open.page.is_none());
+        open.finish(2, &current, Err("current reply".into()));
+        open.finish(1, &current, Err("earlier request".into()));
+        assert!(matches!(open.page, Some(Err(why)) if why == "current reply"));
+    }
 
     #[test]
     fn enabled_ids_come_from_the_current_packages_only() {
@@ -1045,9 +1342,10 @@ mod enabled_tests {
         .unwrap();
         let local = |id: &str| model::Local {
             id: id.into(),
+            file: format!("{id}.smod"),
             name: id.into(),
             version: String::new(),
-            github: false,
+            github: None,
             native: false,
             unreadable: false,
         };
@@ -1060,6 +1358,58 @@ mod enabled_tests {
 #[cfg(test)]
 mod installed_refresh_tests {
     use super::*;
+
+    #[test]
+    fn busy_publication_keeps_the_settled_hold_and_disables_actions_until_refresh() {
+        use sunrise_launcher_smod::{
+            locks::{LockMode, Release},
+            runtime_leases::Registry,
+        };
+        const ACTOR: &str = "INSTALLED_BUSY_PUBLICATION_ACTOR";
+        let Some(root) = std::env::var_os(ACTOR).map(PathBuf::from) else {
+            let scratch = tempfile::tempdir().unwrap();
+            let root = scratch.path();
+            assert!(std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "mods::installed_refresh_tests::busy_publication_keeps_the_settled_hold_and_disables_actions_until_refresh"])
+                .env(ACTOR, root).env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
+                .status().unwrap().success());
+            return;
+        };
+        let home = root.join("game");
+        let registry = Registry::with_release(&backend::data_dir(), Release::Close).unwrap();
+        let publication = registry.publication(LockMode::Exclusive).unwrap();
+        let mut snapshot = Snapshot {
+            key: "viewed fingerprint".into(),
+            home: home.clone(),
+            rows: InstalledRows {
+                switch_held: std::collections::HashMap::from([(
+                    "ruby".into(),
+                    sunrise_launcher::managed_play::HeldReason::NoFit {
+                        detail: None,
+                        build: "fixture".into(),
+                    },
+                )]),
+                ..Default::default()
+            },
+            reading: true,
+            error: None,
+            backup_notice: None,
+        };
+        assert!(!snapshot.finish(InstalledRows::read(&home)));
+        assert!(!snapshot.ready());
+        assert!(matches!(
+            InstalledRefresh::of(Some(&snapshot)),
+            InstalledRefresh::Reading
+        ));
+        assert!(snapshot.switch_held.contains_key("ruby"));
+        assert!(
+            snapshot.key.is_empty(),
+            "the same fingerprint must be reread"
+        );
+        drop(publication);
+        assert!(snapshot.finish(InstalledRows::read(&home)));
+        assert!(snapshot.ready());
+    }
 
     #[test]
     fn retry_after_a_game_journal_error_keeps_the_last_good_rows_until_success() {

@@ -93,8 +93,6 @@ impl ModsState {
     pub(super) fn enter(&mut self, to: &Installed) -> Page {
         self.selection.clear();
         self.anchor = None;
-        self.confirm = None;
-        self.reviewed_home = None;
         self.menu = None;
         self.unfit_open = None;
         self.have.set(String::new());
@@ -138,9 +136,10 @@ mod tests {
     fn rows() -> Vec<model::Row> {
         let local = ["lantern", "rain", "trail"].map(|id| Local {
             id: id.into(),
+            file: format!("{id}.smod"),
             name: id.into(),
             version: "1.0".into(),
-            github: false,
+            github: None,
             native: id != "rain",
             unreadable: false,
         });
@@ -150,6 +149,7 @@ mod tests {
             &model::World {
                 index: None,
                 game: "26.3",
+                unfit_updates: &Default::default(),
                 enabled: &on,
                 unbuilt: &HashSet::new(),
                 native_allowed: true,
@@ -159,18 +159,12 @@ mod tests {
         )
     }
 
-    /// Installed as the player left it: two mods ticked (one of them on), a range begun, a
-    /// removal waiting for its answer, and filters that hide every mod that is off.
+    /// Installed as the player left it: two mods ticked (one of them on), a range begun,
+    /// and filters that hide every mod that is off.
     fn left_behind() -> ModsState {
         let mut m = ModsState {
             selection: ["lantern", "trail"].map(String::from).into(),
             anchor: Some(1),
-            confirm: Some(Confirm::Remove(vec![(
-                "lantern".into(),
-                "lantern".into(),
-                "lantern".into(),
-            )])),
-            reviewed_home: Some("/profiles/a".into()),
             row_filter: RowFilter {
                 text: "lantern".into(),
                 show: Show::On,
@@ -193,7 +187,6 @@ mod tests {
     fn nothing_carried_in(m: &ModsState) {
         assert!(m.selection.is_empty(), "no hidden row stays ticked");
         assert_eq!(m.anchor, None);
-        assert!(m.confirm.is_none() && m.reviewed_home.is_none());
         assert!(m.row_filter.makes.is_empty());
     }
 

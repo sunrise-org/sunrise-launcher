@@ -483,7 +483,7 @@ fn worlds_body(name: &str, worlds: &[String]) -> String {
 }
 
 /// The choice that keeps everything as it is, said on its button: the version `current` (a
-/// game build's tag) named as the Versions page names it.
+/// game build's tag) using its display name.
 pub fn stay(current: &str) -> String {
     let name = crate::nightly::update_name(current).unwrap_or_else(|| current.to_owned());
     trf("Stay on {build}", &[("build", &name)])
