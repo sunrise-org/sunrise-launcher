@@ -107,12 +107,22 @@ pub(crate) fn inputs(home: &Path) -> Result<[u8; 32], String> {
     Ok(hash.finalize().into())
 }
 
+use sunrise_launcher_smod::index::browser_state::records::Entry as Row;
+
+/// The in-game mod ID a mod row's `file` names, under the mods or native mods folder.
+fn row_mod_id(file: &str) -> Option<&str> {
+    if let Some(rest) = file.strip_prefix(mod_list::NATIVE_DIR) {
+        return rest.strip_prefix('/')?.strip_suffix(".smod");
+    }
+    let rest = file.strip_prefix(mod_list::DIR)?.strip_prefix('/')?;
+    Some(rest.strip_suffix(".smod").unwrap_or(rest))
+}
+
 /// Each registry row that names a mod file must claim exactly that package, once. These rows are
 /// game-facing metadata, never destructive authority for the launcher.
 pub(super) fn check_browser_rows(home: &Path, packages: &[ScannedPackage]) -> Result<(), String> {
-    use crate::browser::{installed, sunrise, Kind, SourceId};
     use serde_json::Value;
-    let path = home.join(installed::MANIFEST);
+    let path = home.join(index::browser_state::MANIFEST);
     let Some(bytes) = super::optional_bytes(&path)? else {
         return Ok(());
     };
@@ -144,8 +154,7 @@ pub(super) fn check_browser_rows(home: &Path, packages: &[ScannedPackage]) -> Re
         {
             continue;
         }
-        let row: installed::Entry =
-            serde_json::from_value(raw.clone()).map_err(|e| at(&path, e))?;
+        let row: Row = serde_json::from_value(raw.clone()).map_err(|e| at(&path, e))?;
         let package = by_file.get(relative).ok_or_else(|| unsettled!())?;
         let id = &package.manifest.id;
         let id_ok = if row.mod_id.is_some() {
@@ -154,11 +163,11 @@ pub(super) fn check_browser_rows(home: &Path, packages: &[ScannedPackage]) -> Re
             &row.project == id
         };
         if package.directory
-            || !installed::in_folders(file)
-            || row.kind != Kind::Mod
-            || row.source != SourceId::Sunrise
+            || !index::browser_state::in_folders(file)
+            || row.kind != index::browser_state::Kind::Mod
+            || row.source != index::browser_state::SourceId::Sunrise
             || !id_ok
-            || sunrise::mod_id(&row) != Some(id.as_str())
+            || row_mod_id(&row.file) != Some(id.as_str())
             || claims.single(id).map_err(|e| e.render(crate::i18n::trf))? != Some(position)
         {
             return Err(unsettled!());

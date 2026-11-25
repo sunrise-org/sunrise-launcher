@@ -125,6 +125,7 @@ impl Session {
                         accepted_account: accounts.selected().map(|a| a.uuid.as_str()),
                         explicit_account: false,
                         piped: true,
+                        registry: sunrise_launcher::browser::sunrise::v2::current_index,
                     }
                     .start(
                         || managed_play::headless_first(&instance),

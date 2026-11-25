@@ -16,75 +16,12 @@ pub mod sunrise;
 
 pub use sunrise_launcher_smod::install_lock::{lock_home, try_lock_home, HomeLockGuard};
 
-use serde::{Deserialize, Serialize};
-
 /// The Minecraft version Sunrise plays: the installed build's, read once per search or install.
 pub fn game() -> String {
     crate::backend::played_version_id()
 }
 
-/// What a project is, as far as Sunrise is concerned.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Kind {
-    ResourcePack,
-    Modpack,
-    /// A Java mod: its content is ported ([`java`]).
-    Mod,
-    /// One of Sunrise's own shader packs (`.sshader`, docs/shaders.md), from Sunrise's registry
-    /// only.
-    Shader,
-    /// A data pack: it goes into one world's `datapacks/` (`crate::datapacks`).
-    DataPack,
-}
-
-impl Kind {
-    pub const ALL: [Kind; 5] = [
-        Kind::Mod,
-        Kind::Modpack,
-        Kind::ResourcePack,
-        Kind::Shader,
-        Kind::DataPack,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Kind::Mod => "Mods",
-            Kind::ResourcePack => "Resource packs",
-            Kind::Modpack => "Modpacks",
-            Kind::Shader => "Shader packs",
-            Kind::DataPack => "Data packs",
-        }
-    }
-
-    /// The folder beside `options.txt` the file goes in; a modpack is imported, a mod ported
-    /// and a data pack put in a world instead.
-    pub fn folder(self) -> Option<&'static str> {
-        match self {
-            Kind::ResourcePack => Some("resourcepacks"),
-            Kind::Shader => Some("shaderpacks"),
-            Kind::Modpack | Kind::Mod | Kind::DataPack => None,
-        }
-    }
-}
-
-/// Where a project comes from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum SourceId {
-    Modrinth,
-    /// Sunrise's own registry of reviewed mods, modpacks and resource packs ([`sunrise`]).
-    Sunrise,
-}
-
-impl SourceId {
-    pub fn label(self) -> &'static str {
-        match self {
-            SourceId::Modrinth => "Modrinth",
-            SourceId::Sunrise => "Sunrise",
-        }
-    }
-}
+pub use sunrise_launcher_smod::index::browser_state::{Kind, SourceId};
 
 /// How well a project runs in Sunrise.
 #[derive(Clone, Debug, PartialEq, Eq)]

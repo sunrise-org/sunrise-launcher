@@ -183,6 +183,7 @@ fn recovery_refuses_a_saved_world_and_never_begins_play() {
             accepted_account: Some("fixture"),
             explicit_account: false,
             piped: false,
+            registry: || None,
         }
         .start_with_recovery(
             Some(ModRecovery {
@@ -364,6 +365,7 @@ fn recovery_binds_first_play_and_refuses_a_result_from_before_switch() {
             accepted_account: Some("fixture"),
             explicit_account: false,
             piped: false,
+            registry: || None,
         }
         .start_with_recovery(
             Some(recovery),
@@ -465,7 +467,7 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
     fs::write(prepared.join("sunrise-resources.json"), b"{}").unwrap();
     fs::write(build.join(".installed"), []).unwrap();
     fs::write(build.join(backend::CLIENT), "unchanged client").unwrap();
-    let row_path = home.join(crate::browser::installed::MANIFEST);
+    let row_path = home.join(sunrise_launcher_smod::index::browser_state::MANIFEST);
     fs::create_dir_all(row_path.parent().unwrap()).unwrap();
     let relative = format!("{}/lantern.smod", mod_list::DIR);
     let package = home.join(&relative);
@@ -499,6 +501,7 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
         accepted_account: None,
         explicit_account: false,
         piped: false,
+        registry: || None,
     };
     let mut profile = Profile::open(&home, None).unwrap();
     let cancellation = native_mods::Cancellation::default();
@@ -721,6 +724,7 @@ fn a_failed_first_download_can_be_followed_by_a_mod_change_and_play() {
         accepted_account: None,
         explicit_account: false,
         piped: false,
+        registry: || None,
     };
     let stop = native_mods::Cancellation::default();
     let Err(error) = client().start(
@@ -847,6 +851,7 @@ fn windows_bound_x64_fallback_survives_pending_retry_and_committed_replay() {
         accepted_account: None,
         explicit_account: false,
         piped: false,
+        registry: || None,
     };
     let cancellation = native_mods::Cancellation::default();
     let retry = |profile: &mut Profile| {

@@ -710,7 +710,11 @@ pub(super) fn mods(action: ModsCmd, as_json: bool) -> Result<(), Error> {
                 }
             }
             if let Some(profile) = profile {
-                if let Some((_, reason)) = profile.enable_unheld(&[id])?.into_iter().next() {
+                if let Some((_, reason)) = profile
+                    .enable_unheld(&[id], sunrise_launcher::browser::sunrise::activate)?
+                    .into_iter()
+                    .next()
+                {
                     return Err(format!("{}: {}.", e.title, reason.label()).into());
                 }
             } else {

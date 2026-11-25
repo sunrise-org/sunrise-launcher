@@ -84,6 +84,7 @@ pub(super) fn client(args: PlayArgs) -> Result<i32, Error> {
             accepted_account: selected.map(|a| a.uuid.as_str()),
             explicit_account: account.is_some(),
             piped: false,
+            registry: sunrise_launcher::browser::sunrise::v2::current_index,
         }
         .start(
             || managed_play::headless_first(&instance),

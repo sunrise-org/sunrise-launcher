@@ -317,7 +317,11 @@ impl Profile {
 
     /// Enable only the requested mods that aren't held by Switch. An exact hold is retired by
     /// a proved replacement, not by turning on its old ID from a stale view or command.
-    pub fn enable_unheld<'a>(&self, ids: &[&'a str]) -> Result<Vec<(&'a str, HeldReason)>, String> {
+    pub fn enable_unheld<'a>(
+        &self,
+        ids: &[&'a str],
+        activate: impl Fn(&Path, Option<&Active>, &[&str]) -> Result<(), String>,
+    ) -> Result<Vec<(&'a str, HeldReason)>, String> {
         let _manifest = game_lock(self.home())?;
         let active = self.active()?;
         let mut go = Vec::new();
@@ -333,8 +337,7 @@ impl Profile {
             }
         }
         if !go.is_empty() {
-            crate::browser::sunrise::check_activation(self.home(), active.as_ref(), &go)?;
-            crate::browser::mod_list::set_all_enabled(self.home(), &go, true)?;
+            (activate)(self.home(), active.as_ref(), &go)?;
         }
         Ok(skipped)
     }

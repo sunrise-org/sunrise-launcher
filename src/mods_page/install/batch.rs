@@ -371,7 +371,7 @@ impl Installs {
                                                 "{mod}: {reason}",
                                                 &[
                                                     ("mod", &change.title),
-                                                    ("reason", &change.reason.detail()),
+                                                    ("reason", &sunrise_launcher::browser::installed::hold_detail(&change.reason)),
                                                 ],
                                             )
                                         })

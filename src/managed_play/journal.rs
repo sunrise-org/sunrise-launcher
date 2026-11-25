@@ -59,27 +59,7 @@ pub fn recover_game_install(home: &Path) -> Result<(), GameInstallProblem> {
         .map_err(|error| GameInstallProblem::from_recovery(home, error))
 }
 
-/// Verified GitHub repository and release workflow identity recorded from a Sigstore attestation
-/// for a schema-2 Sunrise registry install.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct VerifiedRepository {
-    pub id: u64,
-    pub name: String,
-    pub path: String,
-    pub workflow: String,
-}
-
-impl VerifiedRepository {
-    pub fn valid(&self) -> bool {
-        self.id > 0
-            && !self.name.trim().is_empty()
-            && !self.name.chars().any(char::is_control)
-            && !self.path.trim().is_empty()
-            && !self.path.chars().any(char::is_control)
-            && !self.workflow.trim().is_empty()
-            && !self.workflow.chars().any(char::is_control)
-    }
-}
+pub use sunrise_launcher_smod::index::browser_state::records::VerifiedRepository;
 
 /// Exact project, release, SHA-256 digest, and verified repository recorded in the profile's
 /// build lock for a signed schema-2 Sunrise registry mod.

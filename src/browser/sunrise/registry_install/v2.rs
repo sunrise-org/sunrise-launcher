@@ -39,7 +39,7 @@ use std::{
 use sunrise_launcher_smod::{
     dependencies::parse_version,
     index::{self, MAX_FILE},
-    index_v2::{self, FitVerdict, Index, Kind as V2Kind, Project, Release, Revoked},
+    index_v2::{self, FitVerdict, Index, Kind as V2Kind, Project, Release},
     manifest::{collect_jar_requirements, JarRef, Side},
 };
 
@@ -53,6 +53,9 @@ mod ownership;
 mod plan;
 mod queue;
 mod types;
+pub use crate::managed_play::{
+    classify_v2_ownership, revoked_for_installed_package, revoked_for_package, V2Ownership,
+};
 pub use ownership::*;
 pub use plan::*;
 use queue::*;

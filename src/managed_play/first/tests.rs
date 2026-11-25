@@ -171,7 +171,7 @@ fn game_replacements_leave_registry_rows_alone_and_advance_the_same_base() {
     });
     let opaque =
         json!({"source": "future", "file": "resourcepacks/other.zip", "opaque": [null, {}]});
-    let path = home.join(crate::browser::installed::MANIFEST);
+    let path = home.join(sunrise_launcher_smod::index::browser_state::MANIFEST);
     let initial = json!({"entries": [opaque, row], "future-top": [false]});
     fs::write(&path, serde_json::to_vec(&initial).unwrap()).unwrap();
     let cancellation = native_mods::Cancellation::default();
@@ -589,7 +589,11 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
         // No test override is granted registry authority by this fixture.
         let mut profile = Profile::open(&home, None).unwrap();
         assert_eq!(
-            profile.enable_unheld(&["fireflies", "moths"]).unwrap(),
+            profile
+                .enable_unheld(&["fireflies", "moths"], |home, _, ids| {
+                    sunrise_launcher_smod::mod_list::set_all_enabled(home, ids, true)
+                })
+                .unwrap(),
             [(
                 "fireflies",
                 HeldReason::NoFit {
@@ -598,15 +602,18 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
                 }
             )]
         );
-        assert!(!crate::browser::mod_list::is_enabled(&home, "fireflies"));
-        assert!(crate::browser::mod_list::is_enabled(&home, "moths"));
+        assert!(!sunrise_launcher_smod::mod_list::is_enabled(
+            &home,
+            "fireflies"
+        ));
+        assert!(sunrise_launcher_smod::mod_list::is_enabled(&home, "moths"));
         let edit = profile
             .begin_edit(|| panic!("the build is already committed"), |_| {})
             .unwrap();
         let candidate = edit.candidate().unwrap();
         let replacement = package("fireflies", "Fireflies", "2.0");
         fs::write(candidate.path().join(&relative), &replacement).unwrap();
-        crate::browser::mod_list::set_enabled(candidate.path(), "fireflies", true).unwrap();
+        sunrise_launcher_smod::mod_list::set_enabled(candidate.path(), "fireflies", true).unwrap();
         let cancellation = native_mods::Cancellation::default();
         let proof = edit
             .prove(

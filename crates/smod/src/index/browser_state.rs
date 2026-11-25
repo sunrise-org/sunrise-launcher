@@ -2,14 +2,15 @@
 //! Mirrors `crates/sunrise-mod-package/src/index/browser_state.rs` in sunrise-org/sunrise.
 use super::{MAX_FILE, MAX_INDEX, hex64, sha256_file, valid_id};
 use crate::install_lock::lock_home;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::io::{self, ErrorKind, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod claims;
+pub mod records;
 pub use claims::{ClaimProblem, portable_ascii_component};
 
 pub const MANIFEST: &str = "mod-browser.json";
@@ -442,3 +443,87 @@ fn replace(from: &Path, to: &Path) -> io::Result<()> {
 mod claims_matrix_tests;
 #[cfg(test)]
 mod tests;
+
+/// What a project is, as far as Sunrise is concerned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Kind {
+    ResourcePack,
+    Modpack,
+    /// A Java mod: its content is ported.
+    Mod,
+    /// One of Sunrise's own shader packs (`.sshader`, docs/shaders.md), from Sunrise's registry
+    /// only.
+    Shader,
+    /// A data pack: it goes into one world's `datapacks/`.
+    DataPack,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 5] = [
+        Kind::Mod,
+        Kind::Modpack,
+        Kind::ResourcePack,
+        Kind::Shader,
+        Kind::DataPack,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Kind::Mod => "Mods",
+            Kind::ResourcePack => "Resource packs",
+            Kind::Modpack => "Modpacks",
+            Kind::Shader => "Shader packs",
+            Kind::DataPack => "Data packs",
+        }
+    }
+
+    /// The folder beside `options.txt` the file goes in; a modpack is imported, a mod ported
+    /// and a data pack put in a world instead.
+    pub fn folder(self) -> Option<&'static str> {
+        match self {
+            Kind::ResourcePack => Some("resourcepacks"),
+            Kind::Shader => Some("shaderpacks"),
+            Kind::Modpack | Kind::Mod | Kind::DataPack => None,
+        }
+    }
+}
+
+/// Where a project comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SourceId {
+    Modrinth,
+    /// Sunrise's own registry of reviewed mods, modpacks and resource packs.
+    Sunrise,
+}
+
+impl SourceId {
+    pub fn label(self) -> &'static str {
+        match self {
+            SourceId::Modrinth => "Modrinth",
+            SourceId::Sunrise => "Sunrise",
+        }
+    }
+}
+
+/// The folders the browser installs into: an entry's `file` is always inside one of them.
+const FOLDERS: [&str; 5] = [
+    "mods",
+    "resourcepacks",
+    "shaderpacks",
+    crate::mod_list::DIR,
+    crate::mod_list::NATIVE_DIR,
+];
+
+/// Whether `file` names something inside one of the folders the browser installs into, made of
+/// plain names only (no root, drive or `..`), so `home.join(file)` stays in the game folder. The
+/// list is a file in that folder, which a modpack could have put there: an entry naming any other
+/// place must never make the browser remove or rename it.
+pub fn in_folders(file: &str) -> bool {
+    let mut parts = Path::new(file).components();
+    let top = parts.next();
+    matches!(top, Some(Component::Normal(t)) if FOLDERS.iter().any(|f| t == *f))
+        && parts.clone().next().is_some()
+        && parts.all(|c| matches!(c, Component::Normal(_)))
+}

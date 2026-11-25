@@ -9,6 +9,10 @@ mod inputs;
 mod resources;
 mod roots;
 mod target;
+pub(crate) use catalogue::has_source_origin;
+pub use catalogue::{
+    classify_v2_ownership, revoked_for_installed_package, revoked_for_package, V2Ownership,
+};
 pub use client::{headless_first, Client, FailedBuild, ModRecovery, Progress, StartError, Started};
 pub(crate) use first::{changed_files, copy_install_inputs};
 pub(crate) use first::{CandidateImage, Edit, SwitchPublication};

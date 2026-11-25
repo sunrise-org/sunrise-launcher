@@ -116,6 +116,8 @@ pub struct Client<'a> {
     /// An explicit command-line account still requires ownership in a developer build.
     pub explicit_account: bool,
     pub piped: bool,
+    /// The verified registry catalogue's index, if one can be read before Play.
+    pub registry: fn() -> Option<Arc<sunrise_launcher_smod::index_v2::Index>>,
 }
 
 pub struct Started {
@@ -204,11 +206,7 @@ impl Client<'_> {
             check_build,
             cancellation,
             &progress,
-            || {
-                crate::browser::sunrise::v2::index()
-                    .ok()
-                    .map(|catalog| catalog.index)
-            },
+            self.registry,
         )?;
         let tag = active.executable();
         let offline = !self.explicit_account && developer_offline::enabled(tag);

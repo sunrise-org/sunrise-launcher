@@ -60,6 +60,7 @@ fi
             accepted_account: None,
             explicit_account: false,
             piped: false,
+            registry: || None,
         }
         .start(
             || FirstBuild::installed(BUILD),

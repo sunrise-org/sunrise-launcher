@@ -34,7 +34,8 @@ fn dispatch_enable(
         let result = (|| {
             let profile = Profile::open_for(&home, None, Some(identity)).map_err(String::from)?;
             let ids: Vec<_> = ids.iter().map(String::as_str).collect();
-            let skipped = profile.enable_unheld(&ids)?;
+            let skipped =
+                profile.enable_unheld(&ids, sunrise_launcher::browser::sunrise::activate)?;
             Ok(EnabledMods {
                 count: ids.len() - skipped.len(),
                 skipped: skipped

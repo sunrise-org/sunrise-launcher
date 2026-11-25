@@ -49,7 +49,10 @@ impl Launcher {
             card => {
                 if let Some(hold) = self.registry_install_hold(id) {
                     return Some(Outcome {
-                        failure: Some((hold.label(), hold.detail())),
+                        failure: Some((
+                            installed::hold_label(&hold),
+                            installed::hold_detail(&hold),
+                        )),
                         ..Outcome::default()
                     });
                 }
@@ -198,7 +201,7 @@ pub(super) fn notice_failure(notice: &BuildNotice, card: &str) -> (String, Strin
     let this = notice.changes.iter().find(|change| change.project == card);
     let label = match this {
         Some(change) if change.predecessor.is_some() => tr("Kept the working version").into(),
-        Some(change) => change.reason.label(),
+        Some(change) => installed::hold_label(&change.reason),
         None => tr("Some mods stayed off or kept their old version").into(),
     };
     let detail = notice
@@ -210,7 +213,7 @@ pub(super) fn notice_failure(notice: &BuildNotice, card: &str) -> (String, Strin
                 &[
                     ("mod", &change.title),
                     ("disposition", &change.disposition()),
-                    ("reason", &change.reason.detail()),
+                    ("reason", &installed::hold_detail(&change.reason)),
                 ],
             )
         })

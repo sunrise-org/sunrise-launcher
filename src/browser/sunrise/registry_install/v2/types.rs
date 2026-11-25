@@ -1,6 +1,7 @@
 //! The types v2 installs, updates and provider switches pass around: plans, options, hooks and the questions they ask.
 
 use super::*;
+use crate::managed_play::V2Ownership;
 
 /// Injectable byte fetcher used by internal `_with` entrypoints and unit tests.
 pub(crate) type BytesFetcher<'a> = &'a dyn Fn(&str, u64) -> Result<Vec<u8>, String>;
@@ -43,54 +44,6 @@ pub struct ProviderConflict {
     pub installed_name: String,
     pub requested_project: String,
     pub requested_name: String,
-}
-
-/// Verified schema-2 ownership of an installed package on disk.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum V2Ownership {
-    /// Verified v2 receipt whose on-disk size and SHA-256 match a release in this project's signed
-    /// v2 history.
-    Verified {
-        project_id: String,
-        slug: String,
-        version: String,
-        repository: installed::VerifiedRepository,
-    },
-    /// Legacy v1 receipt adopted ONLY because exact on-disk size, version, kind, and SHA-256
-    /// uniquely matched one `(Project, Release)` in signed v2 history.
-    AdoptedV1 {
-        project_id: String,
-        slug: String,
-        version: String,
-        repository: installed::VerifiedRepository,
-    },
-    /// Manual file, GitHub source mod, unadopted v1 file, or tampered bytes: not owned by any v2
-    /// project. Whole-project takedowns never apply, and updates/switches never replace it.
-    Local,
-}
-
-impl V2Ownership {
-    pub fn project_id(&self) -> Option<&str> {
-        match self {
-            Self::Verified { project_id, .. } | Self::AdoptedV1 { project_id, .. } => {
-                Some(project_id.as_str())
-            }
-            Self::Local => None,
-        }
-    }
-
-    pub fn repository(&self) -> Option<&installed::VerifiedRepository> {
-        match self {
-            Self::Verified { repository, .. } | Self::AdoptedV1 { repository, .. } => {
-                Some(repository)
-            }
-            Self::Local => None,
-        }
-    }
-
-    pub fn is_owned(&self) -> bool {
-        !matches!(self, Self::Local)
-    }
 }
 
 /// One scanned package in a profile together with its verified v2 ownership.

@@ -38,10 +38,19 @@ impl Launcher {
                         "{disposition} · {reason}",
                         &[
                             ("disposition", &change.disposition()),
-                            ("reason", &change.reason.short_reason()),
+                            (
+                                "reason",
+                                &sunrise_launcher::browser::installed::hold_short_reason(
+                                    &change.reason,
+                                ),
+                            ),
                         ],
                     )))
-                    .children(show.then(|| muted(change.reason.detail()))),
+                    .children(show.then(|| {
+                        muted(sunrise_launcher::browser::installed::hold_detail(
+                            &change.reason,
+                        ))
+                    })),
             );
         }
         let actions = show.then(|| {

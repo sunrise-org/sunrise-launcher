@@ -80,8 +80,8 @@ impl Launcher {
         let status_cell: AnyElement = if switch_held {
             div().into_any_element()
         } else if let Some(hold) = install_hold {
-            let detail = hold.detail();
-            status("warning", hold.label(), palette().warning)
+            let detail = installed::hold_detail(hold);
+            status("warning", installed::hold_label(hold), palette().warning)
                 .id(("alt-row-install-hold", n))
                 .reach()
                 .min_w_0()

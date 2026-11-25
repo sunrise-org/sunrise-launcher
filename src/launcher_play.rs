@@ -459,6 +459,7 @@ impl Launcher {
                 accepted_account: intent.account.as_deref(),
                 explicit_account: false,
                 piped: true,
+                registry: sunrise_launcher::browser::sunrise::v2::current_index,
             }
             .start_with_recovery(
                 recovery,
