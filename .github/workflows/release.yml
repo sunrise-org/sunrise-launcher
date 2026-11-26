@@ -93,9 +93,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.decide.outputs.matrix) }}
-    # BLACKSMITH_RELEASE=on (a repository variable; unset or anything else is off) builds each shipped platform on its
-    # Blacksmith machine (`blacksmith` in tools/launcher_build_matrix.py: the same images as GitHub's, Linux on the same
-    # Ubuntu 22.04 and so the same glibc). The jobs that attest, draft and publish stay on GitHub's runners.
+    # BLACKSMITH_RELEASE=on (a repository variable; unset or anything else is off) builds Linux and Windows on their
+    # Blacksmith machines (`blacksmith` in tools/launcher_build_matrix.py: the same images as GitHub's, Linux on the same
+    # Ubuntu 22.04 and so the same glibc). macOS stays on GitHub's runner: an_app_bundle_updates_in_place fails on
+    # Blacksmith's macOS 15 (run 45745995661). The jobs that attest, draft and publish stay on GitHub's runners.
     runs-on: ${{ vars.BLACKSMITH_RELEASE == 'on' && matrix.blacksmith || (matrix.mac && 'macos-latest' || matrix.os) }}
     timeout-minutes: 40
     env:
