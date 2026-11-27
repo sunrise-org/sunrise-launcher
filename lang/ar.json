@@ -2593,5 +2593,15 @@
   "{mod} was turned off. Fit could not be verified.": "تم تعطيل {mod}. تعذّر التحقق من توافقها.",
   "{mod} was turned off. Needs an update from its author.": "تم تعطيل {mod}. تحتاج إلى تحديث من مطوّرها.",
   "A short report when the game crashes, so the crash can be fixed.": "تقرير موجز عند تعطل اللعبة للمساعدة في إصلاح المشكلة.",
-  "Backing up": "جارٍ إنشاء نسخة احتياطية"
+  "Backing up": "جارٍ إنشاء نسخة احتياطية",
+  "Changing operators": "جارٍ تغيير المشغّلين",
+  "Copying the game files": "جارٍ نسخ ملفات اللعبة",
+  "Core shaders": "تظليلات أساسية",
+  "Game builds kept for running servers: downloaded again when needed.": "إصدارات اللعبة المحفوظة لتشغيل الخوادم: تُنزّل مجددًا عند الحاجة.",
+  "How smoothly Sunrise runs on your computer, so slowdowns can be found and fixed.": "مدى سلاسة تشغيل Sunrise على جهازك، للمساعدة في اكتشاف البطء وإصلاحه.",
+  "Iris-format pack: most work, some effects may not": "حزمة بتنسيق Iris: تعمل معظم التأثيرات، وقد لا يعمل بعضها",
+  "Java": "Java",
+  "Moving server to trash": "جارٍ نقل الخادم إلى المهملات",
+  "Only the bug reports you write and send yourself.": "تقارير الأخطاء التي تكتبها وترسلها بنفسك فقط.",
+  "Other downloads kept to make the launcher faster.": "تنزيلات أخرى محفوظة لتسريع المشغّل."
 }
