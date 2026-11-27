@@ -2069,5 +2069,13 @@
   "{channel} · {version}": "{channel} · {version}",
   "{count} mods are available on other Sunrise builds. Turn on Show all to see which builds they fit.": "تتوفر {count} إضافات في إصدارات Sunrise الأخرى. فعّل «عرض الكل» لمعرفة الإصدارات المتوافقة.",
   "{count} mods don't work with {build} yet: {mods}.": "لا تعمل {count} إضافات مع {build} بعد: {mods}.",
-  "{count} mods fit {target}": "تتوافق {count} إضافات مع {target}"
+  "{count} mods fit {target}": "تتوافق {count} إضافات مع {target}",
+  "{count} mods match \"{query}\" on other Sunrise builds. Turn on Show all to see which builds they fit.": "تطابق {count} إضافات \"{query}\" في إصدارات Sunrise الأخرى. فعّل «عرض الكل» لمعرفة الإصدارات المتوافقة.",
+  "{count} releases for other builds hidden": "تم إخفاء {count} إصدارًا للبناءات الأخرى",
+  "{count} saved worlds may lose blocks and items from these mods.": "قد تفقد {count} من العوالم المحفوظة كتلًا وعناصر من هذه الإضافات.",
+  "{count} saved worlds may lose blocks and items from this mod.": "قد تفقد {count} من العوالم المحفوظة كتلًا وعناصر من هذه الإضافة.",
+  "{count} stayed off: see their rows.": "بقيت {count} متوقفة: راجع صفوفها.",
+  "{disposition} · {reason}": "{disposition} · {reason}",
+  "{error}\n{stay}: nothing changed.": "{error}\n{stay}: لم يتغير شيء.",
+  "{first} and {count} more": "{first} و{count} أخرى"
 }

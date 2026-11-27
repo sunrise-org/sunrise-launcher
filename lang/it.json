@@ -2168,5 +2168,13 @@
   "Signed in as {signed_in} instead of {expected}. Use the Microsoft account for {expected} and try again.": "Accesso effettuato come {signed_in} invece di {expected}. Usa l’account Microsoft di {expected} e riprova.",
   "That account was signed out while sign-in was in progress. Add it again to continue.": "L’account è stato disconnesso durante l’accesso. Aggiungilo di nuovo per continuare.",
   "{name} is no longer signed in on this computer. Sign in again.": "{name} non ha più effettuato l’accesso su questo computer. Accedi di nuovo.",
-  "Could not reach {service}. Check your internet connection.": "Impossibile raggiungere {service}. Controlla la connessione Internet."
+  "Could not reach {service}. Check your internet connection.": "Impossibile raggiungere {service}. Controlla la connessione Internet.",
+  "Sign-in was declined in the browser.": "L’accesso è stato rifiutato nel browser.",
+  "The sign-in code expired. Start again.": "Il codice di accesso è scaduto. Ricomincia.",
+  "The sign-in code was not recognised. Start again.": "Il codice di accesso non è stato riconosciuto. Ricomincia.",
+  "Microsoft refused this launcher's app registration (client ID).": "Microsoft ha rifiutato la registrazione dell’app del launcher (ID client).",
+  "Microsoft sign-in failed ({error}).": "Accesso a Microsoft non riuscito ({error}).",
+  "Microsoft sign-in failed.": "Accesso a Microsoft non riuscito.",
+  "This Microsoft account has no Xbox profile yet. Sign in once at xbox.com to create one, then try again.": "Questo account Microsoft non ha ancora un profilo Xbox. Accedi una volta su xbox.com per crearne uno, poi riprova.",
+  "Xbox Live is not available in your country or region.": "Xbox Live non è disponibile nel tuo Paese o nella tua area geografica."
 }

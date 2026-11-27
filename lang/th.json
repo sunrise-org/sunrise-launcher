@@ -2564,5 +2564,13 @@
   "Open access controls": "เปิดการควบคุมการเข้าถึง",
   "Privacy": "ความเป็นส่วนตัว",
   "Quit Sunrise Launcher": "ออกจาก Sunrise Launcher",
-  "Remove old build": "นำบิลด์เก่าออก"
+  "Remove old build": "นำบิลด์เก่าออก",
+  "Remove old builds": "นำบิลด์เก่าออก",
+  "Resource pack": "แพ็กทรัพยากร",
+  "Restore…": "กู้คืน…",
+  "See what would be sent": "ดูข้อมูลที่จะส่ง",
+  "Server address or a friend's invite code": "ที่อยู่เซิร์ฟเวอร์หรือรหัสเชิญของเพื่อน",
+  "Shader pack": "แพ็ก shader",
+  "Show or hide the sidebar": "แสดงหรือซ่อนแถบด้านข้าง",
+  "Spectator": "ผู้ชม"
 }
