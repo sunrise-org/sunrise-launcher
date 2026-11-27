@@ -1852,5 +1852,20 @@
   "Nothing matches “{query}”.": "لا شيء يطابق “{query}”.",
   "Nothing was changed. Use --confirm-world-loss only if you accept this risk.": "لم يتغير شيء. استخدم --confirm-world-loss فقط إذا قبلت هذه المخاطرة.",
   "Nothing was removed.": "لم يُزل شيء.",
-  "Nothing was updated.": "لم يتم تحديث شيء."
+  "Nothing was updated.": "لم يتم تحديث شيء.",
+  "On a computer with no Minecraft install, run sunrise-launcher account sign-in, then sunrise-launcher prepare --download.": "على كمبيوتر لا يحتوي على Minecraft، شغّل sunrise-launcher account sign-in ثم sunrise-launcher prepare --download.",
+  "Only Sunrise registry mods can be installed by the browser.": "لا يمكن تثبيت الإضافات عبر المتصفح إلا من سجل Sunrise.",
+  "Only Sunrise registry mods can be updated by this command.": "لا يمكن لهذا الأمر تحديث إلا إضافات سجل Sunrise.",
+  "Open on GitHub": "فتح على GitHub",
+  "Original game build not recorded.": "لم يُسجل إصدار اللعبة الأصلي.",
+  "Pack {mod} as an .smod in the native mods folder before using it as an installed native mod.": "عبّئ {mod} كملف .smod في مجلد الإضافات الأصلية قبل استخدامها كإضافة أصلية مثبّتة.",
+  "Panel opacity": "عتامة اللوحة",
+  "Paste a GitHub link to a repository, release, tag, branch or commit, or choose a mod folder on this computer.": "الصق رابط GitHub لمستودع أو إصدار أو وسم أو فرع أو التزام، أو اختر مجلد إضافة على هذا الكمبيوتر.",
+  "Picture {number} of {total}": "الصورة {number} من {total}",
+  "Play time not saved: {error}": "لم يُحفظ وقت اللعب: {error}",
+  "Play when the install is ready": "العب عند اكتمال التثبيت",
+  "Play {version} once in the official Minecraft launcher, or in Prism Launcher, MultiMC, the Modrinth App, ATLauncher, GDLauncher or Dawn Client, then prepare again.": "شغّل {version} مرة واحدة في مشغّل Minecraft الرسمي أو Prism Launcher أو MultiMC أو Modrinth App أو ATLauncher أو GDLauncher أو Dawn Client، ثم أعد التجهيز.",
+  "Play {version} once in {launcher} so it downloads the game, then prepare again.": "شغّل {version} مرة واحدة في {launcher} لتنزيل اللعبة، ثم أعد التجهيز.",
+  "Play {world}": "العب {world}",
+  "Playing Sunrise modpacks is paused. Choose another profile to play.": "تم إيقاف تشغيل حزم إضافات Sunrise مؤقتًا. اختر ملفًا شخصيًا آخر للعب."
 }

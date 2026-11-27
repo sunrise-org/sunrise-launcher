@@ -1951,5 +1951,20 @@
   "The affected worlds changed after review. Nothing was changed; try again.": "I mondi interessati sono cambiati dopo la revisione. Non è stata apportata alcuna modifica; riprova.",
   "The build could not be published.": "Impossibile pubblicare la build.",
   "The build did not include every enabled mod. Nothing was switched.": "La build non includeva tutte le mod attive. Non è stato effettuato alcun passaggio.",
-  "The build is ready, but the profile choice could not be saved: {error}": "La build è pronta, ma non è stato possibile salvare la scelta del profilo: {error}"
+  "The build is ready, but the profile choice could not be saved: {error}": "La build è pronta, ma non è stato possibile salvare la scelta del profilo: {error}",
+  "The downloaded package for {mod} changed. Fetch it again.": "Il pacchetto scaricato per {mod} è cambiato. Scaricalo di nuovo.",
+  "The files prepared for removal changed. Nothing was removed; try again.": "I file preparati per la rimozione sono cambiati. Non è stato rimosso nulla; riprova.",
+  "The game arguments change the folders or mods selected for this profile.": "Gli argomenti del gioco modificano le cartelle o le mod selezionate per questo profilo.",
+  "The game couldn't be installed.": "Impossibile installare il gioco.",
+  "The game couldn't start.": "Impossibile avviare il gioco.",
+  "The game is running": "Il gioco è in esecuzione",
+  "The game port is unavailable, so Sunrise can't check access to that port.": "La porta del gioco non è disponibile, quindi Sunrise non può verificarne l’accesso.",
+  "The game stopped in {profile}. {reason}": "Il gioco si è arrestato in {profile}. {reason}",
+  "The game stopped.": "Il gioco si è arrestato.",
+  "The game wrapper stopped: {reason}": "Il wrapper del gioco si è arrestato: {reason}",
+  "The game's files couldn't be prepared.": "Impossibile preparare i file del gioco.",
+  "The game's preparer stopped ({status}).": "La preparazione del gioco si è arrestata ({status}).",
+  "The installed GitHub archive or origin for {mod} changed. Nothing was changed; try again.": "L’archivio GitHub installato o l’origine di {mod} sono cambiati. Non è stata apportata alcuna modifica; riprova.",
+  "The last game build is unknown for these worlds: {worlds}": "L’ultima build di gioco è sconosciuta per questi mondi: {worlds}",
+  "The launcher couldn't check for unfinished mod updates. You can still play.": "Il launcher non ha potuto verificare gli aggiornamenti mod incompleti. Puoi comunque giocare."
 }

@@ -2347,5 +2347,20 @@
   "{name} does not match the checksum GitHub lists for it.": "{name} ไม่ตรงกับ checksum ที่ GitHub ระบุ",
   "GitHub's rate limit for anonymous requests was reached. Try again in a few minutes.": "ถึงขีดจำกัดคำขอแบบไม่ระบุตัวตนของ GitHub แล้ว ลองอีกครั้งในอีกไม่กี่นาที",
   "{name} is a Modrinth modpack: Sunrise doesn't import those.": "{name} เป็นม็อดแพ็ก Modrinth: Sunrise ไม่นำเข้าแพ็กประเภทนี้",
-  "{name} can't be imported: drop {kinds}.": "นำเข้า {name} ไม่ได้: ลาก {kinds} มาวาง"
+  "{name} can't be imported: drop {kinds}.": "นำเข้า {name} ไม่ได้: ลาก {kinds} มาวาง",
+  "{name} is a Java modpack: Sunrise doesn't import those.": "{name} เป็นม็อดแพ็ก Java: Sunrise ไม่นำเข้าประเภทนี้",
+  "{name} is neither a pack, a shared profile nor a game build: nothing in it that Sunrise reads.": "{name} ไม่ใช่แพ็ก โปรไฟล์ที่แชร์ หรือบิลด์เกม: ไม่มีสิ่งใดที่ Sunrise อ่านได้",
+  "{name} is not a shared profile.": "{name} ไม่ใช่โปรไฟล์ที่แชร์",
+  "Could not make a profile called {name}.": "สร้างโปรไฟล์ชื่อ {name} ไม่ได้",
+  "Copying {name}": "กำลังคัดลอก {name}",
+  "{path} is not a folder to install in.": "{path} ไม่ใช่โฟลเดอร์สำหรับติดตั้ง",
+  "The licence: {error}": "ใบอนุญาต: {error}",
+  "The licences: {error}": "ใบอนุญาต: {error}",
+  "The registry: {error}": "รีจิสทรี: {error}",
+  "{path} (not the launcher's own folder)": "{path} (ไม่ใช่โฟลเดอร์ของ launcher เอง)",
+  "Not removed: {item}": "ไม่ได้นำออก: {item}",
+  "That file isn't a picture the launcher can read (PNG, JPEG, GIF, WebP).": "ไฟล์นั้นไม่ใช่รูปภาพที่ launcher อ่านได้ (PNG, JPEG, GIF, WebP)",
+  "{name} plays its pack's mods: import the pack again for a second copy.": "{name} ใช้ม็อดจากแพ็กของตัวเอง: นำเข้าแพ็กอีกครั้งเพื่อสร้างสำเนาที่สอง",
+  "{path} is not a directory inside the game folder": "{path} ไม่ใช่ไดเรกทอรีภายในโฟลเดอร์เกม",
+  "No profile {query}: sunrise-launcher instance list shows them": "ไม่มีโปรไฟล์ {query}: ดูรายการได้ด้วย sunrise-launcher instance list"
 }
