@@ -239,7 +239,14 @@ impl Launcher {
                     .justify_between()
                     .gap(px(10.))
                     .child(strip)
-                    .child(div().flex().items_center().gap(px(8.)).child(open_file).child(open)),
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .children(open_file)
+                            .child(open),
+                    ),
             )
             .children(toolbar)
             .children(self.share_panel(&instance.home, cx))

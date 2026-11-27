@@ -486,7 +486,7 @@ Move a profile up or down in the sidebar, among the profiles of its group. Sunri
     sunrise-launcher instance move <INSTANCE> <DIRECTION>
 
 - `INSTANCE`
-- `DIRECTION`
+- `DIRECTION` (up, down)
 
 MCP: `instance_move`.
 
