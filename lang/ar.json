@@ -2431,5 +2431,15 @@
   "A server needs an address.": "يحتاج الخادم إلى عنوان.",
   "There is no server {number}.": "لا يوجد خادم {number}.",
   "Could not save the server list: {error}": "تعذّر حفظ قائمة الخوادم: {error}",
-  "No server {query} in the list": "لا يوجد خادم {query} في القائمة"
+  "No server {query} in the list": "لا يوجد خادم {query} في القائمة",
+  "the panel gave no link": "لم توفر اللوحة رابطًا",
+  "This server is no longer in the launcher’s list.": "لم يعد هذا الخادم ضمن قائمة المشغّل.",
+  "Turn off running in the background before deleting this server.": "أوقف التشغيل في الخلفية قبل حذف هذا الخادم.",
+  "The server was moved to the trash, but its list could not be saved: {error}": "تم نقل الخادم إلى المهملات، لكن تعذّر حفظ قائمته: {error}",
+  "This is not a server folder.": "هذا ليس مجلد خادم.",
+  "Could not move the server to the trash: {error}": "تعذّر نقل الخادم إلى المهملات: {error}",
+  "Public IP lookup failed": "فشل البحث عن عنوان IP عام",
+  "Public IP lookup did not return HTTP 200": "لم يُرجع البحث عن IP عام استجابة HTTP 200",
+  "Could not read the public IP address": "تعذّرت قراءة عنوان IP العام",
+  "Invalid public IP response": "استجابة عنوان IP العام غير صالحة"
 }

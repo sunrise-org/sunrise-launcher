@@ -2530,5 +2530,15 @@
   "Last detected public address": "Ultimo indirizzo pubblico rilevato",
   "Public IP not detected": "IP pubblico non rilevato",
   "Finding public IP…": "Ricerca dell’IP pubblico…",
-  "Public IP unavailable": "IP pubblico non disponibile"
+  "Public IP unavailable": "IP pubblico non disponibile",
+  "Refresh public IP": "Aggiorna IP pubblico",
+  "Detect public IP": "Rileva IP pubblico",
+  "Local connections only": "Solo connessioni locali",
+  "Public IPv4 unavailable for this listener": "IPv4 pubblico non disponibile per questo listener",
+  "A Horizon community server": "Un server della community Horizon",
+  "Added · builds when you play": "Aggiunto · viene compilato quando giochi",
+  "Address coming soon": "Indirizzo in arrivo",
+  "Another installed mod uses this ID.": "Un’altra mod installata usa questo ID.",
+  "Coming soon": "Prossimamente",
+  "Continue playing lists one world a row.": "Continua a giocare mostra un mondo per riga."
 }
