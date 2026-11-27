@@ -2245,5 +2245,17 @@
   "not a plain URL": "non è un URL semplice",
   "{url}: larger than {size} MB": "{url}: supera {size} MB",
   "{path}: larger than {size} MB": "{path}: supera {size} MB",
-  "{index_location}: v2 images require an https:// index or local file path": "{index_location}: le immagini v2 richiedono un indice https:// o un percorso locale"
+  "{index_location}: v2 images require an https:// index or local file path": "{index_location}: le immagini v2 richiedono un indice https:// o un percorso locale",
+  "{index_location}: index path has no parent directory": "{index_location}: مسار الفهرس ليس له مجلد أب",
+  "{file}: larger than {size} MB": "{file}: أكبر من {size} MB",
+  "{title} isn't a pack Sunrise installs as a file.": "{title} ليست حزمة يثبتها Sunrise كملف.",
+  "{title}'s dependencies go too deep.": "اعتمادات {title} متداخلة بعمق كبير.",
+  "{title} doesn't run in Sunrise: {why}": "لا تعمل {title} في Sunrise: {why}",
+  "{title} can't be installed from here: {why}": "تعذّر تثبيت {title} من هنا: {why}",
+  "{title} has no version Sunrise runs.": "لا يتوفر لـ {title} إصدار يعمل على Sunrise.",
+  "{title} needs {id} on {source}, which isn't a pack Sunrise loads.": "تحتاج {title} إلى {id} من {source}، وهو ليس حزمة يحمّلها Sunrise.",
+  "{title} needs {dependency}.": "تحتاج {title} إلى {dependency}.",
+  "{file} isn't a pack file in its expected folder.": "{file} ليس ملف حزمة في مجلده المتوقع.",
+  "{file} goes through a filesystem link.": "يمر {file} عبر رابط في نظام الملفات.",
+  "{file} isn't a pack file in a plain pack folder.": "{file} ليس ملف حزمة في مجلد حزم عادي."
 }

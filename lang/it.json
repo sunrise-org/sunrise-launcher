@@ -2344,5 +2344,17 @@
   "{why}, and Sunrise's mirror of GitHub couldn't help either ({mirror}). Try again in a few minutes.": "{why}; anche il mirror GitHub di Sunrise non è stato d’aiuto ({mirror}). Riprova tra qualche minuto.",
   "{url} answered {code}": "{url} ha risposto {code}",
   "{link} is not a GitHub link: use https://github.com/<owner>/<repo>, or .../releases/tag/<tag>, .../tree/<ref> or .../commit/<sha>.": "{link} non è un link GitHub: usa https://github.com/<owner>/<repo>, oppure .../releases/tag/<tag>, .../tree/<ref> o .../commit/<sha>.",
-  "{name} does not match the checksum GitHub lists for it.": "{name} non corrisponde al checksum indicato da GitHub"
+  "{name} does not match the checksum GitHub lists for it.": "{name} non corrisponde al checksum indicato da GitHub",
+  "GitHub's rate limit for anonymous requests was reached. Try again in a few minutes.": "È stato raggiunto il limite di richieste anonime di GitHub. Riprova tra qualche minuto.",
+  "{name} is a Modrinth modpack: Sunrise doesn't import those.": "{name} è un modpack Modrinth: Sunrise non li importa.",
+  "{name} can't be imported: drop {kinds}.": "Impossibile importare {name}: trascina {kinds}.",
+  "{name} is a Java modpack: Sunrise doesn't import those.": "{name} è un modpack Java: Sunrise non li importa.",
+  "{name} is neither a pack, a shared profile nor a game build: nothing in it that Sunrise reads.": "{name} non è un pacchetto, un profilo condiviso né una build di gioco: non contiene nulla che Sunrise possa leggere.",
+  "{name} is not a shared profile.": "{name} non è un profilo condiviso.",
+  "Could not make a profile called {name}.": "Impossibile creare un profilo chiamato {name}.",
+  "Copying {name}": "Copia di {name}",
+  "{path} is not a folder to install in.": "{path} non è una cartella di installazione.",
+  "The licence: {error}": "La licenza: {error}",
+  "The licences: {error}": "Le licenze: {error}",
+  "The registry: {error}": "Il registro: {error}"
 }
