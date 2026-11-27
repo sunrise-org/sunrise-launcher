@@ -2410,5 +2410,15 @@
   "Could not check running games and builds: {error}": "Impossibile verificare giochi e build in esecuzione: {error}",
   "Could not check running games and builds; no files were moved.": "Impossibile verificare giochi e build in esecuzione; nessun file è stato spostato.",
   "Could not read running processes: {error}": "Impossibile leggere i processi in esecuzione: {error}",
-  "Close games, servers and native builds before moving data ({name} is running).": "Chiudi giochi, server e build native prima di spostare i dati ({name} è in esecuzione)."
+  "Close games, servers and native builds before moving data ({name} is running).": "Chiudi giochi, server e build native prima di spostare i dati ({name} è in esecuzione).",
+  "--relocate-data needs an empty destination folder": "--relocate-data richiede una cartella di destinazione vuota",
+  "{error}; diagnostic log: {log}": "{error}; log diagnostico: {log}",
+  "{error}; could not write launcher diagnostic log: {log_error}": "{error}; impossibile scrivere il log diagnostico del launcher: {log_error}",
+  "Unexpected download state.": "Stato di download imprevisto.",
+  "Download worker ended unexpectedly.": "Il processo di download è terminato inaspettatamente.",
+  "Rust {version} ({name}): {error}": "Rust {version} ({name}): {error}",
+  "{compiler} did not contain the compiler and linker files the launcher needs.": "{compiler} non contiene i file del compilatore e del linker necessari al launcher.",
+  "Native mods need Apple's Command Line Tools to link the game. Run `xcode-select --install` in Terminal, then build again.": "Le mod native richiedono gli Strumenti da riga di comando di Apple per collegare il gioco. Esegui `xcode-select --install` nel Terminale, poi ricompila.",
+  "ALSA's development files": "File di sviluppo ALSA",
+  "libudev's development files": "File di sviluppo libudev"
 }

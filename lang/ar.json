@@ -2311,5 +2311,15 @@
   "it panicked": "حدث ذعر برمجي",
   "Server ignored or changed the requested byte range": "تجاهل الخادم نطاق البايتات المطلوب أو غيّره",
   "Unexpected partial response": "استجابة جزئية غير متوقعة",
-  "Resource changed during transfer": "تغيّر المورد أثناء النقل"
+  "Resource changed during transfer": "تغيّر المورد أثناء النقل",
+  "Inconsistent Content-Length": "Content-Length non coerente",
+  "Response exceeds expected length": "La risposta supera la lunghezza prevista",
+  "Unsupported proxy scheme": "Schema proxy non supportato",
+  "URL has no host": "L’URL non ha un host",
+  "Redirect has no Location": "Il reindirizzamento non ha un’intestazione Location",
+  "{url} answered {status}": "{url} ha risposto {status}",
+  "Too many redirects": "Troppi reindirizzamenti",
+  "Artifact requires a 40-character SHA-1": "L’artefatto richiede uno SHA-1 di 40 caratteri",
+  "Downloaded size or SHA-1 does not match the manifest": "La dimensione o lo SHA-1 del download non corrisponde al manifest",
+  "{url}: {message} (after {seconds}s)": "{url}: {message} (dopo {seconds}s)"
 }
