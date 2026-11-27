@@ -154,8 +154,14 @@ pub(crate) fn icon_button(
     style: Style,
 ) -> Stateful<Div> {
     let tip: SharedString = tooltip.into();
-    let look = Look::new(style, Size::Medium).icon(icon);
-    make(id.into(), look, true, None).tooltip(crate::glass_ui::tip(tip))
+    icon_only(id, Look::new(style, Size::Medium).icon(icon)).tooltip(crate::glass_ui::tip(tip))
+}
+
+/// A square button showing only `look`'s icon, with no tooltip: for a caller that names it in a
+/// tooltip of its own (one read when it shows, or a reason it is disabled). GPUI takes one
+/// tooltip per element, so an [`icon_button`] can't take a second.
+pub(crate) fn icon_only(id: impl Into<ElementId>, look: Look) -> Stateful<Div> {
+    make(id.into(), look, true, None)
 }
 
 /// The shared body of [`button`] and [`icon_button`]: the box, its fill and edge, its hover and

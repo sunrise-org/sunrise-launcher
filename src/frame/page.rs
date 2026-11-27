@@ -34,7 +34,7 @@ impl Page {
     ];
 
     /// The tab that stays selected on a subpage.
-    pub(super) fn active_tab(self) -> Self {
+    pub(crate) fn active_tab(self) -> Self {
         match self {
             Self::Installed | Self::Project => Self::Discover,
             Self::PackFind | Self::PackProject => Self::Packs,
@@ -44,9 +44,14 @@ impl Page {
     }
 }
 
+/// How many pages Back remembers.
+const BACK_LIMIT: usize = 20;
+
 #[derive(Default)]
 pub(crate) struct State {
     pub page: Page,
+    /// The pages Back returns to, the most recent last, at most [`BACK_LIMIT`] of them.
+    pub back: Vec<Page>,
     pub home: crate::home::HomeState,
     pub backdrop: crate::backdrop::Backdrop,
     pub sheet: Option<Sheet>,
@@ -65,6 +70,8 @@ pub(crate) struct State {
     /// Tests: draw the sidebar this far open, as if part way through an ease.
     #[cfg(test)]
     pub rail_pin: Option<f32>,
+    /// The sidebar's Help & community section is open (its Discord and Website rows show).
+    pub help_open: bool,
     /// Where the last frame drew each profile that has a context menu: the open menu covers
     /// them, so a right-click on one reaches it through here.
     pub profile_rows: crate::rail::ProfileRows,
@@ -77,6 +84,14 @@ pub(crate) struct State {
 }
 
 impl State {
+    /// Remembers `from` as the page Back returns to, dropping the oldest past [`BACK_LIMIT`].
+    pub(crate) fn remember(&mut self, from: Page) {
+        self.back.push(from);
+        if self.back.len() > BACK_LIMIT {
+            self.back.remove(0);
+        }
+    }
+
     /// Returns the instant the current page entrance started while its transition is still active,
     /// or `None` on initial render, under reduced motion, or after [`crate::motion::PAGE`] ends.
     pub(crate) fn page_transition(

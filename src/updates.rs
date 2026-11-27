@@ -2,7 +2,7 @@
 use super::*;
 use crate::paint::palette;
 use crate::sheets::{self, Sheet};
-use crate::widgets::button::{primary, secondary};
+use crate::widgets::button::{button, primary, secondary, Look, Size, Style};
 use gpui::rgb;
 use sunrise_launcher::update_handoff;
 
@@ -471,7 +471,12 @@ impl Launcher {
                 label.clone()
             }
         });
-        let main = secondary("launcher-update", "")
+        // An update to take is the bar's one accent outline; a status is a secondary button.
+        let look = match action {
+            Some(_) => Look::new(Style::Accent, Size::Small).icon("download-04"),
+            None => Look::new(Style::Secondary, Size::Medium),
+        };
+        let main = button("launcher-update", "", look)
             .max_w(px(172.))
             .overflow_hidden()
             .h(px(tokens::FIELD))
@@ -483,9 +488,6 @@ impl Launcher {
                     crate::glass_ui::icon("information-circle", 16., rgb(p.chrome_muted).into())
                         .flex_none(),
                 )
-            })
-            .when(action.is_some(), |b| {
-                b.border_color(rgb(p.accent)).text_color(rgb(p.chrome_text))
             });
         let main = if action.is_some() {
             main.on_click(cx.listener(|this, _, _, cx| {

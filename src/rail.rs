@@ -1,15 +1,14 @@
-//! The full-height profiles sidebar. Its middle scrolls independently of its controls.
+//! The sidebar: the navigation (Discover, Servers, Skins), the profiles, and Help & community
+//! and Settings at the bottom. Its profiles scroll independently of its controls. The parts are
+//! in `rail/nav.rs` and `rail/profiles.rs`.
 use super::*;
-use crate::{
-    frame::{Page, Reach},
-    paint::palette,
-};
-use gpui::{rgb, MouseButton, MouseDownEvent};
-use instances::{Icon, Instance, Kind};
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-};
+use crate::{frame::Page, paint::palette};
+use gpui::rgb;
+use instances::Instance;
+use std::{cell::RefCell, rc::Rc};
+
+mod nav;
+mod profiles;
 
 /// Each drawn profile row that opens a context menu, with its bounds in the window.
 pub(crate) type ProfileRows = Rc<RefCell<Vec<(gpui::Bounds<gpui::Pixels>, Instance)>>>;
@@ -17,8 +16,15 @@ pub(crate) type ProfileRows = Rc<RefCell<Vec<(gpui::Bounds<gpui::Pixels>, Instan
 /// How wide the sidebar is closed, and open.
 const CLOSED: f32 = 54.;
 const OPEN: f32 = 204.;
-/// The room a row has inside the closed sidebar: its padding and both borders taken off.
-const CLOSED_ROW: f32 = CLOSED - 2. * 5. - 2. - 2.;
+/// The sidebar's padding on every side.
+const RAIL_PAD: f32 = 8.;
+/// The width a closed sidebar's rows and profile columns have inside its padding.
+const CLOSED_ROW: f32 = CLOSED - 2. * RAIL_PAD;
+/// A nav row's icon, and the padding either side of it that centres it in the closed column.
+const ICON: f32 = 20.;
+const ICON_PAD: f32 = (CLOSED_ROW - ICON) / 2.;
+/// A label's width per character: a 13 px Geist average, for whether the sun fits.
+const CHAR_WIDTH: f32 = 7.2;
 
 /// How wide the sidebar is, `open` of the way from closed (0) to open (1).
 pub(crate) fn rail_width(open: f32) -> f32 {
@@ -30,9 +36,8 @@ fn label_opacity(open: f32) -> f32 {
     ((open - 0.3) / 0.7).clamp(0., 1.)
 }
 
-/// The column a sidebar icon is centred in, open or closed: a closed row's inside (the closed
-/// rail less its 1 px edges, its 5 px padding and the row's own 1 px edges). Labels follow it,
-/// so no icon moves when the sidebar opens or closes.
+/// The column a sidebar icon is centred in, open or closed: the closed sidebar's inside. Labels
+/// follow it, so no icon moves when the sidebar opens or closes.
 fn icon_slot(icon: impl IntoElement) -> Div {
     div()
         .flex_none()
@@ -41,6 +46,11 @@ fn icon_slot(icon: impl IntoElement) -> Div {
         .items_center()
         .justify_center()
         .child(icon)
+}
+
+/// The hairline between the sidebar's sections: 1 px, with 8 px of space above and below.
+fn divider(p: &crate::paint::Palette) -> Div {
+    div().flex_none().h(px(1.)).my(px(8.)).bg(rgb(p.divider))
 }
 
 /// Where the selected profile's actions button is.
@@ -151,402 +161,30 @@ impl Launcher {
             .map_or(at_rest, |fade| fade.value(now).clamp(0., 1.))
     }
 
-    pub(super) fn profile_lock(&self) -> Option<&'static str> {
-        profile_lock_reason(
-            &self.launch_activity(),
-            !self.location_unavailable,
-            self.ui.after_sign_in.is_some() || self.ui.after_install.is_some(),
-        )
-    }
-
-    pub(super) fn switch_profile(&mut self, instance: &Instance, cx: &mut Context<Self>) {
-        if self.profile_lock().is_some() {
-            return;
-        }
-        if !self
-            .selected_instance()
-            .is_some_and(|i| i.id == instance.id)
-        {
-            self.select_instance(instance);
-            self.clear_profile_notices();
-        }
-        self.navigate(Page::Home);
-        cx.notify();
-    }
-
-    pub(super) fn clear_profile_notices(&mut self) {
-        self.client_error = None;
-        self.prepare_error = None;
-        self.install_error = None;
-        self.crash = None;
-    }
-
-    pub(super) fn profile_mark(&mut self, i: &Instance, size: f32) -> Div {
-        let p = palette();
-        let picture = self.icon_image(format!("picture:{}", i.id), size, || {
-            Some(i.home.join(instances::PICTURE))
-        });
-        let texture = match &i.icon {
-            Some(icon @ Icon::Texture(name)) if picture.is_none() => {
-                self.version_of(i).cloned().and_then(|tag| {
-                    self.icon_image(format!("texture:{tag}:{name}"), size, || {
-                        instances::icon_texture(icon, &backend::resources(&tag))
-                    })
-                })
-            }
-            _ => None,
-        };
-        let tile = div()
-            .size(px(size))
-            .flex_none()
-            .rounded(px(size * 0.22))
-            .overflow_hidden()
-            .flex()
-            .items_center()
-            .justify_center();
-        if let Some(image) = picture.or(texture) {
-            return tile.child(
-                gpui::img(image)
-                    .size_full()
-                    .object_fit(gpui::ObjectFit::Contain),
-            );
-        }
-        match &i.icon {
-            Some(Icon::Colour(hex)) => {
-                let colour =
-                    u32::from_str_radix(hex.trim_start_matches('#'), 16).unwrap_or(p.selected);
-                let ink = if sunrise_launcher_theme::contrast(colour, p.text)
-                    > sunrise_launcher_theme::contrast(colour, p.background)
-                {
-                    p.text
-                } else {
-                    p.background
-                };
-                tile.bg(rgb(colour))
-                    .text_color(rgb(ink))
-                    .font_weight(FontWeight::BOLD)
-                    .text_size(px(size * 0.54))
-                    .child(
-                        i.name
-                            .chars()
-                            .next()
-                            .unwrap_or('S')
-                            .to_uppercase()
-                            .to_string(),
-                    )
-            }
-            _ => crate::mark(size),
-        }
-    }
-
+    /// The sidebar: the navigation, a divider, the profiles (which take the room that is left),
+    /// then Help & community and Settings at the foot.
     pub(super) fn sidebar(&mut self, cx: &mut Context<Self>) -> Div {
-        let wide = self.settings.sidebar_expanded;
         let open = self.rail_open();
-        // Labels are drawn once there is any room for them; they fade in as it opens.
-        let labelled = open > 0.;
         let p = palette();
-        let lock = self.profile_lock();
-        let row = |id: ElementId, label: String, on: bool| {
-            div()
-                .id(id)
-                .reach_edge()
-                .h(px(40.))
-                .flex_none()
-                .w_full()
-                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-                .border_1()
-                .border_color(if on {
-                    rgb(p.accent_ink).into()
-                } else {
-                    gpui::transparent_black()
-                })
-                // The chrome's own lift, in the theme's hue, under the accent's edge: the
-                // accent washed into the fill stood out in themes whose hue differs from it.
-                .when(on, |d| d.bg(rgb(p.chrome_raised)))
-                .flex()
-                .items_center()
-                // Icons stay in their column (`icon_slot`); the room after the label eases in.
-                .gap(px(4.))
-                .pr(px(8. * open))
-                .when(lock.is_none(), |d| {
-                    d.cursor_pointer().hover(|d| d.bg(rgb(p.chrome_raised)))
-                })
-                .when(lock.is_some(), |d| d.opacity(0.45).tab_stop(false))
-                .when(!labelled || lock.is_some(), |d| {
-                    d.tooltip(crate::glass_ui::tip(lock.map_or(label, str::to_owned)))
-                })
+        let look = profiles::Look {
+            open,
+            lock: self.profile_lock(),
+            on_home: self.ui.page == Page::Home,
         };
-        let txt = |s: String| {
-            div()
-                .min_w_0()
-                .flex_1()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                // An ellipsis would flicker along a label still being uncovered.
-                .when(open >= 1., |d| d.text_ellipsis())
-                .opacity(label_opacity(open))
-                .text_size(px(tokens::LABEL))
-                .child(s)
-        };
-        // A small toolbar button, not a row: it names itself in its tooltip only. Ctrl+B does
-        // the same, and the search lists that key.
-        let me = cx.weak_entity();
-        let toggle = div()
-            .flex()
-            .flex_none()
-            .h(px(32.))
-            .items_center()
-            // In line with the rows' icons, whose rows have a 1 px edge.
-            .px(px(1.))
-            .child(icon_slot(
-                div()
-                    .id("sidebar-toggle")
-                    .reach()
-                    .size(px(28.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(crate::tokens::r(crate::tokens::R_SMALL))
-                    .cursor_pointer()
-                    .hover(|d| d.bg(rgb(p.chrome_raised)))
-                    // Read when the tooltip shows: one that was on its way when the toggle was
-                    // pressed would otherwise offer what it just did.
-                    .tooltip(crate::glass_ui::tip_with(move |cx| {
-                        let wide = me
-                            .upgrade()
-                            .map_or(wide, |me| me.read(cx).settings.sidebar_expanded);
-                        if wide {
-                            tr("Hide sidebar")
-                        } else {
-                            tr("Show sidebar")
-                        }
-                        .into()
-                    }))
-                    .child(
-                        div()
-                            .w(px(16.))
-                            .h(px(13.))
-                            .flex()
-                            .rounded(px(3.))
-                            .border_1()
-                            .border_color(rgb(p.chrome_muted))
-                            .child(div().ml(px(4.)).w(px(1.)).h_full().bg(rgb(p.chrome_muted))),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.toggle_sidebar();
-                        cx.notify();
-                    })),
-            ));
-        let add = row("sidebar-create".into(), tr("New profile").into(), false)
-            .child(icon_slot(blocks::icon(
-                "plus",
-                20.,
-                rgb(p.chrome_text).into(),
-            )))
-            .when(labelled, |d| d.child(txt(tr("New profile").into())))
-            .when(lock.is_none(), |d| {
-                d.on_click(cx.listener(|this, _, _, cx| {
-                    if this.profile_lock().is_none() {
-                        this.new_profile(cx);
-                    }
-                }))
-            });
-        let selected = self.selected_instance().map(|i| i.id.clone());
-        let rows = self.ui.profile_rows.clone();
-        rows.borrow_mut().clear();
-        let mut list = div()
-            .id("sidebar-profiles")
-            .flex()
-            .flex_col()
-            .min_h_0()
-            .flex_1()
-            .gap(px(4.))
-            .overflow_y_scroll()
-            .track_scroll(&crate::frame::scrolls("sidebar"));
-        let headings = group_headings(self.instances.list.iter().map(|i| i.group.as_deref()));
-        for (n, i) in self.instances.list.clone().into_iter().enumerate() {
-            if let Some(group) = headings[n].clone() {
-                list = list.child(
-                    div()
-                        .flex_none()
-                        .h(px(22.))
-                        .mt(px(6.))
-                        .px(px(9.))
-                        .flex()
-                        .items_end()
-                        .truncate()
-                        .text_size(px(crate::tokens::SMALL))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(p.chrome_muted))
-                        .opacity(label_opacity(open))
-                        // With the names hidden a short rule still marks where a group begins.
-                        .when(!labelled, |d| {
-                            d.h(px(1.))
-                                .mt(px(4.))
-                                .mx(px(8.))
-                                .bg(rgb(p.chrome_muted))
-                                .opacity(0.5)
-                        })
-                        .when(labelled, |d| d.child(group)),
-                );
-            }
-            let on = selected.as_ref() == Some(&i.id);
-            let deletable = i.kind == Kind::Own && !self.location_unavailable;
-            let more = on && deletable;
-            let profile = row(
-                ElementId::named_usize("sidebar-profile", n),
-                i.name.clone(),
-                on,
-            )
-            .child(
-                icon_slot(self.profile_mark(&i, 28.))
-                    .when(on, |d| d.debug_selector(|| "selected-profile-mark".into())),
-            )
-            .when(labelled, |d| d.child(txt(i.name.clone())))
-            .when(labelled && more, |d| d.pr(px(36.)))
-            .when(deletable, |d| {
-                let (drawn, at) = (i.clone(), rows.clone());
-                let i = i.clone();
-                d.child(
-                    gpui::canvas(
-                        // Only the part of the row the list shows counts: a row scrolled past
-                        // either end lies under the rail's controls.
-                        move |bounds, window, _| {
-                            let visible = bounds.intersect(&window.content_mask().bounds);
-                            if !visible.is_empty() {
-                                at.borrow_mut().push((visible, drawn.clone()));
-                            }
-                        },
-                        |_, _, _, _| {},
-                    )
-                    .absolute()
-                    .inset_0(),
-                )
-                .on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                        this.open_profile_menu(&i, f32::from(ev.position.y));
-                        cx.notify();
-                    }),
-                )
-            });
-            let actions = more.then(|| actions_at(open)).flatten().map(|at| {
-                let top = Rc::new(Cell::new(0.));
-                let read_top = top.clone();
-                let i = i.clone();
-                div()
-                    .id(SharedString::from(format!("profile-actions-{}", i.id)))
-                    .debug_selector(|| "selected-profile-actions".into())
-                    .reach()
-                    .when(at == ActionsAt::Beside, |d| {
-                        d.absolute()
-                            .top(px(6.))
-                            .right(px(5.))
-                            .w(px(28.))
-                            .opacity(label_opacity(open))
-                    })
-                    .h(px(28.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .hover(|d| d.bg(rgb(p.chrome_raised)))
-                    .tooltip(crate::glass_ui::tip(tr("Profile actions")))
-                    .child(div().flex().gap(px(2.)).children(
-                        (0..3).map(|_| div().size(px(3.)).rounded_full().bg(rgb(p.chrome_text))),
-                    ))
-                    .child(
-                        gpui::canvas(
-                            move |bounds, _, _| top.set(f32::from(bounds.top())),
-                            |_, _, _, _| {},
-                        )
-                        .absolute()
-                        .inset_0(),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.open_profile_menu(&i, read_top.get());
-                        cx.notify();
-                    }))
-            });
-            list = list.child(
-                div()
-                    .relative()
-                    .flex()
-                    .flex_col()
-                    .flex_none()
-                    .child(profile.when(lock.is_none(), |d| {
-                        d.on_click(cx.listener(move |this, _, _, cx| this.switch_profile(&i, cx)))
-                    }))
-                    .children(actions)
-                    // The room the closed button took under the mark eases away with the
-                    // width, so the profiles below don't jump as it leaves the row.
-                    .when(more && labelled, |d| {
-                        d.child(div().flex_none().h(px(actions_room(open))))
-                    }),
-            );
-        }
-        let mut rail = div()
+        div()
             .flex()
             .flex_col()
             .w(px(rail_width(open)))
             .min_h_0()
             .flex_none()
-            .gap(px(4.))
-            .p(px(5.))
-            .rounded(crate::tokens::r(crate::tokens::R_PANEL))
-            .bg(p.chrome_plate())
-            .border_1()
-            .border_color(p.rule())
+            .p(px(RAIL_PAD))
+            .bg(rgb(p.chrome))
             .text_color(rgb(p.chrome_text))
-            .child(toggle)
-            .child(add)
-            .child(list);
-        for (id, label, icon, url) in [
-            (
-                "sidebar-discord",
-                tr("Discord"),
-                "discord",
-                self.links.discord.clone(),
-            ),
-            (
-                "sidebar-website",
-                tr("Website"),
-                "earth",
-                self.links.website.clone(),
-            ),
-            (
-                "sidebar-settings",
-                tr("Settings"),
-                "sliders-horizontal",
-                String::new(),
-            ),
-        ] {
-            let settings = id == "sidebar-settings";
-            rail = rail.child(
-                row(
-                    id.into(),
-                    label.into(),
-                    settings && self.ui.page == Page::Settings,
-                )
-                .child(icon_slot(crate::glass_ui::icon(
-                    icon,
-                    18.,
-                    rgb(p.chrome_muted).into(),
-                )))
-                .when(labelled, |d| d.child(txt(label.into())))
-                .when(settings || !url.is_empty(), |d| {
-                    d.on_click(cx.listener(move |this, _, _, cx| {
-                        if settings {
-                            this.navigate(Page::Settings);
-                        } else {
-                            Self::open_url(&url, cx);
-                        }
-                        cx.notify();
-                    }))
-                }),
-            );
-        }
-        rail
+            .child(self.nav_section(open, cx))
+            .child(divider(&p))
+            .child(self.profiles_section(look, cx))
+            .child(self.help_section(open, cx))
+            .child(self.settings_row(open, cx))
     }
 }
 
@@ -563,11 +201,11 @@ mod tests {
         let (mut hidden, mut beside) = (0, false);
         for step in 1..=1000 {
             let open = step as f32 / 1000.;
-            // Inside the rail's padding (5) and border (1): the button sits 5 px from the
-            // right and is 28 wide. The mark is centred in its column after the row's border,
-            // and the column doesn't move as the sidebar opens.
-            let button_left = rail_width(open) - 2. * 5. - 2. - 5. - 28.;
-            let mark_right = 1. + (CLOSED_ROW - 28.) / 2. + 28.;
+            // Inside the rail's padding: the button sits 5 px from the row's right edge, which
+            // is the rail's inner edge, and is 28 wide. The mark is centred in its column, which
+            // doesn't move as the sidebar opens.
+            let button_left = rail_width(open) - RAIL_PAD - 5. - 28.;
+            let mark_right = RAIL_PAD + (CLOSED_ROW - 28.) / 2. + 28.;
             match actions_at(open) {
                 Some(ActionsAt::Under) => panic!("at {open} the button is back under the mark"),
                 Some(ActionsAt::Beside) => {
@@ -699,9 +337,10 @@ mod tests {
 
     #[test]
     fn icons_keep_the_closed_rows_column_and_labels_wait_for_room() {
-        // The icon column is a closed row's inside: the rail less its edges, padding and the
-        // row's own edges, as `icon_slot` was sized from before the sidebar eased.
-        assert_eq!(CLOSED_ROW, rail_width(0.) - 2. * (1. + 5. + 1.));
+        // The icon column is a closed row's inside: the closed rail less its padding on each side.
+        assert_eq!(CLOSED_ROW, rail_width(0.) - 2. * RAIL_PAD);
+        // A nav row's icon sits centred in that column, and its label starts where a profile's does.
+        assert_eq!(ICON_PAD * 2. + ICON, CLOSED_ROW);
         assert_eq!(rail_width(0.), 54.);
         assert_eq!(rail_width(1.), 204.);
         assert_eq!(label_opacity(0.2), 0.);

@@ -243,7 +243,7 @@ impl Launcher {
                 .text_color(rgb(palette().chrome_muted))
                 .truncate()
                 .child(tr("Search…"));
-            search_box(false, key, word).w(px(if badge { 204. } else { 150. }))
+            search_box(false, key, word).w(px(if badge { 320. } else { 150. }))
         };
         let button = body
             .id("search-open")

@@ -71,6 +71,7 @@ mod selectable;
 mod servers_page;
 mod settings;
 #[cfg(windows)]
+#[cfg(windows)]
 mod setup_page;
 mod sheets;
 mod shell;

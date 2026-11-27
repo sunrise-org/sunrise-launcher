@@ -2644,5 +2644,6 @@
   "Could not back up {name}: {error}": "Could not back up {name}: {error}",
   "Profile game build: not played yet; it stays on {build}": "Profile game build: not played yet; it stays on {build}",
   "Profile game build: not played yet; it follows the newest {channel} build": "Profile game build: not played yet; it follows the newest {channel} build",
-  "Every installed build named for these mods ({version}) holds other mods or was changed after it was installed. Remove them, then build again.": "Every installed build named for these mods ({version}) holds other mods or was changed after it was installed. Remove them, then build again."
+  "Every installed build named for these mods ({version}) holds other mods or was changed after it was installed. Remove them, then build again.": "Every installed build named for these mods ({version}) holds other mods or was changed after it was installed. Remove them, then build again.",
+  "Help & community": "Help & community"
 }

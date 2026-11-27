@@ -1,11 +1,17 @@
 //! Window chrome: Windows and Linux client-side decorations are custom drawn; macOS and Linux
-//! server-side decorations use the platform's native chrome.
+//! server-side decorations use the platform's native chrome. The title bar itself is composed in
+//! `frame/title_bar.rs`; this file supplies its platform parts: the drag area, the window
+//! controls, the resize edges and the appearance.
 use crate::theme::Theme;
-use gpui::{App, Div, TitlebarOptions, Window};
+use gpui::{App, Div, Stateful, TitlebarOptions, Window};
 use sunrise_launcher::backend::Appearance;
 
-/// The drawn title bar's height, where there is one: the toast starts below it and the header.
-pub const HEIGHT: f32 = 32.;
+/// The title bar's height in the launcher's frame.
+pub const HEIGHT: f32 = 44.;
+
+/// The setup window's bar: a label and the window controls, nothing else.
+#[cfg(target_os = "windows")]
+const SETUP_HEIGHT: f32 = 32.;
 
 pub fn options() -> TitlebarOptions {
     TitlebarOptions {
@@ -17,33 +23,238 @@ pub fn options() -> TitlebarOptions {
     }
 }
 
-/// Draw the macOS title bar under the native traffic lights, in the sidebar's and the top bar's
-/// material. The native title bar is transparent, so the bar is always drawn: without it the
-/// page would start under the traffic lights. AppKit keeps its controls and window interactions.
-#[cfg(target_os = "macos")]
-pub fn render(theme: &Theme, _window: &mut Window, _cx: &mut App) -> Option<Div> {
+/// The bar's flexible middle, the window's drag area: no press handling of its own. The
+/// platform parts (`drag_area`) add it.
+fn plain() -> Stateful<Div> {
     use gpui::{div, prelude::*, px};
 
-    Some(
-        div()
-            .relative()
-            .flex_none()
-            .h(px(32.))
-            .bg(crate::paint::palette().chrome_plate())
-            .text_color(theme.muted),
-    )
+    div()
+        .id("window-drag")
+        .flex()
+        .flex_1()
+        .min_w_0()
+        .h_full()
+        .items_center()
+        .gap(px(8.))
 }
 
-#[cfg(all(
-    not(target_os = "windows"),
-    not(target_os = "linux"),
-    not(target_os = "macos")
-))]
-pub fn render(_theme: &Theme, _window: &mut Window, _cx: &mut App) -> Option<Div> {
+/// The room the bar leaves at its edges for the native resize edges, where the bar is drawn by
+/// the launcher (Windows; none when maximized).
+#[cfg(target_os = "windows")]
+pub fn inset(window: &Window) -> Option<f32> {
+    (!window.is_maximized()).then_some(windows::RESIZE_INSET)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn inset(_: &Window) -> Option<f32> {
     None
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+/// The window's drag area: a press on it drags the window, and a double click zooms it.
+#[cfg(target_os = "linux")]
+pub fn drag_area(window: &mut Window, cx: &mut App) -> Stateful<Div> {
+    use gpui::{
+        canvas, prelude::*, Decorations, DispatchPhase, MouseButton, MouseMoveEvent, MouseUpEvent,
+        Pixels, Point,
+    };
+    use std::cell::Cell;
+
+    let area = plain();
+    // A compositor-drawn frame moves its own window: the area is only a space.
+    if matches!(window.window_decorations(), Decorations::Server) {
+        return area;
+    }
+    let maximize = window.window_controls().maximize;
+    let pressed_at = window.use_state(cx, |_, _| Cell::new(None::<Point<Pixels>>));
+    let pressed_on_bar = pressed_at.clone();
+    let pressed_elsewhere = pressed_at.clone();
+    area.on_mouse_down(MouseButton::Left, move |ev, window, cx| {
+        if maximize && ev.click_count == 2 {
+            pressed_on_bar.read(cx).set(None);
+            window.zoom_window();
+        } else {
+            pressed_on_bar.read(cx).set(Some(ev.position));
+        }
+    })
+    .on_mouse_down_out(move |ev, _, cx| {
+        if ev.button == MouseButton::Left {
+            pressed_elsewhere.read(cx).set(None);
+        }
+    })
+    .child(
+        canvas(
+            |_, _, _| {},
+            move |_, _, window, _| {
+                let released = pressed_at.clone();
+                window.on_mouse_event(move |ev: &MouseUpEvent, phase, _, cx| {
+                    if phase == DispatchPhase::Capture && ev.button == MouseButton::Left {
+                        released.read(cx).set(None);
+                    }
+                });
+                let moved = pressed_at.clone();
+                // Starting a native move on the press gives the compositor the pointer before
+                // GPUI can see a second click. Wait for GPUI's drag distance (2 px).
+                // Listen on the window so a fast drag can already be outside the title bar.
+                window.on_mouse_event(move |ev: &MouseMoveEvent, phase, window, cx| {
+                    if phase == DispatchPhase::Capture && ev.dragging() {
+                        let start = moved.read(cx);
+                        if start
+                            .get()
+                            .is_some_and(|p| (ev.position - p).magnitude() > 2.)
+                        {
+                            start.set(None);
+                            window.start_window_move();
+                        }
+                    }
+                });
+            },
+        )
+        .absolute()
+        .inset_0(),
+    )
+}
+
+#[cfg(target_os = "windows")]
+pub fn drag_area(_window: &mut Window, _cx: &mut App) -> Stateful<Div> {
+    use gpui::{prelude::*, MouseButton, WindowControlArea};
+
+    // GPUI maps this area to the native caption, so Windows drags and snaps it itself.
+    plain()
+        .window_control_area(WindowControlArea::Drag)
+        // A double click maximises or restores. Handled here, the press is not passed on, so
+        // the native caption cannot toggle the window a second time.
+        .on_mouse_down(MouseButton::Left, |ev, window, cx| {
+            if ev.click_count == 2 {
+                window.zoom_window();
+                cx.stop_propagation();
+            }
+        })
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+pub fn drag_area(_window: &mut Window, _cx: &mut App) -> Stateful<Div> {
+    // macOS keeps the drag on its native title bar, under the traffic lights.
+    plain()
+}
+
+/// The window controls the launcher draws at the bar's right end: Linux with client-side
+/// decorations, and Windows. None where the platform draws them (or where no bar is drawn).
+#[cfg(target_os = "linux")]
+pub fn controls(theme: &Theme, window: &mut Window, _cx: &mut App) -> Option<Div> {
+    use gpui::{div, prelude::*, Decorations};
+
+    if matches!(window.window_decorations(), Decorations::Server) {
+        return None;
+    }
+    let controls = window.window_controls();
+    let mut row = div().flex().flex_none().items_center().h_full();
+    if controls.minimize {
+        row = row.child(linux_minimize(theme));
+    }
+    if controls.maximize {
+        row = row.child(linux_maximize(theme, window.is_maximized()));
+    }
+    Some(row.child(linux_close(theme)))
+}
+
+/// A caption button on Linux: 46 px wide, the bar's full height.
+#[cfg(target_os = "linux")]
+fn linux_caption(id: &'static str) -> gpui::Stateful<Div> {
+    use gpui::{div, prelude::*, px};
+
+    div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .w(px(46.))
+        .h_full()
+        .cursor_pointer()
+}
+
+#[cfg(target_os = "linux")]
+fn linux_minimize(theme: &Theme) -> gpui::Stateful<Div> {
+    use gpui::{div, prelude::*, px};
+
+    let color = theme.ink_soft;
+    let hover = theme.raised;
+    linux_caption("window-minimize")
+        .hover(move |style| style.bg(hover))
+        .child(div().w(px(10.)).h(px(1.)).bg(color))
+        .on_click(|_, window, _| window.minimize_window())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_maximize(theme: &Theme, maximized: bool) -> gpui::Stateful<Div> {
+    use gpui::{div, prelude::*, px};
+
+    let color = theme.ink_soft;
+    let hover = theme.raised;
+    let square = || {
+        div()
+            .absolute()
+            .size(px(10.))
+            .border_1()
+            .border_color(color)
+    };
+    let icon = div().relative().size(px(14.));
+    let icon = if maximized {
+        icon.child(
+            div()
+                .absolute()
+                .left(px(4.))
+                .top_0()
+                .size(px(10.))
+                .border_t_1()
+                .border_r_1()
+                .border_color(color),
+        )
+        .child(square().left(px(1.)).top(px(3.)))
+    } else {
+        icon.child(square().left(px(2.)).top(px(2.)))
+    };
+    linux_caption("window-maximize")
+        .hover(move |style| style.bg(hover))
+        .child(icon)
+        .on_click(|_, window, _| window.zoom_window())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_close(theme: &Theme) -> gpui::Stateful<Div> {
+    use crate::blocks;
+    use gpui::prelude::*;
+
+    let close_hover = theme.page;
+    let close_bg = theme.danger;
+    linux_caption("window-close")
+        .group("linux-window-close")
+        .hover(move |style| style.bg(close_bg).text_color(close_hover))
+        .child(
+            blocks::icon("close", 14., theme.ink_soft)
+                .group_hover("linux-window-close", move |style| {
+                    style.text_color(close_hover)
+                }),
+        )
+        .on_click(|_, window, cx| {
+            if !crate::profile_delete::defer_shutdown(cx) {
+                window.remove_window();
+            }
+        })
+}
+
+#[cfg(target_os = "windows")]
+pub fn controls(_theme: &Theme, window: &mut Window, _cx: &mut App) -> Option<Div> {
+    Some(windows::controls(window))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+pub fn controls(_theme: &Theme, _window: &mut Window, _cx: &mut App) -> Option<Div> {
+    None
+}
+
+/// The label the setup window's bar shows beside its mark.
+#[cfg(target_os = "windows")]
 fn label() -> Div {
     use gpui::{div, px, FontWeight, ParentElement, Styled};
 
@@ -56,183 +267,34 @@ fn label() -> Div {
         ))
 }
 
-/// Draw the launcher's Linux title bar when the platform uses client-side decorations.
-#[cfg(target_os = "linux")]
+/// The setup window's own bar (`setup_page`): the mark, its name and the window controls. Where
+/// the platform draws its controls, there is no bar. The setup window is Windows-only.
+#[cfg(target_os = "windows")]
 pub fn render(theme: &Theme, window: &mut Window, cx: &mut App) -> Option<Div> {
-    use crate::{blocks, mark};
-    use gpui::{
-        div, prelude::*, px, Decorations, DispatchPhase, MouseButton, MouseMoveEvent, MouseUpEvent,
-        Pixels, Point,
-    };
-    use std::cell::Cell;
+    use crate::{mark, paint::palette};
+    use gpui::{div, prelude::*, px};
 
-    if matches!(window.window_decorations(), Decorations::Server) {
-        return None;
-    }
-
-    let controls = window.window_controls();
-    let maximize = controls.maximize;
-    let pressed_at = window.use_state(cx, |_, _| Cell::new(None::<Point<Pixels>>));
-    let pressed_on_bar = pressed_at.clone();
-    let pressed_elsewhere = pressed_at.clone();
-    let drag = div()
-        .id("window-drag")
-        .flex()
-        .flex_1()
-        .h_full()
-        .items_center()
-        .gap(px(8.))
-        .px(px(12.))
-        .on_mouse_down(MouseButton::Left, move |ev, window, cx| {
-            if maximize && ev.click_count == 2 {
-                pressed_on_bar.read(cx).set(None);
-                window.zoom_window();
-            } else {
-                pressed_on_bar.read(cx).set(Some(ev.position));
-            }
-        })
-        .on_mouse_down_out(move |ev, _, cx| {
-            if ev.button == MouseButton::Left {
-                pressed_elsewhere.read(cx).set(None);
-            }
-        })
-        .child(
-            gpui::canvas(
-                |_, _, _| {},
-                move |_, _, window, _| {
-                    let released = pressed_at.clone();
-                    window.on_mouse_event(move |ev: &MouseUpEvent, phase, _, cx| {
-                        if phase == DispatchPhase::Capture && ev.button == MouseButton::Left {
-                            released.read(cx).set(None);
-                        }
-                    });
-                    let moved = pressed_at.clone();
-                    // Starting a native move on the press gives the compositor the pointer
-                    // before GPUI can see a second click. Wait for GPUI's drag distance (2 px).
-                    // Listen on the window so a fast drag can already be outside the title bar.
-                    window.on_mouse_event(move |ev: &MouseMoveEvent, phase, window, cx| {
-                        if phase == DispatchPhase::Capture && ev.dragging() {
-                            let start = moved.read(cx);
-                            if start
-                                .get()
-                                .is_some_and(|p| (ev.position - p).magnitude() > 2.)
-                            {
-                                start.set(None);
-                                window.start_window_move();
-                            }
-                        }
-                    });
-                },
-            )
-            .absolute()
-            .inset_0(),
-        )
-        .child(mark(16.))
-        .child(label());
-
-    let mut bar = div()
+    let controls = controls(theme, window, cx)?;
+    let bar = div()
         .relative()
         .flex()
         .flex_none()
         .items_center()
-        .h(px(32.))
+        .h(px(SETUP_HEIGHT))
         .font_family(sunrise_launcher_theme::glass::FONT)
-        .bg(crate::paint::palette().chrome_plate())
+        .when_some(inset(window), |bar, inset| bar.pt(px(inset)).px(px(inset)))
+        .bg(palette().chrome_plate())
         .text_color(theme.muted)
         .border_b_1()
-        .border_color(crate::paint::palette().rule())
-        .child(drag);
-
-    if controls.minimize {
-        let color = theme.ink_soft;
-        let hover = theme.raised;
-        bar = bar.child(
-            div()
-                .id("window-minimize")
-                .flex()
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .w(px(46.))
-                .h_full()
-                .cursor_pointer()
-                .hover(move |style| style.bg(hover))
-                .child(div().w(px(10.)).h(px(1.)).bg(color))
-                .on_click(|_, window, _| window.minimize_window()),
-        );
-    }
-
-    if controls.maximize {
-        let color = theme.ink_soft;
-        let hover = theme.raised;
-        let maximized = window.is_maximized();
-        let square = || {
-            div()
-                .absolute()
-                .size(px(10.))
-                .border_1()
-                .border_color(color)
-        };
-        let icon = div().relative().size(px(14.));
-        let icon = if maximized {
-            icon.child(
-                div()
-                    .absolute()
-                    .left(px(4.))
-                    .top_0()
-                    .size(px(10.))
-                    .border_t_1()
-                    .border_r_1()
-                    .border_color(color),
-            )
-            .child(square().left(px(1.)).top(px(3.)))
-        } else {
-            icon.child(square().left(px(2.)).top(px(2.)))
-        };
-        bar = bar.child(
-            div()
-                .id("window-maximize")
-                .flex()
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .w(px(46.))
-                .h_full()
-                .cursor_pointer()
-                .hover(move |style| style.bg(hover))
-                .child(icon)
-                .on_click(|_, window, _| window.zoom_window()),
-        );
-    }
-
-    let close_hover = theme.page;
-    let close_bg = theme.danger;
-    Some(
-        bar.child(
-            div()
-                .id("window-close")
-                .group("linux-window-close")
-                .flex()
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .w(px(46.))
-                .h_full()
-                .cursor_pointer()
-                .hover(move |style| style.bg(close_bg).text_color(close_hover))
-                .child(
-                    blocks::icon("close", 14., theme.ink_soft)
-                        .group_hover("linux-window-close", move |style| {
-                            style.text_color(close_hover)
-                        }),
-                )
-                .on_click(|_, window, cx| {
-                    if !crate::profile_delete::defer_shutdown(cx) {
-                        window.remove_window();
-                    }
-                }),
-        ),
-    )
+        .border_color(palette().rule())
+        .child(
+            drag_area(window, cx)
+                .px(px(12.))
+                .child(mark(16.))
+                .child(label()),
+        )
+        .child(controls);
+    Some(bar)
 }
 
 /// The edges a client-decorated Linux window is resized by: none when the compositor draws the
@@ -385,15 +447,15 @@ pub fn apply_appearance(_: &Window, _: Appearance) {}
 #[cfg(target_os = "windows")]
 mod windows {
     use super::*;
+    use crate::blocks;
     use crate::glass_ui::{color, hover_edge, white};
-    use crate::{blocks, mark};
-    use gpui::{div, prelude::*, px, Hsla, MouseButton, SharedString, Stateful, WindowControlArea};
+    use gpui::{div, prelude::*, px, Hsla, SharedString, Stateful, WindowControlArea};
 
-    const HEIGHT: f32 = 32.;
+    /// How far the bar sits in from the window's edges, where the native resize edges are.
+    pub(super) const RESIZE_INSET: f32 = 5.;
     const BUTTON_WIDTH: f32 = 30.;
     const BUTTON_HEIGHT: f32 = 26.;
     const RADIUS: f32 = 8.;
-    const RESIZE_INSET: f32 = 5.;
 
     #[derive(Clone, Copy)]
     enum Control {
@@ -512,61 +574,20 @@ mod windows {
         crate::track_hover(el, id)
     }
 
-    pub fn render(theme: &Theme, window: &mut Window, _cx: &mut App) -> Option<Div> {
-        let drag = div()
-            .id("window-drag")
+    /// The three caption buttons, at the bar's right end.
+    pub(super) fn controls(window: &Window) -> Div {
+        div()
             .flex()
-            .flex_1()
-            .h_full()
+            .flex_none()
             .items_center()
-            .gap(px(8.))
-            .px(px(12.))
-            .window_control_area(WindowControlArea::Drag)
-            // A double click maximises or restores. Handled here, the press is not passed on,
-            // so the native caption cannot toggle the window a second time.
-            .on_mouse_down(MouseButton::Left, |ev, window, cx| {
-                if ev.click_count == 2 {
-                    window.zoom_window();
-                    cx.stop_propagation();
-                }
-            })
-            .child(mark(16.))
-            .child(label());
-        Some(
-            div()
-                .relative()
-                .flex()
-                .flex_none()
-                .items_center()
-                .h(px(HEIGHT))
-                .font_family(sunrise_launcher_theme::glass::FONT)
-                // Control hit tests run before native edge resizing in GPUI 0.2.2.
-                .when(!window.is_maximized(), |bar| {
-                    bar.pt(px(RESIZE_INSET)).px(px(RESIZE_INSET))
-                })
-                .bg(crate::paint::palette().chrome_plate())
-                .text_color(theme.muted)
-                .border_b_1()
-                .border_color(crate::paint::palette().rule())
-                .child(drag)
-                .child(
-                    div()
-                        .flex()
-                        .flex_none()
-                        .items_center()
-                        .gap(px(4.))
-                        .mr(px(6.))
-                        .children(
-                            [Control::Minimize, Control::Maximize, Control::Close]
-                                .map(|control| control_button(control, window.is_maximized())),
-                        ),
-                ),
-        )
+            .gap(px(4.))
+            .mr(px(6.))
+            .children(
+                [Control::Minimize, Control::Maximize, Control::Close]
+                    .map(|control| control_button(control, window.is_maximized())),
+            )
     }
 }
-
-#[cfg(target_os = "windows")]
-pub use windows::render;
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests;

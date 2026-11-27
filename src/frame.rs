@@ -5,16 +5,35 @@ use crate::paint::palette;
 use crate::sheets::Sheet;
 use gpui::{rgb, AnimationExt};
 
-mod header;
 mod page;
 mod play;
+mod title_bar;
 pub(crate) use crate::widgets::focus::{c, focus_ring, Reach};
 use crate::widgets::scrolls::scrolls_begin;
 pub(crate) use crate::widgets::scrolls::{drawn_scroll, focused_bounds, scrolls, scrolls_with};
 pub(crate) use page::{Page, State};
 
 impl Launcher {
+    /// Shows `page`, remembering the one left so Back returns to it.
     pub(super) fn navigate(&mut self, page: Page) {
+        if page != self.ui.page {
+            let from = self.ui.page;
+            self.ui.remember(from);
+        }
+        self.open_page(page);
+    }
+
+    /// Back: shows the page navigated away from last. Returns whether there was one.
+    pub(super) fn go_back(&mut self) -> bool {
+        let Some(page) = self.ui.back.pop() else {
+            return false;
+        };
+        self.open_page(page);
+        true
+    }
+
+    /// Shows `page` without remembering the one left (`navigate` and Back do that).
+    fn open_page(&mut self, page: Page) {
         let before = self.ui.page;
         self.multiplayer.target = None;
         match page {
@@ -93,7 +112,7 @@ impl Launcher {
         if self.ui.rail.is_some_and(|fade| fade.moving(now)) {
             window.request_animation_frame();
         }
-        let header = self.header(cx);
+        let title_bar = self.title_bar(window, cx);
         let content = match page {
             Page::Settings => self.settings(window, cx),
             Page::Skins => self.skins_page(window, cx).into_any_element(),
@@ -227,12 +246,6 @@ impl Launcher {
             .children(status)
             .children(self.registry_notice_strip(cx))
             .child(content);
-        let titlebar = titlebar::render(&self.theme, window, cx);
-        let titlebar_h = if titlebar.is_some() {
-            titlebar::HEIGHT
-        } else {
-            0.
-        };
         let mut frame = div()
             .id("launcher-frame")
             .track_focus(&self.root_focus)
@@ -245,6 +258,12 @@ impl Launcher {
             .text_size(px(tokens::BODY))
             .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
                 let k = &ev.keystroke;
+                // Alt+Left goes back, unless a layer (a dialog, a sheet, the search) has the keys.
+                if k.modifiers.alt && k.key == "left" && !this.layer_open() && this.go_back() {
+                    cx.stop_propagation();
+                    cx.notify();
+                    return;
+                }
                 let command = if cfg!(target_os = "macos") {
                     k.modifiers.platform
                 } else {
@@ -287,7 +306,7 @@ impl Launcher {
                 cx.stop_propagation();
                 cx.notify();
             }))
-            .children(titlebar)
+            .child(title_bar)
             .children(self.settings_save_notice(cx))
             .child(
                 div()
@@ -297,17 +316,7 @@ impl Launcher {
                     .p(px(tokens::FRAME_INSET))
                     .gap(px(12.))
                     .child(rail)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .min_w_0()
-                            .min_h_0()
-                            .gap(px(10.))
-                            .child(header)
-                            .child(pane),
-                    ),
+                    .child(pane),
             );
         // What lies over the page, bottom to top. The top one has the keyboard (`modal`).
         crate::glass_ui::tips_layers();
@@ -325,7 +334,7 @@ impl Launcher {
         let top = self.modal(layers.pop(), window, cx);
         frame = frame.children(layers).children(top);
         frame = frame.children(self.viewer(window, cx));
-        frame = frame.children(self.toast_float(titlebar_h));
+        frame = frame.children(self.toast_float(titlebar::HEIGHT));
         self.pictures.free_retired(window);
         let scenery = self
             .ui

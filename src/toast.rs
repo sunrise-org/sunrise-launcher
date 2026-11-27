@@ -147,7 +147,7 @@ impl Launcher {
     /// dialog: under the title bar (`titlebar_h`, none when the system draws it) and the
     /// header, so it never covers the window's buttons, search or the account.
     pub(super) fn toast_float(&self, titlebar_h: f32) -> Option<Div> {
-        toast_card(titlebar_h + crate::tokens::FRAME_INSET + crate::tokens::HEADER + 8.)
+        toast_card(titlebar_h + crate::tokens::FRAME_INSET + 8.)
     }
 }
 

@@ -49,7 +49,8 @@ pub mod fonts {
 /// its cat cut out by a mask), for Settings' credit link. `sparkles` (Home's What's
 /// new), `chat` (the sidebar's Discord link), `t-shirt` (the Skins tab) and `alert-02`
 /// (unreviewed-mod warnings) are drawn for Sunrise in the same 1.6 stroke, and so are `star` and
-/// `star-filled` (mod ratings), the second filled.
+/// `star-filled` (mod ratings), the second filled, `arrow-left-01` (the title bar's Back) and
+/// `sidebar-left` (its sidebar toggle).
 pub mod glass_icons {
     macro_rules! icons {
         ($($name:literal),* $(,)?) => {
@@ -63,11 +64,13 @@ pub mod glass_icons {
         "ai-chat-02",
         "alert-02",
         "arrow-down-01",
+        "arrow-left-01",
         "arrow-right-01",
         "book",
         "chat",
         "map",
         "cancel-01",
+        "sidebar-left",
         "clock",
         "color-picker",
         "computer",
@@ -174,7 +177,6 @@ pub mod icons {
         ALL.iter().find(|(n, _)| *n == name).map(|(_, svg)| *svg)
     }
 }
-
 
 /// How a type step sizes on the web.
 #[derive(Clone, Copy, Debug, PartialEq)]
