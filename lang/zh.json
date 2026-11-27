@@ -1382,7 +1382,6 @@
   "Not built": "未构建",
   "Not checked": "未检查",
   "Not checked for {build} yet": "尚未检查对 {build} 的适配性",
-  "Not initialized": "未初始化",
   "Nothing was changed. Use --confirm-world-loss only if you accept this risk.": "未进行任何更改。仅在接受此风险时使用 --confirm-world-loss。",
   "Nothing was removed.": "未移除任何内容。",
   "Nothing was updated.": "未更新任何内容。",

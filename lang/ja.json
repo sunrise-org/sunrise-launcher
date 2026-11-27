@@ -1322,7 +1322,6 @@
   "No source updates were checked while offline.": "オフラインのため、ソースの更新は確認されませんでした。",
   "Not built": "未ビルド",
   "Not checked for {build} yet": "{build} への対応はまだ確認されていません",
-  "Not initialized": "未初期化",
   "Nothing was changed. Use --confirm-world-loss only if you accept this risk.": "変更は行われていません。このリスクを受け入れる場合にのみ --confirm-world-loss を使ってください。",
   "Nothing was removed.": "削除されたものはありません。",
   "Nothing was updated.": "更新されたものはありません。",

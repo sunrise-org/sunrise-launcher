@@ -1272,7 +1272,6 @@
   "No source updates were checked while offline.": "No se comprobaron actualizaciones de código fuente sin conexión.",
   "Not built": "Sin compilar",
   "Not checked for {build} yet": "Aún no comprobado para {build}",
-  "Not initialized": "Sin inicializar",
   "Nothing was changed. Use --confirm-world-loss only if you accept this risk.": "No se cambió nada. Usa --confirm-world-loss solo si aceptas este riesgo.",
   "Nothing was removed.": "No se eliminó nada.",
   "Nothing was updated.": "No se actualizó nada.",
