@@ -1907,5 +1907,17 @@
   "Search…": "بحث…",
   "Server port unavailable": "منفذ الخادم غير متاح",
   "Server status unavailable": "حالة الخادم غير متاحة",
-  "Show all": "عرض الكل"
+  "Show all": "عرض الكل",
+  "Show more ({count} left)": "عرض المزيد (متبقي {count})",
+  "Show sidebar": "إظهار الشريط الجانبي",
+  "Show why": "إظهار السبب",
+  "Showing the saved registry list while offline.": "يتم عرض قائمة السجل المحفوظة دون اتصال.",
+  "Some mods couldn't be built": "تعذّر بناء بعض الإضافات",
+  "Some mods stayed off or kept their old version": "بقيت بعض الإضافات متوقفة أو احتفظت بإصدارها القديم",
+  "Sorted by name": "مرتّبة حسب الاسم",
+  "Sorted by recently updated": "مرتّبة حسب الأحدث تحديثًا",
+  "Source build canceled. Nothing was changed.": "أُلغي البناء من المصدر. لم يتغير شيء.",
+  "Source · {repo} @ {sha}": "المصدر · {repo} @ {sha}",
+  "Start empty": "البدء فارغًا",
+  "Stay to leave all your mods unchanged. Continue to install the checked set with the changes below.": "ابقَ لإبقاء إضافاتك دون تغيير. تابع لتثبيت المجموعة المحددة بالتغييرات أدناه."
 }

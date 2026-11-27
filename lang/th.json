@@ -2402,5 +2402,17 @@
   "Checking the prebuilt game": "กำลังตรวจสอบเกมที่บิลด์ไว้ล่วงหน้า",
   "Checking the Rust toolchain": "กำลังตรวจสอบ toolchain ของ Rust",
   "Keeping the mods' libraries for the next build": "กำลังเก็บไลบรารีของม็อดไว้สำหรับบิลด์ถัดไป",
-  "The built game: {error}": "เกมที่บิลด์แล้ว: {error}"
+  "The built game: {error}": "เกมที่บิลด์แล้ว: {error}",
+  "{id}: could not resolve [native] mixins: {error}": "{id}: แก้ไข mixin [native] ไม่ได้: {error}",
+  "Can't tell which of the mods' horizon-mixins revisions is newest: {error}": "ระบุไม่ได้ว่ารุ่นใดของ horizon-mixins ในม็อดเป็นรุ่นใหม่สุด: {error}",
+  "Sunrise shader pack": "แพ็ก shader ของ Sunrise",
+  "{error}. Write it as http://host:port or socks5://host:port.": "{error} เขียนในรูปแบบ http://host:port หรือ socks5://host:port",
+  "Could not check running games and builds: {error}": "ตรวจสอบเกมและบิลด์ที่กำลังทำงานไม่ได้: {error}",
+  "Could not check running games and builds; no files were moved.": "ตรวจสอบเกมและบิลด์ที่กำลังทำงานไม่ได้ ไม่มีการย้ายไฟล์",
+  "Could not read running processes: {error}": "อ่านโปรเซสที่กำลังทำงานไม่ได้: {error}",
+  "Close games, servers and native builds before moving data ({name} is running).": "ปิดเกม เซิร์ฟเวอร์ และบิลด์เนทีฟก่อนย้ายข้อมูล ({name} กำลังทำงาน)",
+  "--relocate-data needs an empty destination folder": "--relocate-data ต้องใช้โฟลเดอร์ปลายทางที่ว่าง",
+  "{error}; diagnostic log: {log}": "{error}; บันทึกวินิจฉัย: {log}",
+  "{error}; could not write launcher diagnostic log: {log_error}": "{error}; เขียนบันทึกวินิจฉัย launcher ไม่ได้: {log_error}",
+  "Unexpected download state.": "สถานะการดาวน์โหลดไม่คาดคิด"
 }

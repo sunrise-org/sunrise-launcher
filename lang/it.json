@@ -2006,5 +2006,17 @@
   "This pack controls which mods it installs.": "Questo pacchetto determina quali mod installare.",
   "This profile already plays {build}.": "Questo profilo usa già {build}.",
   "This profile is in use. Close the game or wait for the other operation to finish.": "Questo profilo è in uso. Chiudi il gioco o attendi il completamento dell’altra operazione.",
-  "This profile stays on this build until you change it.": "Questo profilo resta su questa build finché non la cambi."
+  "This profile stays on this build until you change it.": "Questo profilo resta su questa build finché non la cambi.",
+  "This profile uses {build}, not {requested}. Use Switch to change its game build.": "Questo profilo usa {build}, non {requested}. Usa Passa per cambiare la build di gioco.",
+  "This profile was replaced while the request was waiting. Nothing was changed.": "Questo profilo è stato sostituito mentre la richiesta era in attesa. Non è stata apportata alcuna modifica.",
+  "This profile's build": "Build del profilo",
+  "This release wasn’t found.": "Questa release non è stata trovata.",
+  "This replaces the installed version with the GitHub release you selected.": "Sostituisce la versione installata con la release GitHub selezionata.",
+  "This repository is private, removed or moved.": "Questo repository è privato, rimosso o spostato.",
+  "This server listens only on this computer.": "Questo server è in ascolto solo su questo computer.",
+  "This source listing changed. Open it again from Discover.": "Questo elenco delle fonti è cambiato. Riaprilo da Scopri.",
+  "To decide, run Switch in a terminal.": "Per scegliere, esegui Switch in un terminale.",
+  "Tracked branch or release unavailable.": "Branch o release monitorata non disponibile.",
+  "Tracked branch/release unavailable": "Branch/release monitorata non disponibile",
+  "Try a different search or clear your category filter.": "Prova una ricerca diversa o rimuovi il filtro di categoria."
 }
