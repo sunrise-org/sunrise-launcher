@@ -4241,7 +4241,7 @@ impl Logged {
 
     pub fn start_server(tag: &str, folder: &Path, cmd: Command) -> Result<Self, String> {
         let (cmd, runtime) = prepare_server_command(tag, folder, cmd)?;
-        Self::start_with(|tx| spawn_prepared(Job::Server, cmd, runtime, tx, None, None))
+        Self::start_with(|tx| spawn_prepared(Job::Server, cmd, runtime, tx))
     }
 
     fn start_with(
@@ -5334,8 +5334,11 @@ pub fn spawn_attached(cmd: &mut Command) -> std::io::Result<std::process::Child>
     crate::run_leases::spawn(cmd, false)
 }
 
+/// Starts the game or a server. A preparer never starts here: it runs through
+/// [`run_preparation`], the preparer's one runner.
 pub fn spawn(job: Job, cmd: Command, tx: Sender<Msg>) -> Result<Running, String> {
-    spawn_holding(job, cmd, tx, None)
+    let (cmd, runtime) = prepare_command(cmd)?;
+    spawn_prepared(job, cmd, runtime, tx)
 }
 
 /// Holds the preparation lock of the version that owns `version`'s resources (its base, for a
@@ -5376,28 +5379,53 @@ pub(crate) fn prepare_lock_at(
     Ok(crate::preparer::Preparation::new(file))
 }
 
-/// [`spawn`], keeping `hold` (a lock) until the program ends; a preparation's whole process group is stopped if the launcher quits first.
-pub fn spawn_holding(
-    job: Job,
+/// Runs `tag`'s preparer on this thread to its end, each line it prints to `line`, then completes
+/// the version's resources under the same lock: a switch's preparation, and Prepare's.
+///
+/// The child goes through the preparer's one runner ([`crate::preparer::run_staged`]), as every
+/// preparer child does: its group is stopped by `stop`, no wait on it is unbounded, and no early
+/// return leaves it running (review of #670).
+pub fn run_preparation(
+    tag: &str,
     cmd: Command,
-    tx: Sender<Msg>,
-    prepare: Option<(String, crate::preparer::Preparation)>,
-) -> Result<Running, String> {
-    spawn_holding_cancellable(job, cmd, tx, prepare, None)
+    preparation: &crate::preparer::Preparation,
+    stop: Option<&crate::native_mods::Cancellation>,
+    line: &dyn Fn(String),
+) -> Result<(), String> {
+    let handoff = match stop {
+        Some(stop) => preparation.handoff_cancellable(None, stop),
+        None => preparation.handoff(None),
+    };
+    run_preparer(cmd, &handoff, line, || {
+        finish_preparation_cancellable(tag, preparation, stop)
+    })
 }
 
-pub fn spawn_holding_cancellable(
-    job: Job,
+/// [`run_preparation`]'s child, logged as its step, then `then`.
+fn run_preparer(
     cmd: Command,
-    tx: Sender<Msg>,
-    prepare: Option<(String, crate::preparer::Preparation)>,
-    stop: Option<crate::native_mods::Cancellation>,
-) -> Result<Running, String> {
-    if let Some(stop) = &stop {
-        stop.check()?;
+    handoff: &crate::preparer::Handoff<'_>,
+    line: &dyn Fn(String),
+    then: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    let step = crate::launcher_log::step("Preparing game files");
+    let stop = handoff.stop();
+    let result = stop
+        .map_or(Ok(()), crate::native_mods::Cancellation::check)
+        .and_then(|()| {
+            let (cmd, runtime) = prepare_command(cmd)?;
+            let result = crate::preparer::run_staged(cmd, handoff, line).and_then(|()| then());
+            runtime.game_exited();
+            result
+        });
+    match &result {
+        Ok(()) => step.done(""),
+        Err(_) if stop.is_some_and(crate::native_mods::Cancellation::is_stopped) => {
+            step.cancelled()
+        }
+        Err(error) => step.failed(error),
     }
-    let (cmd, runtime) = prepare_command(cmd)?;
-    spawn_prepared(job, cmd, runtime, tx, prepare, stop)
+    result
 }
 
 fn spawn_prepared(
@@ -5405,16 +5433,7 @@ fn spawn_prepared(
     mut cmd: Command,
     runtime: RuntimeGuard,
     tx: Sender<Msg>,
-    prepare: Option<(String, crate::preparer::Preparation)>,
-    stop: Option<crate::native_mods::Cancellation>,
 ) -> Result<Running, String> {
-    if let Some((_, preparation)) = &prepare {
-        let child = preparation
-            .handoff(None)
-            .spawn(cmd, true)
-            .map_err(|e| e.to_string())?;
-        return Ok(monitor(job, child, tx, runtime, prepare, stop));
-    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -5425,36 +5444,16 @@ fn spawn_prepared(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let child = play_log::spawn(&mut cmd)?.into();
-    Ok(monitor(job, child, tx, runtime, None, stop))
+    Ok(monitor(job, child, tx, runtime))
 }
 
 /// Use the same streams, process monitor and crash reporting for an admitted game's child.
 pub fn monitor_game(child: Child, tx: Sender<Msg>, runtime: RuntimeGuard) -> Running {
-    monitor(Job::Client, child, tx, runtime, None, None)
+    monitor(Job::Client, child, tx, runtime)
 }
 
-fn monitor(
-    job: Job,
-    mut child: Child,
-    tx: Sender<Msg>,
-    runtime: RuntimeGuard,
-    prepare: Option<(String, crate::preparer::Preparation)>,
-    stop: Option<crate::native_mods::Cancellation>,
-) -> Running {
-    let pid = child.id();
+fn monitor(job: Job, mut child: Child, tx: Sender<Msg>, runtime: RuntimeGuard) -> Running {
     let began = std::time::Instant::now();
-    let group = matches!(job, Job::Prepare);
-    if group {
-        crate::process::owned::CHILDREN.track_group(pid);
-    }
-    let prepare_step =
-        (job == Job::Prepare).then(|| crate::launcher_log::step("Preparing game files"));
-    let tracked = stop
-        .as_ref()
-        .map(|stop| stop.track_process(pid))
-        .transpose()
-        .ok()
-        .flatten();
     let stdin = child.stdin.take();
     let relayed = child.is_relayed();
     let forwarding = Arc::new(Mutex::new(true));
@@ -5488,11 +5487,10 @@ fn monitor(
     drop(reader_live);
     let child = Arc::new(Mutex::new(child));
     let waited = child.clone();
-    // The monitor's lines (how the preparer ended) belong to the same operation as its step.
+    // The monitor's lines (how the game ended) belong to the operation that started it.
     let op = crate::launcher_log::current();
     std::thread::spawn(move || {
         let _in = crate::launcher_log::enter(&op);
-        let tracked = tracked;
         if !relayed {
             for r in readers {
                 let _ = r.join();
@@ -5528,46 +5526,20 @@ fn monitor(
         }
         if relayed {
             if let Err(error) = status {
-                if let Some(step) = prepare_step {
-                    step.failed(error.to_string());
-                }
                 let _ = tx.send(Msg::ClientObservationLost(
                     crate::process::child::unconfirmed_exit(error),
                 ));
                 return;
             }
         }
-        if group {
-            crate::process::owned::CHILDREN.release(pid);
-        }
-        drop(tracked);
-        let cancelled = stop.as_ref().is_some_and(|stop| stop.is_stopped());
-        let result = if cancelled {
+        let result = status.map_err(|e| e.to_string()).and_then(|s| {
             runtime.game_exited();
-            Err(crate::native_mods::CANCELLED.into())
-        } else {
-            status.map_err(|e| e.to_string()).and_then(|s| {
-                let result = match prepare {
-                    Some((tag, preparation)) if s.success() => {
-                        finish_preparation_cancellable(&tag, &preparation, stop.as_ref())
-                    }
-                    _ if s.success() => Ok(()),
-                    _ => Err(format!("Exited with {s}")),
-                };
-                runtime.game_exited();
-                result
-            })
-        };
-        if let Some(step) = prepare_step {
-            if cancelled {
-                step.cancelled();
+            if s.success() {
+                Ok(())
             } else {
-                match &result {
-                    Ok(()) => step.done(""),
-                    Err(error) => step.failed(error),
-                }
+                Err(format!("Exited with {s}"))
             }
-        }
+        });
         let _ = tx.send(Msg::Exit(job, result));
     });
     Running { child, stdin }
@@ -8619,6 +8591,70 @@ pub fn {f}("
         }
     }
 
+    /// The switch's preparation runs its preparer through the preparer's one runner: Cancel on a
+    /// preparer that ignores SIGTERM, with a process it left in its group, returns within the
+    /// grace and a margin, and nothing of the group is left (review of #670). The backend's
+    /// monitor, which ran it before, waited on its output with no deadline.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_switchs_preparation_is_cancelled_within_the_grace() {
+        use std::os::unix::fs::PermissionsExt;
+        const ROOT: &str = "SWITCH_PREPARATION_CANCEL_ROOT";
+        let Some(root) = std::env::var_os(ROOT) else {
+            let root = tempfile::tempdir().unwrap();
+            assert!(Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "backend::tests::a_switchs_preparation_is_cancelled_within_the_grace",
+                ])
+                .env(ROOT, root.path())
+                .env("SUNRISE_LAUNCHER_HOME", root.path())
+                .env("SUNRISE_HOME", root.path().join("home"))
+                .env("XDG_DATA_HOME", root.path().join("xdg-data"))
+                .env("XDG_CONFIG_HOME", root.path().join("xdg-config"))
+                .env("SUNRISE_LAUNCHER_NO_SELF_UPDATE", "1")
+                .env("SUNRISE_NO_AUDIO", "1")
+                .status()
+                .unwrap()
+                .success());
+            return;
+        };
+        let version = PathBuf::from(root).join("versions/v-stubborn");
+        fs::create_dir_all(&version).unwrap();
+        let preparer = version.join("sunrise-prepare");
+        fs::write(
+            &preparer,
+            "#!/bin/sh\ntrap '' TERM\ndir=$(dirname \"$0\")\nsh -c 'echo $$ > \"$1\"; exec sleep 30' left \"$dir/left.pid\" &\nwhile [ ! -s \"$dir/left.pid\" ]; do sleep 0.05; done\necho ready\nsleep 30\n",
+        )
+        .unwrap();
+        fs::set_permissions(&preparer, fs::Permissions::from_mode(0o700)).unwrap();
+        let lock = prepare_lock_at(&version, "v-stubborn").unwrap();
+        let stop = crate::native_mods::Cancellation::default();
+        let cancelled = std::cell::Cell::new(None);
+        let result = run_preparation(
+            "v-stubborn",
+            Command::new(&preparer),
+            &lock,
+            Some(&stop),
+            &|line| {
+                if line == "ready" {
+                    stop.stop();
+                    cancelled.set(Some(std::time::Instant::now()));
+                }
+            },
+        );
+        let took = cancelled.get().expect("the preparer started").elapsed();
+        assert_eq!(result, Err(crate::native_mods::CANCELLED.to_owned()));
+        assert!(
+            took < crate::native_mods::STOP_GRACE + std::time::Duration::from_secs(3),
+            "Cancel took {took:?}"
+        );
+        assert!(
+            !still_runs(&version, "left.pid"),
+            "what the preparer left in its group still runs"
+        );
+    }
+
     /// A writer that closes its stdout, then stalls ignoring SIGTERM: Cancel still ends it within
     /// the grace and a margin, as no wait is without a deadline (review of #670).
     #[cfg(target_os = "linux")]
@@ -10483,20 +10519,18 @@ esac"#
         .unwrap();
         fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
 
-        let (tx, rx) = std::sync::mpsc::channel();
-        let _running =
-            spawn_holding_cancellable(Job::Prepare, Command::new(&script), tx, None, None).unwrap();
-        let mut local_lines = Vec::new();
-        loop {
-            match rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap() {
-                Msg::Line(Job::Prepare, line) => local_lines.push(line),
-                Msg::Exit(Job::Prepare, result) => {
-                    assert_eq!(result, Ok(()));
-                    break;
-                }
-                _ => {}
-            }
-        }
+        let fake = root.join("versions/v-fake");
+        fs::create_dir_all(&fake).unwrap();
+        let fake_lock = prepare_lock_at(&fake, "v-fake").unwrap();
+        let local_lines = std::cell::RefCell::new(Vec::new());
+        let result = run_preparer(
+            Command::new(&script),
+            &fake_lock.handoff(None),
+            &|line| local_lines.borrow_mut().push(line),
+            || Ok(()),
+        );
+        assert_eq!(result, Ok(()));
+        let local_lines = local_lines.into_inner();
         assert!(
             local_lines.iter().any(|l| l == "Private Client Backup"),
             "local diagnostics must keep raw stdout: {local_lines:?}"

@@ -230,11 +230,11 @@ fn run_with(
     stop: Option<&crate::native_mods::Cancellation>,
 ) -> Result<(ExitStatus, Vec<String>), String> {
     use crate::process::owned::Owned;
-    use std::sync::mpsc::{sync_channel, RecvTimeoutError, TryRecvError};
+    use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
     if let Some(stop) = stop {
         stop.check()?;
     }
-    let mut child = if let Some(handoff) = handoff {
+    let spawned = if let Some(handoff) = handoff {
         handoff.spawn(command, true).map(Owned::start_preparer)
     } else {
         command
@@ -244,38 +244,135 @@ fn run_with(
         Owned::spawn(&mut command)
     }
     .map_err(unrun)?;
-    let pid = child.child().id();
+    // From here the child is the guard's: whatever way this returns, a `?` included, a child not
+    // reaped here is killed and reaped off this thread (review of #670).
+    let mut child = Held::new(spawned);
     #[cfg(test)]
     test_hooks::hook(&test_hooks::BEFORE_TRACK);
     let tracked = match stop {
-        Some(stop) => match stop.track_preparer(
-            pid,
-            #[cfg(windows)]
-            child.child().preparer_job(),
-        ) {
-            Ok(guard) => Some(guard),
-            // A stop came between the spawn and here: the child was killed at once, and it is
-            // reaped off this thread like one the stop gave up on, as a child stuck in the file
-            // system could hold a wait. It still holds the preparation lock it was handed while
-            // it can write (review of #670).
-            Err(cancelled) => {
-                abandon(child);
-                return Err(cancelled);
+        Some(stop) => {
+            match stop.track_preparer(
+                child.pid,
+                #[cfg(windows)]
+                child.get().child().preparer_job(),
+            ) {
+                Ok(guard) => Some(guard),
+                Err(cancelled) => {
+                    // The stop came between the spawn and here, and has ended the child's tree:
+                    // the guard only leaves it to a reaping thread.
+                    child.killed = true;
+                    return Err(cancelled);
+                }
             }
-        },
+        }
         None => None,
     };
+    let (lines_rx, errors_rx) = read_output(child.get()).map_err(unrun)?;
+    let stopped = || stop.is_some_and(crate::native_mods::Cancellation::is_stopped);
+    let mut watch = Watch::default();
+    let (mut stdout_open, mut errors, mut exited, mut failed) = (true, None, false, None);
+    // The time spent in `out`: the deadlines run on a clock without it, so they judge the child
+    // and its pipes, never how fast the caller takes its lines. A slow caller can't drop the
+    // final reply queued behind the lines before it (review of #670).
+    let mut in_out = Duration::ZERO;
+    loop {
+        let ending = stopped() || failed.is_some();
+        if stdout_open {
+            match lines_rx.recv_timeout(POLL) {
+                // Once the run is ending its lines are only drained: they go nowhere.
+                Ok(Ok(text)) if !ending => {
+                    let took = Instant::now();
+                    out(text);
+                    in_out += took.elapsed();
+                }
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    // A read error ends the run at once, as the base's return did: the child's
+                    // tree is killed now, and every wait from here has the stop's bound.
+                    failed = Some(unrun(error));
+                    stdout_open = false;
+                    watch.killed = true;
+                    child.kill();
+                }
+                Err(RecvTimeoutError::Disconnected) => stdout_open = false,
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+        } else {
+            std::thread::sleep(POLL);
+        }
+        if errors.is_none() {
+            match errors_rx.try_recv() {
+                Ok(lines) => errors = Some(lines),
+                Err(TryRecvError::Disconnected) => errors = Some(Vec::new()),
+                Err(TryRecvError::Empty) => {}
+            }
+        }
+        if !exited {
+            exited = probe(child.get()).map_err(unrun)?;
+        }
+        let pipes_open = stdout_open || errors.is_none();
+        let ending = stopped() || failed.is_some();
+        let now = Instant::now()
+            .checked_sub(in_out)
+            .unwrap_or_else(Instant::now);
+        match next(&mut watch, ending, exited, pipes_open, now) {
+            Next::Wait => {}
+            Next::Kill => child.kill(),
+            // Given up only once the stop's wait is over, or once the child had ended and its
+            // group was killed: whatever still holds its output left the group.
+            Next::Done | Next::GiveUp => break,
+        }
+    }
+    #[cfg(test)]
+    test_hooks::hook(&test_hooks::BEFORE_UNTRACK);
+    let status = finish(Ending {
+        child,
+        tracked,
+        ended: exited,
+    });
+    if stopped() {
+        return Err(crate::native_mods::CANCELLED.into());
+    }
+    if let Some(failed) = failed {
+        return Err(failed);
+    }
+    // Without a stop the loop ends only once the child has, so it was reaped.
+    let status = status.ok_or_else(|| unrun(std::io::Error::other("it did not end")))?;
+    Ok((status, errors.unwrap_or_default()))
+}
+
+/// A run's stdout lines, and the last lines of its stderr.
+type Output = (
+    std::sync::mpsc::Receiver<std::io::Result<String>>,
+    std::sync::mpsc::Receiver<Vec<String>>,
+);
+
+/// Starts the threads that read `child`'s output: its stdout lines, queued at most [`QUEUE`]
+/// at a time, and the last lines of its stderr.
+fn read_output(child: &mut crate::process::owned::Owned) -> std::io::Result<Output> {
+    use std::sync::mpsc::sync_channel;
     drop(child.child().stdin.take());
     let stderr = child.child().stderr.take().expect("piped");
     let (errors_tx, errors_rx) = sync_channel(1);
-    std::thread::spawn(move || {
+    reader(move || {
         let _ = errors_tx.send(tail(stderr));
-    });
+    })?;
     let stdout = child.child().stdout.take().expect("piped");
     let (lines_tx, lines_rx) = sync_channel::<std::io::Result<String>>(QUEUE);
-    std::thread::spawn(move || {
+    #[cfg(test)]
+    let mut fails_after = test_hooks::READ_FAILS_AFTER.with(std::cell::Cell::take);
+    reader(move || {
         let mut read = 0;
         for text in lines(stdout) {
+            #[cfg(test)]
+            let text = match fails_after {
+                Some(0) => Err(std::io::Error::other("a test's read error")),
+                Some(left) => {
+                    fails_after = Some(left - 1);
+                    text
+                }
+                None => text,
+            };
             let text = match text {
                 Ok(text) => text,
                 Err(error) => {
@@ -293,60 +390,76 @@ fn run_with(
                 break;
             }
         }
-    });
-    let stopped = || stop.is_some_and(crate::native_mods::Cancellation::is_stopped);
-    let mut watch = Watch::default();
-    let (mut stdout_open, mut errors, mut exited, mut failed) = (true, None, false, None);
-    loop {
-        if stdout_open {
-            match lines_rx.recv_timeout(POLL) {
-                Ok(Ok(text)) => out(text),
-                Ok(Err(error)) => {
-                    failed = Some(unrun(error));
-                    stdout_open = false;
-                }
-                Err(RecvTimeoutError::Disconnected) => stdout_open = false,
-                Err(RecvTimeoutError::Timeout) => {}
-            }
-        } else {
-            std::thread::sleep(POLL);
-        }
-        if errors.is_none() {
-            match errors_rx.try_recv() {
-                Ok(lines) => errors = Some(lines),
-                Err(TryRecvError::Disconnected) => errors = Some(Vec::new()),
-                Err(TryRecvError::Empty) => {}
-            }
-        }
-        if !exited {
-            exited = ended_unreaped(&mut child).map_err(unrun)?;
-        }
-        let pipes_open = stdout_open || errors.is_none();
-        match next(&mut watch, stopped(), exited, pipes_open, Instant::now()) {
-            Next::Wait => {}
-            Next::Kill => kill_tree(&mut child, pid),
-            // Given up only once the stop's wait is over, or once the child had ended and its
-            // group was killed: whatever still holds its output left the group.
-            Next::Done | Next::GiveUp => break,
-        }
-    }
+    })?;
+    Ok((lines_rx, errors_rx))
+}
+
+/// Starts one of a run's reader threads. A thread that can't start is an error like any other:
+/// the run's guard ends the child.
+fn reader(read: impl FnOnce() + Send + 'static) -> std::io::Result<()> {
     #[cfg(test)]
-    test_hooks::hook(&test_hooks::BEFORE_UNTRACK);
-    let status = finish(Ending {
-        child,
-        pid,
-        tracked,
-        ended: exited,
-    });
-    if stopped() {
-        return Err(crate::native_mods::CANCELLED.into());
+    if test_hooks::READERS_FAIL.with(std::cell::Cell::take) {
+        return Err(std::io::Error::other("a test's failed thread start"));
     }
-    if let Some(failed) = failed {
-        return Err(failed);
+    std::thread::Builder::new()
+        .name("preparer output".into())
+        .spawn(read)
+        .map(drop)
+}
+
+/// A preparer child from its spawn to its reap. Dropped before it was reaped, an early `?` or
+/// a stop that gave up, it kills the child's tree, which is not reaped yet, and leaves it to a
+/// thread to reap, so the run's thread never waits on a child that may be stuck (review of #670).
+struct Held {
+    child: Option<crate::process::owned::Owned>,
+    pid: u32,
+    /// Its tree was killed, by the run or by the stop: one kill decides.
+    killed: bool,
+}
+
+impl Held {
+    fn new(mut child: crate::process::owned::Owned) -> Self {
+        let pid = child.child().id();
+        Self {
+            child: Some(child),
+            pid,
+            killed: false,
+        }
     }
-    // Without a stop the loop ends only once the child has, so it was reaped.
-    let status = status.ok_or_else(|| unrun(std::io::Error::other("it did not end")))?;
-    Ok((status, errors.unwrap_or_default()))
+
+    /// Kills the child's tree, which is not reaped yet, once.
+    fn kill(&mut self) {
+        if !std::mem::replace(&mut self.killed, true) {
+            let pid = self.pid;
+            kill_tree(self.get(), pid);
+        }
+    }
+
+    fn get(&mut self) -> &mut crate::process::owned::Owned {
+        self.child
+            .as_mut()
+            .expect("a held child stays held until it is reaped")
+    }
+
+    /// Reaps the child if it has ended. One that hasn't, after a stop and a kill, is left to a
+    /// thread to reap, so the run never waits on it.
+    fn reap(mut self, ended: bool) -> Option<ExitStatus> {
+        if !ended {
+            return None;
+        }
+        self.child.take()?.wait().ok()
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        if self.child.is_some() {
+            self.kill();
+        }
+        if let Some(child) = self.child.take() {
+            abandon(child);
+        }
+    }
 }
 
 /// How often a running child's stop is checked while its output is awaited.
@@ -440,8 +553,7 @@ trait End {
 
 /// A run's child at its end.
 struct Ending {
-    child: crate::process::owned::Owned,
-    pid: u32,
+    child: Held,
     tracked: Option<crate::native_mods::ProcessGuard>,
     ended: bool,
 }
@@ -456,22 +568,12 @@ impl End for Ending {
     }
 
     fn kill(&mut self) {
-        kill_tree(&mut self.child, self.pid);
+        self.child.kill();
     }
 
     fn reap(self) -> Option<ExitStatus> {
-        reap(self.child, self.ended)
+        self.child.reap(self.ended)
     }
-}
-
-/// Reaps a child that has ended. One that hasn't, after a stop and a kill, is left to a thread
-/// to reap, so the run never waits on it.
-fn reap(mut child: crate::process::owned::Owned, ended: bool) -> Option<ExitStatus> {
-    if ended {
-        return child.wait().ok();
-    }
-    abandon(child);
-    None
 }
 
 /// Leaves a child that may not have ended to a thread to reap.
@@ -494,6 +596,15 @@ fn kill_tree(child: &mut crate::process::owned::Owned, pid: u32) {
         let _ = pid;
         let _ = child.child().kill();
     }
+}
+
+/// Whether the child has ended, without reaping it.
+fn probe(child: &mut crate::process::owned::Owned) -> std::io::Result<bool> {
+    #[cfg(test)]
+    if test_hooks::PROBE_FAILS.with(std::cell::Cell::take) {
+        return Err(std::io::Error::other("a test's failed probe"));
+    }
+    ended_unreaped(child)
 }
 
 /// Whether the child has ended, without reaping it: on Unix its zombie stays, keeping its PID.
@@ -804,6 +915,12 @@ mod test_hooks {
         pub(crate) static BEFORE_UNTRACK: Hook = const { RefCell::new(None) };
         /// How many children this thread left to a reaping thread (`abandon`).
         pub(crate) static ABANDONED: Cell<usize> = const { Cell::new(0) };
+        /// The next probe of whether the child ended fails.
+        pub(crate) static PROBE_FAILS: Cell<bool> = const { Cell::new(false) };
+        /// The next reader thread fails to start.
+        pub(crate) static READERS_FAIL: Cell<bool> = const { Cell::new(false) };
+        /// The next run's stdout fails to read after this many lines.
+        pub(crate) static READ_FAILS_AFTER: Cell<Option<usize>> = const { Cell::new(None) };
     }
 
     /// Runs this thread's hook `which`, once, if a test set it.
@@ -816,7 +933,9 @@ mod test_hooks {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::test_hooks::{ABANDONED, BEFORE_TRACK, BEFORE_UNTRACK};
+    use super::test_hooks::{
+        ABANDONED, BEFORE_TRACK, BEFORE_UNTRACK, PROBE_FAILS, READERS_FAIL, READ_FAILS_AFTER,
+    };
     use super::*;
     use std::cell::Cell;
 
@@ -887,6 +1006,143 @@ mod tests {
             !runs(),
             "the quiet process the child left in its group still runs"
         );
+    }
+
+    /// Whether a process whose command line holds `marker` still runs (a zombie doesn't).
+    #[cfg(target_os = "linux")]
+    fn runs_with(marker: &str) -> bool {
+        fs::read_dir("/proc").unwrap().flatten().any(|entry| {
+            let dir = entry.path();
+            let named = fs::read(dir.join("cmdline"))
+                .is_ok_and(|line| String::from_utf8_lossy(&line).contains(marker));
+            let zombie = fs::read_to_string(dir.join("stat")).is_ok_and(|stat| {
+                stat.rsplit(')')
+                    .next()
+                    .is_some_and(|rest| rest.trim_start().starts_with('Z'))
+            });
+            named && !zombie
+        })
+    }
+
+    /// Waits up to two seconds for every process with `marker` to end.
+    #[cfg(target_os = "linux")]
+    fn ends_soon(marker: &str) -> bool {
+        let waiting = Instant::now();
+        while runs_with(marker) && waiting.elapsed() < Duration::from_secs(2) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        !runs_with(marker)
+    }
+
+    /// A child, in its own group, that leaves a process ignoring SIGTERM there, says "ready" once
+    /// both run, and doesn't end. `marker` names both.
+    #[cfg(target_os = "linux")]
+    fn stubborn(marker: &str) -> Command {
+        use std::os::unix::process::CommandExt;
+        let mut command = Command::new("sh");
+        command
+            .args([
+                "-c",
+                "trap '' TERM; sh -c 'sleep 30; :' \"$1\" & echo ready; exec sh -c 'sleep 30; :' \"$1\"",
+                "stubborn",
+                marker,
+            ])
+            .process_group(0);
+        command
+    }
+
+    /// A failed look at whether the child ended returns through `?`: the child's guard still ends
+    /// its whole group, and leaves the reap to a thread (review of #670).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_failed_probe_of_the_child_still_ends_its_group_off_this_thread() {
+        let marker = format!("probe-{}", std::process::id());
+        let before = ABANDONED.with(Cell::get);
+        let started = Instant::now();
+        let result = run_with(
+            stubborn(&marker),
+            &mut |line| {
+                if line == "ready" {
+                    PROBE_FAILS.with(|fails| fails.set(true));
+                }
+            },
+            None,
+            None,
+        );
+        assert!(result.unwrap_err().contains("a test's failed probe"));
+        assert_eq!(
+            ABANDONED.with(Cell::get),
+            before + 1,
+            "reaped off this thread"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(
+            ends_soon(&marker),
+            "what the child left in its group still runs"
+        );
+    }
+
+    /// A reader thread that can't start returns through `?` too, and the guard ends the child.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_reader_that_cannot_start_leaves_no_child_behind() {
+        let marker = format!("reader-{}", std::process::id());
+        READERS_FAIL.with(|fails| fails.set(true));
+        let before = ABANDONED.with(Cell::get);
+        let result = run_with(stubborn(&marker), &mut |_| {}, None, None);
+        assert!(result.unwrap_err().contains("a test's failed thread start"));
+        assert_eq!(
+            ABANDONED.with(Cell::get),
+            before + 1,
+            "reaped off this thread"
+        );
+        assert!(ends_soon(&marker), "the child still runs");
+    }
+
+    /// A read error on the child's stdout ends the child at once, as the base did, rather than
+    /// waiting for a child that may never end (review of #670).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_read_error_ends_the_child_at_once() {
+        let marker = format!("read-{}", std::process::id());
+        READ_FAILS_AFTER.with(|after| after.set(Some(0)));
+        let started = Instant::now();
+        let result = run_with(stubborn(&marker), &mut |_| {}, None, None);
+        assert!(result.unwrap_err().contains("a test's read error"));
+        assert!(
+            started.elapsed() < STOPPED_WAIT,
+            "it waited {:?}",
+            started.elapsed()
+        );
+        assert!(ends_soon(&marker), "the child still runs");
+    }
+
+    /// A preparer that ended with its final reply queued behind many log lines, taken by a slow
+    /// caller: the time the caller takes is not the child's, so the reply still arrives (review of
+    /// #670). The lines take longer than any of the run's deadlines.
+    #[test]
+    fn a_slow_caller_still_gets_the_final_reply_queued_behind_its_lines() {
+        let mut command = Command::new("sh");
+        command.args([
+            "-c",
+            "for n in $(seq 40); do echo '{\"message\":\"line\"}'; done; echo '{\"format\":1,\"done\":true}'",
+        ]);
+        let taken = Cell::new(0);
+        let started = Instant::now();
+        let reply = reply(
+            command,
+            &|_| {
+                std::thread::sleep(Duration::from_millis(150));
+                taken.set(taken.get() + 1);
+            },
+            None,
+        );
+        assert!(
+            started.elapsed() > STOPPED_WAIT,
+            "the lines outlast the deadlines"
+        );
+        assert_eq!(taken.get(), 40);
+        assert_eq!(reply.unwrap().unwrap()["done"], true);
     }
 
     /// A native build copies the SDK's `sunrise-client` with this, then runs it. Checked in the

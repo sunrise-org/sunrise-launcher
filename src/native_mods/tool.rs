@@ -101,25 +101,11 @@ impl Cancellation {
         &self.flag
     }
 
-    /// Registers a spawned child process group so [`Self::stop`] terminates it. If already
-    /// stopped, terminates the child immediately and returns the cancellation error.
-    pub(crate) fn track_process(&self, pid: u32) -> Result<ProcessGuard, String> {
-        let mut state = self.state();
-        if state.stopped {
-            drop(state);
-            // It has done nothing yet: it is killed outright, with no grace to ignore.
-            kill_process(pid);
-            return Err(super::CANCELLED.into());
-        }
-        state.tool = Some(pid);
-        Ok(ProcessGuard {
-            cancellation: self.clone(),
-            pid,
-        })
-    }
-
-    /// [`Self::track_process`] for a preparer child, with its Windows job, so a stop ends the
-    /// whole tree there and not only the leader's PID (review of #670).
+    /// Registers a preparer child's process group, with its Windows job, so [`Self::stop`]
+    /// ends the whole tree and not only the leader's PID (review of #670). If already stopped,
+    /// it is killed outright, as it has done nothing yet, and the cancellation error returned.
+    /// One kill decides: a preparer with a job ends through its job alone, as [`Self::stop`]
+    /// ends it, and nothing waits on a `taskkill`.
     pub(crate) fn track_preparer(
         &self,
         pid: u32,
@@ -131,6 +117,7 @@ impl Cancellation {
             #[cfg(windows)]
             if let Some(job) = &job {
                 let _ = job.terminate();
+                return Err(super::CANCELLED.into());
             }
             kill_process(pid);
             return Err(super::CANCELLED.into());
@@ -238,8 +225,16 @@ fn terminate_process(pid: u32) {
     kill_process(pid);
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many times this thread ended a process by its PID ([`kill_process`]).
+    static KILLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Ends the child's process group outright: SIGKILL on Unix, `taskkill /T /F` on Windows.
 fn kill_process(pid: u32) {
+    #[cfg(test)]
+    KILLS.with(|kills| kills.set(kills.get() + 1));
     // SAFETY: callers only pass PIDs of process groups they spawned for this attempt.
     #[cfg(unix)]
     unsafe {

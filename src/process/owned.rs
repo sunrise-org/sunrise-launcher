@@ -39,9 +39,13 @@ impl Registry {
     }
 
     fn track(&'static self, child: Child) -> Owned {
+        self.track_as(child, false)
+    }
+
+    fn track_as(&'static self, child: Child, group: bool) -> Owned {
         self.entries().push(Entry {
             pid: child.id(),
-            group: false,
+            group,
         });
         Owned {
             child,
@@ -93,8 +97,10 @@ impl Owned {
         Ok(CHILDREN.track(gate.spawn(command, role)?))
     }
 
+    /// Tracks a piped preparer, which leads its own process group: the launcher's quit stops the
+    /// whole group, as it did when the backend's monitor ran the switch's preparer.
     pub(crate) fn start_preparer(child: Child) -> Self {
-        CHILDREN.track(child)
+        CHILDREN.track_as(child, cfg!(unix))
     }
 
     #[cfg(windows)]

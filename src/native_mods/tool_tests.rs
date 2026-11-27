@@ -798,3 +798,37 @@ fn a_one_line_command_gets_its_name_and_a_contract_and_answers_one_line() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A Cancel that wins before a piped preparer is registered ends it through its job alone: what
+/// the leader left running in the job ends, and no `taskkill` runs, so nothing waits on one
+/// (review of #670). Only Windows CI runs this.
+#[cfg(windows)]
+#[test]
+fn a_stop_before_a_preparers_registration_ends_its_job_without_taskkill() {
+    let lock = tempfile::tempfile().unwrap();
+    let mut command = std::process::Command::new("cmd");
+    command.args(["/c", "start", "", "/b", "ping", "-n", "30", "127.0.0.1"]);
+    let mut child = crate::process::leases::spawn_preparer(command, &lock, None, true).unwrap();
+    let job = child
+        .preparer_job()
+        .expect("a piped preparer runs in a job of its own");
+    let pid = child.id();
+    let _ = child.wait();
+    let active = || job.accounting().unwrap().ActiveProcesses;
+    let waiting = Instant::now();
+    while active() == 0 && waiting.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(active() >= 1, "the leader left ping running in its job");
+    let stop = Cancellation::default();
+    stop.stop();
+    let kills = KILLS.with(std::cell::Cell::get);
+    let result = stop.track_preparer(pid, Some(Arc::clone(&job)));
+    assert_eq!(result.err().as_deref(), Some(crate::native_mods::CANCELLED));
+    assert_eq!(KILLS.with(std::cell::Cell::get), kills, "a taskkill ran");
+    let waiting = Instant::now();
+    while active() != 0 && waiting.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(active(), 0, "the job ended, with what the leader left");
+}

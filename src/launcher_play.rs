@@ -294,18 +294,9 @@ impl Launcher {
                     None => backend::sounds(&tag, &minecraft, &diagnostics, &lock),
                 }
                 backend::set_prepare_step(backend::PrepareStep::Prepare);
-                backend::spawn_holding_cancellable(
-                    Job::Prepare,
-                    cmd,
-                    tx.clone(),
-                    Some((tag, lock)),
-                    stop,
-                )
+                backend::run_preparation(&tag, cmd, &lock, stop.as_ref(), &diagnostics)
             })();
-            // A running preparer sends its own Exit when it ends.
-            if let Err(e) = result {
-                let _ = tx.send(Msg::Exit(Job::Prepare, Err(e)));
-            }
+            let _ = tx.send(Msg::Exit(Job::Prepare, result));
         });
         self.preparing = true;
         self.prepare_started = Some(Instant::now());
