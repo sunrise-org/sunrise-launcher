@@ -5,8 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// The launcher's appearance, as older launchers saved it: a theme is one look now, and a saved
-/// `light` opens on the Taiga theme (`Settings::parse`).
+/// The launcher's appearance: dark, light, or the system's. Sunrise has a light look; the other
+/// themes stay dark in both. Files from before the choice existed are settled in `Settings::parse`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Appearance {
@@ -15,6 +15,24 @@ pub enum Appearance {
     Light,
     /// Follow the system's light or dark.
     System,
+}
+
+impl Appearance {
+    pub const ALL: [Appearance; 3] = [Self::Dark, Self::Light, Self::System];
+
+    /// Its name in `settings.json` and on the command line.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Dark => "dark",
+            Self::Light => "light",
+            Self::System => "system",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        let name = name.trim().to_ascii_lowercase();
+        Self::ALL.into_iter().find(|a| a.name() == name)
+    }
 }
 
 /// What the launcher's window does while the game runs, as the player picks it in Settings.
@@ -145,10 +163,14 @@ pub struct Settings {
     /// Unset means none: the environment's `HTTPS_PROXY` and `HTTP_PROXY` apply instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy: Option<String>,
-    /// Only read to move an old light appearance to the Taiga theme (`parse`): always dark now,
-    /// a theme being one look.
+    /// Dark, light or the system's (Settings › Appearance). Dark for every file saved before
+    /// the choice existed.
     #[serde(default)]
     pub appearance: Appearance,
+    /// Which settling the file has had (`look_settings::LOOK_VERSION`). Absent in files written
+    /// before the appearance choice, which settle to dark and move a saved light to Taiga.
+    #[serde(default)]
+    pub look_version: u8,
     /// The player has answered the data switches in Settings, where the "I'm playing" ping's
     /// text (`telemetry::PING`) stands beside them.
     #[serde(default)]

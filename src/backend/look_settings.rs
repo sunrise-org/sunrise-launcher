@@ -3,8 +3,19 @@
 use super::{Appearance, Settings};
 use serde_json::{Map, Value};
 
+/// The settling that files saved by this launcher carry (`Settings::look_version`). Files without
+/// one predate the appearance choice.
+pub(super) const LOOK_VERSION: u8 = 1;
+
 /// Drops the look's fields that aren't what they say, each alone, before the rest is read.
 pub(super) fn tidy(fields: &mut Map<String, Value>) {
+    // A version that isn't a small whole number is as if never saved.
+    if fields
+        .get("look_version")
+        .is_some_and(|v| serde_json::from_value::<u8>(v.clone()).is_err())
+    {
+        fields.remove("look_version");
+    }
     // An accent per theme that isn't one is dropped alone; a map that isn't one, whole.
     match fields.get_mut("theme_accents") {
         Some(Value::Object(accents)) => accents
@@ -44,15 +55,20 @@ pub(super) fn tidy(fields: &mut Map<String, Value>) {
     }
 }
 
-/// A theme is one look now: the light appearance became the Taiga theme, and dark or the system's
-/// opens on the saved theme. Saved back as dark, so this runs once.
+/// Settles the look of a file as it was read. A file from before the appearance choice (no
+/// `look_version`) was always dark: a saved light moves to the Taiga theme, and everything else
+/// opens dark on the saved theme. From then on the appearance is kept as the player saved it
+/// (dark, light or the system's), and the file is marked so this doesn't run again.
 pub(super) fn settle(settings: &mut Settings) {
-    if settings.appearance == Appearance::Light {
-        settings.theme = Some(crate::themes::TAIGA.id.to_string());
-        settings.accent =
-            crate::themes::starting_accent(settings.theme.as_deref(), &settings.theme_accents);
+    if settings.look_version < LOOK_VERSION {
+        if settings.appearance == Appearance::Light {
+            settings.theme = Some(crate::themes::TAIGA.id.to_string());
+            settings.accent =
+                crate::themes::starting_accent(settings.theme.as_deref(), &settings.theme_accents);
+        }
+        settings.appearance = Appearance::Dark;
+        settings.look_version = LOOK_VERSION;
     }
-    settings.appearance = Appearance::Dark;
     settings.set_panel_opacity(settings.panel_opacity);
 
     // Old Dawn saved its pink default like a picked accent. If it wasn't saved under
@@ -71,7 +87,78 @@ pub(super) fn settle(settings: &mut Settings) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::Appearance;
     use super::Settings;
+
+    /// A file saved before the appearance choice: a light opens on Taiga, dark or the system's
+    /// on the saved theme, all of them dark, as they always were.
+    #[test]
+    fn a_file_from_before_the_choice_settles_to_dark_as_it_always_did() {
+        let light = Settings::parse(r#"{"appearance": "light", "game_args": "--x"}"#);
+        assert_eq!(light.appearance, Appearance::Dark);
+        assert_eq!(light.theme.as_deref(), Some("taiga"));
+        assert_eq!(light.game_args, "--x");
+        for appearance in ["dark", "system"] {
+            let kept = Settings::parse(&format!(
+                r#"{{"appearance": "{appearance}", "theme": "nord"}}"#
+            ));
+            assert_eq!(kept.appearance, Appearance::Dark, "{appearance}");
+            assert_eq!(kept.theme.as_deref(), Some("nord"), "{appearance}");
+        }
+        assert_eq!(Settings::parse("{}").appearance, Appearance::Dark);
+    }
+
+    /// Light and the system's, saved by the choice, are kept: a light under a theme stays under
+    /// it, and nothing moves to Taiga on every read. Round trips keep them too.
+    #[test]
+    fn a_saved_light_or_system_appearance_is_kept_through_reads_and_saves() {
+        for (appearance, expected) in [
+            ("light", Appearance::Light),
+            ("system", Appearance::System),
+            ("dark", Appearance::Dark),
+        ] {
+            let text = format!(
+                r#"{{"appearance": "{appearance}", "theme": "dawn", "look_version": 1, "game_args": "--x"}}"#
+            );
+            let read = Settings::parse(&text);
+            assert_eq!(read.appearance, expected, "{appearance}");
+            assert_eq!(read.theme.as_deref(), Some("dawn"), "{appearance}");
+            let saved = serde_json::to_string(&read).unwrap();
+            assert!(
+                saved.contains(&format!(r#""appearance":"{appearance}""#)),
+                "{saved}"
+            );
+            let again = Settings::parse(&saved);
+            assert_eq!(again.appearance, expected, "{appearance} after a save");
+            assert_eq!(
+                again.theme.as_deref(),
+                Some("dawn"),
+                "{appearance} after a save"
+            );
+        }
+    }
+
+    /// A light saved by the choice under another theme stays light under it: only a file without
+    /// a look version has a light moved to Taiga.
+    #[test]
+    fn a_light_chosen_under_another_theme_stays_under_it() {
+        let read =
+            Settings::parse(r#"{"appearance": "light", "theme": "nord", "look_version": 1}"#);
+        assert_eq!(read.appearance, Appearance::Light);
+        assert_eq!(read.theme.as_deref(), Some("nord"));
+    }
+
+    /// An appearance this launcher doesn't know is dark; a look version that isn't a number is
+    /// as if never saved, and the rest of the file is kept.
+    #[test]
+    fn unknown_appearance_and_bad_look_version_lose_only_themselves() {
+        let read = Settings::parse(
+            r#"{"appearance": "sepia", "look_version": "new", "game_args": "--x"}"#,
+        );
+        assert_eq!(read.appearance, Appearance::Dark);
+        assert_eq!(read.game_args, "--x");
+        assert_eq!(read.look_version, super::LOOK_VERSION);
+    }
 
     #[test]
     fn dawn_follows_the_new_default_but_keeps_accent_choices() {

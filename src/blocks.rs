@@ -14,6 +14,11 @@ impl gpui::AssetSource for Assets {
                 "../assets/media/banner.svg"
             ))));
         }
+        if path == "banner-light.svg" {
+            return Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/media/banner-light.svg"
+            ))));
+        }
         if path == "dawn.webp" {
             return Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/media/dawn.webp"

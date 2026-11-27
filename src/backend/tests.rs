@@ -1568,7 +1568,7 @@ fn an_old_appearance_moves_to_a_theme_and_an_unknown_one_keeps_the_rest() {
             "{text}"
         );
     }
-    // Dark and the system's keep the saved theme's look.
+    // Dark and the system's keep the saved theme's look: a file from before the choice is dark.
     for appearance in ["dark", "system"] {
         let text = format!(r#"{{"appearance": "{appearance}", "theme": "nord"}}"#);
         let kept = Settings::parse(&text);
@@ -1586,9 +1586,25 @@ fn an_old_appearance_moves_to_a_theme_and_an_unknown_one_keeps_the_rest() {
         ),
         (Appearance::Dark, Some("nord"), "--x")
     );
-    // Saved back as dark, so a migrated light stays on Taiga only until the player picks.
+    // Saved back as dark with its look version, so a migrated light stays on Taiga and is not
+    // moved again.
     let text = serde_json::to_string(&Settings::parse(r#"{"appearance": "light"}"#)).unwrap();
     assert!(text.contains(r#""appearance":"dark""#), "{text}");
+    assert!(text.contains(r#""look_version":1"#), "{text}");
+}
+
+#[test]
+fn a_chosen_light_or_system_look_is_not_forced_to_dark() {
+    // Chosen in Settings (the file carries its look version), Light and System are kept.
+    for (saved, expected) in [("light", Appearance::Light), ("system", Appearance::System)] {
+        let text = format!(r#"{{"appearance": "{saved}", "look_version": 1}}"#);
+        assert_eq!(Settings::parse(&text).appearance, expected, "{saved}");
+    }
+    let mut chosen = Settings::parse("{}");
+    chosen.appearance = Appearance::Light;
+    let saved = serde_json::to_string(&chosen).unwrap();
+    assert!(saved.contains(r#""appearance":"light""#), "{saved}");
+    assert_eq!(Settings::parse(&saved).appearance, Appearance::Light);
 }
 
 #[test]

@@ -287,6 +287,7 @@ impl Launcher {
         if !bad.is_empty() {
             rows.push(div().flex().flex_col().gap(px(10.)).children(bad));
         }
+        rows.push(self.appearance_row(cx));
         rows.push(self.accent_row(missing, window, cx));
         rows.push(self.background_row(cx));
         rows.push(self.scenery_row(cx));
@@ -700,6 +701,48 @@ impl Launcher {
             about,
             div().child(choose).child(theirs),
         )
+    }
+
+    /// Dark, light or the system's look, as three chips. Sunrise has a light look; the other
+    /// themes stay dark in both, which the hint says when the theme isn't Sunrise.
+    fn appearance_row(&self, cx: &mut Context<Self>) -> Div {
+        let options: Vec<(backend::Appearance, SharedString)> = [
+            (backend::Appearance::Dark, crate::i18n::tr_key("Dark")),
+            (backend::Appearance::Light, crate::i18n::tr_key("Light")),
+            (backend::Appearance::System, crate::i18n::tr_key("System")),
+        ]
+        .into_iter()
+        .map(|(choice, label)| (choice, tr(label).into()))
+        .collect();
+        let dark_only = appearance::effective_id(&self.settings) != themes::DAWN_THEME.id;
+        let about = if dark_only {
+            format!(
+                "{} {}",
+                tr("System follows your computer's light or dark mode."),
+                tr("This theme has only a dark look.")
+            )
+        } else {
+            tr("System follows your computer's light or dark mode.").to_string()
+        };
+        let this = cx.entity();
+        let control = crate::widgets::chip::choices(
+            "alt-appearance",
+            &options,
+            self.settings.appearance,
+            move |picked, window, cx| {
+                this.update(cx, |this, cx| {
+                    this.appearance_change(
+                        |s| {
+                            s.appearance = picked;
+                            Ok(())
+                        },
+                        window,
+                    );
+                    cx.notify();
+                })
+            },
+        );
+        row(tr("Appearance"), about, div().child(control))
     }
 
     /// Whether Home shows its background at all: a row of its own, its switch on the right like

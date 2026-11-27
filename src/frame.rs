@@ -99,10 +99,10 @@ impl Launcher {
         // The scenery (or the player's picture) stands in the profile banner, not behind the
         // window: the window is the flat chrome and the page one solid panel.
         self.ui.home.art = (page == Page::Home && self.settings.scenery()).then(|| {
-            // Sunrise in the dark look draws the design's own banner art (mountains and pines
-            // that fade into the panel themselves); a picture or another theme stands its scene.
+            // Sunrise draws the design's own banner art (mountains and pines that fade into the
+            // panel themselves, the light look's copy into its light panel); a picture or
+            // another theme stands its scene.
             let sunrise = photo.is_none()
-                && self.theme.dark
                 && matches!(
                     sunrise_launcher::themes::resolve(self.settings.theme.as_deref()),
                     sunrise_launcher::themes::Resolved::Builtin(t)
@@ -111,9 +111,13 @@ impl Launcher {
             if sunrise {
                 crate::home::Art::Fading(
                     div().absolute().inset_0().child(
-                        gpui::img("banner.svg")
-                            .size_full()
-                            .object_fit(gpui::ObjectFit::Cover),
+                        gpui::img(if self.theme.dark {
+                            "banner.svg"
+                        } else {
+                            "banner-light.svg"
+                        })
+                        .size_full()
+                        .object_fit(gpui::ObjectFit::Cover),
                     ),
                 )
             } else {

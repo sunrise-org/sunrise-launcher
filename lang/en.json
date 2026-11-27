@@ -2664,5 +2664,10 @@
   "built today": "built today",
   "{channel} build": "{channel} build",
   "{channel} build · {age}": "{channel} build · {age}",
-  "{days} days old": "{days} days old"
+  "{days} days old": "{days} days old",
+  "Dark": "Dark",
+  "Light": "Light",
+  "System follows your computer's light or dark mode.": "System follows your computer's light or dark mode.",
+  "This theme has only a dark look.": "This theme has only a dark look.",
+  "{value}: say dark, light or system": "{value}: say dark, light or system"
 }

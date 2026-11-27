@@ -174,6 +174,20 @@ fn panel_opacity_takes_every_percent_and_can_reset() {
 }
 
 #[test]
+fn appearance_cli_sets_dark_light_or_system_and_the_json_says_so() {
+    let mut settings = backend::Settings::parse("{}");
+    assert_eq!(settings_json(&settings)["appearance"], "dark");
+    for value in ["light", "system", "dark"] {
+        set_setting(&mut settings, "appearance", value).unwrap();
+        // Saved and read back, the choice is still the one the player made.
+        settings = backend::Settings::parse(&serde_json::to_string(&settings).unwrap());
+        assert_eq!(settings_json(&settings)["appearance"], value);
+    }
+    assert!(set_setting(&mut settings, "appearance", "sepia").is_err());
+    assert_eq!(settings_json(&settings)["appearance"], "dark");
+}
+
+#[test]
 fn reduced_graphics_cli_sets_and_reads_the_shared_choice() {
     let mut settings = backend::Settings::parse(
         r#"{"blur":8.5,"reduce_motion":false,"cat":true,

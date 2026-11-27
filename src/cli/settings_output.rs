@@ -34,6 +34,7 @@ fn settings_json_with_paths(
         "while_playing": s.while_playing.name(),
         "world_layout": s.world_layout.name(),
         "language": s.language.map_or("system", |l| l.code()),
+        "appearance": s.appearance.name(),
         "theme": sunrise_launcher::appearance::effective_id(s),
         "theme_choice": s.theme,
         "accent": sunrise_launcher::appearance::accent(s).name(),
