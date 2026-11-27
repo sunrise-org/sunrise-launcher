@@ -1,6 +1,6 @@
 //! One confirmation for profile removal, whether opened in Settings or in the sidebar.
 use super::*;
-use crate::widgets::button::{primary, secondary};
+use crate::widgets::button::secondary;
 use crate::{
     frame::Reach as _,
     mods::refused::{details_box, details_label},
@@ -177,7 +177,7 @@ impl Launcher {
                     footer()
                         .child(close("profile-delete-cancel", tr("Cancel"), cx))
                         .child(
-                            primary("profile-delete-confirm", tr("Delete profile"))
+                            crate::widgets::button::danger("profile-delete-confirm", tr("Delete profile"))
                                 .on_click(cx.listener(|this, _, _, cx| this.delete_profile(cx))),
                         ),
                 ),

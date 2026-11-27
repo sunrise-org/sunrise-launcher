@@ -466,12 +466,14 @@ impl Launcher {
                             },
                         )),
                     )
-                    .child(primary("new-discard", tr("Discard")).on_click(cx.listener(
-                        |this, _, _, cx| {
-                            this.instances.dialog = None;
-                            cx.notify();
-                        },
-                    ))),
+                    .child(
+                        crate::widgets::button::danger("new-discard", tr("Discard")).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.instances.dialog = None;
+                                cx.notify();
+                            }),
+                        ),
+                    ),
             );
         crate::sheets::modal_frame(
             "new-profile",

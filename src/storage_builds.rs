@@ -1,6 +1,6 @@
 //! The installed builds and import cards in Settings → Storage.
 use crate::settings::{group, hint, off, row};
-use crate::widgets::button::{primary, secondary};
+use crate::widgets::button::secondary;
 use crate::widgets::check::switch;
 use crate::widgets::feedback::{banner, Tone};
 use std::sync::Arc;
@@ -290,7 +290,7 @@ impl Launcher {
         action: &str,
         cx: &mut Context<Self>,
     ) -> Div {
-        let remove = primary("storage-build-confirm", action.to_owned());
+        let remove = crate::widgets::button::danger("storage-build-confirm", action.to_owned());
         row(
             title,
             about,
