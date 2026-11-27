@@ -127,8 +127,6 @@ impl Launcher {
                 &[("channel", channel_name(channel))],
             )
         };
-        let target = self.target_version(pin.as_ref(), channel).cloned();
-        let age = target.as_deref().and_then(|tag| self.build_age(tag));
         let current = match (&bound, &pin) {
             (Some(label), _) => label.clone(),
             (None, Some(tag)) => self.version_label(tag),
@@ -144,7 +142,7 @@ impl Launcher {
             open,
             Some("package-01"),
             current,
-            age,
+            None,
             bound.is_none(),
         );
         if let Some(build) = bound.as_deref() {

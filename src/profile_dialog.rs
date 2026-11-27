@@ -11,7 +11,7 @@ mod menus;
 mod side;
 
 /// The new-profile dialog's height with the copy box open.
-const STEADY_HEIGHT: f32 = 590.;
+const STEADY_HEIGHT: f32 = 516.;
 
 impl Launcher {
     pub(super) fn new_profile(&mut self, cx: &mut Context<Self>) {
@@ -102,8 +102,14 @@ impl Launcher {
             .px(px(24.))
             .child(self.profile_name_row(cx));
         if !editing {
-            body = body.child(self.profile_build_row(cx));
-            body = body.child(self.profile_start_row(cx));
+            // Game build and Start from side by side, each half the form.
+            body = body.child(
+                div()
+                    .flex()
+                    .gap(px(12.))
+                    .child(self.profile_build_row(cx).flex_1().min_w_0())
+                    .child(self.profile_start_row(cx).flex_1().min_w_0()),
+            );
             body = body.children(self.copy_box(cx));
         }
         // A new profile or a copy keeps one height whatever is chosen: tall enough for the copy

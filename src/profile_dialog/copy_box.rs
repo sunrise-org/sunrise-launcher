@@ -52,7 +52,6 @@ impl Launcher {
             .child(
                 div()
                     .text_size(px(tokens::SMALL))
-                    .font_weight(FontWeight::SEMIBOLD)
                     .text_color(rgb(p.muted))
                     .child(tr("What to copy")),
             )
@@ -144,12 +143,10 @@ impl Launcher {
             .flex()
             .flex_col()
             .gap(px(6.))
-            .px(px(14.))
-            .py(px(12.))
-            .rounded(tokens::r(tokens::R_CARD))
-            .border_1()
-            .border_color(rgb(p.line))
-            .bg(rgb(p.chrome))
+            // No box: a rule above, then the options on the dialog's own fill.
+            .pt(px(16.))
+            .border_t_1()
+            .border_color(rgb(p.divider))
             .overflow_hidden()
             .child(header)
             .child(grid);

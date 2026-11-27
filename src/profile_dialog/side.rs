@@ -218,19 +218,11 @@ impl Launcher {
             .child(div().w_full().h(px(1.)).bg(rgb(p.divider)))
             .child(swatches)
             .child(picture_button);
-        // Darker than the plate, with its right corners square against the divider.
-        let ground = |d: Div| d.absolute().top_0().bottom_0().bg(rgb(p.chrome));
+        // On the plate's own fill, set off from the form by a divider only.
         div()
             .relative()
             .w(px(220.))
             .flex_none()
-            .child(
-                ground(div())
-                    .left_0()
-                    .right_0()
-                    .rounded(tokens::r(tokens::R_PANEL)),
-            )
-            .child(ground(div()).right_0().w(px(tokens::R_PANEL * 2.)))
             .child(
                 div()
                     .absolute()
