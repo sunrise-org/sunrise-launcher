@@ -2460,5 +2460,15 @@
   "Copying the game files prepared for Sunrise {tag}": "Copia dei file di gioco preparati per Sunrise {tag}",
   "The game files are ready. Press Start again.": "I file di gioco sono pronti. Premi di nuovo Avvia.",
   "Install a Sunrise version first.": "Installa prima una versione di Sunrise.",
-  "Type the line players see under the name.": "Inserisci la frase che i giocatori vedranno sotto il nome."
+  "Type the line players see under the name.": "Inserisci la frase che i giocatori vedranno sotto il nome.",
+  "Letting {name} in": "Ammissione di {name}",
+  "Made by hand": "Creato manualmente",
+  "Before an update": "Prima di un aggiornamento",
+  "Before updating to {version}": "Prima dell’aggiornamento a {version}",
+  "{name} is ready. Press Start, then give your friends the address below.": "{name} è pronto. Premi Avvia e invia ai tuoi amici l’indirizzo qui sotto.",
+  "Server moved to the trash.": "Server spostato nel Cestino.",
+  "{name} is already on the desktop, and isn't this profile's shortcut.": "{name} è già sul desktop e non è il collegamento di questo profilo.",
+  "This computer has no desktop folder.": "Questo computer non ha una cartella Desktop.",
+  "{tag} is not a Sunrise release.": "{tag} non è una release Sunrise.",
+  "{file} is not the {version} release Sunrise was made for": "{file} non è la release {version} prevista per Sunrise"
 }

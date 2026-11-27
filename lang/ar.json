@@ -2361,5 +2361,15 @@
   "Not removed: {item}": "لم تتم إزالة: {item}",
   "That file isn't a picture the launcher can read (PNG, JPEG, GIF, WebP).": "هذا الملف ليس صورة يمكن للمشغّل قراءتها (PNG أو JPEG أو GIF أو WebP).",
   "{name} plays its pack's mods: import the pack again for a second copy.": "يستخدم {name} إضافات حزمتها: استورد الحزمة مجددًا لإنشاء نسخة ثانية.",
-  "{path} is not a directory inside the game folder": "{path} ليس دليلًا داخل مجلد اللعبة"
+  "{path} is not a directory inside the game folder": "{path} ليس دليلًا داخل مجلد اللعبة",
+  "No profile {query}: sunrise-launcher instance list shows them": "لا يوجد ملف شخصي {query}: يعرضها sunrise-launcher instance list",
+  "Paste the access token Tailscale showed (it begins with tskey-).": "الصق رمز الوصول الذي عرضه Tailscale (يبدأ بـ tskey-).",
+  "No keychain here: the token is kept until the launcher closes.": "لا يتوفر مخزن مفاتيح هنا: سيُحتفظ بالرمز حتى إغلاق المشغّل.",
+  "Done: friends you share this computer with reach only the Minecraft server.": "اكتمل: يمكن للأصدقاء الذين تشاركهم هذا الكمبيوتر الوصول إلى خادم Minecraft فقط.",
+  "Tailscale's default access controls are back.": "تمت استعادة عناصر التحكم الافتراضية في الوصول لدى Tailscale.",
+  "{url}: HTTP {status}": "{url}: HTTP {status}",
+  "Mojang has no Java {name}. Known: {known}.": "لا يتوفر لدى Mojang إصدار Java ‏{name}. الإصدارات المعروفة: {known}.",
+  "{word}: write it as NAME=value": "{word}: اكتبه بصيغة NAME=value",
+  "{key}: a variable's name is letters, digits and _, not starting with a digit": "{key}: يتكون اسم المتغير من أحرف وأرقام و_، ولا يبدأ برقم",
+  "The pre-launch command didn't run: {error}": "لم يُشغّل الأمر قبل بدء اللعبة: {error}"
 }
