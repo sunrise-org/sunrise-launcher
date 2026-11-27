@@ -1837,5 +1837,20 @@
   "No matching mods": "لا توجد إضافات مطابقة",
   "No matching mods fit {target}": "لا توجد إضافات مطابقة متوافقة مع {target}",
   "No mods fit {target} yet": "لا توجد إضافات متوافقة مع {target} حتى الآن",
-  "No profile selected.": "لم يُحدد ملف شخصي."
+  "No profile selected.": "لم يُحدد ملف شخصي.",
+  "No registry updates available.": "لا تتوفر تحديثات للسجل.",
+  "No source updates available.": "لا تتوفر تحديثات للمصدر.",
+  "No source updates were checked while offline.": "لم يتم التحقق من تحديثات المصدر أثناء عدم الاتصال.",
+  "No such string": "لا يوجد نص كهذا",
+  "Not a picture": "ليست صورة",
+  "Not a regular lock file": "ليس ملف قفل عاديًا",
+  "Not built": "لم يُبنَ",
+  "Not checked": "لم يتم التحقق",
+  "Not checked for {build} yet": "لم يتم التحقق من توافقه مع {build} بعد",
+  "Not checked yet": "لم يتم التحقق بعد",
+  "Not initialized": "لم تتم تهيئته",
+  "Nothing matches “{query}”.": "لا شيء يطابق “{query}”.",
+  "Nothing was changed. Use --confirm-world-loss only if you accept this risk.": "لم يتغير شيء. استخدم --confirm-world-loss فقط إذا قبلت هذه المخاطرة.",
+  "Nothing was removed.": "لم يُزل شيء.",
+  "Nothing was updated.": "لم يتم تحديث شيء."
 }

@@ -1936,5 +1936,20 @@
   "Sunrise may have started. Close the game if it opened before trying again.\nWrapper: {wrapper}\n{reason}": "Sunrise potrebbe essersi avviato. Se il gioco si è aperto, chiudilo prima di riprovare.\nWrapper: {wrapper}\n{reason}",
   "Sunrise started, but the launcher couldn't confirm that it stopped. Close the game if it's still open.\n{reason}": "Sunrise è stato avviato, ma il launcher non ha potuto confermare che si sia arrestato. Chiudi il gioco se è ancora aperto.\n{reason}",
   "Switch anyway": "Passa comunque",
-  "Switch anyway? [y/N]": "Passare comunque? [y/N]"
+  "Switch anyway? [y/N]": "Passare comunque? [y/N]",
+  "Switch cancelled. Nothing was switched.": "Passaggio annullato. Non è stato effettuato alcun passaggio.",
+  "Switch to {build}": "Passa a {build}",
+  "That GitHub archive is already installed. Nothing was changed.": "L’archivio GitHub è già installato. Non è stata apportata alcuna modifica.",
+  "The Downloads folder isn't available.": "La cartella Download non è disponibile.",
+  "The GitHub download has more than one package for {mod}.": "Il download GitHub contiene più di un pacchetto per {mod}.",
+  "The GitHub mod download is too large.": "Il download della mod da GitHub è troppo grande.",
+  "The GitHub mod package was not valid.": "Il pacchetto mod GitHub non è valido.",
+  "The GitHub source archive contains an invalid or duplicate path.": "L’archivio sorgente GitHub contiene un percorso non valido o duplicato.",
+  "The Nightly list did not return a catalog.": "L’elenco Nightly non ha restituito un catalogo.",
+  "The Nightly list had no saved copy to refresh.": "L’elenco Nightly non aveva una copia salvata da aggiornare.",
+  "The account Play was pressed for was signed out before the game started. Press Play again.": "L’account per cui è stato premuto Gioca ha effettuato la disconnessione prima dell’avvio del gioco. Premi di nuovo Gioca.",
+  "The affected worlds changed after review. Nothing was changed; try again.": "I mondi interessati sono cambiati dopo la revisione. Non è stata apportata alcuna modifica; riprova.",
+  "The build could not be published.": "Impossibile pubblicare la build.",
+  "The build did not include every enabled mod. Nothing was switched.": "La build non includeva tutte le mod attive. Non è stato effettuato alcun passaggio.",
+  "The build is ready, but the profile choice could not be saved: {error}": "La build è pronta, ma non è stato possibile salvare la scelta del profilo: {error}"
 }
