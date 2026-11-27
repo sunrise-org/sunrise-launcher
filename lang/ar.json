@@ -1881,5 +1881,19 @@
   "Registry mods must fit the profile's game build.": "يجب أن تتوافق إضافات السجل مع إصدار اللعبة للملف الشخصي.",
   "Reinstall for this architecture": "إعادة التثبيت لهذه البنية",
   "Release": "الإصدار",
-  "Release: {tag}": "الإصدار: {tag}"
+  "Release: {tag}": "الإصدار: {tag}",
+  "Remove 1 old build?": "هل تريد إزالة إصدار قديم واحد؟",
+  "Remove build": "إزالة الإصدار",
+  "Remove old game builds automatically": "إزالة إصدارات اللعبة القديمة تلقائيًا",
+  "Remove {build}?": "هل تريد إزالة {build}؟",
+  "Remove {count} old builds?": "هل تريد إزالة {count} من الإصدارات القديمة؟",
+  "Remove {name}?": "هل تريد إزالة {name}؟",
+  "Remove: {mods}.": "إزالة: {mods}.",
+  "Removed {mod}.": "تمت إزالة {mod}.",
+  "Remove…": "إزالة…",
+  "Removing Sunrise modpacks is paused. Leave the pack in place; its files are unchanged.": "تم إيقاف إزالة حزم إضافات Sunrise مؤقتًا. اترك الحزمة في مكانها؛ لم تتغير ملفاتها.",
+  "Removing…": "جارٍ الإزالة…",
+  "Replacement archive": "الأرشيف البديل",
+  "Report for game build: {build}": "تقرير إصدار اللعبة: {build}",
+  "Repository unavailable. It may be private, moved or deleted.": "المستودع غير متاح. قد يكون خاصًا أو منقولًا أو محذوفًا."
 }

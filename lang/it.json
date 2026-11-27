@@ -1980,5 +1980,19 @@
   "The pre-launch command failed (exit {code}), so the game did not start.": "Il comando prima dell’avvio non è riuscito (codice {code}), quindi il gioco non è partito.",
   "The profile folder couldn't be verified.": "Impossibile verificare la cartella del profilo.",
   "The profile's runtime copy was not prepared.": "La copia runtime del profilo non è stata preparata.",
-  "The proposed mods don't work with {mod}. Nothing was installed.": "Le mod proposte non funzionano con {mod}. Non è stato installato nulla."
+  "The proposed mods don't work with {mod}. Nothing was installed.": "Le mod proposte non funzionano con {mod}. Non è stato installato nulla.",
+  "The saved game download proof is invalid.": "La prova di download del gioco salvata non è valida.",
+  "The saved worlds changed while the changes were being prepared. The profile was left unchanged.": "I mondi salvati sono cambiati durante la preparazione delle modifiche. Il profilo non è stato modificato.",
+  "The selected game doesn't include exactly the enabled native mods.": "Il gioco selezionato non include esattamente le mod native attive.",
+  "The server command cannot change its server folder.": "Il comando server non può modificare la propria cartella.",
+  "The server is running on port {running}. Restart to use saved port {saved}.": "Il server è in esecuzione sulla porta {running}. Riavvialo per usare la porta salvata {saved}.",
+  "The source could not be verified.": "Impossibile verificare la fonte.",
+  "The staged GitHub packages changed. Nothing was changed; try again.": "I pacchetti GitHub preparati sono cambiati. Non è stata apportata alcuna modifica; riprova.",
+  "There are no pending build changes for this profile.": "Non ci sono modifiche di build in sospeso per questo profilo.",
+  "There is more than one installed package for {mod}. Move the duplicate before trying again.": "È installato più di un pacchetto per {mod}. Sposta il duplicato prima di riprovare.",
+  "There is no newer source on the same tracker.": "Non esiste una fonte più recente sullo stesso tracker.",
+  "These build changes are no longer current. Close this report and open Build changes again.": "Queste modifiche alla build non sono più attuali. Chiudi questo rapporto e riapri Modifiche alla build.",
+  "These mods are already installed: {mods}. Update them from Installed.": "Queste mod sono già installate: {mods}. Aggiornale da Installate.",
+  "These mods need the ones you are removing. They will be turned off, but their files will stay installed: {mods}.": "Queste mod dipendono da quelle che stai rimuovendo. Verranno disattivate, ma i relativi file resteranno installati: {mods}.",
+  "These worlds were last played on a newer game: {worlds}": "Questi mondi sono stati giocati l’ultima volta con una versione più recente del gioco: {worlds}"
 }

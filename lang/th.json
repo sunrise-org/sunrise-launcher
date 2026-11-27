@@ -2376,5 +2376,19 @@
   "Checking Java and your Minecraft install": "กำลังตรวจสอบ Java และการติดตั้ง Minecraft ของคุณ",
   "The app has no folder.": "แอปไม่มีโฟลเดอร์",
   "Could not stage the new app: {error}": "เตรียมแอปใหม่ไม่ได้: {error}",
-  "Could not copy the new app next to {path}.": "คัดลอกแอปใหม่ไปไว้ข้าง {path} ไม่ได้"
+  "Could not copy the new app next to {path}.": "คัดลอกแอปใหม่ไปไว้ข้าง {path} ไม่ได้",
+  "The downloaded app's signature doesn't hold; the launcher stays as it is.": "ลายเซ็นของแอปที่ดาวน์โหลดใช้ไม่ได้ launcher จะคงสภาพเดิม",
+  "Could not move {path} aside: {error}": "ย้าย {path} ออกไปไม่ได้: {error}",
+  "Could not put the new app at {path}: {error}": "วางแอปใหม่ไว้ที่ {path} ไม่ได้: {error}",
+  "The new app's signature doesn't hold at {path}; the launcher stays as it was.": "ลายเซ็นของแอปใหม่ที่ {path} ใช้ไม่ได้ launcher จะคงสภาพเดิม",
+  "Downloading Minecraft {version} from Mojang: the game and {libraries} libraries": "กำลังดาวน์โหลด Minecraft {version} จาก Mojang: เกมและไลบรารี {libraries} รายการ",
+  "Downloading the sounds ({count} files)": "กำลังดาวน์โหลดเสียง ({count} ไฟล์)",
+  "The sounds could not all be downloaded: {error}": "ดาวน์โหลดไฟล์เสียงได้ไม่ครบ: {error}",
+  "Mojang has no Java for this system": "Mojang ไม่มี Java สำหรับระบบนี้",
+  "Mojang's Java index: {error}": "ดัชนี Java ของ Mojang: {error}",
+  "Mojang has no {component} for {platform}": "Mojang ไม่มี {component} สำหรับ {platform}",
+  "Mojang's {component} manifest: {error}": "manifest ของ {component} จาก Mojang: {error}",
+  "Downloading Minecraft's Java {name} from Mojang ({count} files)": "กำลังดาวน์โหลด Java {name} สำหรับ Minecraft จาก Mojang ({count} ไฟล์)",
+  "is {actual} bytes, not the {expected} Mojang lists": "มีขนาด {actual} ไบต์ ไม่ใช่ {expected} ไบต์ตามที่ Mojang ระบุ",
+  "is not the one Sunrise pins (sha1 {actual})": "ไม่ใช่ไฟล์ที่ Sunrise ล็อกไว้ (sha1 {actual})"
 }
