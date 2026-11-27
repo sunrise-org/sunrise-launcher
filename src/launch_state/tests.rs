@@ -764,3 +764,39 @@ fn registry_install_shows_build_percent_and_offers_stop_until_publishing() {
         Some(("Finishing…".into(), StripAct::Home))
     );
 }
+
+#[test]
+fn play_build_account_error_shows_the_account_refusal_instead_of_publish_fallback() {
+    use crate::mods::build_run::{End, Run};
+    use sunrise_launcher::account::NoOwner;
+
+    for refused in [
+        NoOwner::default(),
+        NoOwner {
+            keyring: Some(
+                "Couldn't sign in to play online: Your Microsoft sign-in expired. Sign in again. Press Play to try again."
+                    .into(),
+            ),
+        },
+    ] {
+        let mut run = Run::start(
+            "inst".into(),
+            "Default".into(),
+            "Nightly".into(),
+            Vec::new(),
+            true,
+        );
+        let expected = refused.in_window();
+        let captured = settle_play_build_error(&mut run, &StartError::Account(refused), false);
+        assert!(
+            !captured,
+            "account refusal still runs the Play button's account-refusal path"
+        );
+        let Some(End::Stopped(stop)) = &run.end else {
+            panic!("expected stopped build run");
+        };
+        assert_eq!(stop.summary, expected);
+        assert!(stop.error.is_empty());
+        assert_eq!(stop.action, None);
+    }
+}

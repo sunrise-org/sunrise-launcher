@@ -85,7 +85,15 @@ impl Status {
             None => State::SignInRequired,
             Some(s) if s.sign_in_required => State::SignInRequired,
             Some(s) if !s.owns => State::OwnershipRequired,
-            Some(s) if s.minecraft_expires_at <= now() + RENEW_BEFORE => State::NeedsRefresh,
+            // The token's own `exp`, read locally, counts too (#618): a kept expiry that
+            // disagrees with the token never shows a dead sign-in as ready.
+            Some(s)
+                if s.minecraft_expires_at <= now() + RENEW_BEFORE
+                    || super::game_launch::token_exp(&s.minecraft_token)
+                        .is_some_and(|exp| exp <= now() + RENEW_BEFORE) =>
+            {
+                State::NeedsRefresh
+            }
             Some(_) => State::Ready,
         };
         let mut status = Self {

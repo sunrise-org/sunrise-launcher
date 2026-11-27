@@ -655,6 +655,8 @@
   "Players can hurt each other (PvP)": "Players can hurt each other (PvP)",
   "Playing now": "Playing now",
   "Playing offline: {reason}": "Playing offline: {reason}",
+  "{service} isn't answering right now. Try again in a moment.": "{service} isn't answering right now. Try again in a moment.",
+  "Couldn't sign in to play online: {why} Press Play to try again.": "Couldn't sign in to play online: {why} Press Play to try again.",
   "Plays when you press Play": "Plays when you press Play",
   "Point the server at it: set engine.path to this file in the server's server.toml (docs/hosting.md); the launcher writes nothing itself.": "Point the server at it: set engine.path to this file in the server's server.toml (docs/hosting.md); the launcher writes nothing itself.",
   "Port": "Port",

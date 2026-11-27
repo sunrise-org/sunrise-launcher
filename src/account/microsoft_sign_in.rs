@@ -111,6 +111,9 @@ pub enum SignInError {
     NoProfile,
     /// The Microsoft account now has another Minecraft profile than the one signed in.
     OtherProfile,
+    /// The services couldn't answer just now (no connection, 429, 5xx): not a refusal. Only
+    /// this lets Play fall back to a kept token that is still good (#542).
+    Unavailable(String),
     Other(String),
 }
 
@@ -123,7 +126,7 @@ impl std::fmt::Display for SignInError {
             Self::DoesNotOwn => tr(DOES_NOT_OWN),
             Self::NoProfile => tr(NO_PROFILE),
             Self::OtherProfile => tr(OTHER_PROFILE),
-            Self::Other(message) => message,
+            Self::Unavailable(message) | Self::Other(message) => message,
         })
     }
 }
@@ -191,6 +194,26 @@ pub(super) fn send(
     let status = response.status();
     let text = response.into_string().unwrap_or_default();
     Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)))
+}
+
+/// [`send`] for the sign-in chain: a request that got no answer (no connection, 429, 5xx) is
+/// [`SignInError::Unavailable`], kept apart from the services' refusals.
+fn call(
+    request: ureq::Request,
+    body: Option<Body>,
+    service: &str,
+) -> Result<(u16, Value), SignInError> {
+    let (status, v) = send(request, body, service).map_err(SignInError::Unavailable)?;
+    match status {
+        429 => Err(SignInError::Unavailable(
+            tr("Too many sign-ins in a short time. Wait a minute and try again.").into(),
+        )),
+        500..=599 => Err(SignInError::Unavailable(trf(
+            "{service} isn't answering right now. Try again in a moment.",
+            &[("service", tr(service))],
+        ))),
+        _ => Ok((status, v)),
+    }
 }
 
 pub(super) enum Body<'a> {
@@ -348,7 +371,7 @@ pub fn wait_for_sign_in(
 }
 
 fn refresh_ms(ep: &Endpoints, client_id: &str, refresh: &str) -> Result<MsTokens, SignInError> {
-    let (status, v) = send(
+    let (status, v) = call(
         request_to("POST", &format!("{}/token", ep.microsoft))?,
         Some(Body::Form(vec![
             ("grant_type", "refresh_token"),
@@ -360,8 +383,10 @@ fn refresh_ms(ep: &Endpoints, client_id: &str, refresh: &str) -> Result<MsTokens
     )?;
     // A refresh token issued to another app registration (the launcher's client ID changed
     // since the player signed in) is refused as the client's; only a new sign-in mends it.
-    match v.get("error").and_then(Value::as_str) {
-        Some("invalid_client" | "unauthorized_client") => Err(SignInError::SignInAgain),
+    match (status, v.get("error").and_then(Value::as_str)) {
+        (400..=403, _) | (_, Some("invalid_client" | "unauthorized_client")) => {
+            Err(SignInError::SignInAgain)
+        }
         _ => ms_tokens(status, &v),
     }
 }
@@ -401,7 +426,7 @@ fn minecraft_login(
     progress: &dyn Fn(session::Phase),
 ) -> Result<Minecraft, SignInError> {
     progress(session::Phase::Xbox);
-    let (status, xbl) = send(
+    let (status, xbl) = call(
         request_to("POST", &ep.xbox_user)?,
         Some(Body::Json(json!({
             "Properties": {
@@ -417,7 +442,7 @@ fn minecraft_login(
     let xbl_token = str_field(&xbl, "Token")
         .filter(|_| status == 200)
         .ok_or_else(|| tr("Xbox Live refused the sign-in.").to_string())?;
-    let (status, xsts) = send(
+    let (status, xsts) = call(
         request_to("POST", &ep.xsts)?,
         Some(Body::Json(json!({
             "Properties": { "SandboxId": "RETAIL", "UserTokens": [xbl_token] },
@@ -465,7 +490,7 @@ fn minecraft_token(ep: &Endpoints, xtoken: &str) -> Result<(String, u64), SignIn
             return Ok((token, lifetime(v)));
         }
     }
-    let (status, mc) = send(
+    let (status, mc) = call(
         request_to(
             "POST",
             &format!("{}/authentication/login_with_xbox", ep.minecraft),
@@ -493,7 +518,7 @@ pub(super) fn bearer(request: ureq::Request, token: &str) -> ureq::Request {
 
 /// Whether the account owns Minecraft: Java Edition (Game Pass included).
 fn owns_game(ep: &Endpoints, token: &str) -> Result<bool, SignInError> {
-    let (status, v) = send(
+    let (status, v) = call(
         bearer(
             request_to("GET", &format!("{}/entitlements/mcstore", ep.minecraft))?,
             token,
@@ -501,6 +526,9 @@ fn owns_game(ep: &Endpoints, token: &str) -> Result<bool, SignInError> {
         None,
         "the Minecraft services",
     )?;
+    if matches!(status, 401 | 403) {
+        return Err(SignInError::SignInAgain);
+    }
     if status != 200 {
         return Err(tr("Could not check which games this account owns.").into());
     }
@@ -531,7 +559,7 @@ pub struct Account {
 
 /// The profile; none when the account has none (it doesn't own the game, or never made one).
 fn profile(ep: &Endpoints, token: &str) -> Result<Option<Account>, SignInError> {
-    let (status, v) = send(
+    let (status, v) = call(
         bearer(
             request_to("GET", &format!("{}/minecraft/profile", ep.minecraft))?,
             token,
@@ -539,10 +567,13 @@ fn profile(ep: &Endpoints, token: &str) -> Result<Option<Account>, SignInError> 
         None,
         "the Minecraft services",
     )?;
+    if matches!(status, 401 | 403) {
+        return Err(SignInError::SignInAgain);
+    }
     if status == 404 {
         return Ok(None);
     }
-    let (Some(uuid), Some(name)) = (str_field(&v, "id"), str_field(&v, "name")) else {
+    let (200, Some(uuid), Some(name)) = (status, str_field(&v, "id"), str_field(&v, "name")) else {
         return Err(tr("Could not read the Minecraft profile.").into());
     };
     let active = |key: &str| {
@@ -648,6 +679,35 @@ pub(super) fn check(
     check_with(ep, client_id, account, secrets, false, &|_| {})
 }
 
+/// Whether the Minecraft token is due for renewal: the earlier of the kept expiry and the
+/// token's own `exp` (#618) is within [`RENEW_BEFORE`], so a token whose claim has passed is
+/// renewed while the services answer rather than sent and refused.
+fn renew_due(secrets: &Secrets) -> bool {
+    let expires_at = super::game_launch::token_exp(&secrets.minecraft_token)
+        .map_or(secrets.minecraft_expires_at, |exp| {
+            exp.min(secrets.minecraft_expires_at)
+        });
+    expires_at <= now() + RENEW_BEFORE
+}
+
+/// A new Minecraft token through the refresh token, which Microsoft may rotate in `secrets`
+/// even when a later step fails. The token hasn't passed the ownership and profile checks yet.
+fn renew(
+    ep: &Endpoints,
+    client_id: Option<&str>,
+    secrets: &mut Secrets,
+    progress: &dyn Fn(session::Phase),
+) -> Result<Minecraft, SignInError> {
+    progress(session::Phase::Microsoft);
+    let ms = client_id
+        .ok_or(SignInError::NotConfigured)
+        .and_then(|id| refresh_ms(ep, id, &secrets.refresh_token))
+        .inspect_err(|e| secrets.sign_in_required = matches!(e, SignInError::SignInAgain))?;
+    // Microsoft can rotate its refresh credential even if a later service fails.
+    secrets.refresh_token = ms.refresh;
+    minecraft_login(ep, &ms.access, progress)
+}
+
 pub(super) fn check_with(
     ep: &Endpoints,
     client_id: Option<&str>,
@@ -659,21 +719,14 @@ pub(super) fn check_with(
     if secrets.sign_in_required {
         return Check::NoAnswer(SignInError::SignInAgain, secrets);
     }
-    if force || secrets.minecraft_expires_at <= now() + RENEW_BEFORE {
-        progress(session::Phase::Microsoft);
-        let renewed = client_id
-            .ok_or(SignInError::NotConfigured)
-            .and_then(|id| refresh_ms(ep, id, &secrets.refresh_token));
-        let ms = match renewed {
-            Ok(ms) => ms,
-            Err(e) => {
-                secrets.sign_in_required = matches!(e, SignInError::SignInAgain);
-                return Check::NoAnswer(e, secrets);
-            }
-        };
-        // Microsoft can rotate its refresh credential even if a later service fails.
-        secrets.refresh_token = ms.refresh;
-        match minecraft_login(ep, &ms.access, progress) {
+    // The credentials kept before this check. Any answer short of "owns it, same profile" goes
+    // back to them (with Microsoft's rotated refresh token and the refusal), so a renewed
+    // Minecraft token is kept and played with only once it has passed both checks.
+    let mut kept = secrets.clone();
+    if force || renew_due(&secrets) {
+        let renewed = renew(ep, client_id, &mut secrets, progress);
+        kept.refresh_token.clone_from(&secrets.refresh_token);
+        match renewed {
             Ok(mc) => {
                 secrets = Secrets {
                     owns: secrets.owns,
@@ -692,16 +745,19 @@ pub(super) fn check_with(
         progress(session::Phase::Profile);
         profile(ep, token)
     }) {
-        Err(e) => Check::NoAnswer(e, secrets),
+        Err(e) => {
+            kept.sign_in_required = matches!(e, SignInError::SignInAgain);
+            Check::NoAnswer(e, kept)
+        }
         Ok(None) => Check::DoesNot(Secrets {
             owns: false,
-            ..secrets
+            ..kept
         }),
         Ok(Some(p)) if p.uuid != account.uuid => Check::NoAnswer(
             SignInError::OtherProfile,
             Secrets {
                 sign_in_required: true,
-                ..secrets
+                ..kept
             },
         ),
         Ok(Some(p)) => Check::Owns(

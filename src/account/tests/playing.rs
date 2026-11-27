@@ -103,16 +103,18 @@ fn no_network_never_blocks_a_past_owner() {
     let store = MemoryStore::default();
     let mut accounts = signed_in(&store, &secrets("mc-token", true));
     let pass = launch(&offline(), Some("test-client"), &store, &mut accounts).unwrap();
-    // Plays, offline, and says why.
-    assert!(pass.session.is_none() && pass.owner.is_none());
-    assert!(pass.offline.unwrap().contains("Could not reach"));
-    // A token to renew with no network, or a build without sign-in: the same.
+    // The kept token is still good: it plays signed in with it (#542), not without a session.
+    assert_eq!(pass.session.unwrap().1.minecraft_token, "mc-token");
+    assert!(pass.owner.is_none() && pass.offline.is_none());
+    // A token to renew with no network, or a build without sign-in: the gate still passes
+    // (a download may go ahead), but there is no session and it says why.
     let stale = Secrets {
         minecraft_expires_at: 0,
         ..secrets("mc-token", true)
     };
     let mut accounts = signed_in(&store, &stale);
-    assert!(launch(&offline(), Some("test-client"), &store, &mut accounts).is_ok());
+    let pass = launch(&offline(), Some("test-client"), &store, &mut accounts).unwrap();
+    assert!(pass.session.is_none() && pass.offline.unwrap().contains("Could not reach"));
     assert!(launch(&offline(), None, &store, &mut accounts).is_ok());
     // An account that never passed doesn't pass offline.
     let mut accounts = signed_in(&store, &secrets("mc-token", false));
@@ -343,7 +345,7 @@ fn a_launch_as_another_account_leaves_the_selected_one() {
     assert_eq!(accounts.selected.as_deref(), Some(UUID));
     // Notch plays with the last answer while the services can't be reached.
     let pass = launch_as(&offline(), Some("test-client"), &store, &mut accounts, UUID).unwrap();
-    assert!(pass.session.is_none() && pass.offline.is_some());
+    assert!(pass.session.is_some() && pass.offline.is_none());
     // An account that isn't in the launcher is refused, and changes nothing either.
     let gone = launch_as(
         &offline(),
@@ -379,7 +381,7 @@ fn play_starts_as_the_account_it_was_pressed_for_whoever_is_selected_since() {
     // The accepted account plays, and the switcher's choice stays.
     let pass =
         launch_accepted(&offline(), Some("test-client"), &store, &mut accounts, UUID).unwrap();
-    assert!(pass.offline.is_some());
+    assert!(pass.session.is_some() && pass.offline.is_none());
     assert_eq!(accounts.selected.as_deref(), Some(alex));
     // Signed out before the game started: nobody plays in its place.
     accounts.remove(&store, UUID).unwrap();
@@ -463,4 +465,247 @@ fn a_launch_saving_late_keeps_sign_ins_and_outs_made_meanwhile() {
         .collect();
     assert_eq!(names, [std::ffi::OsString::from("accounts.json")]);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A JWT with just this payload (header and signature are placeholders).
+fn jwt(payload: &str) -> String {
+    use base64::Engine as _;
+    let part = |s: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(s);
+    format!("{}.{}.sig", part(r#"{"alg":"RS256"}"#), part(payload))
+}
+
+#[test]
+fn no_answer_with_an_expired_token_stops_play_instead_of_starting_signed_out() {
+    // #542: Microsoft, Xbox Live or the Minecraft services time out, and the kept token has run
+    // out. The game must not start without a session.
+    let store = MemoryStore::default();
+    let stale = Secrets {
+        minecraft_expires_at: now() + 30,
+        ..secrets("mc-token", true)
+    };
+    let mut accounts = signed_in(&store, &stale);
+    let refused = launch_for_game(&offline(), Some("test-client"), &store, &mut accounts)
+        .unwrap_err()
+        .in_window();
+    assert!(
+        refused.starts_with("Couldn't sign in to play online:"),
+        "{refused}"
+    );
+    assert!(refused.contains("Could not reach"), "says why: {refused}");
+    assert!(
+        refused.ends_with("Press Play to try again."),
+        "offers a retry: {refused}"
+    );
+    // The same account with a token still good plays with it.
+    let mut accounts = signed_in(&store, &secrets("mc-token", true));
+    let pass = launch_for_game(&offline(), Some("test-client"), &store, &mut accounts).unwrap();
+    assert_eq!(pass.session.unwrap().1.minecraft_token, "mc-token");
+}
+
+#[test]
+fn a_sign_in_marked_for_renewal_never_plays_on_its_old_token() {
+    let store = MemoryStore::default();
+    let marked = Secrets {
+        sign_in_required: true,
+        ..secrets("mc-token", true)
+    };
+    let mut accounts = signed_in(&store, &marked);
+    assert!(launch_for_game(&offline(), Some("test-client"), &store, &mut accounts).is_err());
+}
+
+#[test]
+fn a_kept_token_is_judged_by_its_own_exp_claim() {
+    // #618: the token's `exp`, read locally, wins over a kept expiry that says otherwise.
+    let live = jwt(&format!(r#"{{"exp":{}}}"#, now() + 7200));
+    let dead = jwt(&format!(r#"{{"exp":{}}}"#, now() - 10));
+    assert!(token_exp(&live).unwrap() > now() + 7000);
+    assert!(token_exp(&dead).unwrap() < now());
+    assert_eq!(token_exp("not-a-jwt"), None);
+    assert_eq!(token_exp(&jwt(r#"{"sub":"x"}"#)), None);
+    assert!(still_valid(&secrets(&live, true)));
+    assert!(
+        !still_valid(&secrets(&dead, true)),
+        "kept expiry says 2 h, the token says gone"
+    );
+    assert!(
+        still_valid(&secrets("opaque-token", true)),
+        "no claim: the kept expiry decides"
+    );
+    assert!(
+        !still_valid(&secrets(&live, false)),
+        "never for an account that doesn't own it"
+    );
+    // No answer and a token whose own exp has passed: Play stops rather than start signed out.
+    let store = MemoryStore::default();
+    let mut accounts = signed_in(&store, &secrets(&dead, true));
+    assert!(launch_for_game(&offline(), Some("test-client"), &store, &mut accounts).is_err());
+}
+
+#[test]
+fn status_shows_a_token_past_its_exp_claim_as_needing_refresh() {
+    // #618: detected at startup, before Play finds out from a failed request.
+    let store = MemoryStore::default();
+    let dead = jwt(&format!(r#"{{"exp":{}}}"#, now() - 10));
+    let _accounts = signed_in(&store, &secrets(&dead, true));
+    let status = session::status(&store, UUID);
+    assert_eq!(status.state, session::State::NeedsRefresh);
+    let store = MemoryStore::default();
+    let live = jwt(&format!(r#"{{"exp":{}}}"#, now() + 7200));
+    let _accounts = signed_in(&store, &secrets(&live, true));
+    assert_eq!(session::status(&store, UUID).state, session::State::Ready);
+}
+
+#[test]
+fn a_refusal_from_the_services_never_plays_on_a_fresh_kept_token() {
+    // Profile or entitlements 401/403: a refusal, not an outage. The kept token is fresh (no
+    // renewal), Play stops, and the account is marked for sign-in so later presses don't keep
+    // sending the rejected token.
+    for status in [401, 403] {
+        let (m, ep) = mock(|m| m.profile_answers = [status].into());
+        let store = MemoryStore::default();
+        let mut accounts = signed_in(&store, &secrets("mc-token", true));
+        let refused = launch_for_game(&ep, Some("test-client"), &store, &mut accounts)
+            .expect_err("profile refusal must not start play");
+        assert!(refused
+            .keyring
+            .as_deref()
+            .is_some_and(|w| w.contains(SIGN_IN_AGAIN)));
+        assert!(kept(&store).sign_in_required);
+        assert_eq!(
+            session::status(&store, UUID).state,
+            session::State::SignInRequired
+        );
+        let calls = m.lock().unwrap().log.len();
+        assert!(launch_for_game(&ep, Some("test-client"), &store, &mut accounts).is_err());
+        assert_eq!(
+            m.lock().unwrap().log.len(),
+            calls,
+            "rejected token is not re-sent"
+        );
+
+        let (m, ep) = mock(|m| m.entitlements_refused = Some(status));
+        let store = MemoryStore::default();
+        let mut accounts = signed_in(&store, &secrets("mc-token", true));
+        let refused = launch_for_game(&ep, Some("test-client"), &store, &mut accounts)
+            .expect_err("entitlements refusal must not start play");
+        assert!(refused
+            .keyring
+            .as_deref()
+            .is_some_and(|w| w.contains(SIGN_IN_AGAIN)));
+        assert!(kept(&store).sign_in_required);
+        let calls = m.lock().unwrap().log.len();
+        assert!(launch_for_game(&ep, Some("test-client"), &store, &mut accounts).is_err());
+        assert_eq!(
+            m.lock().unwrap().log.len(),
+            calls,
+            "rejected token is not re-sent"
+        );
+    }
+    // A refresh refusal (400..=403) also marks sign-in required and stops offline fallback.
+    for status in [400, 401, 403] {
+        let store = MemoryStore::default();
+        let near = Secrets {
+            minecraft_expires_at: now() + 1800,
+            ..secrets("mc-token", true)
+        };
+        let mut accounts = signed_in(&store, &near);
+        let (_, ep) = mock(|m| m.refresh_refused = Some(status));
+        let refused = launch_accepted(&ep, Some("test-client"), &store, &mut accounts, UUID)
+            .expect_err("a refresh refusal needs sign-in");
+        assert!(refused
+            .keyring
+            .as_deref()
+            .is_some_and(|w| w.contains(SIGN_IN_AGAIN)));
+        assert!(kept(&store).sign_in_required);
+        assert!(
+            launch_accepted(&offline(), Some("test-client"), &store, &mut accounts, UUID).is_err()
+        );
+    }
+    // The same request answered 503: the services are down, and the fresh kept token plays.
+    let (_, ep) = mock(|m| m.profile_answers = [503].into());
+    let store = MemoryStore::default();
+    let mut accounts = signed_in(&store, &secrets("mc-token", true));
+    let pass = launch_for_game(&ep, Some("test-client"), &store, &mut accounts).unwrap();
+    assert_eq!(pass.session.unwrap().1.minecraft_token, "mc-token");
+}
+
+#[test]
+fn an_outage_after_renewal_keeps_the_rotated_refresh_token_and_drops_the_unchecked_one() {
+    // Less than an hour left: the token is renewed (Microsoft rotates its refresh token), then
+    // the profile check meets an outage. The new Minecraft token never passed the ownership and
+    // profile checks, so it is rolled back; the old one, still good, plays.
+    let (_, ep) = mock(|m| m.profile_answers = [503].into());
+    let store = MemoryStore::default();
+    let near = Secrets {
+        minecraft_expires_at: now() + 1800,
+        ..secrets("old-token", true)
+    };
+    let mut accounts = signed_in(&store, &near);
+    let pass = launch_for_game(&ep, Some("test-client"), &store, &mut accounts).unwrap();
+    assert_eq!(pass.session.unwrap().1.minecraft_token, "old-token");
+    let kept = kept(&store);
+    assert_eq!(
+        kept.minecraft_token, "old-token",
+        "the unchecked token isn't kept"
+    );
+    assert_eq!(
+        kept.refresh_token, "ms-refresh-2",
+        "Microsoft's rotation is kept"
+    );
+}
+
+#[test]
+fn play_renews_a_token_past_its_exp_claim_when_the_services_answer() {
+    // #618: the kept expiry says two hours, the token's own `exp` has passed. Play renews it
+    // instead of sending the dead token and refusing on every retry.
+    let (_, ep) = mock(|_| {});
+    let store = MemoryStore::default();
+    let dead = jwt(&format!(r#"{{"exp":{}}}"#, now() - 10));
+    let mut accounts = signed_in(&store, &secrets(&dead, true));
+    let pass = launch_for_game(&ep, Some("test-client"), &store, &mut accounts).unwrap();
+    assert_eq!(pass.session.unwrap().1.minecraft_token, "mc-token");
+    assert_eq!(kept(&store).minecraft_token, "mc-token");
+}
+
+#[test]
+fn a_mismatched_profile_after_renewal_stores_the_old_token_marked_for_sign_in() {
+    // The token is renewed, then the services name another profile than the one signed in.
+    // What is stored is the previous Minecraft token with Microsoft's rotated refresh token and
+    // the refusal; the replacement, issued for another profile, is never kept under this one.
+    let (_, ep) = mock(|_| {});
+    let store = MemoryStore::default();
+    let mut accounts = Accounts::default();
+    let other = Account {
+        uuid: "0f22b7ed5e3d4a2c9bfe2f6f8f1f6a01".into(),
+        name: "Alex".into(),
+        skin: None,
+        cape: None,
+    };
+    let near = Secrets {
+        minecraft_expires_at: now() + 1800,
+        ..secrets("old-token", true)
+    };
+    accounts.add(&store, other.clone(), &near).unwrap();
+    assert!(launch_for_game(&ep, Some("test-client"), &store, &mut accounts).is_err());
+    let stored = secrets_in(&store, &other.uuid).unwrap();
+    assert_eq!(stored.minecraft_token, "old-token");
+    assert_eq!(stored.minecraft_expires_at, near.minecraft_expires_at);
+    assert_eq!(stored.refresh_token, "ms-refresh-2");
+    assert!(stored.sign_in_required);
+}
+
+#[test]
+fn a_no_after_renewal_stores_the_old_token_and_the_answer() {
+    let (_, ep) = mock(|m| m.owns_game = false);
+    let store = MemoryStore::default();
+    let near = Secrets {
+        minecraft_expires_at: now() + 1800,
+        ..secrets("old-token", true)
+    };
+    let mut accounts = signed_in(&store, &near);
+    assert!(launch_for_game(&ep, Some("test-client"), &store, &mut accounts).is_err());
+    let stored = kept(&store);
+    assert_eq!(stored.minecraft_token, "old-token");
+    assert_eq!(stored.refresh_token, "ms-refresh-2");
+    assert!(!stored.owns);
 }

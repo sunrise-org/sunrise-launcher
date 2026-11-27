@@ -1442,9 +1442,10 @@ fn an_installed_legacy_pin_still_starts_its_client() {
     use std::os::unix::fs::PermissionsExt;
     const ACTOR: &str = "SUNRISE_STABLE_LEGACY_PLAY_TEST";
     const OLD: &str = "v2026.10.13";
-    const UUID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const UUID: &str = crate::account::tests::UUID;
     if std::env::var_os(ACTOR).is_none() {
         let root = tempfile::tempdir().unwrap();
+        let services = crate::account::tests::minecraft_services_mock();
         assert!(Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
@@ -1455,6 +1456,7 @@ fn an_installed_legacy_pin_still_starts_its_client() {
             .env("SUNRISE_HOME", root.path().join("game"))
             .env("SUNRISE_TELEMETRY_URL", "off")
             .env("SUNRISE_NO_KEYCHAIN", "1")
+            .env("SUNRISE_MINECRAFT_SERVICES_ENDPOINT", &services)
             .status()
             .unwrap()
             .success());
@@ -1475,12 +1477,13 @@ fn an_installed_legacy_pin_still_starts_its_client() {
     fs::write(&client, "#!/bin/sh\nprintf 'legacy client reached\\n'\n").unwrap();
     fs::set_permissions(&client, fs::Permissions::from_mode(0o700)).unwrap();
 
-    // Local stand-in for an already authenticated session; no service is contacted.
+    // Local stand-in for an already authenticated session against the loopback mock.
     let accounts =
         serde_json::json!({"selected": UUID, "accounts": [{"uuid": UUID, "name": "Player"}]});
     fs::write(data.join("accounts.json"), accounts.to_string()).unwrap();
-    let secrets = serde_json::json!({"refresh_token":"fixture", "minecraft_token":"fixture",
-        "minecraft_expires_at":SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 3600});
+    let secrets = serde_json::json!({"refresh_token":"fixture", "minecraft_token":"mc-token",
+        "minecraft_expires_at":SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 7200,
+        "owns": true});
     crate::account::store()
         .set(UUID, &secrets.to_string())
         .unwrap();
@@ -1506,6 +1509,7 @@ fn same_day_rolling_nightly_remains_the_play_target_offline() {
     const OLD: &str = "nightly-2026-11-20-bbbbbbb";
     if std::env::var_os(ACTOR).is_none() {
         let root = tempfile::tempdir().unwrap();
+        let services = crate::account::tests::minecraft_services_mock();
         assert!(Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
@@ -1516,6 +1520,7 @@ fn same_day_rolling_nightly_remains_the_play_target_offline() {
             .env("SUNRISE_HOME", root.path().join("game"))
             .env("SUNRISE_TELEMETRY_URL", "off")
             .env("SUNRISE_NO_KEYCHAIN", "1")
+            .env("SUNRISE_MINECRAFT_SERVICES_ENDPOINT", &services)
             .status()
             .unwrap()
             .success());
@@ -1562,12 +1567,13 @@ fn same_day_rolling_nightly_remains_the_play_target_offline() {
         fs::write(&client, format!("#!/bin/sh\nprintf '%s' '{name}'\n")).unwrap();
         fs::set_permissions(client, fs::Permissions::from_mode(0o700)).unwrap();
     }
-    const UUID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const UUID: &str = crate::account::tests::UUID;
     let accounts =
         serde_json::json!({"selected": UUID, "accounts": [{"uuid": UUID, "name": "Player"}]});
     fs::write(data.join("accounts.json"), accounts.to_string()).unwrap();
-    let secrets = serde_json::json!({"refresh_token":"fixture", "minecraft_token":"fixture",
-        "minecraft_expires_at":SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 3600});
+    let secrets = serde_json::json!({"refresh_token":"fixture", "minecraft_token":"mc-token",
+        "minecraft_expires_at":SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 7200,
+        "owns": true});
     crate::account::store()
         .set(UUID, &secrets.to_string())
         .unwrap();

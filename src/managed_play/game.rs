@@ -30,7 +30,7 @@ impl Profile {
             (command, selection),
             &[],
             piped,
-            || Ok(()),
+            |_| Ok(()),
         )
         .map_err(String::from)
     }
@@ -51,7 +51,7 @@ impl Profile {
             command,
             (launch, piped, &|_| {}),
             |_| Ok(()),
-            || Ok(()),
+            |_| Ok(()),
         )
     }
 
@@ -62,7 +62,7 @@ impl Profile {
         mut command: Command,
         (launch, piped, hook_log): (&crate::launch::Launch, bool, &dyn Fn(String)),
         prepare_jars: impl FnOnce(&Command) -> Result<(), String>,
-        check_account: impl FnOnce() -> Result<(), String>,
+        check_account: impl FnOnce(&mut Command) -> Result<(), StartError>,
     ) -> Result<(Child, RuntimeGuard), StartError> {
         let wrapper = crate::launch::managed_wrapper(&mut command, launch);
         let selection = validate_selection(self.home(), &active.resource_path(), &command)?;
@@ -86,7 +86,7 @@ impl Profile {
         selected: (Command, LaunchArguments),
         wrapper: &[std::ffi::OsString],
         piped: bool,
-        check_account: impl FnOnce() -> Result<(), String>,
+        check_account: impl FnOnce(&mut Command) -> Result<(), StartError>,
     ) -> Result<(Child, RuntimeGuard), StartError> {
         self.verified_handoff(active, cancellation, |profile| {
             let (command, selection) = selected;
@@ -146,7 +146,10 @@ impl Profile {
                 use std::os::unix::process::CommandExt;
                 command.process_group(0);
             }
-            check_account()?;
+            check_account(&mut command)?;
+            // Signing in can take a network round trip after the handoff's own checks: a Stop
+            // pressed meanwhile still starts no game.
+            cancellation.check()?;
             let child = if wrapper.is_empty() {
                 let program = command.get_program().to_string_lossy().into_owned();
                 leases
@@ -252,4 +255,124 @@ fn validate_selection(
         return Err(invalid());
     }
     Ok(selection)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    const BUILD: &str = "v0.1.7";
+    const CASE: &str =
+        "managed_play::game::tests::the_account_check_runs_after_the_start_up_checks_and_gates_the_spawn";
+
+    /// #542: the account check (where Play writes the session file) runs only once the start-up
+    /// checks of the image have passed, and nothing is spawned until it has answered.
+    #[test]
+    fn the_account_check_runs_after_the_start_up_checks_and_gates_the_spawn() {
+        if std::env::var_os("SESSION_ORDER_FIXTURE").is_none() {
+            let temp = tempfile::tempdir().unwrap();
+            let root = backend::plain(temp.path().canonicalize().unwrap());
+            assert!(Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", CASE, "--nocapture"])
+                .env("SESSION_ORDER_FIXTURE", "1")
+                .env("SUNRISE_HOME", root.join("game"))
+                .env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
+                .env("XDG_CONFIG_HOME", root.join("config"))
+                .status()
+                .unwrap()
+                .success());
+            return;
+        }
+        let home = backend::game_home();
+        let folder = backend::version_dir(BUILD);
+        let resources = backend::resources(BUILD);
+        std::fs::create_dir_all(&resources).unwrap();
+        std::fs::write(resources.join("sunrise-resources.json"), b"{}").unwrap();
+        std::fs::write(folder.join(".installed"), []).unwrap();
+        std::fs::write(folder.join(backend::CLIENT), "client").unwrap();
+        std::fs::create_dir_all(home.join(sunrise_launcher_smod::mod_list::DIR)).unwrap();
+        std::fs::write(
+            home.join(sunrise_launcher_smod::index::browser_state::MANIFEST),
+            br#"{"entries": []}"#,
+        )
+        .unwrap();
+        let cancellation = Cancellation::default();
+        let mut profile = Profile::open(&home, None).unwrap();
+        let active = profile
+            .begin_first(|| super::super::FirstBuild::installed(BUILD), |_| {})
+            .unwrap()
+            .commit(BUILD, &cancellation)
+            .unwrap();
+        let command = || {
+            let mut command = Command::new(folder.join(backend::CLIENT));
+            command
+                .current_dir(&home)
+                .arg("--resources")
+                .arg(active.resource_path());
+            command
+        };
+        let events = RefCell::new(Vec::<&str>::new());
+        let attempt = || {
+            let command = command();
+            let selection =
+                validate_selection(profile.home(), &active.resource_path(), &command).unwrap();
+            profile.spawn_selected(
+                &active,
+                &cancellation,
+                (command, selection),
+                &[],
+                false,
+                |command: &mut Command| {
+                    events.borrow_mut().push("account check");
+                    command.arg("--session-file").arg("written-here");
+                    Err(StartError::Other("refused at the account check".into()))
+                },
+            )
+        };
+
+        // The image changed since it was checked: the start-up checks refuse, and the account
+        // check (the session file) never happens.
+        std::fs::write(folder.join(backend::CLIENT), "tampered").unwrap();
+        assert!(attempt().is_err());
+        assert!(
+            events.borrow().is_empty(),
+            "no session before the checks pass"
+        );
+
+        // The checks pass: the account check runs, and its refusal means no game starts.
+        std::fs::write(folder.join(backend::CLIENT), "client").unwrap();
+        let refused = attempt()
+            .err()
+            .map(|e| format!("{e:?}"))
+            .unwrap_or_default();
+        assert_eq!(*events.borrow(), ["account check"], "{refused}");
+        assert!(
+            refused.contains("refused at the account check"),
+            "{refused}"
+        );
+
+        // Stop pressed while the account check signs in: the check answers, but no game starts.
+        let stopped = {
+            let command = command();
+            let selection =
+                validate_selection(profile.home(), &active.resource_path(), &command).unwrap();
+            profile.spawn_selected(
+                &active,
+                &cancellation,
+                (command, selection),
+                &[],
+                false,
+                |_: &mut Command| {
+                    cancellation.stop();
+                    Ok(())
+                },
+            )
+        };
+        let stopped = format!(
+            "{:?}",
+            stopped.err().expect("a stopped Play starts no game")
+        );
+        assert!(stopped.contains("cancelled"), "{stopped}");
+    }
 }

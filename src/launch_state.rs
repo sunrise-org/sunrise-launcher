@@ -613,27 +613,7 @@ impl Launcher {
                 let mut captured_build_error = false;
                 if let (Some(run), Err(error)) = (&mut self.mods_state.build, result.as_ref()) {
                     if active_play_build {
-                        match error {
-                            _ if cancelled => run.cancelled(),
-                            StartError::Native(error, build) => {
-                                run.failed_build = build.clone();
-                                run.native_failed(error, &[]);
-                            }
-                            StartError::Other(error) => {
-                                run.stopped(
-                                    tr("The build could not finish. No game was started.").into(),
-                                    error.clone(),
-                                );
-                                captured_build_error = true;
-                            }
-                            StartError::Journal(error) => {
-                                run.stopped(error.summary().into(), error.details())
-                            }
-                            _ => run.stopped(
-                                tr("The build could not be published.").into(),
-                                String::new(),
-                            ),
-                        }
+                        captured_build_error = settle_play_build_error(run, error, cancelled);
                     }
                 }
                 if !self.mods_state.build.as_ref().is_some_and(|run| {
@@ -717,6 +697,34 @@ impl Launcher {
             _ => unreachable!("not a play message"),
         }
     }
+}
+
+fn settle_play_build_error(
+    run: &mut crate::mods::build_run::Run,
+    error: &StartError,
+    cancelled: bool,
+) -> bool {
+    match error {
+        _ if cancelled => run.cancelled(),
+        StartError::Native(error, build) => {
+            run.failed_build = build.clone();
+            run.native_failed(error, &[]);
+        }
+        StartError::Other(error) => {
+            run.stopped(
+                tr("The build could not finish. No game was started.").into(),
+                error.clone(),
+            );
+            return true;
+        }
+        StartError::Journal(error) => run.stopped(error.summary().into(), error.details()),
+        StartError::Account(refused) => run.stopped(refused.in_window(), String::new()),
+        _ => run.stopped(
+            tr("The build could not be published.").into(),
+            String::new(),
+        ),
+    }
+    false
 }
 
 #[cfg(test)]

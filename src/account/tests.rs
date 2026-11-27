@@ -6,13 +6,15 @@ use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::Instant;
 
-const UUID: &str = "069a79f444e94726a5befca90e38aaf5";
+pub(crate) const UUID: &str = "069a79f444e94726a5befca90e38aaf5";
 
 /// What the mock answers and what it was asked.
 #[derive(Default)]
 struct Mock {
     /// Polls left before the token endpoint stops saying authorization_pending.
     pending: usize,
+    refresh_refused: Option<u16>,
+    entitlements_refused: Option<u16>,
     xerr: Option<u64>,
     owns_game: bool,
     no_profile: bool,
@@ -168,6 +170,9 @@ fn route(mock: &mut Mock, method: &str, path: &str, auth: &str, body: &str) -> (
                     json!({"access_token": "ms-access-1", "refresh_token": "ms-refresh-1", "expires_in": 3600}),
                 )
             }
+            Some("refresh_token") if mock.refresh_refused.is_some() => {
+                reply(mock.refresh_refused.unwrap(), json!({}))
+            }
             Some("refresh_token") if form("refresh_token").as_deref() == Some("ms-refresh-1") => {
                 reply(
                     200,
@@ -225,6 +230,9 @@ fn route(mock: &mut Mock, method: &str, path: &str, auth: &str, body: &str) -> (
                 200,
                 json!({"username": "mock", "access_token": "mc-token", "token_type": "Bearer", "expires_in": 86400}),
             )
+        }
+        ("GET", "/mc/entitlements/mcstore") if mock.entitlements_refused.is_some() => {
+            reply(mock.entitlements_refused.unwrap(), json!({}))
         }
         ("GET", "/mc/entitlements/mcstore") => {
             assert_eq!(auth, "Bearer mc-token");
@@ -367,6 +375,11 @@ fn mock(f: impl FnOnce(&mut Mock)) -> (Arc<Mutex<Mock>>, Endpoints) {
     let m = Arc::new(Mutex::new(m));
     let ep = serve(m.clone());
     (m, ep)
+}
+
+#[cfg(unix)]
+pub(crate) fn minecraft_services_mock() -> String {
+    mock(|_| {}).1.minecraft
 }
 
 fn notch() -> Account {

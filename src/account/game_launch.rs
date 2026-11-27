@@ -135,7 +135,18 @@ pub fn launch(
                 (None, secrets)
             }
             Check::DoesNot(secrets) => (Some(crate::i18n::tr(DOES_NOT_OWN).to_string()), secrets),
-            Check::NoAnswer(e, secrets) => (Some(e.to_string()), secrets),
+            Check::NoAnswer(e, secrets) => {
+                // No answer, but the token the keychain keeps is still good: the game plays
+                // signed in with it rather than without a session (#542).
+                // Only when the services couldn't answer: a refusal (401/403, a bad profile) or a
+                // locked keychain never starts the game on the kept token.
+                if plays && matches!(e, SignInError::Unavailable(_)) && still_valid(&secrets) {
+                    pass.session = Some((account.clone(), secrets.clone()));
+                    (None, secrets)
+                } else {
+                    (Some(e.to_string()), secrets)
+                }
+            }
         };
         owned = secrets.owns;
         if plays {
@@ -185,6 +196,20 @@ pub fn launch_for_game(
         .selected()
         .and_then(|a| secrets_in(store, &a.uuid))
         .is_some_and(|s| s.owns);
+    if owns && pass.session.is_none() {
+        // A signed launcher never starts the game for a signed-in player without a session
+        // (#542): online-mode servers would refuse them. Play stops with the reason; pressing
+        // Play again retries. Only developer builds play offline, and they never get here.
+        let why = pass
+            .offline
+            .unwrap_or_else(|| crate::i18n::tr(NEEDS_OWNER).to_string());
+        return Err(NoOwner {
+            keyring: Some(crate::i18n::trf(
+                "Couldn't sign in to play online: {why} Press Play to try again.",
+                &[("why", &why)],
+            )),
+        });
+    }
     if owns {
         Ok(pass)
     } else {
@@ -193,6 +218,35 @@ pub fn launch_for_game(
             keyring: pass.offline,
         })
     }
+}
+
+/// How long a kept Minecraft token must still last for the game to start with it when the
+/// services can't be asked: a running game is handed a renewed session before then.
+pub(super) const STILL_VALID_FOR: u64 = 300;
+
+/// Whether the kept sign-in can start the game by itself: not marked for a new sign-in, owns
+/// the game by the last answer, and its token outlasts [`STILL_VALID_FOR`] by its own `exp`.
+pub(super) fn still_valid(secrets: &Secrets) -> bool {
+    !secrets.sign_in_required
+        && secrets.owns
+        && !secrets.minecraft_token.is_empty()
+        && secrets.minecraft_expires_at > now() + STILL_VALID_FOR
+        && token_exp(&secrets.minecraft_token).is_none_or(|exp| exp > now() + STILL_VALID_FOR)
+}
+
+/// The `exp` claim of a JWT access token, read locally (#618); none when the token isn't a
+/// JWT. The signature isn't checked here: the token came from the services over TLS and stays
+/// in the keychain, and the services check it again on every use.
+pub(super) fn token_exp(token: &str) -> Option<u64> {
+    use base64::Engine as _;
+    let payload = token.split('.').nth(1)?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload.trim_end_matches('='))
+        .ok()?;
+    serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()?
+        .get("exp")?
+        .as_u64()
 }
 
 /// Write the session for the game, readable by this user only, in a fresh file it deletes
@@ -372,7 +426,7 @@ pub fn session_for_game(game_home: &Path) -> Result<GameSession, NoOwner> {
     if let Err(e) = accounts.save_renewed() {
         eprintln!("Sunrise: the accounts are not saved: {e}");
     }
-    Ok(session_file(game_home, pass))
+    session_file(game_home, pass)
 }
 
 /// [`session_for_game`] for the account that was selected when Play was accepted, `accepted`:
@@ -391,7 +445,7 @@ pub fn session_for_game_accepted(game_home: &Path, accepted: &str) -> Result<Gam
     if let Err(e) = accounts.save_renewed() {
         eprintln!("Sunrise: the accounts are not saved: {e}");
     }
-    Ok(session_file(game_home, pass))
+    session_file(game_home, pass)
 }
 
 pub(super) fn launch_accepted(
@@ -439,7 +493,7 @@ pub fn session_for_game_as(game_home: &Path, who: &str) -> Result<GameSession, S
     if let Err(e) = accounts.save_renewed() {
         eprintln!("Sunrise: the accounts are not saved: {e}");
     }
-    Ok(session_file(game_home, pass?))
+    session_file(game_home, pass?).map_err(|e| e.to_string())
 }
 
 /// The owner gate as `who`, on `accounts`, which keeps its choice of player.
@@ -459,16 +513,16 @@ pub(super) fn launch_as(
 }
 
 /// The game's session files for a launch that passed the gate.
-fn session_file(game_home: &Path, pass: Launch) -> GameSession {
+fn session_file(game_home: &Path, pass: Launch) -> Result<GameSession, NoOwner> {
     let mut out = GameSession {
         offline: pass.offline,
         ..GameSession::default()
     };
     if let Some((account, secrets)) = pass.session {
-        match write_launch_session_file(&game_home.join("sessions"), &account, &secrets) {
-            Ok(file) => out.file = Some(file),
-            Err(e) => out.offline = Some(e),
-        }
+        // A session that can't be written is a stopped Play, not a signed-out game (#542).
+        let file = write_launch_session_file(&game_home.join("sessions"), &account, &secrets)
+            .map_err(|e| NoOwner { keyring: Some(e) })?;
+        out.file = Some(file);
     }
-    out
+    Ok(out)
 }

@@ -214,31 +214,18 @@ impl Client<'_> {
         instances::apply(&mut cmd, self.instance)?;
         let vars = self.instance.vars();
         cmd.envs(vars.iter().map(|(key, value)| (key, value)));
-        progress(Progress::SignIn);
-        let notice;
-        let session_file = if offline {
+        // The session is made last, just before the process starts (#542): the game refuses a
+        // session file older than two minutes, and the start-up checks (every file of the
+        // prepared resources is hashed) can take longer than that on a slow disk.
+        let offline_notice = if offline {
             developer_offline::require_capability(tag)?;
             developer_offline::mark(&mut cmd);
-            notice = Some(crate::i18n::tr(developer_offline::NOTICE).into());
-            None
+            Some(crate::i18n::tr(developer_offline::NOTICE).into())
         } else {
-            let uuid = self
-                .accepted_account
-                .ok_or_else(|| StartError::Account(NoOwner::default()))?;
-            let session = account::session_for_game_accepted(&backend::game_home(), uuid)
-                .map_err(StartError::Account)?;
-            let session_file = session.file.clone();
-            notice = if let Some(reason) = session.apply(&mut cmd) {
-                Some(crate::i18n::trf(
-                    "Playing offline: {reason}",
-                    &[("reason", &reason)],
-                ))
-            } else {
-                account::take_unsaved()
-            };
-            session_file
+            None
         };
-        account::retain_launch_session(session_file.as_deref());
+        let session_file = std::cell::RefCell::new(None::<std::path::PathBuf>);
+        let notice = std::cell::RefCell::new(offline_notice);
         let launch = &self.instance.launch;
         let started = (|| {
             arguments(&mut cmd)?;
@@ -250,15 +237,39 @@ impl Client<'_> {
                     progress(Progress::HookLine(line))
                 }),
                 prepare_jars,
-                || {
-                    if let Some(uuid) = self.accepted_account.filter(|_| !offline) {
-                        account::check_launch_account(&Accounts::load(), uuid)
-                            .map_err(|refused| refused.in_window())?;
+                |cmd: &mut Command| {
+                    if offline {
+                        return Ok(());
                     }
+                    // Account refusals stay `StartError::Account`: the window opens sign-in for
+                    // them, and never reports them as a failed build.
+                    let uuid = self
+                        .accepted_account
+                        .ok_or_else(|| StartError::Account(NoOwner::default()))?;
+                    account::check_launch_account(&Accounts::load(), uuid)
+                        .map_err(StartError::Account)?;
+                    progress(Progress::SignIn);
+                    let session = account::session_for_game_accepted(&backend::game_home(), uuid)
+                        .map_err(StartError::Account)?;
+                    // Signed out while the services were asked: that session never plays.
+                    if let Err(refused) = account::check_launch_account(&Accounts::load(), uuid) {
+                        account::discard_launch_session(session.file);
+                        return Err(StartError::Account(refused));
+                    }
+                    account::retain_launch_session(session.file.as_deref());
+                    *session_file.borrow_mut() = session.file.clone();
+                    *notice.borrow_mut() = session
+                        .apply(cmd)
+                        .map(|reason| {
+                            crate::i18n::trf("Playing offline: {reason}", &[("reason", &reason)])
+                        })
+                        .or_else(account::take_unsaved);
                     Ok(())
                 },
             )
         })();
+        let session_file = session_file.into_inner();
+        let notice = notice.into_inner();
         match started {
             Ok((child, mut runtime)) => {
                 runtime.managed_session = session_file;
