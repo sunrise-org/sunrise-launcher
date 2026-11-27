@@ -2612,5 +2612,13 @@
   "The compiler that builds native mods: downloaded again the next time one is built.": "คอมไพเลอร์สำหรับบิลด์ม็อดเนทีฟ: ดาวน์โหลดอีกครั้งเมื่อมีการบิลด์ครั้งถัดไป",
   "The game packages native mods are built against: downloaded again when needed.": "แพ็กเกจเกมที่ใช้บิลด์ม็อดเนทีฟ: ดาวน์โหลดใหม่เมื่อจำเป็น",
   "This Dev build's title ({title}) doesn't name its date and commit as Sunrise signs them, so it can't be checked: it was not installed.": "ชื่อบิลด์ Dev นี้ ({title}) ไม่ระบุวันที่และคอมมิตตามรูปแบบลายเซ็นของ Sunrise จึงตรวจสอบไม่ได้และไม่ได้ติดตั้ง",
-  "Tiles": "ไทล์"
+  "Tiles": "ไทล์",
+  "Turning off running in the background": "กำลังปิดการทำงานเบื้องหลัง",
+  "Type a command: say Hello, time set day…": "พิมพ์คำสั่ง: say Hello, time set day…",
+  "Updating the list": "กำลังอัปเดตรายการ",
+  "Vanilla-like": "คล้าย Vanilla",
+  "What building native mods leaves behind: made again when needed.": "ไฟล์ที่เหลือจากการบิลด์ม็อดเนทีฟ: สร้างใหม่เมื่อจำเป็น",
+  "While you play, the game sends an anonymous \"I'm playing\" ping once a minute, so the launcher can show how many people play Sunrise right now. It holds: a random number made when the game starts and forgotten when it closes, the Sunrise version, your OS (Linux, macOS or Windows), and whether you have a world open to LAN or friends. It doesn't hold: your account, your install ID, world or server names, or anything you do in the game, and the server doesn't keep your IP address. It is on unless you turn it off.": "ขณะเล่น เกมจะส่งสัญญาณ \"ฉันกำลังเล่น\" แบบไม่ระบุตัวตนทุกนาที เพื่อให้ launcher แสดงจำนวนผู้เล่น Sunrise ในขณะนี้ ข้อมูลที่ส่งมี: ตัวเลขสุ่มที่สร้างเมื่อเริ่มเกมและลบทิ้งเมื่อปิดเกม เวอร์ชัน Sunrise ระบบปฏิบัติการ (Linux, macOS หรือ Windows) และการเปิดโลกให้ LAN หรือเพื่อนเข้าร่วม ข้อมูลที่ไม่ส่ง: บัญชี ID การติดตั้ง ชื่อโลกหรือเซิร์ฟเวอร์ หรือกิจกรรมในเกม และเซิร์ฟเวอร์จะไม่เก็บ IP ของคุณ ฟีเจอร์นี้เปิดอยู่เว้นแต่คุณจะปิด",
+  "World generation": "การสร้างโลก",
+  "Your benchmark results, for the community results page.": "ผลการวัดประสิทธิภาพของคุณสำหรับหน้าผลลัพธ์ชุมชน"
 }

@@ -2117,5 +2117,13 @@
   "{tag} is not installed.": "{tag} غير مثبّت.",
   "{time} played": "مدة اللعب {time}",
   "{total} mods total · {fit} fit {target} · {other} for other builds": "إجمالي الإضافات {total} · المتوافق مع {target}: {fit} · لإصدارات أخرى: {other}",
-  "{track} @ {commit}": "{track} @ {commit}"
+  "{track} @ {commit}": "{track} @ {commit}",
+  "{value}: say {one} or {other}": "{value}: قل {one} أو {other}",
+  "{version} · {size}": "{version} · {size}",
+  "{warning} Try again in Settings → Storage.": "{warning} حاول مجددًا من الإعدادات ← التخزين.",
+  "↑ ↓ to move · Enter to open · Esc to close": "↑ ↓ للتنقل · Enter للفتح · Esc للإغلاق",
+  "Custom background": "خلفية مخصصة",
+  "Your picture, behind every page.": "صورتك خلف كل صفحة.",
+  "The theme's picture, behind every page.": "صورة السمة خلف كل صفحة.",
+  "The theme, its accent and what is behind the pages.": "السمة ولونها البارز والخلفية وراء الصفحات."
 }
