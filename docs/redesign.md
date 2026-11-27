@@ -16,6 +16,10 @@ This file is the brief for everyone working on the branch, people and agents. Re
 - Every string goes through `tr`/`trf`; labels reached later are `tr_key("…")` where defined.
   New keys go into `lang/en.json` with `tools/launcher_add_lang_keys.py`.
 - Reduced motion: nothing animates under it (`motion::still()`, `motion::eased`).
+- **The cat** (`src/cat/`): it peeks out, walks the empty part of the play bar, sleeps on Play
+  and can be petted. It moves with Play into the profile page's banner (walking the space beside
+  Play and Profile settings) and keeps its switch (Settings › Appearance › Show the cat) and its
+  reduced-motion behaviour.
 - Keyboard: every control stays reachable with Tab, Esc still closes the top layer, Ctrl K
   searches, Ctrl B toggles the sidebar.
 
