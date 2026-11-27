@@ -3,7 +3,7 @@
 use super::*;
 use crate::widgets::button::{icon_button, Style};
 use crate::widgets::focus::Reach;
-use gpui::{rgb, MouseButton, MouseDownEvent};
+use gpui::{rgb, AnyElement, App, MouseButton, MouseDownEvent, Window};
 use instances::{Icon, Instance, Kind};
 use std::{cell::Cell, rc::Rc};
 
@@ -54,6 +54,91 @@ fn row_height(open: f32) -> f32 {
     PROFILE_ROW_CLOSED + (PROFILE_ROW - PROFILE_ROW_CLOSED) * open.clamp(0., 1.)
 }
 
+/// A profile's mark when the sidebar is open, and folded. Folded, the mark sits in the nav
+/// rows' 30 by 36 highlight with 4 px of it showing at each side, as a nav row's icon does.
+const MARK_OPEN: f32 = 28.;
+const MARK_CLOSED: f32 = 22.;
+
+/// The mark's size `open` of the way, easing with the sidebar so it never jumps.
+fn mark_size(open: f32) -> f32 {
+    MARK_CLOSED + (MARK_OPEN - MARK_CLOSED) * open.clamp(0., 1.)
+}
+
+/// The height of the dots that grow under a folded profile's mark when the pointer is on it.
+const DOTS_HEIGHT: f32 = 16.;
+
+/// Whether a profile's fill and dots are the entry's: the sidebar is folded and profiles can be
+/// picked.
+fn folds_open(look: Look) -> bool {
+    look.open <= 0. && look.lock.is_none()
+}
+
+/// The actions button of a folded profile, which grows under its mark while the pointer is on the
+/// entry `hover_id` (see `track_hover`) and fades in with it, then eases away again. It is built
+/// only while the hover eases, so it is no Tab stop at rest. It opens the same menu as the open
+/// sidebar's button.
+/// A click handler that several closures share.
+type OnClick = dyn Fn(&gpui::ClickEvent, &mut Window, &mut App);
+
+fn folded_dots(i: &Instance, hover_id: &SharedString, cx: &mut Context<Launcher>) -> AnyElement {
+    let p = palette();
+    let button = Rc::new(Cell::new(gpui::Bounds::<gpui::Pixels>::default()));
+    let menu_of = i.clone();
+    let read_button = button.clone();
+    let pick: Rc<OnClick> = Rc::new(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+        this.open_profile_menu_under(&menu_of, read_button.get());
+        cx.notify();
+    }));
+    let key = SharedString::from(format!("profile-dots-{}", i.id));
+    let (ink, hover) = (rgb(p.chrome_text), rgb(p.hover));
+    crate::widgets::hover_fade(
+        hover_id,
+        || {
+            div()
+                .w_full()
+                .flex_none()
+                .overflow_hidden()
+                .flex()
+                .justify_center()
+        },
+        move |row, v| {
+            let v = v.clamp(0., 1.);
+            let write_button = button.clone();
+            let pick = pick.clone();
+            row.h(px(DOTS_HEIGHT * v)).child(
+                div()
+                    .id(key.clone())
+                    .w(px(28.))
+                    .h(px(DOTS_HEIGHT))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .opacity(v)
+                    .cursor_pointer()
+                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                    .hover(move |d| d.bg(hover))
+                    .tooltip(crate::glass_ui::tip(tr("Profile actions")))
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(2.))
+                            .children((0..3).map(|_| div().size(px(3.)).rounded_full().bg(ink))),
+                    )
+                    .child(
+                        gpui::canvas(
+                            move |bounds, _, _| write_button.set(bounds),
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .inset_0(),
+                    )
+                    .on_click(move |e, w, cx| pick(e, w, cx)),
+            )
+        },
+    )
+}
+
 /// A profile's name, fading in as the sidebar opens.
 fn label_text(open: f32, name: String, under: Option<&'static str>) -> Div {
     let line = |text: String| {
@@ -85,6 +170,8 @@ fn label_text(open: f32, name: String, under: Option<&'static str>) -> Div {
 fn profile_button(id: ElementId, name: String, on: bool, look: Look) -> Stateful<Div> {
     let p = palette();
     let labelled = look.open > 0.;
+    // Folded, the entry draws the fill, so it covers the dots that grow under the mark too.
+    let entry_fills = folds_open(look);
     div()
         .id(id)
         .reach_edge()
@@ -98,10 +185,11 @@ fn profile_button(id: ElementId, name: String, on: bool, look: Look) -> Stateful
         .items_center()
         .gap(px(4.))
         .pr(px(8. * look.open))
-        .when(on, |d| d.bg(rgb(p.selected)))
+        .when(on && !entry_fills, |d| d.bg(rgb(p.selected)))
         .when(look.lock.is_none(), |d| {
-            d.cursor_pointer()
-                .when(!on, |d| d.hover(|d| d.bg(rgb(p.chrome_raised))))
+            d.cursor_pointer().when(!on && !entry_fills, |d| {
+                d.hover(|d| d.bg(rgb(p.chrome_raised)))
+            })
         })
         .when(look.lock.is_some(), |d| d.opacity(0.45).tab_stop(false))
         .when(!labelled || look.lock.is_some(), |d| {
@@ -223,14 +311,21 @@ impl Launcher {
     }
 
     pub(crate) fn profile_mark(&mut self, i: &Instance, size: f32) -> Div {
+        self.profile_mark_from(i, size, size)
+    }
+
+    /// A profile's mark drawn `size` px wide from the picture made for `source` px, so a mark
+    /// that eases between two sizes keeps one decoded picture instead of asking for a new one
+    /// every frame.
+    fn profile_mark_from(&mut self, i: &Instance, size: f32, source: f32) -> Div {
         let p = palette();
-        let picture = self.icon_image(format!("picture:{}", i.id), size, || {
+        let picture = self.icon_image(format!("picture:{}", i.id), source, || {
             Some(i.home.join(instances::PICTURE))
         });
         let texture = match &i.icon {
             Some(icon @ Icon::Texture(name)) if picture.is_none() => {
                 self.version_of(i).cloned().and_then(|tag| {
-                    self.icon_image(format!("texture:{tag}:{name}"), size, || {
+                    self.icon_image(format!("texture:{tag}:{name}"), source, || {
                         instances::icon_texture(icon, &backend::resources(&tag))
                     })
                 })
@@ -365,7 +460,8 @@ impl Launcher {
     }
 
     /// One profile: its face, and its actions button while it is the selected one. The
-    /// selected profile looks selected only on the Home page.
+    /// selected profile looks selected only on the Home page. Folded, the entry is the highlight
+    /// (selected or hovered), and the pointer on it grows the actions dots under the mark.
     fn profile_entry(
         &mut self,
         n: usize,
@@ -373,10 +469,12 @@ impl Launcher {
         selected: Option<&str>,
         look: Look,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> Stateful<Div> {
+        let p = palette();
         let current = selected == Some(i.id.as_str());
+        let on = current && look.on_home;
         // Every profile has its actions button (the default one too) while the sidebar is open.
-        // Folded, a profile is its mark alone, and right-clicking opens the same menu.
+        // Folded, a profile is its mark alone until the pointer is on it.
         let more = (current || look.open > 0.) && !self.location_unavailable;
         let face = self.profile_face(n, &i, current, more, look, cx);
         let actions = if more {
@@ -384,13 +482,32 @@ impl Launcher {
         } else {
             None
         };
-        div()
+        let hover_id = SharedString::from(format!("profile-entry-{}", i.id));
+        let mut entry = div()
+            .id(hover_id.clone())
             .relative()
             .flex()
             .flex_col()
-            .flex_none()
-            .child(face)
-            .children(actions)
+            .flex_none();
+        let folded = folds_open(look);
+        if folded {
+            entry = crate::widgets::track_hover(entry, hover_id.clone())
+                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                .when(on, |d| d.bg(rgb(p.selected)))
+                .when(!on, |d| {
+                    d.child(crate::widgets::hover_layer(
+                        &hover_id,
+                        rgb(p.chrome_raised).into(),
+                        crate::tokens::R_CONTROL,
+                        0.,
+                    ))
+                });
+        }
+        entry = entry.child(face).children(actions);
+        if folded && !self.location_unavailable {
+            entry = entry.child(folded_dots(&i, &hover_id, cx));
+        }
+        entry
     }
 
     /// A profile's button: its mark and its name (the selected one's more button sits over its
@@ -413,9 +530,12 @@ impl Launcher {
             on,
             look,
         )
-        .child(icon_slot(self.profile_mark(i, 28.)).when(current, |d| {
-            d.debug_selector(|| "selected-profile-mark".into())
-        }));
+        .child(
+            icon_slot(self.profile_mark_from(i, mark_size(look.open), MARK_OPEN))
+                .when(current, |d| {
+                    d.debug_selector(|| "selected-profile-mark".into())
+                }),
+        );
         if labelled {
             // The channel of the build it plays (a Stable profile plays Nightly until Stable has
             // a build), as the banner's build line names it.

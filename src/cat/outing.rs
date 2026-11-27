@@ -1,5 +1,5 @@
 //! The play bar's scene: where the cat goes, how it gets there, and whether it may come out.
-use super::talk::{next_line, Bubble, Talk, SHOWN};
+use super::talk::{lasts, next_line, Bubble, Talk};
 use super::*;
 
 /// The bar is this wide before the cat has room beside Play, and the window this tall.
@@ -154,19 +154,21 @@ impl Outing {
         let roll = self.cat.random.next();
         let (said, talk) = next_line(self.talk, now, roll);
         self.talk = talk;
+        let lasts = lasts(crate::i18n::tr(said.line).chars().count());
         self.bubble = Some(Bubble {
             line: said.line,
             since: now,
+            lasts,
         });
         self.cat.state = State::Sit;
         self.cat.playing = None;
         self.cat.pet(now);
-        self.cat.next_at = now + SHOWN + 400.;
+        self.cat.next_at = now + lasts + 400.;
         let until = if said.leaves {
             self.away_for = Some([20000., 40000.]);
             now + 1500.
         } else {
-            now + SHOWN + 1000.
+            now + lasts + 1000.
         };
         let until = match self.scene {
             Scene::Visit { until: old, .. } if !said.leaves => old.max(until),
@@ -180,7 +182,7 @@ impl Outing {
 
     /// Clears a bubble that has run its time.
     fn expire_bubble(&mut self, now: f32) {
-        if self.bubble.is_some_and(|b| now - b.since >= SHOWN) {
+        if self.bubble.is_some_and(|b| now - b.since >= b.lasts) {
             self.bubble = None;
         }
     }

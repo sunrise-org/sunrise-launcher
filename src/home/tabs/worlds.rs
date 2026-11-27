@@ -37,11 +37,11 @@ impl Launcher {
             // A world copied into the folder shows up here.
             let saves = instance.home.join("saves");
             let open =
-                // Figma: a plain text link under the empty state's words.
+                // An outlined button, as every other empty state has.
                 button(
                     "home-worlds-folder",
                     tr("Open worlds folder"),
-                    Look::new(Style::Ghost, Size::Medium),
+                    Look::new(Style::Secondary, Size::Medium),
                 )
                 .on_click(move |_, _, cx| {
                     match std::fs::create_dir_all(&saves) {

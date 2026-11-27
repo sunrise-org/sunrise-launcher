@@ -42,8 +42,17 @@ impl Launcher {
                     .justify_center()
                     .child(search),
             )
-            .child(sidebar)
-            .child(brand())
+            // The toggle is centred over the folded sidebar's icons (27 px in from the window's
+            // edge, past the bar's 8 px padding), and the brand keeps clear of it.
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(2. * (crate::rail::CLOSED_ICON_CENTRE - 8.)))
+                    .flex()
+                    .justify_center()
+                    .child(sidebar),
+            )
+            .child(brand().ml(px(6.)))
             .child(drag)
             .children(update)
             .child(account)

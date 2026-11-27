@@ -18,6 +18,8 @@ const CLOSED: f32 = 54.;
 const OPEN: f32 = 232.;
 /// The sidebar's padding on every side.
 const RAIL_PAD: f32 = 12.;
+/// Where a folded sidebar's icons are centred, from the sidebar's left edge.
+pub(crate) const CLOSED_ICON_CENTRE: f32 = CLOSED / 2.;
 /// The width a closed sidebar's rows and profile columns have inside its padding.
 const CLOSED_ROW: f32 = CLOSED - 2. * RAIL_PAD;
 /// A nav row's icon, and the padding either side of it that centres it in the closed column.

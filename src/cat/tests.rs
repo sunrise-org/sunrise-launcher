@@ -231,42 +231,84 @@ mod talk {
     }
 
     #[test]
-    fn quick_clicks_run_the_escalation_in_order_and_the_last_one_leaves() {
-        let (first, mut talk) = click(Talk::default(), 0., 0.3);
-        assert!(LINES.contains(&first.line));
-        for (i, want) in ESCALATION.iter().enumerate() {
-            let (said, next) = click(talk, 1000. * (i + 1) as f32, 0.5);
-            assert_eq!(said.line, *want);
-            assert_eq!(said.leaves, i == ESCALATION.len() - 1);
-            talk = next;
+    fn every_escalation_has_four_distinct_steps_and_the_last_one_leaves() {
+        let mut all = std::collections::HashSet::new();
+        for (n, steps) in ESCALATIONS.iter().enumerate() {
+            let own: std::collections::HashSet<_> = steps.iter().collect();
+            assert_eq!(own.len(), steps.len(), "sequence {n} repeats a step");
+            for line in steps {
+                assert!(!LINES.contains(line), "{line} is also a first-click line");
+                assert!(all.insert(*line), "{line} is in two sequences");
+            }
         }
-        // It left: the next click, however soon, starts over with a random line.
-        let (said, _) = click(talk, 5500., 0.5);
-        assert!(LINES.contains(&said.line));
+    }
+
+    #[test]
+    fn quick_clicks_run_the_picked_escalation_in_order_and_the_last_one_leaves() {
+        for (n, steps) in ESCALATIONS.iter().enumerate() {
+            // The roll that picks sequence n.
+            let pick = (n as f32 + 0.5) / ESCALATIONS.len() as f32;
+            let (first, mut talk) = click(Talk::default(), 0., 0.3);
+            assert!(LINES.contains(&first.line));
+            for (i, want) in steps.iter().enumerate() {
+                // Later rolls do not change the sequence it is in.
+                let roll = if i == 0 { pick } else { 0.99 };
+                let (said, next) = click(talk, 1000. * (i + 1) as f32, roll);
+                assert_eq!(said.line, *want);
+                assert_eq!(said.leaves, i == steps.len() - 1);
+                talk = next;
+            }
+            // It left: the next click, however soon, starts over with a random line.
+            let (said, _) = click(talk, 5500., 0.5);
+            assert!(LINES.contains(&said.line));
+        }
+    }
+
+    #[test]
+    fn every_escalation_can_be_picked() {
+        let mut seen = std::collections::HashSet::new();
+        for i in 0..20 {
+            let (_, talk) = click(Talk::default(), 0., 0.1);
+            let (said, _) = click(talk, 1000., i as f32 / 20.);
+            seen.insert(said.line);
+        }
+        assert_eq!(seen.len(), ESCALATIONS.len());
     }
 
     #[test]
     fn a_pause_resets_the_escalation() {
+        let first = ESCALATIONS[0];
         let (_, talk) = click(Talk::default(), 0., 0.1);
-        let (said, talk) = click(talk, 1000., 0.1);
-        assert_eq!(said.line, ESCALATION[0]);
-        let (said, talk) = click(talk, 2000., 0.1);
-        assert_eq!(said.line, ESCALATION[1]);
+        let (said, talk) = click(talk, 1000., 0.);
+        assert_eq!(said.line, first[0]);
+        let (said, talk) = click(talk, 2000., 0.9);
+        assert_eq!(said.line, first[1]);
         // More than four seconds of peace.
         let (said, talk) = click(talk, 7000., 0.1);
         assert!(LINES.contains(&said.line));
-        let (said, _) = click(talk, 8000., 0.1);
-        assert_eq!(said.line, ESCALATION[0]);
+        let (said, _) = click(talk, 8000., 0.);
+        assert_eq!(said.line, first[0]);
+    }
+
+    #[test]
+    fn a_longer_line_stays_longer_up_to_a_cap() {
+        assert_eq!(lasts(0), 3500.);
+        assert!(lasts(40) > lasts(10));
+        assert_eq!(lasts(500), 7000.);
+        for line in LINES.iter().chain(ESCALATIONS.iter().flatten()) {
+            assert!(lasts(line.chars().count()) >= 3500.);
+        }
     }
 
     #[test]
     fn the_bubble_fades_in_holds_fades_out_and_is_plain_when_motion_is_reduced() {
-        assert_eq!(bubble_alpha(0., false), Some(0.));
-        assert_eq!(bubble_alpha(1500., false), Some(1.));
-        assert!(bubble_alpha(SHOWN - 100., false).is_some_and(|a| a > 0. && a < 1.));
-        assert_eq!(bubble_alpha(SHOWN, false), None);
-        assert_eq!(bubble_alpha(10., true), Some(1.));
-        assert_eq!(bubble_alpha(SHOWN + 1., true), None);
+        let shown = lasts(20);
+        assert_eq!(bubble_alpha(0., shown, false), Some(0.));
+        assert_eq!(bubble_alpha(1500., shown, false), Some(1.));
+        assert!(bubble_alpha(shown - 100., shown, false).is_some_and(|a| a > 0. && a < 1.));
+        assert_eq!(bubble_alpha(shown, shown, false), None);
+        assert_eq!(bubble_alpha(10., shown, true), Some(1.));
+        assert_eq!(bubble_alpha(shown + 1., shown, true), None);
     }
 
     #[test]
