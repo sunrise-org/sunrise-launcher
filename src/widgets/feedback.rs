@@ -176,19 +176,19 @@ pub(crate) fn empty_state(
         .child(
             div()
                 .text_size(px(HEADING))
-                .font_weight(FontWeight::SEMIBOLD)
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(c(p.text))
                 .child(title.into()),
         )
         .child(
             div()
-                .max_w(px(420.))
+                .max_w(px(380.))
                 .text_center()
                 .text_size(px(BODY))
                 .text_color(c(p.muted))
                 .child(label_line(body.into())),
         )
-        .children(action.map(|a| div().mt(px(8.)).child(a)))
+        .children(action.map(|a| div().mt(px(4.)).child(a)))
 }
 
 /// The card a toast draws its line on: 320 px, a tone icon, the content beside it. The toast

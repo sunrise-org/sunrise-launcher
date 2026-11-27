@@ -1231,7 +1231,6 @@
   "No saved servers": "No saved servers",
   "Servers you join or add show up here.": "Servers you join or add show up here.",
   "Open Servers": "Open Servers",
-  "No worlds here yet": "No worlds here yet",
   "Manage resource packs": "Manage resource packs",
   "Manage mods": "Manage mods",
   "Resource packs you add to this profile show up here.": "Resource packs you add to this profile show up here.",
@@ -1526,7 +1525,6 @@
   "Red": "Red",
   "Pink": "Pink",
   "Pick a colour, or type a colour name, a hue in degrees or #rrggbb. Play darkens a pale accent just enough for its white label.": "Pick a colour, or type a colour name, a hue in degrees or #rrggbb. Play darkens a pale accent just enough for its white label.",
-  "Worlds you make or copy in show up here.": "Worlds you make or copy in show up here.",
   "Latest stable": "Latest stable",
   "Latest nightly": "Latest nightly",
   "Latest dev": "Latest dev",
@@ -2657,5 +2655,14 @@
   "Upload skin": "Upload skin",
   "Version {number}": "Version {number}",
   "The name and icon you changed won't be saved.": "The name and icon you changed won't be saved.",
-  "This profile and its worlds and mods will move to the Trash. You can restore it from there.": "This profile and its worlds and mods will move to the Trash. You can restore it from there."
+  "This profile and its worlds and mods will move to the Trash. You can restore it from there.": "This profile and its worlds and mods will move to the Trash. You can restore it from there.",
+  "Search profiles, mods and packs": "Search profiles, mods and packs",
+  "1 day old": "1 day old",
+  "Discover mods & packs": "Discover mods & packs",
+  "Open worlds folder": "Open worlds folder",
+  "Start the game and choose Singleplayer to make one, or copy a world into its folder.": "Start the game and choose Singleplayer to make one, or copy a world into its folder.",
+  "built today": "built today",
+  "{channel} build": "{channel} build",
+  "{channel} build · {age}": "{channel} build · {age}",
+  "{days} days old": "{days} days old"
 }

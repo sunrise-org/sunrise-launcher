@@ -7,7 +7,7 @@ use gpui::{App, Div, Stateful, TitlebarOptions, Window};
 use sunrise_launcher::backend::Appearance;
 
 /// The title bar's height in the launcher's frame.
-pub const HEIGHT: f32 = 44.;
+pub const HEIGHT: f32 = 48.;
 
 /// The setup window's bar: a label and the window controls, nothing else.
 #[cfg(target_os = "windows")]

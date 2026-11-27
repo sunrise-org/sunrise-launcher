@@ -218,12 +218,10 @@ impl Launcher {
             .flex()
             .flex_col()
             .overflow_hidden()
-            .rounded(crate::tokens::r(crate::tokens::R_PANEL))
-            .bg(palette().chrome_plate())
-            .border_1()
-            // The subtle outline the search field has.
-            .border_color(palette().plate_edge())
-            .px(px(inset - 1.))
+            // On the page panel itself, under the banner (Figma: no card of its own, the tabs
+            // 30 px under the banner's edge).
+            .px(px(inset))
+            .pt(px(12.))
             // The tabs, with the profile's one action for its collection on the right.
             .child(
                 div()
@@ -232,8 +230,6 @@ impl Launcher {
                     .items_center()
                     .justify_between()
                     .gap(px(10.))
-                    .border_b_1()
-                    .border_color(palette().rule())
                     .child(strip)
                     .children(manage.map(|button| button.flex_none())),
             )

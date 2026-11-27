@@ -9,6 +9,11 @@ pub struct Assets;
 
 impl gpui::AssetSource for Assets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
+        if path == "banner.svg" {
+            return Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/media/banner.svg"
+            ))));
+        }
         if path == "dawn.webp" {
             return Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/media/dawn.webp"

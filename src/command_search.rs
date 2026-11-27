@@ -244,8 +244,14 @@ impl Launcher {
                 .text_size(px(tokens::LABEL))
                 .text_color(rgb(palette().chrome_muted))
                 .truncate()
-                .child(tr("Search…"));
-            search_box(false, key, word).w(px(if badge { 320. } else { 150. }))
+                .child(if badge {
+                    tr("Search profiles, mods and packs")
+                } else {
+                    tr("Search…")
+                });
+            search_box(false, key, word)
+                .h(px(34.))
+                .w(px(if badge { 300. } else { 150. }))
         };
         let button = body
             .id("search-open")

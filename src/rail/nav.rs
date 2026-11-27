@@ -60,8 +60,8 @@ impl Launcher {
         let discover = nav_item(
             open,
             "nav-discover",
-            "puzzle",
-            tr("Discover"),
+            "compass-01",
+            tr("Discover mods & packs"),
             matches!(active, Page::Discover | Page::Packs),
             false,
         )
@@ -72,7 +72,7 @@ impl Launcher {
         let servers = nav_item(
             open,
             "nav-servers",
-            "computer",
+            "server-stack",
             tr("Servers"),
             active == Page::Join,
             false,
@@ -112,7 +112,7 @@ impl Launcher {
         let mut help = nav_item(
             open,
             "sidebar-help",
-            "information-circle",
+            "help-circle",
             tr("Help & community"),
             false,
             false,
@@ -189,7 +189,7 @@ impl Launcher {
         nav_item(
             open,
             "sidebar-settings",
-            "sliders-horizontal",
+            "settings-01",
             tr("Settings"),
             selected,
             false,

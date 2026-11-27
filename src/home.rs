@@ -23,12 +23,17 @@ const WORLD_ROW_GAP: f32 = 4.;
 const WORLD_TILE: f32 = 128.;
 /// How much of a tile's data packs button shows while nothing points at the tile.
 const PACKS_AT_REST: f32 = 0.6;
-/// The room between the header and the panel under it.
-const GAP: f32 = 20.;
-/// How far the header stands in from the panel's edge: as far as the panel's own text (its
-/// 1 px edge and 22 px padding; the tabs panel pads `INSET - 1`), at every width and with the
-/// sidebar open or closed.
-const INSET: f32 = 1. + 22.;
+/// How far the tabs and their content stand in from the panel's edge: as far as the banner's
+/// own padding insets the profile (Figma: 24).
+const INSET: f32 = 24.;
+
+/// What stands in the profile banner.
+pub(crate) enum Art {
+    /// The design's own art, which fades into the panel on its left by itself.
+    Fading(Div),
+    /// A scene or a player's picture: the banner washes its left part with the panel.
+    Scene(Div),
+}
 
 #[derive(Default)]
 pub(crate) struct HomeState {
@@ -38,6 +43,8 @@ pub(crate) struct HomeState {
     menu: Rc<Cell<Option<Bounds<gpui::Pixels>>>>,
     /// The current frame's unboxed profile, measured before the backdrop is painted.
     hero: Rc<Cell<Option<Bounds<gpui::Pixels>>>>,
+    /// The art the frame drew for this frame's banner, taken by the banner.
+    pub(crate) art: Option<Art>,
     /// What the selected profile has installed.
     pub(crate) mods: crate::home_mods::Inventory,
     tabs: tabs::Tabs,
@@ -151,37 +158,6 @@ impl HomeState {
         })
     }
 
-    /// Feather the scene just behind the text. There is no fill or outline on the header;
-    /// the picture stays unshaded away from the text, and the shade is a wide, soft oval with
-    /// no edge to read as a box.
-    pub(crate) fn profile_scrim(&self) -> impl IntoElement {
-        const BLUR: f32 = 40.;
-        let hero = self.hero.clone();
-        let shade = gpui::BoxShadow {
-            color: Hsla::from(rgb(palette().hero.shade))
-                .opacity((palette().hero.shade_alpha + 0.05).min(1.)),
-            offset: gpui::point(px(0.), px(0.)),
-            blur_radius: px(BLUR),
-            spread_radius: px(0.),
-            inset: false,
-        };
-        gpui::canvas(
-            |_, _, _| {},
-            move |_, (), window, _| {
-                if let Some(hero) = hero.get() {
-                    // At three blur radii in from each edge, the text is in the shadow's
-                    // full-strength centre, above the opacity Paint uses to fit the ink.
-                    // Rounded to an oval: the text's corners still sit well inside it.
-                    let area = hero.dilate(px(3. * BLUR));
-                    let round = area.size.width.min(area.size.height) / 2.;
-                    window.paint_drop_shadows(area, gpui::Corners::all(round), &[shade]);
-                }
-            },
-        )
-        .absolute()
-        .inset_0()
-    }
-
     /// Where the build chooser opens: the left edge and the top, in the window.
     pub(crate) fn chooser_at(&self) -> (f32, f32) {
         match self.picker.get() {
@@ -271,10 +247,8 @@ impl Launcher {
             .min_w_0()
             .flex()
             .flex_col()
-            .gap(px(GAP))
-            .pt(px(if compact { 12. } else { 24. }))
-            // The profile sits on the scene, inset like the text of the panel under it.
-            .child(header.flex_none().px(px(inset)))
+            // The banner runs to the panel's edges; its own padding insets the profile.
+            .child(header.flex_none())
             .child(body)
             .into_any_element()
     }

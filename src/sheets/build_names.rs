@@ -21,7 +21,7 @@ pub(crate) fn build_name(tag: &str) -> String {
     )
 }
 
-pub(super) fn channel_name(channel: instances::Channel) -> &'static str {
+pub(crate) fn channel_name(channel: instances::Channel) -> &'static str {
     match channel {
         instances::Channel::Nightly => tr("Nightly"),
         instances::Channel::Stable => tr("Stable"),
@@ -96,6 +96,23 @@ pub(super) fn built_when(
 }
 
 impl Launcher {
+    /// How old the build `tag` is, as the profile banner says it: "built today", "1 day old",
+    /// "6 days old". `None` when its date isn't known.
+    pub(crate) fn build_age(&self, tag: &str) -> Option<String> {
+        let date = match self.game_releases().iter().find(|r| r.tag == tag) {
+            Some(release) => release.date.clone(),
+            None => backend::dev_date(tag)
+                .or_else(|| sunrise_launcher::nightly::date_of(tag))?
+                .to_string(),
+        };
+        let day = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d").ok()?;
+        Some(match (chrono::Utc::now().date_naive() - day).num_days() {
+            ..=0 => tr("built today").into(),
+            1 => tr("1 day old").into(),
+            days => trf("{days} days old", &[("days", &days.to_string())]),
+        })
+    }
+
     /// When `tag` was published: the catalogue's time when it lists the build, else the date
     /// in a dated tag.
     pub(crate) fn build_when(&self, tag: &str) -> Option<String> {

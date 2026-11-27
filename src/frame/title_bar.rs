@@ -1,5 +1,6 @@
-//! The one title bar across the top of the window: back, the sidebar toggle, the brand, the drag
-//! area, search, the update, the account and, where the launcher draws them, the window controls.
+//! The one title bar across the top of the window (Figma): the sidebar toggle and the brand on
+//! the left, the search field in the middle, the update, the account and, where the launcher
+//! draws them, the window controls on the right. Alt+Left goes back (`frame`'s key capture).
 
 use super::*;
 use crate::titlebar;
@@ -9,7 +10,6 @@ use gpui::{div, prelude::*, px, Div, FontWeight, Stateful};
 impl Launcher {
     pub(super) fn title_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let p = palette();
-        let back = self.back_button(cx);
         let sidebar = self.sidebar_toggle(cx);
         let search = self.search_button(cx);
         let update = self.launcher_update_control(cx);
@@ -32,33 +32,22 @@ impl Launcher {
             .when(cfg!(target_os = "macos"), |bar| bar.pl(px(78.)))
             .font_family(sunrise_launcher_theme::glass::FONT)
             .bg(rgb(p.chrome))
-            .border_b_1()
-            .border_color(p.rule())
-            .child(back)
+            // The search field sits in the bar's middle, whatever stands either side of it.
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(search),
+            )
             .child(sidebar)
             .child(brand())
             .child(drag)
-            .child(search)
             .children(update)
             .child(account)
             .children(controls)
-    }
-
-    /// Back to the page before this one: disabled with nothing to go back to. The keyboard's
-    /// Alt+Left does the same (`frame`'s key capture).
-    fn back_button(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let can = !self.ui.back.is_empty();
-        let look = Look::new(Style::Ghost, Size::Medium)
-            .icon("arrow-left-01")
-            .disabled(!can);
-        let back = icon_only("title-back", look).tooltip(crate::glass_ui::tip(tr("Back")));
-        if !can {
-            return back;
-        }
-        back.on_click(cx.listener(|this, _, _, cx| {
-            this.go_back();
-            cx.notify();
-        }))
     }
 
     /// Shows or hides the sidebar. Its tooltip is read when it shows: a press that is still
@@ -67,7 +56,7 @@ impl Launcher {
         let me = cx.weak_entity();
         icon_only(
             "sidebar-toggle",
-            Look::new(Style::Ghost, Size::Medium).icon("sidebar-left"),
+            Look::new(Style::Ghost, Size::Medium).icon("menu-01"),
         )
         .tooltip(crate::glass_ui::tip_with(move |cx| {
             let open = me
@@ -99,8 +88,8 @@ fn brand() -> Div {
         .child(
             div()
                 .whitespace_nowrap()
-                .text_size(px(tokens::LEAD))
-                .font_weight(FontWeight::SEMIBOLD)
+                .text_size(px(tokens::BODY))
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(rgb(p.text))
                 .child(tr("Sunrise")),
         )

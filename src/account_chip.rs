@@ -132,31 +132,27 @@ impl Launcher {
             let p = palette();
             let label = tr("Sign in with Microsoft");
             let icon_only = compact && self.bar_width() < 750.;
-            return crate::widgets::field::field_box(false, false)
+            // Figma: a small raised chip, the Microsoft mark and "Sign in".
+            return div()
                 .id("account-sign-in")
-                .min_w_0()
-                .h(px(tokens::FIELD))
-                .px(px(12.))
+                .flex()
+                .flex_none()
+                .items_center()
+                .h(px(28.))
+                .px(px(10.))
                 .gap(px(8.))
+                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                .bg(rgb(p.chrome_raised))
                 .text_size(px(tokens::LABEL))
-                .font_weight(FontWeight::SEMIBOLD)
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(rgb(p.chrome_text))
                 .whitespace_nowrap()
                 .cursor_pointer()
-                .hover(move |s| s.bg(rgb(p.chrome_raised)))
-                .reach_edge()
+                .hover(move |s| s.bg(rgb(p.hover)))
+                .reach()
                 .tooltip(crate::glass_ui::tip(label))
-                .child(crate::microsoft::logo(18.))
-                .when(icon_only, |chip| {
-                    chip.w(px(tokens::FIELD)).px_0().justify_center()
-                })
-                .when(!icon_only, |chip| {
-                    chip.child(div().min_w_0().truncate().child(if compact {
-                        tr("Sign in")
-                    } else {
-                        label
-                    }))
-                })
+                .child(crate::microsoft::logo(16.))
+                .when(!icon_only, |chip| chip.child(tr("Sign in")))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.account_action(Action::Add);
                     cx.notify();

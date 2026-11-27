@@ -28,8 +28,9 @@ impl Launcher {
             .children(state)
     }
 
-    /// The banner: the identity on the left, then Play, Profile settings and the cat's lane.
-    /// Under them, the build under way and what the profile says (or the receipt of a build).
+    /// The banner (Figma "Profile · …"): the scenery on its right, fading into the panel; the
+    /// mark, name and build line with Change build; under them Play and Profile settings, and
+    /// the cat's lane beside them. Under the banner: a build under way and what the profile says.
     fn profile_banner(
         &mut self,
         instance: &instances::Instance,
@@ -38,80 +39,91 @@ impl Launcher {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let scenery = self.settings.scenery();
         let (build, tag) = self.build_name(instance);
-        let identity = self.identity(instance, &build, tag, scenery, cx);
+        let identity = self.identity(instance, &build, tag, cx);
         let controls = div()
             .flex_none()
             .flex()
             .items_center()
-            .gap(px(if compact { 8. } else { 12. }))
+            .gap(px(8.))
             .child(self.play_button(view, compact, cx))
             .child(profile_settings_button(instance, cx))
             .child(self.profile_options_button(cx));
         // The cat walks the room beside the controls and sleeps on Play.
         let (lane, _) = self.cat(true, false, window, cx);
-        let row = div()
+        // The row is the buttons' height; the cat may stand taller than it, into the room above.
+        let actions = div()
             .w_full()
+            .h(px(tokens::PLAY))
             .flex()
-            .items_center()
-            .gap(px(16.))
-            .child(identity)
+            .items_end()
             .child(controls)
             // Its feet on the row's bottom line, as they stood on the old play bar's edge.
-            .child(lane.ml(px(12.)).self_end().mb(px(-crate::cat::BELOW_FEET)));
-        let frame = if scenery { div() } else { card() };
-        frame
-            .flex()
-            .flex_col()
-            .gap(px(14.))
-            .p(px(if compact { 14. } else { 20. }))
-            .child(row)
-            .children(self.build_progress(view, cx))
-            .children(self.says(instance, view, scenery, cx))
+            .child(lane.ml(px(12.)).mb(px(-crate::cat::BELOW_FEET)));
+        let art = self.ui.home.art.take();
+        let panel = palette().background;
+        div()
+            .relative()
+            .w_full()
+            .overflow_hidden()
+            .rounded_t(crate::tokens::r(crate::tokens::R_PANEL))
+            .when_some(art, |d, art| match art {
+                crate::home::Art::Fading(art) => d.child(art),
+                // A scene stands on the right; the panel's colour washes over its left part so
+                // the name and the buttons read on the panel, not on the picture.
+                crate::home::Art::Scene(art) => {
+                    d.child(art)
+                        .child(div().absolute().inset_0().bg(gpui::linear_gradient(
+                            90.,
+                            gpui::linear_color_stop(rgb(panel), 0.3),
+                            gpui::linear_color_stop(gpui::Hsla::from(rgb(panel)).opacity(0.), 0.7),
+                        )))
+                }
+            })
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .gap(px(20.))
+                    .p(px(if compact { 16. } else { 24. }))
+                    .pt(px(if compact { 16. } else { 32. }))
+                    .child(identity)
+                    .child(actions)
+                    .children(self.build_progress(view, cx))
+                    .children(self.says(instance, view, false, cx)),
+            )
     }
 
-    /// The profile's mark, name and build line, with Change build under the line.
+    /// The profile's mark, its name and, under the name, the build line ending in Change build.
     fn identity(
         &mut self,
         instance: &instances::Instance,
         build: &str,
         tag: Option<String>,
-        scenery: bool,
         cx: &mut Context<Self>,
     ) -> Div {
         let p = palette();
-        let text = rgb(if scenery { p.hero.text } else { p.text });
-        let ink = rgb(if scenery { p.hero.text } else { p.muted });
-        let line = self.ui.home.shade_behind(
-            div()
-                .min_w_0()
-                .truncate()
-                .text_size(px(tokens::SMALL))
-                .text_color(ink)
-                .child(identity_line(build.to_string(), instance)),
-            scenery,
-        );
         div()
-            .max_w(px(460.))
             .min_w_0()
             .flex()
             .items_center()
             .gap(px(16.))
-            .child(self.profile_mark(instance, 56.))
+            .child(self.profile_mark(instance, 60.))
             .child(
                 div()
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .gap(px(4.))
+                    .gap(px(2.))
                     .child(
                         div()
                             .min_w_0()
                             .truncate()
-                            .text_size(px(tokens::TITLE))
+                            .text_size(px(tokens::HERO))
+                            .line_height(px(tokens::HERO * 1.2))
                             .font_weight(FontWeight::BOLD)
-                            .text_color(text)
+                            .text_color(rgb(p.text))
                             .child(instance.name.clone()),
                     )
                     .child(
@@ -120,7 +132,14 @@ impl Launcher {
                             .items_center()
                             .gap(px(10.))
                             .min_w_0()
-                            .child(line)
+                            .text_size(px(tokens::LABEL))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(rgb(p.muted))
+                                    .child(identity_line(build.to_string(), instance)),
+                            )
                             .child(self.change_build(tag, cx)),
                     ),
             )
@@ -148,11 +167,13 @@ impl Launcher {
             |tag| {
                 let shown = base.as_deref().unwrap_or(tag);
                 // A Nightly or Dev build says how long ago it came out, as the menu does.
-                match (crate::sheets::dated_channel(shown), self.build_when(shown)) {
-                    (Some(channel), Some(when)) => trf(
-                        "{channel} · {version}",
-                        &[("channel", channel), ("version", &when)],
+                // Figma: "Nightly build · 6 days old".
+                match (crate::sheets::dated_channel(shown), self.build_age(shown)) {
+                    (Some(channel), Some(age)) => trf(
+                        "{channel} build · {age}",
+                        &[("channel", channel), ("age", &age)],
                     ),
+                    (Some(channel), None) => trf("{channel} build", &[("channel", channel)]),
                     _ => self.version_label(shown),
                 }
             },
@@ -163,29 +184,34 @@ impl Launcher {
     /// "Change build": the build chooser opens under it.
     fn change_build(&mut self, tag: Option<String>, cx: &mut Context<Self>) -> Stateful<Div> {
         let at = self.ui.home.picker.clone();
-        let change = button(
-            "alt-build",
-            tr("Change build"),
-            Look::new(Style::Secondary, Size::Small),
-        )
-        .flex_none()
-        .when_some(tag, |d, tag| d.tooltip(crate::glass_ui::tip(tag)))
-        .child(
-            gpui::canvas(
-                move |bounds, window, cx| {
-                    if at.replace(Some(bounds)) != Some(bounds) {
-                        // An open chooser follows it, in the frame after this one.
-                        let window = window.window_handle();
-                        cx.defer(move |cx| {
-                            window.update(cx, |_, window, _| window.refresh()).ok();
-                        });
-                    }
-                },
-                |_, _, _, _| {},
-            )
-            .absolute()
-            .inset_0(),
-        );
+        // A link, as the design draws it: the accent's ink, underlined.
+        let change = div()
+            .id("alt-build")
+            .relative()
+            .flex_none()
+            .cursor_pointer()
+            .text_color(rgb(palette().accent_ink))
+            .underline()
+            .hover(|d| d.opacity(0.85))
+            .reach()
+            .child(tr("Change build"))
+            .when_some(tag, |d, tag| d.tooltip(crate::glass_ui::tip(tag)))
+            .child(
+                gpui::canvas(
+                    move |bounds, window, cx| {
+                        if at.replace(Some(bounds)) != Some(bounds) {
+                            // An open chooser follows it, in the frame after this one.
+                            let window = window.window_handle();
+                            cx.defer(move |cx| {
+                                window.update(cx, |_, window, _| window.refresh()).ok();
+                            });
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            );
         change.on_click(cx.listener(|this, _, _, cx| {
             if !this.launch_busy() && this.client.is_none() {
                 this.open_sheet(Sheet::Build);
@@ -197,15 +223,20 @@ impl Launcher {
     /// Play: a Primary button at Play's height. It is still the one entry point for Play's
     /// state, label, tooltip and enabled flag; the cat sleeps on it when it is idle.
     fn play_button(&mut self, view: &View, compact: bool, cx: &mut Context<Self>) -> Stateful<Div> {
-        let idle = matches!(view.main, Main::Play | Main::BuildAndPlay);
+        // The play glyph stands before what starts the game, signing in first included.
+        let idle = matches!(
+            view.main,
+            Main::Play | Main::BuildAndPlay | Main::SignIn | Main::Install
+        );
         let look = Look::new(Style::Primary, Size::Medium).disabled(!view.enabled);
+        // Figma: the play glyph before the label, while Play (or Sign in & play) is what it does.
         let look = if idle { look.icon("play") } else { look };
         let play = button("alt-play", view.main.label(), look)
             .h(px(tokens::PLAY))
-            .min_w(px(if compact { 132. } else { 172. }))
-            .px(px(if compact { 12. } else { 22. }))
+            .min_w(px(if compact { 132. } else { 196. }))
+            .px(px(if compact { 12. } else { 20. }))
             .text_size(px(tokens::LEAD))
-            .font_weight(FontWeight::BOLD)
+            .font_weight(FontWeight::SEMIBOLD)
             // Nothing is added to the page: signed out, the tooltip says Play signs in first.
             .when_some(view.main.tooltip(), |d, text| {
                 d.tooltip(crate::glass_ui::tip(text))
@@ -230,6 +261,7 @@ impl Launcher {
             tr("Profile options"),
             Style::Secondary,
         )
+        .size(px(tokens::PLAY))
         .child(
             gpui::canvas(
                 move |bounds, window, cx| {
@@ -372,10 +404,12 @@ impl Launcher {
 }
 
 /// The build line: the build's name, then how long the profile was played, when it was.
+/// The line under the profile's name (Figma): "Nightly build · 6 days old · 3 h played · Last
+/// played today", or "… · Not played yet".
 fn identity_line(build: String, instance: &instances::Instance) -> String {
     match played_line(instance.played, instance.last_played) {
-        Some((time, _)) => format!("{build}  ·  {time}"),
-        None => build,
+        Some((time, last)) => format!("{build} · {time} · {last}"),
+        None => format!("{build} · {}", tr("Not played yet")),
     }
 }
 
@@ -388,8 +422,10 @@ fn profile_settings_button(
     button(
         "alt-profile-settings",
         tr("Profile settings"),
-        Look::new(Style::Secondary, Size::Medium),
+        Look::new(Style::Secondary, Size::Medium).icon("sliders-horizontal"),
     )
+    .h(px(tokens::PLAY))
+    .px(px(16.))
     .flex_none()
     .on_click(cx.listener(move |this, _, _, cx| {
         this.edit_profile(&target, cx);

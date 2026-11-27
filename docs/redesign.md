@@ -61,7 +61,7 @@ looks.
 - Corners ([`tokens.rs`](../src/tokens.rs)): bars 2, small 4, **controls and chips 6**, cards 8,
   panels and sheets 12. Chips are not pills. Switches and radios stay round.
 - Type: Geist (`FONT`), Geist Mono for logs and codes. Sizes as in `tokens.rs` (caption 11, small
-  12, label 13, body 14, lead 16, heading 18/20, title 24/28).
+  12, label 13, body 14, lead 16, heading 18/20, title 24/28, the profile's name 40).
 
 ### Selection
 
@@ -121,7 +121,7 @@ collapsed, toasts sliding in, a page rising in. Use `motion::eased`, `motion::Fa
 | 6 | Servers, Skins, Settings | done |
 | 7 | Sheets and popups | in progress |
 | 8 | Compact window (800×600), light theme | light theme in progress |
-| 9 | Final sweep: remove every leftover of the old design | to do |
+| 9 | Final sweep: remove every leftover of the old design (incl. the panel opacity and glass tint settings, `HomePhoto::tone`, `Plates`, the resolve sheet's own button colours) | to do |
 
 Not built because the backend has no data for them yet (see the Figma Notes page): a
 Modpacks kind in Discover, a Logs tab, ping on server rows, the mods count and loader in the

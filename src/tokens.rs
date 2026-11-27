@@ -43,6 +43,8 @@ pub(crate) const HEADING: f32 = 18.;
 pub(crate) const TITLE: f32 = 24.;
 /// A page's title.
 pub(crate) const DISPLAY: f32 = 28.;
+/// The profile's name in its banner.
+pub(crate) const HERO: f32 = 40.;
 
 // ---- corner radii
 
@@ -70,6 +72,6 @@ pub(crate) const HEADER: f32 = 54.;
 /// The equal inset of the sidebar and content from the window edges.
 pub(crate) const FRAME_INSET: f32 = 12.;
 /// Play, and the build picker beside it.
-pub(crate) const PLAY: f32 = 50.;
+pub(crate) const PLAY: f32 = 46.;
 /// How far a new page rises as it arrives.
 pub(crate) const RISE: f32 = sunrise_launcher_theme::RISE;

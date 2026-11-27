@@ -1,5 +1,5 @@
 use super::*;
-use crate::widgets::button::secondary;
+use crate::widgets::button::{button, secondary, Look, Size, Style};
 use crate::widgets::focus::c;
 use sunrise_launcher::worlds::World;
 
@@ -37,15 +37,21 @@ impl Launcher {
             // A world copied into the folder shows up here.
             let saves = instance.home.join("saves");
             let open =
-                secondary("home-worlds-folder", tr("Open folder")).on_click(move |_, _, cx| {
+                // Figma: a plain text link under the empty state's words.
+                button(
+                    "home-worlds-folder",
+                    tr("Open worlds folder"),
+                    Look::new(Style::Ghost, Size::Medium),
+                )
+                .on_click(move |_, _, cx| {
                     match std::fs::create_dir_all(&saves) {
                         Ok(()) => crate::toast::open(cx, &saves),
                         Err(e) => crate::toast::say(format!("{}: {e}", saves.display())),
                     }
                 });
             empty(
-                tr("No worlds here yet"),
-                tr("Worlds you make or copy in show up here."),
+                tr("No worlds yet"),
+                tr("Start the game and choose Singleplayer to make one, or copy a world into its folder."),
                 Some(open),
             )
         } else if self.worlds.list.is_empty() {

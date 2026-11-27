@@ -229,8 +229,9 @@ pub struct Settings {
     /// picture). Unset is on; off leaves the plain page (read it with [`Settings::scenery`]).
     #[serde(default, rename = "scenery", skip_serializing_if = "Option::is_none")]
     pub scenery_on: Option<bool>,
-    /// Show names alongside game profiles in the sidebar. Starts collapsed.
-    #[serde(default)]
+    /// The sidebar shows its labels (Ctrl+B folds it to icons). Starts open, as the design
+    /// draws it; a saved choice is kept.
+    #[serde(default = "open_sidebar")]
     pub sidebar_expanded: bool,
 }
 
@@ -472,4 +473,9 @@ pub(super) fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     #[cfg(unix)]
     file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
     file.write_all(bytes)
+}
+
+/// A settings file without a sidebar choice opens the sidebar.
+fn open_sidebar() -> bool {
+    true
 }

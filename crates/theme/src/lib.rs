@@ -50,7 +50,9 @@ pub mod fonts {
 /// new), `chat` (the sidebar's Discord link), `t-shirt` (the Skins tab) and `alert-02`
 /// (unreviewed-mod warnings) are drawn for Sunrise in the same 1.6 stroke, and so are `star` and
 /// `star-filled` (mod ratings), the second filled, `arrow-left-01` (the title bar's Back) and
-/// `sidebar-left` (its sidebar toggle).
+/// `sidebar-left`, `menu-01`, `compass-01`
+/// `server-stack` and
+/// `help-circle` (the sidebar's Discover, Servers and Help).
 pub mod glass_icons {
     macro_rules! icons {
         ($($name:literal),* $(,)?) => {
@@ -68,7 +70,11 @@ pub mod glass_icons {
         "arrow-right-01",
         "book",
         "chat",
+        "compass-01",
+        "help-circle",
         "map",
+        "server-stack",
+        "menu-01",
         "cancel-01",
         "sidebar-left",
         "clock",

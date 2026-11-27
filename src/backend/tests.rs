@@ -1003,9 +1003,9 @@ fn selected_architecture_uses_available_assets_and_only_the_safe_fallback() {
 }
 
 #[test]
-fn sidebar_starts_collapsed_and_remembers_both_positions() {
+fn sidebar_starts_open_and_remembers_both_positions() {
     let mut settings = Settings::parse("{}");
-    assert!(!settings.sidebar_expanded);
+    assert!(settings.sidebar_expanded);
     for expanded in [true, false] {
         settings.sidebar_expanded = expanded;
         let saved = serde_json::to_string(&settings).unwrap();
@@ -1506,10 +1506,10 @@ fn a_malformed_sidebar_choice_keeps_every_other_setting_through_a_save() {
         );
         // What the sidebar's toggle does: load, flip, save, and what the next start reads.
         let mut loaded = Settings::parse(&saved);
-        assert!(!loaded.sidebar_expanded, "{bad} starts collapsed");
+        assert!(loaded.sidebar_expanded, "{bad} starts open");
         loaded.sidebar_expanded = !loaded.sidebar_expanded;
         let again = Settings::parse(&serde_json::to_string(&loaded).unwrap());
-        assert!(again.sidebar_expanded);
+        assert!(!again.sidebar_expanded);
         assert_eq!(again.instance.as_deref(), Some("skyblock"), "{bad}");
         assert!(again.ping_off, "{bad} must not turn the ping back on");
         assert_eq!(

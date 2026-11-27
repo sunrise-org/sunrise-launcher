@@ -96,6 +96,35 @@ impl Launcher {
         if let Some(bench) = &mut self.bench {
             bench.frame(now, gap);
         }
+        // The scenery (or the player's picture) stands in the profile banner, not behind the
+        // window: the window is the flat chrome and the page one solid panel.
+        self.ui.home.art = (page == Page::Home && self.settings.scenery()).then(|| {
+            // Sunrise in the dark look draws the design's own banner art (mountains and pines
+            // that fade into the panel themselves); a picture or another theme stands its scene.
+            let sunrise = photo.is_none()
+                && self.theme.dark
+                && matches!(
+                    sunrise_launcher::themes::resolve(self.settings.theme.as_deref()),
+                    sunrise_launcher::themes::Resolved::Builtin(t)
+                        if t.id == sunrise_launcher::themes::DAWN_THEME.id
+                );
+            if sunrise {
+                crate::home::Art::Fading(
+                    div().absolute().inset_0().child(
+                        gpui::img("banner.svg")
+                            .size_full()
+                            .object_fit(gpui::ObjectFit::Cover),
+                    ),
+                )
+            } else {
+                crate::home::Art::Scene(self.ui.backdrop.render(
+                    &self.settings,
+                    &self.theme,
+                    photo.clone(),
+                    window,
+                ))
+            }
+        });
         crate::selectable::begin();
         crate::tokens::set_roundness(self.corner_roundness());
         // The plates drawn with `glass::backdrop` (the title bar, dialogs' backdrops) take the
@@ -238,11 +267,9 @@ impl Launcher {
             .flex()
             .flex_col()
             .rounded(crate::tokens::r(crate::tokens::R_PANEL))
-            .when(page != Page::Home, |d| {
-                d.bg(palette().chrome_plate())
-                    .border_1()
-                    .border_color(palette().rule())
-            })
+            .bg(rgb(palette().background))
+            .border_1()
+            .border_color(rgb(palette().divider))
             .overflow_hidden()
             .children(status)
             .children(self.registry_notice_strip(cx))
@@ -314,8 +341,10 @@ impl Launcher {
                     .flex()
                     .flex_1()
                     .min_h_0()
-                    .p(px(tokens::FRAME_INSET))
-                    .gap(px(12.))
+                    // The sidebar runs flush to the window's edge; the page panel keeps a margin
+                    // on its other sides (Figma: 12).
+                    .pr(px(12.))
+                    .pb(px(12.))
                     .child(rail)
                     .child(pane),
             );
@@ -337,18 +366,10 @@ impl Launcher {
         frame = frame.children(self.viewer(window, cx));
         frame = frame.children(self.toast_float(titlebar::HEIGHT));
         self.pictures.free_retired(window);
-        let scenery = self
-            .ui
-            .backdrop
-            .render(&self.settings, &self.theme, photo, window);
         div()
             .relative()
             .size_full()
-            .child(scenery)
-            .children(
-                (page == Page::Home && self.settings.scenery())
-                    .then(|| self.ui.home.profile_scrim()),
-            )
+            .bg(rgb(palette().chrome))
             .child(frame)
             .children(titlebar::resize_handles(window))
     }

@@ -82,7 +82,7 @@ impl Launcher {
     }
 
     /// The profile's Play target, including a build Play will have to install first.
-    pub(super) fn profile_target(&self, instance: &Instance) -> Option<String> {
+    pub(crate) fn profile_target(&self, instance: &Instance) -> Option<String> {
         if instance.kind != instances::Kind::Pack {
             match sunrise_launcher::managed_play::display_active(&instance.home) {
                 Ok(Some(active)) => return Some(active.base().to_owned()),

@@ -15,9 +15,9 @@ pub(crate) type ProfileRows = Rc<RefCell<Vec<(gpui::Bounds<gpui::Pixels>, Instan
 
 /// How wide the sidebar is closed, and open.
 const CLOSED: f32 = 54.;
-const OPEN: f32 = 204.;
+const OPEN: f32 = 232.;
 /// The sidebar's padding on every side.
-const RAIL_PAD: f32 = 8.;
+const RAIL_PAD: f32 = 12.;
 /// The width a closed sidebar's rows and profile columns have inside its padding.
 const CLOSED_ROW: f32 = CLOSED - 2. * RAIL_PAD;
 /// A nav row's icon, and the padding either side of it that centres it in the closed column.
@@ -341,8 +341,8 @@ mod tests {
         assert_eq!(CLOSED_ROW, rail_width(0.) - 2. * RAIL_PAD);
         // A nav row's icon sits centred in that column, and its label starts where a profile's does.
         assert_eq!(ICON_PAD * 2. + ICON, CLOSED_ROW);
-        assert_eq!(rail_width(0.), 54.);
-        assert_eq!(rail_width(1.), 204.);
+        assert_eq!(rail_width(0.), CLOSED);
+        assert_eq!(rail_width(1.), 232.);
         assert_eq!(label_opacity(0.2), 0.);
         assert_eq!(label_opacity(1.), 1.);
     }

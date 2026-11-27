@@ -32,6 +32,10 @@ use sunrise_launcher_theme::night::{over, Night};
 pub(crate) struct HomePhoto {
     pub image: Arc<RenderImage>,
     /// Representative colour of the visible pixels, computed once with the decode.
+    #[expect(
+        dead_code,
+        reason = "the flat window no longer tints from the picture; goes with the panel opacity setting in the final sweep"
+    )]
     pub tone: Option<u32>,
 }
 
@@ -164,21 +168,14 @@ impl Inputs {
         photo: Option<&HomePhoto>,
         preview: Option<u8>,
     ) -> Inputs {
-        // Backdrop renders either a decoded picture or a scene, even in performance mode;
-        // a missing picture falls back to a scene. Only turning scenery off removes both.
-        let plates = if !settings.scenery() || settings.reduced_graphics() {
-            Plates::Opaque
-        } else if let Some(percent) = preview.or(settings.panel_opacity()) {
-            Plates::Custom(percent)
-        } else if theme.photo {
-            Plates::Opaque
-        } else {
-            Plates::Automatic
-        };
+        // The window is flat (docs/redesign.md): the scenery stands only in the profile banner,
+        // so every plate is solid and in the theme's own colours, never tinted by the scene.
+        let _ = (settings, photo, preview);
+        let plates = Plates::Opaque;
         Inputs {
             night: theme.night,
-            scene_tone: theme.scene_tone,
-            photo_tone: photo.and_then(|p| p.tone),
+            scene_tone: None,
+            photo_tone: None,
             accent: theme.accent_choice.rgb(),
             play_seed: theme.play_seed,
             tint: settings.glass_tint(),
@@ -252,6 +249,10 @@ fn reads_over(ink: f32, plate: f32, lighter: bool, min: f32) -> bool {
 enum Plates {
     Opaque,
     Automatic,
+    #[expect(
+        dead_code,
+        reason = "the panel opacity setting has no effect on the flat window; removed in the final sweep"
+    )]
     Custom(u8),
 }
 
@@ -323,10 +324,10 @@ impl Inputs {
         let raised = veil(raised_base);
         let field = over(n.ink, fill::FIELD, card_color);
         let hover = over(n.ink, fill::ACTIVE, card_color);
-        // The selection is the accent washed into the plate, as strong as the text on it allows.
-        let selected = (0..14)
-            .map(|i| over(raw, 0.30 - 0.02 * i as f32, card_color))
-            .find(|&s| contrast(n.ink, s) >= TEXT)
+        // The selection is the raised surface (Figma bg/selected), as long as the text reads on
+        // it; else the hover's lift.
+        let selected = Some(raised)
+            .filter(|&s| contrast(n.ink, s) >= TEXT)
             .unwrap_or(hover);
         let surfaces = [background, card_color, raised, field, hover, selected];
         let chrome = veil(chrome_base);
@@ -573,11 +574,6 @@ impl Palette {
     /// A card, caption or plate: the theme's tint at the plates' opacity.
     pub(crate) fn card(&self) -> Hsla {
         Hsla::from(rgb(self.card_color)).opacity(self.alpha)
-    }
-
-    /// The material the sidebar and the bottom panel share.
-    pub(crate) fn chrome_plate(&self) -> Hsla {
-        Hsla::from(rgb(self.chrome)).opacity(self.alpha)
     }
 
     /// A text input's fill, and the account chip's: the field colour, part see-through, so

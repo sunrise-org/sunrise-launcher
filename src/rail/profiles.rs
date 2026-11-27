@@ -45,17 +45,29 @@ fn profile_heading(open: f32, group: String) -> Div {
 }
 
 /// A profile's name, fading in as the sidebar opens.
-fn label_text(open: f32, name: String) -> Div {
+fn label_text(open: f32, name: String, under: Option<&'static str>) -> Div {
+    let line = |text: String| {
+        div()
+            .overflow_hidden()
+            .whitespace_nowrap()
+            // An ellipsis would flicker along a label still being uncovered.
+            .when(open >= 1., |d| d.text_ellipsis())
+            .child(text)
+    };
     div()
         .min_w_0()
         .flex_1()
-        .overflow_hidden()
-        .whitespace_nowrap()
-        // An ellipsis would flicker along a label still being uncovered.
-        .when(open >= 1., |d| d.text_ellipsis())
+        .flex()
+        .flex_col()
         .opacity(label_opacity(open))
-        .text_size(px(tokens::LABEL))
-        .child(name)
+        .child(line(name).text_size(px(tokens::LABEL)))
+        // The profile's channel under its name (Figma: "Nightly · 3 mods"; the count is known
+        // only for the open profile, so the line names the channel).
+        .children(under.map(|under| {
+            line(under.to_owned())
+                .text_size(px(tokens::CAPTION))
+                .text_color(rgb(palette().muted))
+        }))
 }
 
 /// A profile's row: its selected fill (no accent edge), its hover while it can be picked, and
@@ -66,7 +78,7 @@ fn profile_button(id: ElementId, name: String, on: bool, look: Look) -> Stateful
     div()
         .id(id)
         .reach_edge()
-        .h(px(40.))
+        .h(px(48.))
         .flex_none()
         .w_full()
         .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
@@ -400,7 +412,14 @@ impl Launcher {
             d.debug_selector(|| "selected-profile-mark".into())
         }));
         if labelled {
-            button = button.child(label_text(look.open, i.name.clone()));
+            // The channel of the build it plays (a Stable profile plays Nightly until Stable has
+            // a build), as the banner's build line names it.
+            let under = self
+                .profile_target(i)
+                .as_deref()
+                .and_then(crate::sheets::dated_channel)
+                .unwrap_or_else(|| crate::sheets::channel_name(i.channel));
+            button = button.child(label_text(look.open, i.name.clone(), Some(under)));
         }
         if show_sun {
             button = button.child(sun().ml(px(4.)));
