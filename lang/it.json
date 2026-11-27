@@ -2400,5 +2400,15 @@
   "Duplicate native mod id {id}.": "ID mod nativa duplicato: {id}.",
   "Planning the build": "Pianificazione della build",
   "Checking the prebuilt game": "Verifica del gioco precompilato",
-  "Checking the Rust toolchain": "Verifica della toolchain Rust"
+  "Checking the Rust toolchain": "Verifica della toolchain Rust",
+  "Keeping the mods' libraries for the next build": "Conservazione delle librerie delle mod per la build successiva",
+  "The built game: {error}": "Gioco compilato: {error}",
+  "{id}: could not resolve [native] mixins: {error}": "{id}: impossibile risolvere i mixin [native]: {error}",
+  "Can't tell which of the mods' horizon-mixins revisions is newest: {error}": "Impossibile determinare quale revisione di horizon-mixins delle mod sia la più recente: {error}",
+  "Sunrise shader pack": "Pacchetto shader Sunrise",
+  "{error}. Write it as http://host:port or socks5://host:port.": "{error}. Inseriscilo come http://host:port o socks5://host:port.",
+  "Could not check running games and builds: {error}": "Impossibile verificare giochi e build in esecuzione: {error}",
+  "Could not check running games and builds; no files were moved.": "Impossibile verificare giochi e build in esecuzione; nessun file è stato spostato.",
+  "Could not read running processes: {error}": "Impossibile leggere i processi in esecuzione: {error}",
+  "Close games, servers and native builds before moving data ({name} is running).": "Chiudi giochi, server e build native prima di spostare i dati ({name} è in esecuzione)."
 }

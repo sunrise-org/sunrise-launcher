@@ -2301,5 +2301,15 @@
   "{name} is not a data pack the game reads.": "{name} ليست حزمة بيانات تقرؤها اللعبة.",
   "{name} has no data folder: it is a resource pack, not a data pack.": "لا يحتوي {name} على مجلد بيانات: إنها حزمة موارد وليست حزمة بيانات.",
   "{file} is not a data pack the game reads": "{file} ليست حزمة بيانات تقرؤها اللعبة",
-  "No data pack {query} in {folder}": "لا توجد حزمة بيانات {query} في {folder}"
+  "No data pack {query} in {folder}": "لا توجد حزمة بيانات {query} في {folder}",
+  "Nothing in it runs in Sunrise yet.": "لا يعمل أي شيء فيها على Sunrise بعد.",
+  "Runs its {counts}.": "تشغّل {counts} الخاصة بها.",
+  "{runs} Not read yet: {unread}.": "{runs} لم تتم قراءتها بعد: {unread}.",
+  "{kinds} and 1 other kind": "{kinds} ونوع آخر واحد",
+  "{kinds} and {n} other kinds": "{kinds} و{n} أنواع أخرى",
+  "Nothing to move": "لا يوجد شيء لنقله",
+  "it panicked": "حدث ذعر برمجي",
+  "Server ignored or changed the requested byte range": "تجاهل الخادم نطاق البايتات المطلوب أو غيّره",
+  "Unexpected partial response": "استجابة جزئية غير متوقعة",
+  "Resource changed during transfer": "تغيّر المورد أثناء النقل"
 }
