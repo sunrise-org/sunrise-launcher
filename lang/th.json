@@ -2636,5 +2636,15 @@
   "Building {mods}…": "กำลังบิลด์ {mods}…",
   "Skins and capes": "สกินและผ้าคลุม",
   "Search source projects…": "ค้นหาโปรเจกต์ซอร์ส…",
-  "Couldn't install the mod.": "ติดตั้งม็อดไม่ได้"
+  "Couldn't install the mod.": "ติดตั้งม็อดไม่ได้",
+  "Install stopped unexpectedly.": "การติดตั้งหยุดทำงานโดยไม่คาดคิด",
+  "No mods are listed for {target} yet": "ยังไม่มีม็อดในรายการสำหรับ {target}",
+  "The registry lists mods for recent Sunrise builds. Turn on Show all to see mods for other builds.": "รีจิสทรีแสดงม็อดสำหรับบิลด์ Sunrise รุ่นใหม่ เปิดแสดงทั้งหมดเพื่อดูม็อดของบิลด์อื่น",
+  "{build} isn't in the Sunrise registry yet, so its mods can't be installed.": "ยังไม่มี {build} ในรีจิสทรี Sunrise จึงติดตั้งม็อดของบิลด์นี้ไม่ได้",
+  "{build} isn't in the Sunrise registry yet.": "ยังไม่มี {build} ในรีจิสทรี Sunrise",
+  "No world {query} in {path}": "ไม่มีโลก {query} ใน {path}",
+  "Could not back up {name}: {error}": "สำรองข้อมูล {name} ไม่ได้: {error}",
+  "Profile game build: not played yet; it stays on {build}": "บิลด์เกมของโปรไฟล์: ยังไม่ได้เล่น; คงใช้ {build}",
+  "Profile game build: not played yet; it follows the newest {channel} build": "บิลด์เกมของโปรไฟล์: ยังไม่ได้เล่น; ใช้บิลด์ {channel} ล่าสุด",
+  "Every installed build named for these mods ({version}) holds other mods or was changed after it was installed. Remove them, then build again.": "บิลด์ที่ติดตั้งไว้ซึ่งตั้งชื่อตามม็อดเหล่านี้ ({version}) มีม็อดอื่นอยู่หรือถูกเปลี่ยนหลังติดตั้ง นำออกแล้วบิลด์อีกครั้ง"
 }
