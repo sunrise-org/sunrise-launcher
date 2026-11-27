@@ -255,6 +255,10 @@ impl Launcher {
             );
         }
         this.reload_instances();
+        // SUNRISE_LAUNCHER_PAGE opens a page at start (tools and screenshots of a page).
+        if let Ok(asked) = std::env::var("SUNRISE_LAUNCHER_PAGE") {
+            this.open_named_page(&asked);
+        }
         if this.bench.is_some() {
             this.perf.keep_local_log(false);
         }

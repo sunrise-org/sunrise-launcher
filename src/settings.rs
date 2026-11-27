@@ -230,6 +230,21 @@ fn launcher_check_line(
     }
 }
 
+impl Section {
+    /// The section a lower-case English name says, for `SUNRISE_LAUNCHER_PAGE=settings:<name>`.
+    pub(crate) fn named(name: &str) -> Option<Self> {
+        Some(match name {
+            "account" => Self::Account,
+            "game" => Self::Game,
+            "appearance" => Self::Appearance,
+            "storage" => Self::Storage,
+            "privacy" => Self::Privacy,
+            "launcher" => Self::Launcher,
+            _ => return None,
+        })
+    }
+}
+
 impl Launcher {
     /// A [`row`] whose controls are wide: in a narrow window they would leave the words a
     /// column a syllable wide, so there they go under the words.
@@ -401,6 +416,29 @@ impl Launcher {
     }
 
     /// Opens a section, leaving no question from another one standing.
+    /// Opens the page `asked` names (`home`, `discover`, `installed`, `packs`, `pack-find`,
+    /// `join`, `hosting`, `skins`, `settings`, or `settings:<section>`). An unknown name changes
+    /// nothing.
+    pub(crate) fn open_named_page(&mut self, asked: &str) {
+        let (page, section) = asked.split_once(':').unwrap_or((asked, ""));
+        let page = match page {
+            "home" => crate::frame::Page::Home,
+            "discover" => crate::frame::Page::Discover,
+            "installed" => crate::frame::Page::Installed,
+            "packs" => crate::frame::Page::Packs,
+            "pack-find" => crate::frame::Page::PackFind,
+            "join" => crate::frame::Page::Join,
+            "hosting" => crate::frame::Page::Hosting,
+            "skins" => crate::frame::Page::Skins,
+            "settings" => crate::frame::Page::Settings,
+            _ => return,
+        };
+        self.navigate(page);
+        if let Some(section) = Section::named(section) {
+            self.settings_open(section);
+        }
+    }
+
     pub(super) fn settings_open(&mut self, section: Section) {
         // Another section starts at its top, with its list of sections back in place: the old
         // section's scroll would cut the new one's title off, and the list would hold on to
