@@ -2596,5 +2596,13 @@
   "Backing up": "กำลังสำรองข้อมูล",
   "Changing operators": "กำลังเปลี่ยนผู้ดูแล",
   "Copying the game files": "กำลังคัดลอกไฟล์เกม",
-  "Core shaders": "เชดเดอร์หลัก"
+  "Core shaders": "เชดเดอร์หลัก",
+  "Game builds kept for running servers: downloaded again when needed.": "เก็บบิลด์เกมไว้สำหรับเซิร์ฟเวอร์ที่ทำงานอยู่: ดาวน์โหลดใหม่เมื่อจำเป็น",
+  "How smoothly Sunrise runs on your computer, so slowdowns can be found and fixed.": "ความลื่นไหลของ Sunrise บนคอมพิวเตอร์ของคุณ เพื่อค้นหาและแก้ปัญหาการทำงานช้า",
+  "Iris-format pack: most work, some effects may not": "แพ็กรูปแบบ Iris: ใช้ได้ส่วนใหญ่ แต่อาจมีบางเอฟเฟกต์ที่ใช้ไม่ได้",
+  "Java": "Java",
+  "Moving server to trash": "กำลังย้ายเซิร์ฟเวอร์ไปถังขยะ",
+  "Only the bug reports you write and send yourself.": "เฉพาะรายงานบั๊กที่คุณเขียนและส่งด้วยตนเอง",
+  "Other downloads kept to make the launcher faster.": "เก็บไฟล์ดาวน์โหลดอื่นไว้เพื่อให้ launcher ทำงานเร็วขึ้น",
+  "Restoring": "กำลังกู้คืน"
 }

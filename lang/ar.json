@@ -2101,5 +2101,13 @@
   "{name} is the game's own folder: it can't be deleted.": "{name} هو مجلد اللعبة نفسه، ولا يمكن حذفه.",
   "{name} needs it. It'll be turned off, and its files stay installed.": "يحتاج {name} إليها. ستتوقف، لكن ستظل ملفاتها مثبّتة.",
   "{name} needs one or more of these mods. It'll be turned off, and its files stay installed.": "يحتاج {name} إلى واحدة أو أكثر من هذه الإضافات. ستتوقف، لكن ستظل ملفاتها مثبّتة.",
-  "{name} was left out of this build: fit could not be verified ({why}).": "تم استبعاد {name} من هذا البناء: تعذّر التحقق من التوافق ({why})."
+  "{name} was left out of this build: fit could not be verified ({why}).": "تم استبعاد {name} من هذا البناء: تعذّر التحقق من التوافق ({why}).",
+  "{name} will go from {old} to {new}.": "سينتقل {name} من {old} إلى {new}.",
+  "{name} {version} will also be installed.": "سيتم أيضًا تثبيت {name} ‏{version}.",
+  "{name} · by {authors}": "{name} · بواسطة {authors}",
+  "{name} · {source}": "{name} · {source}",
+  "{name} · {version}": "{name} · {version}",
+  "{profile} ({build})": "{profile} ({build})",
+  "{profile} uses {build}, which is not installed. Install it, or use Switch to choose another build.": "يستخدم {profile} الإصدار {build} غير المثبّت. ثبّته أو استخدم «تبديل» لاختيار إصدار آخر.",
+  "{repo} doesn't exist, or is private.": "المستودع {repo} غير موجود أو خاص."
 }

@@ -2200,5 +2200,13 @@
   "Could not read the keychain. Unlock it and retry.": "Impossibile leggere il portachiavi. Sbloccala e riprova.",
   "Your Microsoft sign-in expired. Sign in again.": "La sessione Microsoft è scaduta. Accedi di nuovo.",
   "This account doesn't own Minecraft: Java Edition.": "Questo account non possiede Minecraft: Java Edition.",
-  "This account has no Minecraft profile yet. Create one at minecraft.net, then sign in again.": "Questo account non ha ancora un profilo Minecraft. Creane uno su minecraft.net, poi accedi di nuovo."
+  "This account has no Minecraft profile yet. Create one at minecraft.net, then sign in again.": "Questo account non ha ancora un profilo Minecraft. Creane uno su minecraft.net, poi accedi di nuovo.",
+  "The Microsoft account now has another Minecraft profile. Sign in again.": "L’account Microsoft ora dispone di un altro profilo Minecraft. Accedi di nuovo.",
+  "No keychain available: you are signed in until the launcher closes, then you will have to sign in again.": "Portachiavi non disponibile: resterai connesso fino alla chiusura del launcher, poi dovrai accedere di nuovo.",
+  "The keychain didn't answer earlier: sign in again to keep this account.": "Il portachiavi non ha risposto in precedenza: accedi di nuovo per mantenere questo account.",
+  "Add a Microsoft account": "Aggiungi un account Microsoft",
+  "Xbox Live": "Xbox Live",
+  "the Minecraft services": "i servizi Minecraft",
+  "Minecraft's services": "i servizi di Minecraft",
+  "No Sunrise release is tagged {tag}.": "Nessuna release Sunrise ha il tag {tag}."
 }
