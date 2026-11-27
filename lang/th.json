@@ -2317,5 +2317,20 @@
   "Unsupported proxy scheme": "ไม่รองรับรูปแบบพร็อกซีนี้",
   "URL has no host": "URL ไม่มีโฮสต์",
   "Redirect has no Location": "การเปลี่ยนเส้นทางไม่มี Location",
-  "{url} answered {status}": "{url} ตอบกลับ {status}"
+  "{url} answered {status}": "{url} ตอบกลับ {status}",
+  "Too many redirects": "มีการเปลี่ยนเส้นทางมากเกินไป",
+  "Artifact requires a 40-character SHA-1": "อาร์ติแฟกต์ต้องใช้ SHA-1 ความยาว 40 ตัวอักษร",
+  "Downloaded size or SHA-1 does not match the manifest": "ขนาดไฟล์ที่ดาวน์โหลดหรือ SHA-1 ไม่ตรงกับ manifest",
+  "{url}: {message} (after {seconds}s)": "{url}: {message} (หลัง {seconds} วินาที)",
+  "{completed} files complete, {active} active, {pending} pending; {speed} MiB/s; {verified}/{total} bytes": "เสร็จแล้ว {completed} ไฟล์ กำลังทำ {active} รอ {pending}; {speed} MiB/s; {verified}/{total} ไบต์",
+  "Unexpected partial metadata response": "ได้รับข้อมูลเมตากลับมาเพียงบางส่วนโดยไม่คาดคิด",
+  "Metadata exceeds 16 MiB": "ข้อมูลเมตามีขนาดเกิน 16 MiB",
+  "Redirect target must use HTTPS": "ปลายทางการเปลี่ยนเส้นทางต้องใช้ HTTPS",
+  "{name} has no world {world}.": "{name} ไม่มีโลก {world}",
+  "{name} has nothing to share yet: no settings, packs, mods or worlds.": "{name} ยังไม่มีอะไรให้แชร์: ไม่มีการตั้งค่า แพ็ก ม็อด หรือโลก",
+  "Could not export {name}: {error}": "ส่งออก {name} ไม่ได้: {error}",
+  "Log sharing is not configured for this build.": "ไม่ได้กำหนดค่าการแชร์ล็อกสำหรับบิลด์นี้",
+  "mclo.gs didn't take the log: {error}": "mclo.gs ไม่รับล็อก: {error}",
+  "mclo.gs answered something unexpected: {error}": "mclo.gs ตอบกลับสิ่งที่ไม่คาดคิด: {error}",
+  "mclo.gs didn't take the log: {reason}": "mclo.gs ไม่รับล็อก: {reason}"
 }

@@ -1822,5 +1822,20 @@
   "No Sunrise mod packages were found at {source}.": "لم يُعثر على حزم إضافات Sunrise في {source}.",
   "No Sunrise modpacks are installed.": "لا توجد حزم إضافات Sunrise مثبّتة.",
   "No Sunrise mods were found at this link.": "لم يُعثر على إضافات Sunrise في هذا الرابط.",
-  "No Sunrise mods were found in this release.": "لم يُعثر على إضافات Sunrise في هذا الإصدار."
+  "No Sunrise mods were found in this release.": "لم يُعثر على إضافات Sunrise في هذا الإصدار.",
+  "No build log was saved for this attempt.": "لم يُحفظ سجل بناء لهذه المحاولة.",
+  "No connection: Sunrise couldn't check what it needs to play.": "لا يوجد اتصال: تعذّر على Sunrise التحقق مما تحتاج إليه للعب.",
+  "No connection: the game couldn't be downloaded.": "لا يوجد اتصال: تعذّر تنزيل اللعبة.",
+  "No connection: the game's files couldn't be downloaded.": "لا يوجد اتصال: تعذّر تنزيل ملفات اللعبة.",
+  "No connection: the mod tools couldn't be downloaded.": "لا يوجد اتصال: تعذّر تنزيل أدوات الإضافات.",
+  "No exact download matches the saved build {version}.": "لا يوجد تنزيل مطابق تمامًا للبناء المحفوظ {version}.",
+  "No game address is available through Tailscale.": "لا يتوفر عنوان للعبة عبر Tailscale.",
+  "No game build selected": "لم يُحدد إصدار للعبة",
+  "No game builds installed": "لا توجد إصدارات لعبة مثبّتة",
+  "No group": "لا توجد مجموعة",
+  "No local network address was found. localhost works only on this computer.": "لم يُعثر على عنوان شبكة محلية. يعمل localhost على هذا الكمبيوتر فقط.",
+  "No matching mods": "لا توجد إضافات مطابقة",
+  "No matching mods fit {target}": "لا توجد إضافات مطابقة متوافقة مع {target}",
+  "No mods fit {target} yet": "لا توجد إضافات متوافقة مع {target} حتى الآن",
+  "No profile selected.": "لم يُحدد ملف شخصي."
 }

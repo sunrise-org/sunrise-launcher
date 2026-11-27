@@ -1921,5 +1921,20 @@
   "Start empty": "Inizia vuoto",
   "Stay to leave all your mods unchanged. Continue to install the checked set with the changes below.": "Resta per lasciare tutte le mod invariate. Continua per installare l’insieme selezionato con le modifiche indicate sotto.",
   "Stayed. No mods changed.": "Hai scelto di restare. Nessuna mod è stata modificata.",
-  "Stop the game before copying the profile it is using.": "Arresta il gioco prima di copiare il profilo che sta usando."
+  "Stop the game before copying the profile it is using.": "Arresta il gioco prima di copiare il profilo che sta usando.",
+  "Stopping…": "Arresto…",
+  "Sunrise Launcher is not installed for this account.": "Sunrise Launcher non è installato per questo account.",
+  "Sunrise can't check whether this update removes blocks or items your worlds use.": "Sunrise non può verificare se questo aggiornamento rimuove blocchi o oggetti usati dai tuoi mondi.",
+  "Sunrise can't tell which affected blocks and items are still in those worlds.": "Sunrise non può sapere quali blocchi e oggetti interessati siano ancora presenti in quei mondi.",
+  "Sunrise couldn't check which profiles use this build, so it was kept.": "Sunrise non ha potuto verificare quali profili usano questa build, quindi è stata conservata.",
+  "Sunrise couldn't prove a working mod set for this build.": "Sunrise non ha potuto confermare un insieme di mod funzionante per questa build.",
+  "Sunrise couldn't settle the profile's install transaction. The profile can't be used yet. Any recovery data was kept.": "Sunrise non ha potuto completare la transazione d’installazione del profilo. Il profilo non è ancora utilizzabile. I dati di ripristino sono stati conservati.",
+  "Sunrise couldn't verify the full mod set for this build. Nothing was switched.": "Sunrise non ha potuto verificare l’intero insieme di mod per questa build. Non è stato effettuato alcun passaggio.",
+  "Sunrise couldn't verify the installed mod set. Nothing was installed.": "Sunrise non ha potuto verificare l’insieme di mod installate. Non è stato installato nulla.",
+  "Sunrise didn't start: the game launch is no longer active or could not be verified.": "Sunrise non è stato avviato: l’avvio del gioco non è più attivo o non è stato possibile verificarlo.",
+  "Sunrise hasn't reviewed this code. Building and playing run the author's code on your computer.": "Sunrise non ha verificato questo codice. La compilazione e il gioco eseguono il codice dell’autore sul tuo computer.",
+  "Sunrise may have started. Close the game if it opened before trying again.\nWrapper: {wrapper}\n{reason}": "Sunrise potrebbe essersi avviato. Se il gioco si è aperto, chiudilo prima di riprovare.\nWrapper: {wrapper}\n{reason}",
+  "Sunrise started, but the launcher couldn't confirm that it stopped. Close the game if it's still open.\n{reason}": "Sunrise è stato avviato, ma il launcher non ha potuto confermare che si sia arrestato. Chiudi il gioco se è ancora aperto.\n{reason}",
+  "Switch anyway": "Passa comunque",
+  "Switch anyway? [y/N]": "Passare comunque? [y/N]"
 }
