@@ -2544,5 +2544,15 @@
   "Continue playing shows the worlds' pictures side by side, as many as fit across; the rest wrap under them.": "เล่นต่อจะแสดงภาพโลกเรียงเคียงกันเท่าที่พอดีในแถว ส่วนที่เหลือจะขึ้นแถวถัดไป",
   "Discard": "ละทิ้ง",
   "Discard your changes?": "ละทิ้งการเปลี่ยนแปลงหรือไม่?",
-  "Every AI feature in the launcher and the game is hidden and turned off: agent control of the launcher and the game, sunrise-ctl and the MCP servers.": "ซ่อนและปิดฟีเจอร์ AI ทั้งหมดใน launcher และเกม: การควบคุม launcher และเกมโดยเอเจนต์ sunrise-ctl และเซิร์ฟเวอร์ MCP"
+  "Every AI feature in the launcher and the game is hidden and turned off: agent control of the launcher and the game, sunrise-ctl and the MCP servers.": "ซ่อนและปิดฟีเจอร์ AI ทั้งหมดใน launcher และเกม: การควบคุม launcher และเกมโดยเอเจนต์ sunrise-ctl และเซิร์ฟเวอร์ MCP",
+  "Game storage is unavailable": "พื้นที่จัดเก็บเกมไม่พร้อมใช้งาน",
+  "Go to": "ไปที่",
+  "Hardcore": "ฮาร์ดคอร์",
+  "Hides and turns off every AI feature.": "ซ่อนและปิดฟีเจอร์ AI ทั้งหมด",
+  "Horizon Minecraft": "Horizon Minecraft",
+  "How the game starts. Its build is chosen beside Play on Home.": "วิธีเริ่มเกม เลือกบิลด์เกมข้างปุ่มเล่นในหน้าหลัก",
+  "Install a Sunrise game build first, then prepare it.": "ติดตั้งบิลด์เกม Sunrise ก่อน แล้วจึงเตรียมเกม",
+  "Install a game build first. An import reuses its game files.": "ติดตั้งบิลด์เกมก่อน การนำเข้าจะใช้ไฟล์เกมที่มีอยู่",
+  "Installed mods": "ม็อดที่ติดตั้ง",
+  "Installed resource and shader packs": "แพ็กทรัพยากรและ shader ที่ติดตั้ง"
 }

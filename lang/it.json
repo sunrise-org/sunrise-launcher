@@ -2148,5 +2148,15 @@
   "Switched to {build}.": "Passato a {build}.",
   "ETA: {duration}": "Tempo stimato: {duration}",
   "a few seconds": "pochi secondi",
-  "{seconds} sec": "{seconds} sec"
+  "{seconds} sec": "{seconds} sec",
+  "{minutes} min": "{minutes} min",
+  "{hours} hr": "{hours} h",
+  "{hours} hr {minutes} min": "{hours} h {minutes} min",
+  "Dev · finding builds…": "Dev · ricerca build…",
+  "Dev · builds didn't load": "Dev · caricamento build non riuscito",
+  "Edit profile": "Modifica profilo",
+  "Edit profile…": "Modifica profilo…",
+  "Rename it, move it to a group or pick another icon.": "Rinominalo, spostalo in un gruppo o scegli un’altra icona.",
+  "Installs {count} of its {all} mods: the rest don't fit this build yet.": "Installa {count} delle sue {all} mod: le altre non sono ancora compatibili con questa build.",
+  "Installs {count} of its {all} mods: the rest are optional. Open it to add them.": "Installa {count} delle sue {all} mod: le altre sono facoltative. Aprilo per aggiungerle."
 }

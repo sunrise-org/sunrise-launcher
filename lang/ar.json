@@ -2049,5 +2049,15 @@
   "You may lose blocks and items from the affected mods when you open {count} saved worlds without their definitions.": "قد تفقد كتلًا وعناصر من الإضافات المتأثرة عند فتح {count} من العوالم المحفوظة دون تعريفاتها.",
   "You're offline. Connect and try again.": "أنت غير متصل. اتصل وحاول مجددًا.",
   "You're offline. Connect to check the source.": "أنت غير متصل. اتصل للتحقق من المصدر.",
-  "Your world {worlds} uses them. Opening it without them removes their blocks and what they hold, for good.": "يستخدم عالمك {worlds} هذه الإضافات. فتحه بدونها يزيل كتلها وما تحتويه نهائيًا."
+  "Your world {worlds} uses them. Opening it without them removes their blocks and what they hold, for good.": "يستخدم عالمك {worlds} هذه الإضافات. فتحه بدونها يزيل كتلها وما تحتويه نهائيًا.",
+  "Your worlds stay in place. Check what could change before you switch.": "ستبقى عوالمك كما هي. تحقق مما قد يتغير قبل التبديل.",
+  "Your worlds {worlds} use them. Opening those without them removes their blocks and what they hold, for good.": "تستخدم عوالمك {worlds} هذه الإضافات. فتح تلك العوالم بدونها يزيل كتلها ومحتوياتها نهائيًا.",
+  "its package was made with a newer tool than this game uses; update the game to read its list": "تم إنشاء حزمتها بأداة أحدث مما تستخدمه اللعبة؛ حدّث اللعبة لقراءة قائمتها",
+  "its package was made with an older tool and doesn't record enough to show it fits; its author can pack it again with `cargo sunrise-mod build`": "تم إنشاء حزمتها بأداة أقدم ولا تسجل معلومات كافية لإثبات توافقها؛ يمكن لمؤلفها إعادة تعبئتها باستخدام `cargo sunrise-mod build`",
+  "px": "بكسل",
+  "the game's function {name}": "وظيفة اللعبة {name}",
+  "the game's item {name}": "عنصر اللعبة {name}",
+  "the game's loop {name}": "حلقة اللعبة {name}",
+  "the game's mixin tool": "أداة mixin الخاصة باللعبة",
+  "the game's type {name}": "نوع اللعبة {name}"
 }
