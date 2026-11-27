@@ -2208,5 +2208,13 @@
   "Xbox Live": "Xbox Live",
   "the Minecraft services": "i servizi Minecraft",
   "Minecraft's services": "i servizi di Minecraft",
-  "No Sunrise release is tagged {tag}.": "Nessuna release Sunrise ha il tag {tag}."
+  "No Sunrise release is tagged {tag}.": "Nessuna release Sunrise ha il tag {tag}.",
+  "No release is published yet.": "Non è stata ancora pubblicata alcuna release.",
+  "No release has a build for this platform yet.": "Nessuna release include ancora una build per questa piattaforma.",
+  "{tag} has no build for this platform.": "{tag} non include una build per questa piattaforma.",
+  "Could not save No AI: {error}": "Impossibile salvare No AI: {error}",
+  "No crash report in {path}.": "Nessun rapporto di arresto anomalo in {path}.",
+  "Download interrupted: {error}": "Download interrotto: {error}",
+  "Download worker stopped unexpectedly": "Il processo di download si è arrestato inaspettatamente",
+  "{file}: not the signed file": "{file}: non è il file firmato"
 }

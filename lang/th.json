@@ -2604,5 +2604,13 @@
   "Moving server to trash": "กำลังย้ายเซิร์ฟเวอร์ไปถังขยะ",
   "Only the bug reports you write and send yourself.": "เฉพาะรายงานบั๊กที่คุณเขียนและส่งด้วยตนเอง",
   "Other downloads kept to make the launcher faster.": "เก็บไฟล์ดาวน์โหลดอื่นไว้เพื่อให้ launcher ทำงานเร็วขึ้น",
-  "Restoring": "กำลังกู้คืน"
+  "Restoring": "กำลังกู้คืน",
+  "Rows": "แถว",
+  "Semi-realistic": "กึ่งสมจริง",
+  "Setting it to run in the background": "ตั้งค่าให้ทำงานเบื้องหลัง",
+  "Tells Sunrise, anonymously, that you're playing, so the launcher can show how many people play right now.": "แจ้ง Sunrise แบบไม่ระบุตัวตนว่าคุณกำลังเล่น เพื่อให้ launcher แสดงจำนวนผู้เล่นในขณะนี้",
+  "The compiler that builds native mods: downloaded again the next time one is built.": "คอมไพเลอร์สำหรับบิลด์ม็อดเนทีฟ: ดาวน์โหลดอีกครั้งเมื่อมีการบิลด์ครั้งถัดไป",
+  "The game packages native mods are built against: downloaded again when needed.": "แพ็กเกจเกมที่ใช้บิลด์ม็อดเนทีฟ: ดาวน์โหลดใหม่เมื่อจำเป็น",
+  "This Dev build's title ({title}) doesn't name its date and commit as Sunrise signs them, so it can't be checked: it was not installed.": "ชื่อบิลด์ Dev นี้ ({title}) ไม่ระบุวันที่และคอมมิตตามรูปแบบลายเซ็นของ Sunrise จึงตรวจสอบไม่ได้และไม่ได้ติดตั้ง",
+  "Tiles": "ไทล์"
 }
