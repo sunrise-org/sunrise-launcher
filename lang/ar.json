@@ -2623,5 +2623,15 @@
   "Your benchmark results, for the community results page.": "نتائج قياس الأداء الخاصة بك، لصفحة نتائج المجتمع.",
   "the Part kind {name}": "نوع Part ‏{name}",
   "the argument {name}": "المعامل {name}",
-  "the associated item {name}": "العنصر المرتبط {name}"
+  "the associated item {name}": "العنصر المرتبط {name}",
+  "the capability {name}": "القدرة {name}",
+  "the field {name}": "الحقل {name}",
+  "the function {name}": "الدالة {name}",
+  "the hook {name}": "الخطاف {name}",
+  "the macro {name}": "الماكرو {name}",
+  "the method {name}": "الطريقة {name}",
+  "the trait {name}": "السمة {name}",
+  "the type {name}": "النوع {name}",
+  "the variant {name}": "الحالة {name}",
+  "Building {mods}…": "جارٍ بناء {mods}…"
 }
