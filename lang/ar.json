@@ -2009,5 +2009,15 @@
   "This profile stays on this build until you change it.": "سيبقى هذا الملف الشخصي على هذا البناء حتى تغيّره.",
   "This profile uses {build}, not {requested}. Use Switch to change its game build.": "يستخدم هذا الملف الشخصي {build} وليس {requested}. استخدم «تبديل» لتغيير إصدار اللعبة.",
   "This profile was replaced while the request was waiting. Nothing was changed.": "تم استبدال هذا الملف الشخصي أثناء انتظار الطلب. لم يتغير شيء.",
-  "This profile's build": "بناء هذا الملف الشخصي"
+  "This profile's build": "بناء هذا الملف الشخصي",
+  "This release wasn’t found.": "لم يُعثر على هذا الإصدار.",
+  "This replaces the installed version with the GitHub release you selected.": "سيستبدل هذا الإصدار المثبّت بإصدار GitHub الذي اخترته.",
+  "This repository is private, removed or moved.": "هذا المستودع خاص أو محذوف أو منقول.",
+  "This server listens only on this computer.": "يستقبل هذا الخادم الاتصالات من هذا الكمبيوتر فقط.",
+  "This source listing changed. Open it again from Discover.": "تغيّرت قائمة المصدر هذه. افتحها مجددًا من «استكشاف».",
+  "To decide, run Switch in a terminal.": "لاتخاذ القرار، شغّل Switch في الطرفية.",
+  "Tracked branch or release unavailable.": "الفرع أو الإصدار المتتبّع غير متاح.",
+  "Tracked branch/release unavailable": "الفرع/الإصدار المتتبّع غير متاح",
+  "Try a different search or clear your category filter.": "جرّب بحثًا مختلفًا أو امسح عامل تصفية الفئة.",
+  "Try a different search, or turn on Show all to see mods for other Sunrise builds.": "جرّب بحثًا مختلفًا أو فعّل «عرض الكل» لرؤية إضافات إصدارات Sunrise الأخرى."
 }

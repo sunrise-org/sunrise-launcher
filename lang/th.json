@@ -2504,5 +2504,15 @@
   "World evidence exceeds the save size limit": "หลักฐานโลกมีขนาดเกินขีดจำกัดการบันทึก",
   "{mod} isn't ready for your game version yet. Its author needs to update it for this build.": "{mod} ยังไม่พร้อมสำหรับเกมเวอร์ชันของคุณ ผู้เขียนต้องอัปเดตให้รองรับบิลด์นี้",
   "{mod} can't be added together with the mods this profile has.": "เพิ่ม {mod} พร้อมกับม็อดที่โปรไฟล์นี้มีอยู่ไม่ได้",
-  "The profile or its game build changed while {mod} was being checked. Nothing was changed; try again.": "โปรไฟล์หรือบิลด์เกมเปลี่ยนระหว่างตรวจสอบ {mod} ไม่มีการเปลี่ยนแปลง ลองอีกครั้ง"
+  "The profile or its game build changed while {mod} was being checked. Nothing was changed; try again.": "โปรไฟล์หรือบิลด์เกมเปลี่ยนระหว่างตรวจสอบ {mod} ไม่มีการเปลี่ยนแปลง ลองอีกครั้ง",
+  "Sunrise couldn't download the tools it needs to build {mod}. Check your connection and try again.": "Sunrise ดาวน์โหลดเครื่องมือที่ต้องใช้บิลด์ {mod} ไม่ได้ ตรวจสอบการเชื่อมต่อแล้วลองอีกครั้ง",
+  "{mod} couldn't be built on this computer.": "บิลด์ {mod} บนคอมพิวเตอร์นี้ไม่ได้",
+  "{mod} couldn't be read from GitHub.": "อ่าน {mod} จาก GitHub ไม่ได้",
+  "Sunrise couldn't add {mod}.": "Sunrise เพิ่ม {mod} ไม่ได้",
+  "Build directly from GitHub. Listed source code is not reviewed.": "บิลด์โดยตรงจาก GitHub ซอร์สโค้ดที่ระบุไว้ยังไม่ได้รับการตรวจสอบ",
+  "Build from source…": "บิลด์จากซอร์ส…",
+  "Build unreviewed source code?": "บิลด์ซอร์สโค้ดที่ยังไม่ได้ตรวจสอบหรือไม่?",
+  "Built from source · {repo} @ {sha}": "บิลด์จากซอร์ส · {repo} @ {sha}",
+  "Doesn't fit this build. {detail}": "ไม่รองรับบิลด์นี้ {detail}",
+  "Find dependency": "ค้นหาสิ่งที่ต้องใช้"
 }
