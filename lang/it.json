@@ -2570,5 +2570,15 @@
   "Restore…": "Ripristina…",
   "See what would be sent": "Visualizza cosa verrebbe inviato",
   "Server address or a friend's invite code": "Indirizzo del server o codice d’invito di un amico",
-  "Shader pack": "Pacchetto shader"
+  "Shader pack": "Pacchetto shader",
+  "Show or hide the sidebar": "Mostra o nascondi la barra laterale",
+  "Spectator": "Spettatore",
+  "Stay open": "Resta aperto",
+  "Stop sharing": "Interrompi condivisione",
+  "Sunrise Launcher": "Sunrise Launcher",
+  "Sunrise server": "Server Sunrise",
+  "Sunrise's own server": "Server ufficiale Sunrise",
+  "The game failed to start while checking support for offline developer play. Repeat your sunrise-launcher developer-install command, rebuild this build’s native mods with native-build, then try Play again. If it still fails, report this message on the Sunrise Discord (linked in the launcher).\nDetails: {reason}": "Il gioco non è partito durante la verifica del supporto al gioco offline per sviluppatori. Ripeti il comando sunrise-launcher developer-install, ricompila le mod native di questa build con native-build, poi riprova a giocare. Se non funziona, segnala questo messaggio su Sunrise Discord (collegato nel launcher).\nDettagli: {reason}",
+  "The launcher stays open beside the game.": "Il launcher resta aperto accanto al gioco.",
+  "This version has a {installed} game build, but Settings selects {selected}. Reinstall it from the version picker beside Play before launching.": "Questa versione ha la build di gioco {installed}, ma Impostazioni seleziona {selected}. Reinstallala dal selettore accanto a Gioca prima di avviare."
 }

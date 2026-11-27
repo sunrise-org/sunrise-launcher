@@ -2471,5 +2471,15 @@
   "This computer has no desktop folder.": "لا يحتوي هذا الكمبيوتر على مجلد سطح المكتب.",
   "{tag} is not a Sunrise release.": "{tag} ليس إصدارًا من Sunrise.",
   "{file} is not the {version} release Sunrise was made for": "{file} ليس إصدار {version} الذي صُمم Sunrise له",
-  "{file} is here but not the game itself: play {version} once in that launcher to download it": "{file} موجود هنا لكنه ليس اللعبة نفسها: شغّل {version} مرة واحدة في ذلك المشغّل لتنزيلها"
+  "{file} is here but not the game itself: play {version} once in that launcher to download it": "{file} موجود هنا لكنه ليس اللعبة نفسها: شغّل {version} مرة واحدة في ذلك المشغّل لتنزيلها",
+  "no Minecraft {version} client jar": "لا يوجد ملف client jar لـ Minecraft ‏{version}",
+  "Minecraft {version} was not found. Sunrise looked in:": "لم يتم العثور على Minecraft ‏{version}. بحث Sunrise في:",
+  "\nTo fix it:\n  • ": "\nلحل المشكلة:\n  • ",
+  "Using Minecraft {version} from {name} ({folder})": "جارٍ استخدام Minecraft ‏{version} من {name} ({folder})",
+  "Downloading the {version} version file from Mojang": "جارٍ تنزيل ملف الإصدار {version} من Mojang",
+  "Mojang's {version} version file {error}": "ملف إصدار {version} من Mojang: ‏{error}",
+  "{path}: not a file path": "{path}: ليس مسار ملف",
+  "Tailscale is switched off.": "Tailscale متوقف.",
+  "Tailscale is {state}.": "Tailscale ‏{state}.",
+  "Run `{command}` in a terminal and open the link it prints.": "شغّل `{command}` في الطرفية وافتح الرابط الذي يظهره."
 }
