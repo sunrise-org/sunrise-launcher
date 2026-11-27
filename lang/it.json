@@ -2510,5 +2510,15 @@
   "{mod} couldn't be read from GitHub.": "Impossibile leggere {mod} da GitHub.",
   "Sunrise couldn't add {mod}.": "Sunrise non ha potuto aggiungere {mod}.",
   "Build directly from GitHub. Listed source code is not reviewed.": "Compila direttamente da GitHub. Il codice sorgente elencato non è verificato.",
-  "Build from source…": "Compila dal sorgente…"
+  "Build from source…": "Compila dal sorgente…",
+  "Build unreviewed source code?": "Compilare codice sorgente non verificato?",
+  "Built from source · {repo} @ {sha}": "Compilata dal sorgente · {repo} @ {sha}",
+  "Doesn't fit this build. {detail}": "Non compatibile con questa build. {detail}",
+  "Find dependency": "Trova dipendenza",
+  "Loading the Nightly list…": "Caricamento elenco Nightly…",
+  "Name A–Z": "Nome A–Z",
+  "Nightly list unavailable offline": "Elenco Nightly non disponibile offline",
+  "No Nightly mods match your search.": "Nessuna mod Nightly corrisponde alla ricerca.",
+  "Profile: {build}": "Profilo: {build}",
+  "Search source projects": "Cerca progetti sorgente"
 }
