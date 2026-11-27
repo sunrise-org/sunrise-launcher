@@ -2563,5 +2563,15 @@
   "Not signed in": "لم تسجّل الدخول",
   "Open access controls": "فتح عناصر التحكم في الوصول",
   "Privacy": "الخصوصية",
-  "Quit Sunrise Launcher": "إنهاء مشغّل Sunrise"
+  "Quit Sunrise Launcher": "إنهاء مشغّل Sunrise",
+  "Remove old build": "إزالة الإصدار القديم",
+  "Remove old builds": "إزالة الإصدارات القديمة",
+  "Resource pack": "حزمة موارد",
+  "Restore…": "استعادة…",
+  "See what would be sent": "عرض البيانات التي ستُرسل",
+  "Server address or a friend's invite code": "عنوان الخادم أو رمز دعوة صديق",
+  "Shader pack": "حزمة تظليل",
+  "Show or hide the sidebar": "إظهار الشريط الجانبي أو إخفاؤه",
+  "Spectator": "المشاهد",
+  "Stay open": "إبقاء المشغّل مفتوحًا"
 }
