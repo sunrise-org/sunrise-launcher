@@ -1966,5 +1966,19 @@
   "The game's preparer stopped ({status}).": "La preparazione del gioco si è arrestata ({status}).",
   "The installed GitHub archive or origin for {mod} changed. Nothing was changed; try again.": "L’archivio GitHub installato o l’origine di {mod} sono cambiati. Non è stata apportata alcuna modifica; riprova.",
   "The last game build is unknown for these worlds: {worlds}": "L’ultima build di gioco è sconosciuta per questi mondi: {worlds}",
-  "The launcher couldn't check for unfinished mod updates. You can still play.": "Il launcher non ha potuto verificare gli aggiornamenti mod incompleti. Puoi comunque giocare."
+  "The launcher couldn't check for unfinished mod updates. You can still play.": "Il launcher non ha potuto verificare gli aggiornamenti mod incompleti. Puoi comunque giocare.",
+  "The launcher couldn't prove all native build workers stopped. Their build files were kept.": "Il launcher non ha potuto verificare che tutti i processi di compilazione nativa fossero terminati. I relativi file sono stati conservati.",
+  "The launcher lock folder is not private": "La cartella di lock del launcher non è privata",
+  "The mod changes aren't known until Sunrise checks this build.": "Le modifiche alle mod non sono note finché Sunrise non verifica questa build.",
+  "The mods couldn't be built.": "Impossibile compilare le mod.",
+  "The native build tool gave an incomplete or inconsistent answer. Update the launcher.": "Lo strumento di build nativa ha fornito una risposta incompleta o incoerente. Aggiorna il launcher.",
+  "The native build tool stopped, but its output was still open.": "Lo strumento di build nativa si è arrestato, ma il suo output era ancora aperto.",
+  "The native build tool's output couldn't be verified. See the build log.": "Impossibile verificare l’output dello strumento di build nativa. Consulta il log della build.",
+  "The other mods": "Le altre mod",
+  "The post-exit command didn't run: {error}": "Il comando dopo l’uscita non è stato eseguito: {error}",
+  "The pre-launch command didn't run: {reason}": "Il comando prima dell’avvio non è stato eseguito: {reason}",
+  "The pre-launch command failed (exit {code}), so the game did not start.": "Il comando prima dell’avvio non è riuscito (codice {code}), quindi il gioco non è partito.",
+  "The profile folder couldn't be verified.": "Impossibile verificare la cartella del profilo.",
+  "The profile's runtime copy was not prepared.": "La copia runtime del profilo non è stata preparata.",
+  "The proposed mods don't work with {mod}. Nothing was installed.": "Le mod proposte non funzionano con {mod}. Non è stato installato nulla."
 }

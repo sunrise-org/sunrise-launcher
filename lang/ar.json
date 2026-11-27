@@ -1867,5 +1867,19 @@
   "Play {version} once in the official Minecraft launcher, or in Prism Launcher, MultiMC, the Modrinth App, ATLauncher, GDLauncher or Dawn Client, then prepare again.": "شغّل {version} مرة واحدة في مشغّل Minecraft الرسمي أو Prism Launcher أو MultiMC أو Modrinth App أو ATLauncher أو GDLauncher أو Dawn Client، ثم أعد التجهيز.",
   "Play {version} once in {launcher} so it downloads the game, then prepare again.": "شغّل {version} مرة واحدة في {launcher} لتنزيل اللعبة، ثم أعد التجهيز.",
   "Play {world}": "العب {world}",
-  "Playing Sunrise modpacks is paused. Choose another profile to play.": "تم إيقاف تشغيل حزم إضافات Sunrise مؤقتًا. اختر ملفًا شخصيًا آخر للعب."
+  "Playing Sunrise modpacks is paused. Choose another profile to play.": "تم إيقاف تشغيل حزم إضافات Sunrise مؤقتًا. اختر ملفًا شخصيًا آخر للعب.",
+  "Playing: {profile}": "قيد التشغيل: {profile}",
+  "Prepare this build before switching. Your profile stays on its current build.": "جهّز هذا الإصدار قبل التبديل. سيبقى ملفك الشخصي على إصداره الحالي.",
+  "Private compiler work was kept because the launcher couldn't prove all workers had stopped.": "تم الاحتفاظ بعمل المترجم الخاص لأن المشغّل لم يتمكن من التأكد من توقف جميع العمليات.",
+  "Profile": "الملف الشخصي",
+  "Profile game build: {build}": "إصدار اللعبة للملف الشخصي: {build}",
+  "Published from github.com/{repo}": "نُشر من github.com/{repo}",
+  "Ranked by relevance": "مرتّبة حسب الصلة",
+  "Reading build changes…": "جارٍ قراءة تغييرات الإصدار…",
+  "Refresh": "تحديث",
+  "Refreshing Installed mods…": "جارٍ تحديث الإضافات المثبّتة…",
+  "Registry mods must fit the profile's game build.": "يجب أن تتوافق إضافات السجل مع إصدار اللعبة للملف الشخصي.",
+  "Reinstall for this architecture": "إعادة التثبيت لهذه البنية",
+  "Release": "الإصدار",
+  "Release: {tag}": "الإصدار: {tag}"
 }

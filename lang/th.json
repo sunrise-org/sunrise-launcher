@@ -2362,5 +2362,19 @@
   "That file isn't a picture the launcher can read (PNG, JPEG, GIF, WebP).": "ไฟล์นั้นไม่ใช่รูปภาพที่ launcher อ่านได้ (PNG, JPEG, GIF, WebP)",
   "{name} plays its pack's mods: import the pack again for a second copy.": "{name} ใช้ม็อดจากแพ็กของตัวเอง: นำเข้าแพ็กอีกครั้งเพื่อสร้างสำเนาที่สอง",
   "{path} is not a directory inside the game folder": "{path} ไม่ใช่ไดเรกทอรีภายในโฟลเดอร์เกม",
-  "No profile {query}: sunrise-launcher instance list shows them": "ไม่มีโปรไฟล์ {query}: ดูรายการได้ด้วย sunrise-launcher instance list"
+  "No profile {query}: sunrise-launcher instance list shows them": "ไม่มีโปรไฟล์ {query}: ดูรายการได้ด้วย sunrise-launcher instance list",
+  "Paste the access token Tailscale showed (it begins with tskey-).": "วางโทเค็นการเข้าถึงที่ Tailscale แสดง (ขึ้นต้นด้วย tskey-)",
+  "No keychain here: the token is kept until the launcher closes.": "ไม่มี Keychain ที่นี่: โทเค็นจะถูกเก็บไว้จนกว่าจะปิด launcher",
+  "Done: friends you share this computer with reach only the Minecraft server.": "เสร็จแล้ว: เพื่อนที่ใช้คอมพิวเตอร์ร่วมกับคุณจะเข้าถึงได้เฉพาะเซิร์ฟเวอร์ Minecraft",
+  "Tailscale's default access controls are back.": "คืนค่าการควบคุมการเข้าถึงเริ่มต้นของ Tailscale แล้ว",
+  "{url}: HTTP {status}": "{url}: HTTP {status}",
+  "Mojang has no Java {name}. Known: {known}.": "Mojang ไม่มี Java {name} รายการที่รู้จัก: {known}",
+  "{word}: write it as NAME=value": "{word}: เขียนในรูปแบบ NAME=value",
+  "{key}: a variable's name is letters, digits and _, not starting with a digit": "{key}: ชื่อตัวแปรใช้ตัวอักษร ตัวเลข และ _ โดยห้ามขึ้นต้นด้วยตัวเลข",
+  "The pre-launch command didn't run: {error}": "ไม่ได้เรียกใช้คำสั่งก่อนเปิดเกม: {error}",
+  "The pre-launch command failed (exit {code}), so the game did not start.\n{output}": "คำสั่งก่อนเปิดเกมล้มเหลว (รหัสออก {code}) เกมจึงไม่เริ่มทำงาน\n{output}",
+  "Checking Java and your Minecraft install": "กำลังตรวจสอบ Java และการติดตั้ง Minecraft ของคุณ",
+  "The app has no folder.": "แอปไม่มีโฟลเดอร์",
+  "Could not stage the new app: {error}": "เตรียมแอปใหม่ไม่ได้: {error}",
+  "Could not copy the new app next to {path}.": "คัดลอกแอปใหม่ไปไว้ข้าง {path} ไม่ได้"
 }
