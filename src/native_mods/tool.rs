@@ -43,12 +43,31 @@ pub(crate) struct ProcessGuard {
     pid: u32,
 }
 
-impl Drop for ProcessGuard {
-    fn drop(&mut self) {
+impl ProcessGuard {
+    /// Forgets the child, under the same lock [`Cancellation::stop`] takes, and says whether a
+    /// stop came first. After `false`, no stop signals this PID again. After `true`, the stop
+    /// may have sent only SIGTERM, so the caller still ends the child's group before reaping it
+    /// (review of #670).
+    pub(crate) fn release(self) -> bool {
+        self.forget()
+    }
+
+    fn forget(&self) -> bool {
         let mut state = self.cancellation.state();
         if state.tool == Some(self.pid) {
             state.tool = None;
+            #[cfg(windows)]
+            {
+                state.job = None;
+            }
         }
+        state.stopped
+    }
+}
+
+impl Drop for ProcessGuard {
+    fn drop(&mut self) {
+        self.forget();
     }
 }
 
@@ -93,6 +112,34 @@ impl Cancellation {
             return Err(super::CANCELLED.into());
         }
         state.tool = Some(pid);
+        Ok(ProcessGuard {
+            cancellation: self.clone(),
+            pid,
+        })
+    }
+
+    /// [`Self::track_process`] for a preparer child, with its Windows job, so a stop ends the
+    /// whole tree there and not only the leader's PID (review of #670).
+    pub(crate) fn track_preparer(
+        &self,
+        pid: u32,
+        #[cfg(windows)] job: Option<Arc<crate::process::leases::CompilerJob>>,
+    ) -> Result<ProcessGuard, String> {
+        let mut state = self.state();
+        if state.stopped {
+            drop(state);
+            #[cfg(windows)]
+            if let Some(job) = &job {
+                let _ = job.terminate();
+            }
+            kill_process(pid);
+            return Err(super::CANCELLED.into());
+        }
+        state.tool = Some(pid);
+        #[cfg(windows)]
+        {
+            state.job = job;
+        }
         Ok(ProcessGuard {
             cancellation: self.clone(),
             pid,
@@ -174,6 +221,7 @@ pub(crate) const STOP_GRACE: Duration = Duration::from_secs(2);
 
 /// Ends the process group of child `pid` outright. Only for a child not reaped yet: its zombie
 /// keeps the PID, and so the group's ID, from going to another process.
+#[cfg(unix)]
 pub(crate) fn kill_group(pid: u32) {
     kill_process(pid);
 }

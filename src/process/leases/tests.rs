@@ -364,3 +364,36 @@ fn failed_exec_leaves_no_tree_or_gate_owner() {
     gate.try_lock().unwrap();
     gate.unlock().unwrap();
 }
+
+/// A piped preparer runs in a job of its own from creation: when its leader exits and leaves a
+/// child running, ending the job, as a stop or its escalation does, ends that child too, where
+/// the leader's PID alone wouldn't reach it (review of #670). Only Windows CI runs this.
+#[cfg(windows)]
+#[test]
+fn a_piped_preparers_job_ends_what_its_leader_left_running() {
+    use std::time::{Duration, Instant};
+    let lock = tempfile::tempfile().unwrap();
+    let mut command = std::process::Command::new("cmd");
+    command.args(["/c", "start", "", "/b", "ping", "-n", "30", "127.0.0.1"]);
+    let mut child = super::spawn_preparer(command, &lock, None, true).unwrap();
+    let job = child
+        .preparer_job()
+        .expect("a piped preparer runs in a job of its own");
+    let _ = child.wait();
+    let active = || job.accounting().unwrap().ActiveProcesses;
+    let waiting = Instant::now();
+    while active() == 0 && waiting.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(active() >= 1, "the leader left ping running in its job");
+    child.kill().unwrap();
+    let waiting = Instant::now();
+    while active() != 0 && waiting.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        active(),
+        0,
+        "ending the job ended what the leader left running"
+    );
+}

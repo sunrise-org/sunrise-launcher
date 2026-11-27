@@ -215,13 +215,22 @@ impl Handoff<'_> {
 /// the group keeps the preparation lock. The output is read through a bounded queue, so a child
 /// that floods it is held back by its pipe rather than grow the launcher's memory.
 fn run(
-    mut command: Command,
+    command: Command,
     out: &mut dyn FnMut(String),
     handoff: Option<&Handoff<'_>>,
 ) -> Result<(ExitStatus, Vec<String>), String> {
+    run_with(command, out, handoff, handoff.and_then(Handoff::stop))
+}
+
+/// [`run`], stopped by `stop`, which is the handoff's own outside tests.
+fn run_with(
+    mut command: Command,
+    out: &mut dyn FnMut(String),
+    handoff: Option<&Handoff<'_>>,
+    stop: Option<&crate::native_mods::Cancellation>,
+) -> Result<(ExitStatus, Vec<String>), String> {
     use crate::process::owned::Owned;
     use std::sync::mpsc::{sync_channel, RecvTimeoutError, TryRecvError};
-    let stop = handoff.and_then(Handoff::stop);
     if let Some(stop) = stop {
         stop.check()?;
     }
@@ -236,8 +245,24 @@ fn run(
     }
     .map_err(unrun)?;
     let pid = child.child().id();
+    #[cfg(test)]
+    test_hooks::hook(&test_hooks::BEFORE_TRACK);
     let tracked = match stop {
-        Some(stop) => Some(stop.track_process(pid)?),
+        Some(stop) => match stop.track_preparer(
+            pid,
+            #[cfg(windows)]
+            child.child().preparer_job(),
+        ) {
+            Ok(guard) => Some(guard),
+            // A stop came between the spawn and here: the child was killed at once, and it is
+            // reaped off this thread like one the stop gave up on, as a child stuck in the file
+            // system could hold a wait. It still holds the preparation lock it was handed while
+            // it can write (review of #670).
+            Err(cancelled) => {
+                abandon(child);
+                return Err(cancelled);
+            }
+        },
         None => None,
     };
     drop(child.child().stdin.take());
@@ -299,13 +324,20 @@ fn run(
         let pipes_open = stdout_open || errors.is_none();
         match next(&mut watch, stopped(), exited, pipes_open, Instant::now()) {
             Next::Wait => {}
-            Next::Kill => crate::native_mods::kill_group(pid),
+            Next::Kill => kill_tree(&mut child, pid),
             // Given up only once the stop's wait is over, or once the child had ended and its
             // group was killed: whatever still holds its output left the group.
             Next::Done | Next::GiveUp => break,
         }
     }
-    let status = finish(move || drop(tracked), move || reap(child, exited));
+    #[cfg(test)]
+    test_hooks::hook(&test_hooks::BEFORE_UNTRACK);
+    let status = finish(Ending {
+        child,
+        pid,
+        tracked,
+        ended: exited,
+    });
     if stopped() {
         return Err(crate::native_mods::CANCELLED.into());
     }
@@ -385,9 +417,51 @@ fn next(watch: &mut Watch, stopped: bool, ended: bool, pipes_open: bool, now: In
 
 /// The end of a run, in the order that keeps a signal from reaching another process: the stop
 /// forgets the child's PID first, then the child is reaped and its PID can go to another one.
-fn finish<T>(untrack: impl FnOnce(), reap: impl FnOnce() -> T) -> T {
-    untrack();
-    reap()
+///
+/// The stop's record goes under its lock, and the stop's decision with it: a stop that came in
+/// the moment between the loop's last look and here may have sent only SIGTERM, so the group is
+/// killed before the reap (review of #670).
+fn finish<E: End>(mut end: E) -> E::Status {
+    if end.untrack() {
+        end.kill();
+    }
+    end.reap()
+}
+
+/// The last steps of a run, apart so [`finish`]'s order is testable.
+trait End {
+    type Status;
+    /// Forgets the child's PID for the stop; true when a stop came first.
+    fn untrack(&mut self) -> bool;
+    /// Ends the child's group, which is not reaped yet.
+    fn kill(&mut self);
+    fn reap(self) -> Self::Status;
+}
+
+/// A run's child at its end.
+struct Ending {
+    child: crate::process::owned::Owned,
+    pid: u32,
+    tracked: Option<crate::native_mods::ProcessGuard>,
+    ended: bool,
+}
+
+impl End for Ending {
+    type Status = Option<ExitStatus>;
+
+    fn untrack(&mut self) -> bool {
+        self.tracked
+            .take()
+            .is_some_and(crate::native_mods::ProcessGuard::release)
+    }
+
+    fn kill(&mut self) {
+        kill_tree(&mut self.child, self.pid);
+    }
+
+    fn reap(self) -> Option<ExitStatus> {
+        reap(self.child, self.ended)
+    }
 }
 
 /// Reaps a child that has ended. One that hasn't, after a stop and a kill, is left to a thread
@@ -396,8 +470,30 @@ fn reap(mut child: crate::process::owned::Owned, ended: bool) -> Option<ExitStat
     if ended {
         return child.wait().ok();
     }
-    std::thread::spawn(move || drop(child));
+    abandon(child);
     None
+}
+
+/// Leaves a child that may not have ended to a thread to reap.
+fn abandon(child: crate::process::owned::Owned) {
+    #[cfg(test)]
+    test_hooks::ABANDONED.with(|count| count.set(count.get() + 1));
+    std::thread::spawn(move || drop(child));
+}
+
+/// Ends the child's whole tree, which is not reaped yet: SIGKILL to its process group on Unix,
+/// its job object on Windows (where the leader's PID alone doesn't reach a child it left).
+fn kill_tree(child: &mut crate::process::owned::Owned, pid: u32) {
+    #[cfg(unix)]
+    {
+        let _ = child;
+        crate::native_mods::kill_group(pid);
+    }
+    #[cfg(windows)]
+    {
+        let _ = pid;
+        let _ = child.child().kill();
+    }
 }
 
 /// Whether the child has ended, without reaping it: on Unix its zombie stays, keeping its PID.
@@ -694,9 +790,104 @@ pub(crate) fn add_extras(
     }))
 }
 
+/// Hooks for tests to put a stop at exact points of [`run_with`], on every platform.
+#[cfg(test)]
+mod test_hooks {
+    use std::cell::{Cell, RefCell};
+
+    type Hook = RefCell<Option<Box<dyn FnOnce()>>>;
+
+    thread_local! {
+        /// Runs in `run_with` between the spawn and the stop's registration of the child.
+        pub(crate) static BEFORE_TRACK: Hook = const { RefCell::new(None) };
+        /// Runs in `run_with` after its loop, before `finish`.
+        pub(crate) static BEFORE_UNTRACK: Hook = const { RefCell::new(None) };
+        /// How many children this thread left to a reaping thread (`abandon`).
+        pub(crate) static ABANDONED: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// Runs this thread's hook `which`, once, if a test set it.
+    pub(crate) fn hook(which: &'static std::thread::LocalKey<Hook>) {
+        if let Some(hook) = which.with(|hook| hook.borrow_mut().take()) {
+            hook();
+        }
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
+    use super::test_hooks::{ABANDONED, BEFORE_TRACK, BEFORE_UNTRACK};
     use super::*;
+    use std::cell::Cell;
+
+    /// A stop between the spawn and the child's registration: the child is killed at once and
+    /// left to a reaping thread, so this thread never waits on a child that might be stuck in
+    /// the file system (review of #670). A test can't make a child that ignores SIGKILL, so it
+    /// proves the hand-off itself.
+    #[cfg(unix)]
+    #[test]
+    fn a_stop_before_the_child_is_tracked_leaves_it_to_a_reaping_thread() {
+        use std::os::unix::process::CommandExt;
+        let stop = crate::native_mods::Cancellation::default();
+        let later = stop.clone();
+        BEFORE_TRACK.with(|hook| *hook.borrow_mut() = Some(Box::new(move || later.stop())));
+        let before = ABANDONED.with(Cell::get);
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 30"]).process_group(0);
+        let started = Instant::now();
+        let result = run_with(command, &mut |_| {}, None, Some(&stop));
+        assert_eq!(result.unwrap_err(), crate::native_mods::CANCELLED);
+        assert_eq!(
+            ABANDONED.with(Cell::get),
+            before + 1,
+            "the child went to a reaping thread, not dropped on this one"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    /// A child that ended on its own, leaving a quiet process in its group that ignores SIGTERM,
+    /// with a stop in the moment between the loop's last look and the untrack: the stop's decision
+    /// is taken with the untrack, so the group is still killed before the reap (review of #670).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_stop_in_the_moment_before_the_untrack_still_ends_the_group() {
+        use std::os::unix::process::CommandExt;
+        let dir = tempfile::tempdir().unwrap();
+        let quiet = dir.path().join("quiet.pid");
+        let stop = crate::native_mods::Cancellation::default();
+        let later = stop.clone();
+        BEFORE_UNTRACK.with(|hook| *hook.borrow_mut() = Some(Box::new(move || later.stop())));
+        let mut command = Command::new("sh");
+        command
+            .args([
+                "-c",
+                "sh -c 'trap \"\" TERM; exec >/dev/null 2>&1; echo $$ > \"$1\"; exec sleep 30' quiet \"$1\" & while [ ! -s \"$1\" ]; do sleep 0.05; done",
+                "leader",
+            ])
+            .arg(&quiet)
+            .process_group(0);
+        let result = run_with(command, &mut |_| {}, None, Some(&stop));
+        assert_eq!(result.unwrap_err(), crate::native_mods::CANCELLED);
+        let pid = fs::read_to_string(&quiet).unwrap();
+        let runs = || {
+            fs::read_to_string(format!("/proc/{}/stat", pid.trim()))
+                .ok()
+                .and_then(|stat| {
+                    stat.rsplit(')')
+                        .next()
+                        .map(|rest| rest.trim_start().to_owned())
+                })
+                .is_some_and(|rest| !rest.starts_with('Z'))
+        };
+        let waiting = Instant::now();
+        while runs() && waiting.elapsed() < Duration::from_secs(2) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(
+            !runs(),
+            "the quiet process the child left in its group still runs"
+        );
+    }
 
     /// A native build copies the SDK's `sunrise-client` with this, then runs it. Checked in the
     /// system temp folder (often tmpfs: the plain copy) and beside the test binary in Cargo's
@@ -958,13 +1149,25 @@ esac"#,
             next(&mut watch, false, true, true, start + grace),
             Next::Kill
         );
-        // The stop's record of the PID goes before the reap.
-        let order = std::cell::RefCell::new(Vec::new());
-        finish(
-            || order.borrow_mut().push("untrack"),
-            || order.borrow_mut().push("reap"),
-        );
-        assert_eq!(order.into_inner(), ["untrack", "reap"]);
+        // The stop's record of the PID goes before the reap, and a stop that came first has the
+        // group killed between the two.
+        struct Steps(Vec<&'static str>, bool);
+        impl End for Steps {
+            type Status = Vec<&'static str>;
+            fn untrack(&mut self) -> bool {
+                self.0.push("untrack");
+                self.1
+            }
+            fn kill(&mut self) {
+                self.0.push("kill");
+            }
+            fn reap(mut self) -> Vec<&'static str> {
+                self.0.push("reap");
+                self.0
+            }
+        }
+        assert_eq!(finish(Steps(Vec::new(), false)), ["untrack", "reap"]);
+        assert_eq!(finish(Steps(Vec::new(), true)), ["untrack", "kill", "reap"]);
     }
 
     /// A child that floods its stdout while the caller is slow to take it is held back by its

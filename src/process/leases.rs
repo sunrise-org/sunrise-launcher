@@ -193,6 +193,7 @@ pub(crate) fn spawn_preparer(
         windows::Start {
             profile: profile.map(|handoff| handoff.file),
             attached: !piped,
+            preparer: piped,
             ..windows::Start::default()
         },
         piped,

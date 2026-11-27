@@ -80,6 +80,14 @@ impl Child {
     }
 
     #[cfg(windows)]
+    pub(crate) fn preparer_job(&self) -> Option<std::sync::Arc<super::leases::CompilerJob>> {
+        match &self.process {
+            Handle::Std(_) | Handle::Relayed(_) => None,
+            Handle::Windows(child) => child.preparer_job(),
+        }
+    }
+
+    #[cfg(windows)]
     pub(super) fn wrapper_job(&self) -> Option<std::sync::Arc<super::leases::WrapperJob>> {
         match &self.process {
             Handle::Std(_) | Handle::Relayed(_) => None,
