@@ -110,15 +110,19 @@ collapsed, toasts sliding in, a page rising in. Use `motion::eased`, `motion::Fa
 
 | # | Area | Status |
 |---|---|---|
-| 1 | Theme tune and corner tokens | in progress |
-| 2 | `widgets/`: button, chip, toggle, checkbox, field/search, tabs, segmented, select, menu, copy button, progress, empty state, banner, toast | to do |
-| 3 | Shell: title bar, sidebar nav, selection sun, collapse | to do |
-| 4 | Profile page (Home) and its tabs | to do |
-| 5 | Discover and detail pages | to do |
-| 6 | Servers, Skins, Settings | to do |
-| 7 | Sheets and popups | to do |
-| 8 | Compact window (800×600), light theme | to do |
+| 1 | Theme tune and corner tokens | done |
+| 2 | `widgets/`: button, chip, check, field/search, tabs, select, copy button, progress, empty state, banner, toast | done |
+| 3 | Shell: title bar, sidebar nav, selection sun, collapse | done |
+| 4 | Profile page (Home) and its tabs | done |
+| 5 | Discover and detail pages | done |
+| 6 | Servers, Skins, Settings | done |
+| 7 | Sheets and popups | in progress |
+| 8 | Compact window (800×600), light theme | light theme in progress |
 | 9 | Final sweep: remove every leftover of the old design | to do |
+
+Not built because the backend has no data for them yet (see the Figma Notes page): a
+Modpacks kind in Discover, a Logs tab, ping on server rows, the mods count and loader in the
+profile's build line, a source filter in Discover.
 
 ## Checks before each merge into the branch
 
