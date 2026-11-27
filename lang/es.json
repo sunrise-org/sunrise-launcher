@@ -454,7 +454,15 @@
   "{tag} has no build for the selected game architecture.": "{tag} no tiene una compilación para la arquitectura de juego seleccionada.",
   "{title} would change nothing in Sunrise yet: Sunrise doesn't read its {files}.": "{title} no cambiaría nada en Sunrise todavía: Sunrise aún no lee sus {files}.",
   "{value}%": "{value} %",
+  "Allow executing this checkout's build code and unsigned game with your rights": "Permitir que el código de compilación de esta copia de trabajo y el juego sin firmar se ejecuten con tus permisos",
+  "An imported build is unsigned: Sunrise can't check where it came from. If you trust it, pass --trust-unsigned.": "La compilación importada no está firmada y Sunrise no puede comprobar su procedencia. Si confías en ella, usa --trust-unsigned.",
+  "Developer installation runs the checkout's build code and an unsigned game with your rights. Pass --trust-unsigned only if you trust both.": "La instalación de desarrollo ejecuta con tus permisos el código de compilación de la copia de trabajo y un juego sin firmar. Usa --trust-unsigned solo si confías en ambos.",
+  "Install a local unsigned developer build from a trusted checkout": "Instalar una compilación local de desarrollo sin firmar desde una copia de trabajo de confianza",
+  "Install a release or Nightly, or explicitly select a local unsigned developer base first: an imported build reuses its game files.": "Instala primero una versión estable o Nightly, o selecciona explícitamente una compilación base local de desarrollo sin firmar. La compilación importada reutiliza sus archivos del juego.",
+  "Local unsigned developer build · {commit} · {id}": "Compilación local de desarrollo sin firmar · {commit} · {id}",
+  "The trusted clean Sunrise checkout to package": "Copia de trabajo limpia y de confianza de Sunrise que se empaquetará",
   "Unknown commit": "Commit desconocido",
+  "{version} is not an installed base. Choose an installed release, Nightly or local unsigned developer build.": "{version} no es una base instalada. Elige una versión estable, Nightly o una compilación local de desarrollo sin firmar que ya esté instalada.",
   "The game is already running.": "El juego ya se está ejecutando.",
   "Wait for the preparation to finish, then press Play.": "Espera a que termine la preparación y pulsa Jugar.",
   " Last: {crash}.": " Último: {crash}.",
@@ -1283,6 +1291,8 @@
   "Turn on scenery to see how the backdrop shows through panels.": "Activa el escenario para ver cómo se transparenta el fondo a través de los paneles.",
   "Turned on {count}.": "Activados: {count}.",
   "Turning on mods…": "Activando mods…",
+  "Unsigned developer build": "Compilación de desarrollo sin firmar",
+  "Unsigned import": "Compilación importada sin firmar",
   "Update available: {version}": "Actualización disponible: {version}",
   "Update {name}?": "¿Actualizar {name}?",
   "Update: {mods}.": "Actualizar: {mods}.",
@@ -1523,6 +1533,5 @@
   "Type a command: say Hello, time set day…": "Escribe un comando: say Hello, time set day…",
   "Updating the list": "Actualizando la lista",
   "Vanilla-like": "Estilo Vanilla",
-  "World generation": "Generación de mundo",
-  "Building {mods}…": "Compilando {mods}…"
+  "World generation": "Generación de mundo"
 }

@@ -460,7 +460,15 @@
   "{path} is not a folder to build into.": "{path} 不是可供构建的文件夹。",
   "{tag} has no build for the selected game architecture.": "{tag} 没有适用于所选游戏架构的版本。",
   "{title} would change nothing in Sunrise yet: Sunrise doesn't read its {files}.": "{title} 目前不会改变 Sunrise 中的任何内容：Sunrise 还不会读取它的 {files}。",
+  "Allow executing this checkout's build code and unsigned game with your rights": "允许以你的权限运行此检出目录中的构建代码和未签名的游戏",
+  "An imported build is unsigned: Sunrise can't check where it came from. If you trust it, pass --trust-unsigned.": "导入的构建未签名，Sunrise 无法验证其来源。如果你信任它，请传入 --trust-unsigned。",
+  "Developer installation runs the checkout's build code and an unsigned game with your rights. Pass --trust-unsigned only if you trust both.": "开发者安装会以你的权限运行检出目录中的构建代码和未签名的游戏。仅在两者都可信时传入 --trust-unsigned。",
+  "Install a local unsigned developer build from a trusted checkout": "从受信任的检出目录安装本地未签名的开发者构建",
+  "Install a release or Nightly, or explicitly select a local unsigned developer base first: an imported build reuses its game files.": "请先安装正式版或 Nightly，或明确选择本地未签名的开发者基底构建：导入的构建会复用其游戏文件。",
+  "Local unsigned developer build · {commit} · {id}": "本地未签名开发者构建 · {commit} · {id}",
+  "The trusted clean Sunrise checkout to package": "要打包的受信任且无未提交更改的 Sunrise 检出目录",
   "Unknown commit": "未知提交",
+  "{version} is not an installed base. Choose an installed release, Nightly or local unsigned developer build.": "{version} 不是已安装的基底构建。请选择已安装的正式版、Nightly 或本地未签名的开发者构建。",
   "Source interrupted: {error}": "源码读取中断：{error}",
   "Could not unpack the source: {error}": "无法解压源码：{error}",
   "The game is already running.": "游戏已在运行。",
@@ -1390,6 +1398,8 @@
   "Turn on scenery to see how the backdrop shows through panels.": "开启背景风景即可查看背景透过面板的效果。",
   "Turned on {count}.": "已开启 {count} 个。",
   "Turning on mods…": "正在开启模组…",
+  "Unsigned developer build": "未签名的开发者构建",
+  "Unsigned import": "未签名的导入构建",
   "Update available: {version}": "有可用更新：{version}",
   "Update {name}?": "更新 {name}？",
   "Update: {mods}.": "更新：{mods}。",
@@ -1640,6 +1650,5 @@
   "Type a command: say Hello, time set day…": "输入命令：say Hello、time set day…",
   "Updating the list": "正在更新列表",
   "Vanilla-like": "类原版",
-  "World generation": "世界生成",
-  "Building {mods}…": "正在构建 {mods}…"
+  "World generation": "世界生成"
 }

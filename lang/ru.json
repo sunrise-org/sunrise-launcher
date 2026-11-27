@@ -459,7 +459,15 @@
   "{path} is not a folder to build into.": "{path} не является папкой для сборки.",
   "{tag} has no build for the selected game architecture.": "Для {tag} нет сборки для выбранной архитектуры игры.",
   "{title} would change nothing in Sunrise yet: Sunrise doesn't read its {files}.": "{title} пока ничего не изменит в Sunrise: Sunrise ещё не читает его {files}.",
+  "Allow executing this checkout's build code and unsigned game with your rights": "Разрешить запуск кода сборки из этой рабочей копии и неподписанной игры с вашими правами",
+  "An imported build is unsigned: Sunrise can't check where it came from. If you trust it, pass --trust-unsigned.": "Импортируемая сборка не подписана, поэтому Sunrise не может проверить её происхождение. Если вы ей доверяете, укажите --trust-unsigned.",
+  "Developer installation runs the checkout's build code and an unsigned game with your rights. Pass --trust-unsigned only if you trust both.": "При установке сборки разработчика код сборки из рабочей копии и неподписанная игра запускаются с вашими правами. Указывайте --trust-unsigned, только если доверяете им обоим.",
+  "Install a local unsigned developer build from a trusted checkout": "Установить локальную неподписанную сборку разработчика из доверенной рабочей копии",
+  "Install a release or Nightly, or explicitly select a local unsigned developer base first: an imported build reuses its game files.": "Сначала установите релиз или Nightly либо явно выберите локальную неподписанную сборку разработчика: импортируемая сборка повторно использует её файлы игры.",
+  "Local unsigned developer build · {commit} · {id}": "Локальная неподписанная сборка разработчика · {commit} · {id}",
+  "The trusted clean Sunrise checkout to package": "Доверенная рабочая копия Sunrise без изменений для упаковки",
   "Unknown commit": "Неизвестный коммит",
+  "{version} is not an installed base. Choose an installed release, Nightly or local unsigned developer build.": "{version} не является установленной базовой сборкой. Выберите установленный релиз, Nightly или локальную неподписанную сборку разработчика.",
   "Source interrupted: {error}": "Получение исходного кода прервано: {error}",
   "Could not unpack the source: {error}": "Не удалось распаковать исходный код: {error}",
   "The game is already running.": "Игра уже запущена.",
@@ -1352,6 +1360,8 @@
   "Turn on scenery to see how the backdrop shows through panels.": "Включите фоновую сцену, чтобы видеть, как фон просвечивает сквозь панели.",
   "Turned on {count}.": "Включено: {count}.",
   "Turning on mods…": "Включение модов…",
+  "Unsigned developer build": "Неподписанная сборка разработчика",
+  "Unsigned import": "Неподписанная импортированная сборка",
   "Update available: {version}": "Доступно обновление: {version}",
   "Update {name}?": "Обновить {name}?",
   "Update: {mods}.": "Обновить: {mods}.",
@@ -1596,6 +1606,5 @@
   "Type a command: say Hello, time set day…": "Введите команду: say Hello, time set day…",
   "Updating the list": "Обновление списка",
   "Vanilla-like": "В стиле ваниллы",
-  "World generation": "Генерация мира",
-  "Building {mods}…": "Сборка {mods}…"
+  "World generation": "Генерация мира"
 }

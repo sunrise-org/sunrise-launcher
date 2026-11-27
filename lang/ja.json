@@ -458,7 +458,15 @@
   "{path} is not a folder to build into.": "{path} はビルド先のフォルダーではありません。",
   "{tag} has no build for the selected game architecture.": "{tag} には選択したゲームアーキテクチャ用のビルドがありません。",
   "{title} would change nothing in Sunrise yet: Sunrise doesn't read its {files}.": "{title} は今のところ Sunrise に何も変えません。Sunrise はその {files} をまだ読み込みません。",
+  "Allow executing this checkout's build code and unsigned game with your rights": "このチェックアウトのビルドコードと署名されていないゲームを自分の権限で実行することを許可",
+  "An imported build is unsigned: Sunrise can't check where it came from. If you trust it, pass --trust-unsigned.": "インポートしたビルドには署名がないため、Sunrise は入手元を確認できません。信頼できる場合は --trust-unsigned を指定してください。",
+  "Developer installation runs the checkout's build code and an unsigned game with your rights. Pass --trust-unsigned only if you trust both.": "開発用インストールでは、チェックアウトのビルドコードと署名されていないゲームが自分の権限で実行されます。両方を信頼できる場合にのみ --trust-unsigned を指定してください。",
+  "Install a local unsigned developer build from a trusted checkout": "信頼できるチェックアウトから署名されていないローカル開発ビルドをインストール",
+  "Install a release or Nightly, or explicitly select a local unsigned developer base first: an imported build reuses its game files.": "先にリリース版または Nightly をインストールするか、署名されていないローカル開発ビルドをベースとして明示的に選択してください。インポートしたビルドはそのゲームファイルを再利用します。",
+  "Local unsigned developer build · {commit} · {id}": "署名されていないローカル開発ビルド · {commit} · {id}",
+  "The trusted clean Sunrise checkout to package": "パッケージ化する、変更のない信頼できる Sunrise チェックアウト",
   "Unknown commit": "不明なコミット",
+  "{version} is not an installed base. Choose an installed release, Nightly or local unsigned developer build.": "{version} はインストール済みのベースではありません。インストール済みのリリース版、Nightly、または署名されていないローカル開発ビルドを選択してください。",
   "Source interrupted: {error}": "ソースが中断されました: {error}",
   "Could not unpack the source: {error}": "ソースを展開できませんでした: {error}",
   "The game is already running.": "ゲームはすでに実行中です。",
@@ -1378,6 +1386,8 @@
   "Turn on scenery to see how the backdrop shows through panels.": "パネルを通して背景が透けて見える様子を確認するには、背景表示をオンにしてください。",
   "Turned on {count}.": "{count}個のModをオンにしました。",
   "Turning on mods…": "Modをオンにしています…",
+  "Unsigned developer build": "署名されていない開発ビルド",
+  "Unsigned import": "署名されていないインポート済みビルド",
   "Update available: {version}": "アップデート利用可能: {version}",
   "Update {name}?": "{name} を更新しますか？",
   "Update: {mods}.": "更新：{mods}。",
@@ -1628,6 +1638,5 @@
   "Type a command: say Hello, time set day…": "コマンドを入力：say Hello, time set day…",
   "Updating the list": "リストを更新中",
   "Vanilla-like": "バニラ風",
-  "World generation": "ワールド生成",
-  "Building {mods}…": "{mods} をビルド中…"
+  "World generation": "ワールド生成"
 }
