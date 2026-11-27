@@ -82,18 +82,10 @@ impl Launcher {
             }
         };
         let identity = target.identity();
-        // Changing only the channel/pin preference when the profile is already on `tag` (and has
-        // no pending recovery or first-Play bootstrap) needs no switch modal, registry fetch, or
-        // mod rebuild. Keep artifact hashing off the UI thread.
-        let unplayed_target = self
-            .target_version(instance.version.as_ref(), instance.channel)
-            .map(String::as_str);
-        if can_fast_save_choice(
-            &instance,
-            &tag,
-            unplayed_target,
-            self.installed.contains(&tag),
-        ) {
+        // Changing only the channel/pin preference (the profile is already on `tag`, or has never
+        // been played) needs no switch modal, download, registry fetch, or mod rebuild: Install
+        // or Play installs what it then names. Keep artifact hashing off the UI thread.
+        if can_fast_save_choice(&instance, &tag) {
             if let Some(choice) = choice {
                 if let Err(error) = target.save_build_choice(&tag, choice) {
                     self.open_notice(error.into(), Some(WayOut::ProfileFolder(instance.home)));
@@ -607,13 +599,8 @@ impl Launcher {
 
 /// Whether a picker selection can be saved directly to `instances.json` without running a build
 /// switch: the profile must be ordinary, have no pending transaction recovery or first-Play
-/// bootstrap, and already be on `tag`.
-pub(super) fn can_fast_save_choice(
-    instance: &instances::Instance,
-    tag: &str,
-    unplayed_target: Option<&str>,
-    installed: bool,
-) -> bool {
+/// bootstrap, and be already on `tag` or never played.
+pub(super) fn can_fast_save_choice(instance: &instances::Instance, tag: &str) -> bool {
     if instance.kind == instances::Kind::Pack {
         return false;
     }
@@ -625,7 +612,9 @@ pub(super) fn can_fast_save_choice(
     }
     match managed_play::display_active(&instance.home) {
         Ok(Some(active)) => active.base() == tag,
-        Ok(None) => unplayed_target == Some(tag) && installed,
+        // Never played: the choice is all there is to change. Nothing downloads or builds until
+        // the player presses Install (or Play), which installs whatever the profile then names.
+        Ok(None) => true,
         Err(_) => false,
     }
 }

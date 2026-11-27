@@ -22,25 +22,19 @@ fn can_fast_save_choice_checks_kind_recovery_and_target() {
         incarnation: None,
     };
     let tag = "dev-2026-11-24-abc";
-    // Ordinary unplayed profile already targeting `tag` with `tag` installed -> fast path.
-    assert!(can_fast_save_choice(&instance, tag, Some(tag), true));
-    // Not installed yet or different target -> full switch.
-    assert!(!can_fast_save_choice(&instance, tag, Some(tag), false));
-    assert!(!can_fast_save_choice(
-        &instance,
-        tag,
-        Some("dev-2026-11-20-old"),
-        true
-    ));
+    // An ordinary profile never played: the choice is only saved, whatever it names and
+    // whether or not it is installed (Install downloads it later).
+    assert!(can_fast_save_choice(&instance, tag));
+    assert!(can_fast_save_choice(&instance, "dev-2026-11-20-old"));
     // Pack profiles never take the fast path.
     instance.kind = InstanceKind::Pack;
-    assert!(!can_fast_save_choice(&instance, tag, Some(tag), true));
+    assert!(!can_fast_save_choice(&instance, tag));
     instance.kind = InstanceKind::Own;
     // Pending transaction/bootstrap record -> never take the fast path.
     let txn = dir.path().join("mod-browser/install-txn.json");
     std::fs::create_dir_all(txn.parent().unwrap()).unwrap();
     std::fs::write(&txn, "{}").unwrap();
-    assert!(!can_fast_save_choice(&instance, tag, Some(tag), true));
+    assert!(!can_fast_save_choice(&instance, tag));
 }
 
 #[test]

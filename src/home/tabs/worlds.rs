@@ -97,25 +97,32 @@ impl Launcher {
             .or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
             .clone();
         let on_play = focus.is_focused(window);
-        let packs = secondary("alt-world-packs", tr("Data packs")).on_click(cx.listener(
-            move |this, _: &ClickEvent, window, cx| {
-                this.ui.home.tabs.remember(window.focused(cx));
-                this.show_world_packs(path.clone());
-                cx.notify();
-            },
-        ));
-        let folder_button = secondary("alt-world-folder", tr("Open folder")).on_click(cx.listener(
-            move |_, _: &ClickEvent, _, cx| {
-                crate::toast::open(cx, &saves);
-                cx.notify();
-            },
-        ));
-        let play = secondary("alt-world-play", tr("Play this world"))
-            .track_focus(&focus)
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.play_to("--world", folder.clone());
-                cx.notify();
-            }));
+        let packs = secondary(
+            SharedString::from(format!("alt-world-packs-{}", world.folder)),
+            tr("Data packs"),
+        )
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.ui.home.tabs.remember(window.focused(cx));
+            this.show_world_packs(path.clone());
+            cx.notify();
+        }));
+        let folder_button = secondary(
+            SharedString::from(format!("alt-world-folder-{}", world.folder)),
+            tr("Open folder"),
+        )
+        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+            crate::toast::open(cx, &saves);
+            cx.notify();
+        }));
+        let play = secondary(
+            SharedString::from(format!("alt-world-play-{}", world.folder)),
+            tr("Play this world"),
+        )
+        .track_focus(&focus)
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            this.play_to("--world", folder.clone());
+            cx.notify();
+        }));
         let name = div()
             .id("alt-world-name")
             .text_size(px(tokens::LABEL))

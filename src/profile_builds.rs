@@ -192,6 +192,23 @@ impl Launcher {
         }
         build_import::label(tag).unwrap_or_else(|| crate::sheets::build_name(tag))
     }
+
+    /// [`Self::version_label`], with a Dev build's short commit after it: several Dev builds
+    /// can share a day, and a list of them should never show two alike.
+    pub(super) fn build_name_with_commit(&self, tag: &str) -> String {
+        let name = self.version_label(tag);
+        if instances::Channel::of_build(tag) != Some(instances::Channel::Dev) {
+            return name;
+        }
+        let commit = tag.rsplit_once('-').map_or(tag, |(_, sha)| sha);
+        trf(
+            "{build} · {commit}",
+            &[
+                ("build", &name),
+                ("commit", &sunrise_launcher::nightly::short_commit(commit)),
+            ],
+        )
+    }
 }
 
 /// The release a native build started from, read once per build: a new build has a new tag.

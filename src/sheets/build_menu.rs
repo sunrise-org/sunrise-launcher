@@ -319,12 +319,15 @@ impl Launcher {
     ) -> Option<AnyElement> {
         use sunrise_launcher::browser::sunrise::BuildChoice;
         let p = palette();
-        let pinned = self.selected_instance()?.version.clone();
+        let instance = self.selected_instance()?;
+        let pinned = instance.version.clone();
+        // "Newest" heads the list: it follows the channel, so a long list never has to be read.
+        let follows_this = pinned.is_none() && instance.channel == channel;
         let tags = self.profile_build_choices(channel);
         if tags.is_empty() {
             return None;
         }
-        let high = (tags.len() as f32 * (ROW_HEIGHT + 1.) + 8.).min(SUB_MAX);
+        let high = ((tags.len() + 1) as f32 * (ROW_HEIGHT + 1.) + 15.).min(SUB_MAX);
         // The card's border and padding sit above its first row.
         let row_top = top + 5. + index as f32 * (ROW_HEIGHT + 1.);
         let at = (row_top - 5.).min(self.window_height - high - 12.).max(12.);
@@ -342,6 +345,48 @@ impl Launcher {
             .min_h_0()
             .overflow_y_scroll()
             .track_scroll(&crate::frame::scrolls("build-sub"));
+        list = list
+            .child(
+                div()
+                    .id("alt-build-newest")
+                    .reach()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .h(px(ROW_HEIGHT))
+                    .px(px(8.))
+                    .rounded(crate::tokens::r(crate::tokens::R_SMALL))
+                    .cursor_pointer()
+                    .text_size(px(tokens::LABEL))
+                    .text_color(rgb(p.text))
+                    .when(follows_this, |d| d.bg(rgb(p.selected)))
+                    .hover(move |d| d.bg(rgb(p.hover)))
+                    .child(div().flex_1().min_w_0().truncate().child(tr("Newest")))
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(px(tokens::SMALL))
+                            .text_color(rgb(p.muted))
+                            .child(tr("always")),
+                    )
+                    .children(
+                        follows_this
+                            .then(|| crate::glass_ui::icon("tick-02", 16., rgb(p.accent).into())),
+                    )
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.switch_channel(channel);
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .h(px(1.))
+                    .mx(px(6.))
+                    .my(px(3.))
+                    .bg(rgb(p.divider)),
+            );
         for (n, tag) in tags.iter().enumerate() {
             let on = pinned.as_deref() == Some(tag.as_str());
             let pick = tag.clone();
@@ -366,7 +411,7 @@ impl Launcher {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .child(self.version_label(tag)),
+                            .child(self.build_name_with_commit(tag)),
                     )
                     .children(self.build_age(tag).map(|age| {
                         div()

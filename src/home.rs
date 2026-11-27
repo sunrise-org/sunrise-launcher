@@ -332,24 +332,27 @@ impl Launcher {
                 this.play_to("--world", folder.clone());
                 cx.notify();
             }));
-        let packs = secondary("alt-world-packs", "")
-            .absolute()
-            .left(px(8.))
-            .bottom(px(8.))
-            .size(px(32.))
-            .px_0()
-            .bg(rgb(palette().raised))
-            .occlude()
-            .when(!focus.is_focused(window), |d| d.opacity(PACKS_AT_REST))
-            .group_hover(group.clone(), |s| s.opacity(1.))
-            .focus_visible(|s| s.opacity(1.).border_color(rgb(palette().focus)))
-            .child(blocks::icon("archive", 17., rgb(palette().text).into()))
-            .tooltip(crate::glass_ui::tip(tr("Data packs")))
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.ui.home.tabs.remember(window.focused(cx));
-                this.show_world_packs(path.clone());
-                cx.notify();
-            }));
+        let packs = secondary(
+            SharedString::from(format!("alt-world-packs-{}", world.folder)),
+            "",
+        )
+        .absolute()
+        .left(px(8.))
+        .bottom(px(8.))
+        .size(px(32.))
+        .px_0()
+        .bg(rgb(palette().raised))
+        .occlude()
+        .when(!focus.is_focused(window), |d| d.opacity(PACKS_AT_REST))
+        .group_hover(group.clone(), |s| s.opacity(1.))
+        .focus_visible(|s| s.opacity(1.).border_color(rgb(palette().focus)))
+        .child(blocks::icon("archive", 17., rgb(palette().text).into()))
+        .tooltip(crate::glass_ui::tip(tr("Data packs")))
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.ui.home.tabs.remember(window.focused(cx));
+            this.show_world_packs(path.clone());
+            cx.notify();
+        }));
         div()
             // The tile's own id scopes what is in it: no world's control is another's.
             .id(SharedString::from(format!("alt-world:{}", world.folder)))
