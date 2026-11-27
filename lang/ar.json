@@ -2543,5 +2543,15 @@
   "Continue playing lists one world a row.": "تعرض صفحة متابعة اللعب عالمًا واحدًا في كل صف.",
   "Continue playing shows the worlds' pictures side by side, as many as fit across; the rest wrap under them.": "تعرض صفحة متابعة اللعب صور العوالم جنبًا إلى جنب بحسب المساحة، وتنتقل الصور الباقية إلى الصفوف التالية.",
   "Discard": "تجاهل",
-  "Discard your changes?": "هل تريد تجاهل تغييراتك؟"
+  "Discard your changes?": "هل تريد تجاهل تغييراتك؟",
+  "Every AI feature in the launcher and the game is hidden and turned off: agent control of the launcher and the game, sunrise-ctl and the MCP servers.": "تُخفى وتُعطّل كل ميزات الذكاء الاصطناعي في المشغّل واللعبة: تحكّم الوكلاء بالمشغّل واللعبة، وsunrise-ctl، وخوادم MCP.",
+  "Game storage is unavailable": "مساحة تخزين اللعبة غير متاحة",
+  "Go to": "انتقل إلى",
+  "Hardcore": "المتشدّد",
+  "Hides and turns off every AI feature.": "يخفي كل ميزات الذكاء الاصطناعي ويعطّلها.",
+  "Horizon Minecraft": "Horizon Minecraft",
+  "How the game starts. Its build is chosen beside Play on Home.": "طريقة بدء اللعبة. اختر إصدارها بجوار زر «العب» في الصفحة الرئيسية.",
+  "Install a Sunrise game build first, then prepare it.": "ثبّت إصدارًا من لعبة Sunrise أولًا، ثم أعدّ تثبيته.",
+  "Install a game build first. An import reuses its game files.": "ثبّت إصدارًا من اللعبة أولًا. ستعيد عملية الاستيراد استخدام ملفاته.",
+  "Installed mods": "الإضافات المثبّتة"
 }
