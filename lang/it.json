@@ -2390,5 +2390,15 @@
   "Mojang's {component} manifest: {error}": "Manifest {component} di Mojang: {error}",
   "Downloading Minecraft's Java {name} from Mojang ({count} files)": "Download di Java {name} di Minecraft da Mojang ({count} file)",
   "is {actual} bytes, not the {expected} Mojang lists": "è di {actual} byte, invece dei {expected} indicati da Mojang",
-  "is not the one Sunrise pins (sha1 {actual})": "non corrisponde a quello bloccato da Sunrise (sha1 {actual})"
+  "is not the one Sunrise pins (sha1 {actual})": "non corrisponde a quello bloccato da Sunrise (sha1 {actual})",
+  "{done} of {total} files": "{done} file su {total}",
+  "{failed} of {total} files failed, the first: {error}": "{failed} file su {total} non riusciti, primo errore: {error}",
+  "PE machine 0x{machine}": "Macchina PE 0x{machine}",
+  "Build completed.": "Build completata.",
+  "The build failed: {error}": "Build non riuscita: {error}",
+  "GitHub doesn't know {repo} commit {revision}.": "GitHub non riconosce il commit {revision} di {repo}.",
+  "Duplicate native mod id {id}.": "ID mod nativa duplicato: {id}.",
+  "Planning the build": "Pianificazione della build",
+  "Checking the prebuilt game": "Verifica del gioco precompilato",
+  "Checking the Rust toolchain": "Verifica della toolchain Rust"
 }

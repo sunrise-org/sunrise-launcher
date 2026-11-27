@@ -2291,5 +2291,15 @@
   "Committing data location": "جارٍ تثبيت موقع البيانات",
   "{error}. Original data was kept. Partial copies may remain in {path}; choose an empty folder to retry": "{error}. تم الاحتفاظ بالبيانات الأصلية. قد تبقى نسخ جزئية في {path}؛ اختر مجلدًا فارغًا لإعادة المحاولة",
   "Data root must be a folder: {path}": "يجب أن يكون جذر البيانات مجلدًا: {path}",
-  "Source data roots overlap; only a build folder inside/equal to launcher is supported": "تتداخل جذور بيانات المصدر؛ يُدعم فقط مجلد بناء داخل مجلد المشغّل أو مطابق له"
+  "Source data roots overlap; only a build folder inside/equal to launcher is supported": "تتداخل جذور بيانات المصدر؛ يُدعم فقط مجلد بناء داخل مجلد المشغّل أو مطابق له",
+  "Use an absolute path without '..': {path}": "استخدم مسارًا مطلقًا بلا '..': {path}",
+  "Copy verification failed for {path}": "فشل التحقق من النسخة في {path}",
+  "Source changed during copying: {path}; stop all writers and retry": "تغيّر المصدر أثناء النسخ: {path}؛ أوقف جميع عمليات الكتابة وحاول مجددًا",
+  "Unsupported special file: {path}": "ملف خاص غير مدعوم: {path}",
+  "Cannot preserve access permissions on {path}: {error}": "تعذّر الحفاظ على أذونات الوصول في {path}: {error}",
+  "{name} is not a pack: it has no pack.mcmeta.": "{name} ليست حزمة: لا تحتوي على pack.mcmeta.",
+  "{name} is not a data pack the game reads.": "{name} ليست حزمة بيانات تقرؤها اللعبة.",
+  "{name} has no data folder: it is a resource pack, not a data pack.": "لا يحتوي {name} على مجلد بيانات: إنها حزمة موارد وليست حزمة بيانات.",
+  "{file} is not a data pack the game reads": "{file} ليست حزمة بيانات تقرؤها اللعبة",
+  "No data pack {query} in {folder}": "لا توجد حزمة بيانات {query} في {folder}"
 }
