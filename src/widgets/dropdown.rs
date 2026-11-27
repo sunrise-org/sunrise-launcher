@@ -50,6 +50,9 @@ thread_local! {
     /// closes (`forget`).
     static FILTER: std::cell::RefCell<std::collections::HashMap<SharedString, crate::line_edit::LineEdit>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
+    /// The menus asked to make a new option: their filter's hint says to type its name.
+    static NAMING: std::cell::RefCell<std::collections::HashSet<SharedString>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
     /// The theme the frame draws with, for the filter's text field.
     static THEME: std::cell::RefCell<Option<crate::theme::Theme>> = const { std::cell::RefCell::new(None) };
     /// The focus of each open menu, by the field's id, so opening it hands it the keyboard.
@@ -65,6 +68,7 @@ pub(crate) fn forget(id: &str) {
     HANDLES.with_borrow_mut(|m| m.retain(|key, _| !key.starts_with(id)));
     FILTER.with_borrow_mut(|m| m.retain(|key, _| key.as_ref() != id));
     FOCUS.with_borrow_mut(|m| m.retain(|key, _| key.as_ref() != id));
+    NAMING.with_borrow_mut(|n| n.retain(|key| key.as_ref() != id));
     TYPING.with_borrow_mut(|t| {
         if t.as_ref().is_some_and(|t| t.id.as_ref() == id) {
             *t = None;
@@ -149,13 +153,13 @@ fn ranked(rows: &[(String, Option<String>)], typed: &str) -> Vec<usize> {
 /// The line at the top of a filterable menu: a muted magnifier and its filter, a text field
 /// like every other (selection, caret; a hint before anything is typed). The mouse selects in
 /// it as in any field.
-fn search_line(id: &SharedString) -> Div {
+fn search_line(id: &SharedString, hint: &'static str) -> Div {
     let p = palette();
     let theme = THEME.with_borrow(|t| *t);
     let field = theme.map(|theme| {
         let t = crate::mods::field_theme(theme);
         let content = with_filter(id, |e| {
-            crate::line_edit::content(e, &t, true, false, false, "Type to filter")
+            crate::line_edit::content(e, &t, true, false, false, hint)
         });
         let (press, drag) = (id.clone(), id.clone());
         div()
@@ -651,12 +655,18 @@ pub(crate) struct Dropdown {
 /// What a pick does: the option's index.
 type Pick = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 
-/// A dropdown whose list can grow: the words of its row for what was typed, and what choosing it
-/// does with that text.
-type Create = (
-    fn(&str) -> String,
-    Rc<dyn Fn(String, &mut Window, &mut App)>,
-);
+/// A dropdown whose list can grow: the words of its row for what was typed, the row that offers
+/// it before anything is typed and the hint it then gives, and what choosing it does with the
+/// text.
+struct Create {
+    label: fn(&str) -> String,
+    offer: &'static str,
+    hint: &'static str,
+    made: Made,
+}
+
+/// What making a new option does with its name.
+type Made = Rc<dyn Fn(String, &mut Window, &mut App)>;
 
 /// The index a pick of the "create" row comes through as.
 const CREATE_ROW: usize = usize::MAX;
@@ -734,12 +744,21 @@ impl Dropdown {
     /// Lets the player add an option by typing it: the menu always filters, and a row worded
     /// `label(text)` heads it while the text matches no option exactly. Choosing it (or Enter
     /// with no other match) calls `f` with the text.
+    /// `offer` (an English key) is a row under the options before anything is typed; choosing
+    /// it turns the filter's hint to `hint` (an English key), so the player types the new name.
     pub(crate) fn on_create(
         mut self,
         label: fn(&str) -> String,
+        offer: &'static str,
+        hint: &'static str,
         f: impl Fn(String, &mut Window, &mut App) + 'static,
     ) -> Dropdown {
-        self.create = Some((label, Rc::new(f)));
+        self.create = Some(Create {
+            label,
+            offer,
+            hint,
+            made: Rc::new(f),
+        });
         self
     }
 
@@ -819,7 +838,7 @@ impl Dropdown {
             .find(|&n| items[n].enabled)
             .or(offer.map(|_| CREATE_ROW));
         let pick: Pick = match &create {
-            Some((_, made)) => {
+            Some(Create { made, .. }) => {
                 let (made, pick, name) = (made.clone(), pick.clone(), typed_name.clone());
                 Rc::new(move |n, window, cx| {
                     if n == CREATE_ROW {
@@ -833,7 +852,7 @@ impl Dropdown {
         };
         let mut at: Option<usize> = None;
         let mut rows: Vec<AnyElement> = Vec::new();
-        if let Some((label, _)) = offer {
+        if let Some(Create { label, .. }) = offer {
             let (pick, close) = (pick.clone(), close.clone());
             rows.push(
                 row_when(
@@ -877,6 +896,27 @@ impl Dropdown {
                 rows.push(rule());
             }
         }
+        // Before anything is typed, the way to make a new one is offered under the list.
+        if let Some(made) = create.as_ref().filter(|_| !filtering) {
+            let naming = id.clone();
+            rows.push(rule());
+            rows.push(
+                row_when(
+                    ElementId::from((key.clone(), CREATE_ROW - 1)),
+                    tr(made.offer),
+                    None,
+                    false,
+                    true,
+                )
+                .on_click(move |_, window, _| {
+                    NAMING.with_borrow_mut(|n| {
+                        n.insert(naming.clone());
+                    });
+                    window.refresh();
+                })
+                .into_any_element(),
+            );
+        }
         if rows.is_empty() {
             rows.push(
                 div()
@@ -891,8 +931,12 @@ impl Dropdown {
             );
         }
         let count = rows.len();
+        let hint = create
+            .as_ref()
+            .filter(|_| NAMING.with_borrow(|n| n.contains(&id)))
+            .map_or("Type to filter", |made| made.hint);
         let head = filterable
-            .then(|| search_line(&id).child(typing(id.clone(), first, pick, close.clone())));
+            .then(|| search_line(&id, hint).child(typing(id.clone(), first, pick, close.clone())));
         wrap.children(layer_with(&id, head, rows, count, at, menu_min, close))
     }
 }

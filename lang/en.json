@@ -2838,5 +2838,6 @@
   "Delete only the group and its profiles stay, out of any group. Or delete the profiles with it: they and their worlds and mods move to the Trash, where you can restore them.": "Delete only the group and its profiles stay, out of any group. Or delete the profiles with it: they and their worlds and mods move to the Trash, where you can restore them.",
   "Delete group": "Delete group",
   "Delete group and profile": "Delete group and profile",
-  "Delete group and profiles": "Delete group and profiles"
+  "Delete group and profiles": "Delete group and profiles",
+  "Type the new group's name": "Type the new group's name"
 }

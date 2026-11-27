@@ -294,6 +294,9 @@ impl Launcher {
             Style::Ghost,
             self.item_menu_open(packs, &key),
         )
+        // The card is already lit under the pointer: the button's own light is a step brighter,
+        // or it would not show on it.
+        .hover(|s| s.bg(rgb(palette().selected)))
         .child(
             gpui::canvas(move |bounds, _, _| write.set(bounds), |_, _, _, _| {})
                 .absolute()

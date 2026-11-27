@@ -133,6 +133,8 @@ impl Launcher {
             Style::Ghost,
             self.world_menu_open(&world.folder),
         )
+        // A step brighter than the row's own light, so it shows on a lit row.
+        .hover(|s| s.bg(rgb(palette().selected)))
         .child(
             gpui::canvas(move |bounds, _, _| write.set(bounds), |_, _, _, _| {})
                 .absolute()

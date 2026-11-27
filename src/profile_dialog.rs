@@ -248,15 +248,20 @@ impl Launcher {
                     })
                 }
             })
-            .on_create(|name| trf("New group “{name}”", &[("name", name)]), {
-                let this = cx.entity();
-                move |name, _, cx| {
-                    this.update(cx, |this, cx| {
-                        set(this, name.clone());
-                        cx.notify();
-                    })
-                }
-            })
+            .on_create(
+                |name| trf("New group “{name}”", &[("name", name)]),
+                crate::i18n::tr_key("New group…"),
+                crate::i18n::tr_key("Type the new group's name"),
+                {
+                    let this = cx.entity();
+                    move |name, _, cx| {
+                        this.update(cx, |this, cx| {
+                            set(this, name.clone());
+                            cx.notify();
+                        })
+                    }
+                },
+            )
             .build()
     }
 
