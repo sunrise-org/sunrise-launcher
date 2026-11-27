@@ -8,6 +8,9 @@ use crate::widgets::button::{button, icon_button, Look, Size, Style};
 use crate::widgets::feedback::{banner, progress, Tone};
 use gpui::rgb;
 
+/// The banner's height when nothing under the buttons adds to it (Figma: the art's 208).
+const BANNER_HEIGHT: f32 = 208.;
+
 impl Launcher {
     /// The selected profile's top: the banner, then the state the profile is in.
     pub(super) fn profile_header(
@@ -88,6 +91,8 @@ impl Launcher {
                     .gap(px(20.))
                     .p(px(if compact { 16. } else { 24. }))
                     .pt(px(if compact { 16. } else { 32. }))
+                    // As tall as the design's art (208), however little the banner holds.
+                    .min_h(px(BANNER_HEIGHT))
                     .child(identity)
                     .child(actions)
                     .children(self.build_progress(view, cx))

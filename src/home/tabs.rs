@@ -221,7 +221,7 @@ impl Launcher {
             // On the page panel itself, under the banner (Figma: no card of its own, the tabs
             // 30 px under the banner's edge).
             .px(px(inset))
-            .pt(px(12.))
+            .pt(px(10.))
             // The tabs, with the profile's one action for its collection on the right.
             .child(
                 div()
