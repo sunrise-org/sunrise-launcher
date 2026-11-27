@@ -2320,5 +2320,17 @@
   "{url} answered {status}": "{url} ha risposto {status}",
   "Too many redirects": "Troppi reindirizzamenti",
   "Artifact requires a 40-character SHA-1": "L’artefatto richiede uno SHA-1 di 40 caratteri",
-  "Downloaded size or SHA-1 does not match the manifest": "La dimensione o lo SHA-1 del download non corrisponde al manifest"
+  "Downloaded size or SHA-1 does not match the manifest": "La dimensione o lo SHA-1 del download non corrisponde al manifest",
+  "{url}: {message} (after {seconds}s)": "{url}: {message} (dopo {seconds}s)",
+  "{completed} files complete, {active} active, {pending} pending; {speed} MiB/s; {verified}/{total} bytes": "{completed} file completati, {active} attivi, {pending} in attesa; {speed} MiB/s; {verified}/{total} byte",
+  "Unexpected partial metadata response": "Risposta parziale inattesa dei metadati",
+  "Metadata exceeds 16 MiB": "I metadati superano 16 MiB",
+  "Redirect target must use HTTPS": "La destinazione del reindirizzamento deve usare HTTPS",
+  "{name} has no world {world}.": "{name} non contiene il mondo {world}.",
+  "{name} has nothing to share yet: no settings, packs, mods or worlds.": "{name} non ha ancora nulla da condividere: nessuna impostazione, pacchetto, mod o mondo.",
+  "Could not export {name}: {error}": "Impossibile esportare {name}: {error}",
+  "Log sharing is not configured for this build.": "La condivisione dei log non è configurata per questa build.",
+  "mclo.gs didn't take the log: {error}": "mclo.gs non ha accettato il log: {error}",
+  "mclo.gs answered something unexpected: {error}": "mclo.gs ha risposto in modo imprevisto: {error}",
+  "mclo.gs didn't take the log: {reason}": "mclo.gs non ha accettato il log: {reason}"
 }

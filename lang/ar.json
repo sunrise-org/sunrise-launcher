@@ -2221,5 +2221,17 @@
   "Could not save the rolling receipt for {tag}: {error}": "تعذّر حفظ إيصال التحديث المتتابع لـ {tag}: {error}",
   "{file}: signed build facts are missing": "{file}: بيانات البناء الموقّعة مفقودة",
   "Sunrise: the accounts are not saved: {error}": "Sunrise: لم يتم حفظ الحسابات: {error}",
-  "{name} owns Minecraft: downloading {version} from Mojang": "يمتلك {name} لعبة Minecraft: جارٍ تنزيل {version} من Mojang"
+  "{name} owns Minecraft: downloading {version} from Mojang": "يمتلك {name} لعبة Minecraft: جارٍ تنزيل {version} من Mojang",
+  "{missing}\n  • Minecraft's own Java from Mojang needs glibc ({loader} is missing; on NixOS, enable programs.nix-ld), so install compatible Java instead.": "{missing}\n  • Java di Minecraft fornito da Mojang richiede glibc (manca {loader}; su NixOS, attiva programs.nix-ld), quindi installa una versione Java compatibile.",
+  "{missing}\n  • Sunrise also tried to download Minecraft's own Java from Mojang, but: {error}": "{missing}\n  • حاول Sunrise أيضًا تنزيل Java الخاص بـ Minecraft من Mojang، لكن: {error}",
+  "Minecraft {version}'s assets: {error}": "أصول Minecraft ‏{version}: {error}",
+  "The version's research-lock.json doesn't pin the Minecraft files": "لا يثبّت research-lock.json الخاص بالإصدار ملفات Minecraft",
+  "App bundles are a macOS thing.": "حزم التطبيقات خاصة بنظام macOS.",
+  "{path} is not a launcher update this launcher downloaded.": "{path} ليس تحديثًا للمشغّل تم تنزيله بواسطة هذا المشغّل.",
+  "The download has no launcher binary.": "لا يحتوي التنزيل على ملف المشغّل التنفيذي.",
+  "This launcher release has no build for this platform.": "لا يتوفر لهذا الإصدار من المشغّل بناء لهذه المنصة.",
+  "{tag} is not an AppImage, and this launcher runs from one. Install it from its release page instead.": "{tag} ليس ملف AppImage، وهذا المشغّل يعمل منه. ثبّته من صفحة إصداراته بدلًا من ذلك.",
+  "Could not replace the AppImage at {path}: {error}": "تعذّر استبدال AppImage في {path}: {error}",
+  "Could not replace the launcher at {path}: {error}": "تعذّر استبدال المشغّل في {path}: {error}",
+  "Could not start {path}: {error}. Close the launcher and open it again.": "تعذّر بدء {path}: {error}. أغلق المشغّل وافتحه مجددًا."
 }
