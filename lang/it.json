@@ -2158,5 +2158,15 @@
   "Edit profile…": "Modifica profilo…",
   "Rename it, move it to a group or pick another icon.": "Rinominalo, spostalo in un gruppo o scegli un’altra icona.",
   "Installs {count} of its {all} mods: the rest don't fit this build yet.": "Installa {count} delle sue {all} mod: le altre non sono ancora compatibili con questa build.",
-  "Installs {count} of its {all} mods: the rest are optional. Open it to add them.": "Installa {count} delle sue {all} mod: le altre sono facoltative. Aprilo per aggiungerle."
+  "Installs {count} of its {all} mods: the rest are optional. Open it to add them.": "Installa {count} delle sue {all} mod: le altre sono facoltative. Aprilo per aggiungerle.",
+  "Installs {count} of its {all} mods: some don't fit this build yet and some are optional. Open it to choose.": "Installa {count} delle sue {all} mod: alcune non sono ancora compatibili con questa build e altre sono facoltative. Aprilo per scegliere.",
+  "Install {count}": "Installa {count}",
+  "Show output": "Mostra output",
+  "Hide output": "Nascondi output",
+  "Waiting for the compiler's first lines…": "In attesa delle prime righe del compilatore…",
+  "Sign-in cancelled.": "Accesso annullato.",
+  "Signed in as {signed_in} instead of {expected}. Use the Microsoft account for {expected} and try again.": "Accesso effettuato come {signed_in} invece di {expected}. Usa l’account Microsoft di {expected} e riprova.",
+  "That account was signed out while sign-in was in progress. Add it again to continue.": "L’account è stato disconnesso durante l’accesso. Aggiungilo di nuovo per continuare.",
+  "{name} is no longer signed in on this computer. Sign in again.": "{name} non ha più effettuato l’accesso su questo computer. Accedi di nuovo.",
+  "Could not reach {service}. Check your internet connection.": "Impossibile raggiungere {service}. Controlla la connessione Internet."
 }

@@ -2554,5 +2554,15 @@
   "Install a Sunrise game build first, then prepare it.": "ติดตั้งบิลด์เกม Sunrise ก่อน แล้วจึงเตรียมเกม",
   "Install a game build first. An import reuses its game files.": "ติดตั้งบิลด์เกมก่อน การนำเข้าจะใช้ไฟล์เกมที่มีอยู่",
   "Installed mods": "ม็อดที่ติดตั้ง",
-  "Installed resource and shader packs": "แพ็กทรัพยากรและ shader ที่ติดตั้ง"
+  "Installed resource and shader packs": "แพ็กทรัพยากรและ shader ที่ติดตั้ง",
+  "Keep editing": "แก้ไขต่อ",
+  "Keyboard shortcuts": "แป้นพิมพ์ลัด",
+  "Language, network and this version.": "ภาษา เครือข่าย และเวอร์ชันนี้",
+  "Manage game builds, downloads and where your files are kept.": "จัดการบิลด์เกม การดาวน์โหลด และตำแหน่งจัดเก็บไฟล์",
+  "Not reviewed by the Sunrise registry. Native mods run with full access to this computer. Read the source first.": "รีจิสทรี Sunrise ยังไม่ได้ตรวจสอบ ม็อดเนทีฟเข้าถึงคอมพิวเตอร์นี้ได้เต็มที่ โปรดอ่านซอร์สก่อน",
+  "Not signed in": "ไม่ได้ลงชื่อเข้าใช้",
+  "Open access controls": "เปิดการควบคุมการเข้าถึง",
+  "Privacy": "ความเป็นส่วนตัว",
+  "Quit Sunrise Launcher": "ออกจาก Sunrise Launcher",
+  "Remove old build": "นำบิลด์เก่าออก"
 }

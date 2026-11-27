@@ -2059,5 +2059,15 @@
   "the game's item {name}": "عنصر اللعبة {name}",
   "the game's loop {name}": "حلقة اللعبة {name}",
   "the game's mixin tool": "أداة mixin الخاصة باللعبة",
-  "the game's type {name}": "نوع اللعبة {name}"
+  "the game's type {name}": "نوع اللعبة {name}",
+  "worlds rows|tiles: how Home lists the worlds under Continue playing.": "worlds rows|tiles: طريقة عرض العوالم في الرئيسية تحت «متابعة اللعب».",
+  "{build} ({commit})": "{build} ({commit})",
+  "{build} is installed, but Sunrise couldn't record it as the newest Nightly.": "تم تثبيت {build}، لكن تعذّر على Sunrise تسجيله كأحدث إصدار Nightly.",
+  "{build} isn't in the Sunrise registry yet: mods are checked on this computer.": "{build} غير موجود بعد في سجل Sunrise: يتم التحقق من الإضافات على هذا الكمبيوتر.",
+  "{build} · {commit}": "{build} · {commit}",
+  "{channel} · {month}": "{channel} · {month}",
+  "{channel} · {version}": "{channel} · {version}",
+  "{count} mods are available on other Sunrise builds. Turn on Show all to see which builds they fit.": "تتوفر {count} إضافات في إصدارات Sunrise الأخرى. فعّل «عرض الكل» لمعرفة الإصدارات المتوافقة.",
+  "{count} mods don't work with {build} yet: {mods}.": "لا تعمل {count} إضافات مع {build} بعد: {mods}.",
+  "{count} mods fit {target}": "تتوافق {count} إضافات مع {target}"
 }
