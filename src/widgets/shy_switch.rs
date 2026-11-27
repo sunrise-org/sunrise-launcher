@@ -26,6 +26,22 @@ const PULL: f32 = 640.;
 const DRAG: f32 = 2. * 0.7 * 25.3;
 /// The speed it bolts at when the pointer first comes near, in px per second.
 const KICK: f32 = 180.;
+/// How close a dodge may pass the pointer (centre to pointer) before it hops instead, in px.
+const CLEAR: f32 = 30.;
+/// How long a hop takes to pop in.
+const HOP_POP: std::time::Duration = std::time::Duration::from_millis(140);
+
+/// How close the segment from `a` to `b` comes to `p`.
+fn segment_dist(a: Pt, b: Pt, p: Pt) -> f32 {
+    let ab = (b.0 - a.0, b.1 - a.1);
+    let len = ab.0 * ab.0 + ab.1 * ab.1;
+    let t = if len <= f32::EPSILON {
+        0.
+    } else {
+        (((p.0 - a.0) * ab.0 + (p.1 - a.1) * ab.1) / len).clamp(0., 1.)
+    };
+    dist((a.0 + ab.0 * t, a.1 + ab.1 * t), p)
+}
 /// The size of a switch (`check::switch`'s track), which the placeholder in the row keeps.
 const SIZE: (f32, f32) = (36., 20.);
 
@@ -42,6 +58,8 @@ struct Shy {
     /// Which way, from -1 to 1, it leans sideways of straight away from the pointer.
     bias: f32,
     seed: u32,
+    /// When it last hopped (it pops in at its new place rather than slide past the pointer).
+    hopped: Option<Instant>,
     /// Scrolls nothing: its bounds follow the home spot when a page scrolls (as the slider's).
     home: ScrollHandle,
 }
@@ -60,6 +78,7 @@ impl Shy {
             engaged: false,
             bias: 0.,
             seed,
+            hopped: None,
             home: ScrollHandle::new(),
         }
     }
@@ -173,7 +192,10 @@ fn nudge(key: &str, at: gpui::Point<gpui::Pixels>) -> bool {
             let push = PUSH.0 + (PUSH.1 - PUSH.0) * (1. - near / RADIUS);
             let to = keep_in_leash((shy.pos.0 + dir.0 * push, shy.pos.1 + dir.1 * push));
             let cornered = dist(to, shy.pos) < push * 0.45 && near < RADIUS * 0.7;
-            if cornered {
+            // A path that would brush the pointer is no path: it hops there instead.
+            let pointer_at = (pointer.0 - home.0, pointer.1 - home.1);
+            let brushes = |to: Pt| segment_dist(shy.pos, to, pointer_at) < CLEAR;
+            if cornered || brushes(to) {
                 // Cornered against the leash: it hops across the pointer, to the far side.
                 shy.bias = shy.roll();
                 let mirror = (
@@ -186,8 +208,11 @@ fn nudge(key: &str, at: gpui::Point<gpui::Pixels>) -> bool {
                         .unwrap_or((if shy.bias < 0. { -1. } else { 1. }, 0.));
                     hop = keep_in_leash((across.0 * LEASH_X, across.1 * LEASH_Y));
                 }
+                // It vanishes and pops in over there, so it never crosses the pointer.
                 shy.target = hop;
-                shy.vel = (dir.0 * KICK * 1.4, dir.1 * KICK * 1.4);
+                shy.pos = hop;
+                shy.vel = (0., 0.);
+                shy.hopped = Some(now);
             } else {
                 shy.target = to;
                 if fresh {
@@ -215,7 +240,7 @@ pub(crate) fn wrap(id: &str, on: bool, inner: impl IntoElement) -> Div {
     let now = Instant::now();
     let still = motion::still();
     let key = id.to_string();
-    let (pos, home, animating) = SHY.with_borrow_mut(|all| {
+    let (pos, home, animating, pop) = SHY.with_borrow_mut(|all| {
         let shy = all.entry(key.clone()).or_insert_with(Shy::new);
         if still {
             shy.go_home();
@@ -232,10 +257,22 @@ pub(crate) fn wrap(id: &str, on: bool, inner: impl IntoElement) -> Div {
             }
             shy.step(now);
         }
-        (shy.pos, shy.home.clone(), !shy.settled())
+        // A hop pops in: it fades up at its new place over HOP_POP.
+        let pop = shy.hopped.map_or(1., |at| {
+            (now.saturating_duration_since(at).as_secs_f32() / HOP_POP.as_secs_f32()).min(1.)
+        });
+        if pop >= 1. {
+            shy.hopped = None;
+        }
+        (shy.pos, shy.home.clone(), !shy.settled() || pop < 1., pop)
     });
     let floating = (on && !still) || pos != (0., 0.);
-    let placed = div().absolute().left(px(pos.0)).top(px(pos.1)).child(inner);
+    let placed = div()
+        .absolute()
+        .left(px(pos.0))
+        .top(px(pos.1))
+        .opacity(pop)
+        .child(inner);
     let placed = if floating {
         // Above the card's edges and everything near it, below open menus (priority 9 and up).
         gpui::deferred(placed).with_priority(6).into_any_element()

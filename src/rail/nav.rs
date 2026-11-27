@@ -1,7 +1,7 @@
 //! The sidebar's navigation: Discover, Servers and Skins at the top, Help & community (with its
 //! Discord and Website rows) and Settings at the foot. Each row is the shared `nav_row`.
 use super::*;
-use crate::widgets::nav::{nav_row, sun_fits};
+use crate::widgets::nav::nav_row;
 use gpui::{AnimationExt, AnyElement};
 
 /// The gap from a row's icon to its label: the label starts where a profile's name does.
@@ -21,11 +21,8 @@ fn nav_item(
     indent: bool,
 ) -> Stateful<Div> {
     let labelled = open >= 1.;
-    // The row's width less its padding, and the icon and gap, is the room for the label and sun.
-    let room = rail_width(open) - 2. * RAIL_PAD - 2. * 12. - ICON - 10.;
-    let show_sun = labelled && sun_fits(label.chars().count() as f32 * CHAR_WIDTH, room);
     let shown = if labelled { label } else { "" };
-    let row = nav_row(id, icon, shown, selected, show_sun)
+    let row = nav_row(id, icon, shown, selected)
         .px(px(ICON_PAD))
         .gap(px(LABEL_GAP));
     if labelled {

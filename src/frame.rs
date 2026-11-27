@@ -70,6 +70,7 @@ impl Launcher {
         cx.set_reduce_motion(crate::motion::still());
         crate::motion::note_power(cx);
         crate::motion::note_benchmark(self.bench.is_some());
+        crate::widgets::dropdown::new_frame();
         let size = window.viewport_size();
         self.window_width = f32::from(size.width);
         self.window_height = f32::from(size.height);
@@ -285,7 +286,13 @@ impl Launcher {
             .text_color(rgb(palette().text))
             .font_family(sunrise_launcher_theme::glass::FONT)
             .text_size(px(tokens::BODY))
-            .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
+            .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                // An open menu that filters as it is typed in takes the keys first.
+                if crate::widgets::dropdown::type_key(ev, window, cx) {
+                    cx.stop_propagation();
+                    cx.notify();
+                    return;
+                }
                 let k = &ev.keystroke;
                 // Alt+Left goes back, unless a layer (a dialog, a sheet, the search) has the keys.
                 if k.modifiers.alt && k.key == "left" && !this.layer_open() && this.go_back() {

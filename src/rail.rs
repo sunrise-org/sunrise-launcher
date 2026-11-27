@@ -1,6 +1,7 @@
 //! The sidebar: the navigation (Discover, Servers, Skins), the profiles, and Help & community
-//! and Settings at the bottom. Its profiles scroll independently of its controls. The parts are
-//! in `rail/nav.rs` and `rail/profiles.rs`.
+//! and Settings at the bottom, with the launcher's update notice above them when there is one.
+//! Its profiles scroll independently of its controls. The parts are in `rail/nav.rs`,
+//! `rail/profiles.rs` and `rail/update_notice.rs`.
 use super::*;
 use crate::{frame::Page, paint::palette};
 use gpui::rgb;
@@ -9,6 +10,7 @@ use std::{cell::RefCell, rc::Rc};
 
 mod nav;
 mod profiles;
+mod update_notice;
 
 /// Each drawn profile row that opens a context menu, with its bounds in the window.
 pub(crate) type ProfileRows = Rc<RefCell<Vec<(gpui::Bounds<gpui::Pixels>, Instance)>>>;
@@ -25,8 +27,6 @@ const CLOSED_ROW: f32 = CLOSED - 2. * RAIL_PAD;
 /// A nav row's icon, and the padding either side of it that centres it in the closed column.
 const ICON: f32 = 20.;
 const ICON_PAD: f32 = (CLOSED_ROW - ICON) / 2.;
-/// A label's width per character: a 13 px Geist average, for whether the sun fits.
-const CHAR_WIDTH: f32 = 7.2;
 
 /// How wide the sidebar is, `open` of the way from closed (0) to open (1).
 pub(crate) fn rail_width(open: f32) -> f32 {
@@ -166,6 +166,7 @@ impl Launcher {
             .child(self.nav_section(open, cx))
             .child(divider(&p))
             .child(self.profiles_section(look, cx))
+            .children(self.update_notice(open, cx))
             .child(self.help_section(open, cx))
             .child(self.settings_row(open, cx))
     }

@@ -189,7 +189,16 @@ pub(crate) fn row_with(title: impl Into<SharedString>, about: Option<Div>, actio
                 )
                 .children(about),
         )
-        .child(actions.flex_none().flex().items_center().gap(px(6.)))
+        // Wrapped under the words in a narrow pane, the controls never reach past the card.
+        .child(
+            actions
+                .flex_none()
+                .max_w_full()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap(px(6.)),
+        )
 }
 
 /// A row whose control needs the full width: the words above, the control below.
@@ -406,7 +415,7 @@ impl Launcher {
             let on = s == section;
             let label = tr(s.label());
             nav = nav.child(
-                nav_row(format!("alt-settings-nav-{n}"), s.icon(), label, on, false).on_click(
+                nav_row(format!("alt-settings-nav-{n}"), s.icon(), label, on).on_click(
                     cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.settings_open(s);
                         cx.notify();

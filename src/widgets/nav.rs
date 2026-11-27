@@ -25,8 +25,6 @@ pub(crate) const SUN_HORIZON: u32 = 0xE0457E;
 /// The pixel sun's width, in px (its height is 10 px).
 pub(crate) const SUN_WIDTH: f32 = 14.;
 const SUN_HEIGHT: f32 = 10.;
-/// The room between a label and the sun at the end of its row.
-const SUN_GAP: f32 = 8.;
 
 /// The pixel sun's squares: (x, y, width, height, colour) in its own 14×10 box, 2 px tall rows.
 const SUN_CELLS: [(f32, f32, f32, f32, u32); 6] = [
@@ -57,12 +55,6 @@ pub(crate) fn sun() -> Div {
         );
     }
     sun
-}
-
-/// Whether a label `label_width` px wide, at full length, with the sun after it fits in `room`.
-/// The caller shows the sun only when this holds; the label is never shortened for it.
-pub(crate) fn sun_fits(label_width: f32, room: f32) -> bool {
-    label_width + SUN_GAP + SUN_WIDTH <= room
 }
 
 thread_local! {
@@ -260,14 +252,12 @@ pub(crate) fn tab_row(strip: Stateful<Div>, trailing: Option<AnyElement>) -> Div
 
 /// A sidebar nav row: its icon and label, 36 px tall. Not selected, it has no fill and lights
 /// `hover` (at 60 %) as the pointer comes to it; selected, it is filled `selected` in full text
-/// colour, with the pixel sun at its end when `show_sun`. The caller adds the click handler and
-/// decides `show_sun` with [`sun_fits`].
+/// colour. The caller adds the click handler.
 pub(crate) fn nav_row(
     id: impl Into<SharedString>,
     icon: &'static str,
     label: impl Into<SharedString>,
     selected: bool,
-    show_sun: bool,
 ) -> Stateful<Div> {
     let id: SharedString = id.into();
     let p = palette();
@@ -294,21 +284,15 @@ pub(crate) fn nav_row(
             0.,
         ));
     }
-    row.child(glass_ui::icon(icon, 20., ink))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_size(px(tokens::LABEL))
-                .text_color(ink)
-                .child(label.into()),
-        )
-        // The sun's gap is 8 px (see `sun_fits`): the row's 10 px gap less the 2 px it is pulled in.
-        .when(selected && show_sun, |d| d.child(sun().ml(px(-2.))))
+    row.child(glass_ui::icon(icon, 20., ink)).child(
+        div()
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .text_size(px(tokens::LABEL))
+            .text_color(ink)
+            .child(label.into()),
+    )
 }
-
-#[cfg(test)]
-mod tests;

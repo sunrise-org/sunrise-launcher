@@ -1,6 +1,6 @@
 //! The one title bar across the top of the window (Figma): the sidebar toggle and the brand on
-//! the left, the search field in the middle, the update, the account and, where the launcher
-//! draws them, the window controls on the right. Alt+Left goes back (`frame`'s key capture).
+//! the left, the search field in the middle, the account and, where the launcher draws them,
+//! the window controls on the right. The launcher's update notice is in the sidebar. Alt+Left goes back (`frame`'s key capture).
 
 use super::*;
 use crate::titlebar;
@@ -12,7 +12,6 @@ impl Launcher {
         let p = palette();
         let sidebar = self.sidebar_toggle(cx);
         let search = self.search_button(cx);
-        let update = self.launcher_update_control(cx);
         let controls = titlebar::controls(&self.theme, window, cx);
         let chip_name = match self.accounts.selected() {
             Some(account) => account.name.clone(),
@@ -22,7 +21,6 @@ impl Launcher {
         let compact_account = chip_is_compact(
             self.window_width,
             crate::account_chip::full_width(&chip_name),
-            update.is_some(),
             controls.is_some(),
         );
         let account = self.account_chip(compact_account, cx);
@@ -64,7 +62,6 @@ impl Launcher {
             )
             .child(brand().ml(px(6.)))
             .child(drag)
-            .children(update)
             .child(account)
             .children(controls)
     }
@@ -100,13 +97,11 @@ const CHIP_GAP: f32 = 16.;
 
 /// Whether the account chip shows only its face: when its full width would leave less than
 /// `CHIP_GAP` between it and the centred search field. The right end of the bar is the
-/// window controls, the update button (taken as 150 px, wider than its dot) and the chip, with
-/// the bar's 8 px padding and gaps.
-fn chip_is_compact(window: f32, chip: f32, update: bool, controls: bool) -> bool {
+/// window controls and the chip, with the bar's 8 px padding and gaps.
+fn chip_is_compact(window: f32, chip: f32, controls: bool) -> bool {
     let search_right = window / 2. + crate::command_search::search_width(window) / 2.;
     let controls = if controls { 3. * 46. + 8. } else { 0. };
-    let update = if update { 150. + 8. } else { 0. };
-    let chip_left = window - 8. - controls - chip - update;
+    let chip_left = window - 8. - controls - chip;
     chip_left - search_right < CHIP_GAP
 }
 

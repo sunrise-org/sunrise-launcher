@@ -1,10 +1,38 @@
-//! Launcher update actions, shared by the top bar, its release-notes sheet and Settings.
+//! Launcher update actions, shared by the sidebar's notice, its release-notes popover and Settings.
 use super::*;
 use crate::paint::palette;
 use crate::sheets::{self, Sheet};
 use crate::widgets::button::{button, primary, secondary, Look, Size, Style};
-use gpui::rgb;
+use gpui::{rgb, MouseButton, MouseDownEvent};
 use sunrise_launcher::update_handoff;
+
+/// The launcher's update notice in the sidebar: what it says and does.
+pub(crate) struct Notice {
+    /// The text beside the icon, when the sidebar is open.
+    pub(crate) label: String,
+    /// The tooltip, which is all the text a folded sidebar shows.
+    pub(crate) tip: String,
+    pub(crate) icon: &'static str,
+    /// The download's progress, 0 to 1, while there is one.
+    pub(crate) progress: Option<f32>,
+    /// The version is hidden: the notice is its icon and a dot, which open the notes.
+    pub(crate) dot: bool,
+    /// A press starts the update (and the notes have their own button); otherwise it opens the notes.
+    pub(crate) installs: bool,
+    /// The notes popover is open: the tooltips stay out of its way.
+    pub(crate) sheet_open: bool,
+}
+
+thread_local! {
+    /// Where the sidebar last drew the notice, in the window: what the notes popover hangs from.
+    static NOTICE_AT: std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Records where the notice was drawn this frame.
+pub(crate) fn note_notice_bounds(bounds: gpui::Bounds<gpui::Pixels>) {
+    NOTICE_AT.set(Some(bounds));
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Status<'a> {
@@ -431,30 +459,26 @@ impl Launcher {
         }
     }
 
-    pub(super) fn launcher_update_control(&self, cx: &mut Context<Self>) -> Option<Div> {
+    /// What the sidebar's update notice shows, if there is an update to show.
+    pub(crate) fn launcher_update_notice(&self) -> Option<Notice> {
         let offer = self.launcher_update_offer()?;
-        let p = palette();
         let wait = self.launcher_update_wait();
         let action = offer.action(wait, self.restart_for_launcher_update);
         let available = trf("Update available: {version}", &[("version", offer.version)]);
-        let update_open = self.ui.sheet == Some(Sheet::LauncherUpdate);
-        let open = cx.listener(|this, _, _, cx| {
-            this.open_sheet(Sheet::LauncherUpdate);
-            cx.notify();
-        });
+        let sheet_open = self.ui.sheet == Some(Sheet::LauncherUpdate);
         if offer.dot {
-            return Some(
-                div().flex_none().child(
-                    secondary("launcher-update-dot", "")
-                        .size(px(tokens::FIELD))
-                        .px_0()
-                        .tooltip(crate::glass_ui::tip_unless(update_open, available))
-                        .child(div().size(px(7.)).rounded_full().bg(rgb(p.accent)))
-                        .on_click(open),
-                ),
-            );
+            // Hidden for this version: just the icon and its dot.
+            return Some(Notice {
+                label: String::new(),
+                tip: available,
+                icon: "download-04",
+                progress: None,
+                dot: true,
+                installs: false,
+                sheet_open,
+            });
         }
-        let label = match (&action, wait, offer.status) {
+        let label: String = match (&action, wait, offer.status) {
             (Some(_), Some(Wait::Game), _) => tr("Update after game").into(),
             (Some(_), Some(Wait::Work), _) => tr("Update after task").into(),
             (Some(label), _, _) => label.clone(),
@@ -465,64 +489,29 @@ impl Launcher {
             (None, _, Status::Ready) => tr("Update queued").into(),
             _ => trf("{version} available", &[("version", offer.version)]),
         };
-        let tip = action.clone().unwrap_or_else(|| {
-            if matches!(offer.status, Status::Disabled | Status::Stuck(_)) {
-                tr("What's new").into()
+        let status_only =
+            action.is_none() && matches!(offer.status, Status::Disabled | Status::Stuck(_));
+        let tip: String = match &action {
+            Some(action) => action.clone(),
+            None if status_only => tr("What's new").into(),
+            None => label.clone(),
+        };
+        Some(Notice {
+            label,
+            tip,
+            icon: if status_only {
+                "information-circle"
             } else {
-                label.clone()
-            }
-        });
-        // An update to take is the bar's one accent outline; a status is a secondary button.
-        let look = match action {
-            Some(_) => Look::new(Style::Accent, Size::Small).icon("download-04"),
-            None => Look::new(Style::Secondary, Size::Medium),
-        };
-        let main = button("launcher-update", "", look)
-            .max_w(px(172.))
-            .overflow_hidden()
-            .h(px(tokens::FIELD))
-            .gap(px(6.))
-            .tooltip(crate::glass_ui::tip_unless(update_open, tip))
-            .child(div().min_w_0().truncate().child(label))
-            .when(action.is_none(), |b| {
-                b.child(
-                    crate::glass_ui::icon("information-circle", 16., rgb(p.chrome_muted).into())
-                        .flex_none(),
-                )
-            });
-        let main = if action.is_some() {
-            main.on_click(cx.listener(|this, _, _, cx| {
-                this.request_launcher_update();
-                cx.notify();
-            }))
-        } else {
-            main.on_click(open)
-        };
-        Some(
-            div()
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap(px(4.))
-                .child(main)
-                .when(action.is_some(), |row| {
-                    row.child(
-                        secondary("launcher-update-notes", "")
-                            .size(px(tokens::FIELD))
-                            .px_0()
-                            .tooltip(crate::glass_ui::tip_unless(update_open, tr("What's new")))
-                            .child(crate::glass_ui::icon(
-                                "information-circle",
-                                16.,
-                                rgb(p.chrome_muted).into(),
-                            ))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.open_sheet(Sheet::LauncherUpdate);
-                                cx.notify();
-                            })),
-                    )
-                }),
-        )
+                "download-04"
+            },
+            progress: match offer.status {
+                Status::Downloading(progress) => Some(progress),
+                _ => None,
+            },
+            dot: false,
+            installs: action.is_some(),
+            sheet_open,
+        })
     }
 
     pub(super) fn launcher_update_sheet(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
@@ -663,7 +652,87 @@ impl Launcher {
                             })),
                     ),
             );
-        Some(sheets::frame("launcher-update-sheet", 520., body, cx))
+        Some(self.update_popover(body, cx))
+    }
+
+    /// The notes on a raised plate beside the sidebar's notice: to its right, with its bottom
+    /// edge level with the notice's, so it grows upward. A clear layer around it closes it on a
+    /// press outside.
+    fn update_popover(&self, body: Div, cx: &mut Context<Self>) -> Stateful<Div> {
+        const WIDTH: f32 = 400.;
+        const EDGE: f32 = 12.;
+        const GAP: f32 = 8.;
+        let p = palette();
+        let width = WIDTH.min((self.window_width - 2. * EDGE).max(0.));
+        let (left, bottom) = match NOTICE_AT.get() {
+            Some(at) => (
+                f32::from(at.right()) + GAP,
+                self.window_height - f32::from(at.bottom()),
+            ),
+            // The sidebar was not drawn yet; it is by the next frame.
+            None => (crate::rail::rail_width(0.) + GAP, EDGE),
+        };
+        let left = left.min(self.window_width - width - EDGE).max(EDGE);
+        let bottom = bottom.max(EDGE);
+        let plate = body
+            .id("launcher-update-sheet-body")
+            .absolute()
+            .left(px(left))
+            .bottom(px(bottom))
+            .w(px(width))
+            .max_h(px((self.window_height - bottom - EDGE).max(120.)))
+            .overflow_y_scroll()
+            .track_scroll(&crate::frame::scrolls("launcher-update"))
+            .p(px(20.))
+            .gap(px(16.))
+            .rounded(crate::tokens::r(crate::tokens::R_CARD))
+            .border_1()
+            .border_color(rgb(p.line))
+            .bg(rgb(p.raised))
+            .shadow(vec![gpui::BoxShadow {
+                color: gpui::hsla(0., 0., 0., 0.35),
+                offset: gpui::point(px(0.), px(8.)),
+                blur_radius: px(32.),
+                spread_radius: px(0.),
+                inset: false,
+            }])
+            .text_color(rgb(p.text))
+            .on_mouse_down(MouseButton::Left, |_: &MouseDownEvent, _, cx| {
+                cx.stop_propagation()
+            });
+        // It fades in from 4 px lower down, as the sidebar's other popups do, except under
+        // reduced motion and while a benchmark runs.
+        let plate = if crate::motion::arrivals() {
+            plate
+                .with_animation(
+                    "launcher-update-sheet-in",
+                    crate::motion::eased(sunrise_launcher_theme::QUICK),
+                    move |d, t| d.bottom(px(bottom - 4. * (1. - t))).opacity(t),
+                )
+                .into_any_element()
+        } else {
+            plate.into_any_element()
+        };
+        div()
+            .id("launcher-update-sheet")
+            .absolute()
+            .inset_0()
+            .occlude()
+            .on_mouse_down(MouseButton::Right, |_: &MouseDownEvent, _, cx| {
+                cx.stop_propagation()
+            })
+            .on_mouse_down(MouseButton::Middle, |_: &MouseDownEvent, _, cx| {
+                cx.stop_propagation()
+            })
+            .on_scroll(|_, _, cx| cx.stop_propagation())
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                    this.close_sheet();
+                    cx.notify();
+                }),
+            )
+            .child(plate)
     }
 }
 

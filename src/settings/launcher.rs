@@ -79,7 +79,7 @@ impl Launcher {
             tr("Proxy"),
             tr("Downloads, sign-ins and updates go through it. Empty means none; HTTPS_PROXY then applies if the launcher was started with one."),
             // Out to the row's right edge, in line with the buttons on the other rows.
-            field.w(px(360.)),
+            field.w(px(360.)).max_w_full(),
         );
         let proxy = match refused {
             Some(why) => div()

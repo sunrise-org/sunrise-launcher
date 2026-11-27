@@ -63,6 +63,11 @@ pub(crate) fn forget(id: &str) {
     HANDLES.with_borrow_mut(|m| m.retain(|key, _| !key.starts_with(id)));
     FILTER.with_borrow_mut(|m| m.retain(|key, _| key.as_ref() != id));
     FOCUS.with_borrow_mut(|m| m.retain(|key, _| key.as_ref() != id));
+    TYPING.with_borrow_mut(|t| {
+        if t.as_ref().is_some_and(|t| t.id.as_ref() == id) {
+            *t = None;
+        }
+    });
 }
 
 /// A child, taking no room, that gives the open menu of the field `id` the keyboard the first time
@@ -195,62 +200,82 @@ fn search_line(text: &str) -> Div {
         )
 }
 
-/// A child, taking no room, that reads the keyboard while the menu is drawn: letters go to the
-/// filter of the field `id`, Backspace edits it, Escape clears it before it closes the menu,
-/// and Enter picks the first match (`first`).
+/// The filterable menu open now, as its last frame drew it: the window's root hands it the keys
+/// (see [`type_key`]), so typing works without anything in the menu having the focus.
+struct Typing {
+    id: SharedString,
+    first: Option<usize>,
+    pick: Pick,
+    close: Close,
+}
+
+thread_local! {
+    static TYPING: std::cell::RefCell<Option<Typing>> = const { std::cell::RefCell::new(None) };
+}
+
+/// A new frame begins: only a menu drawn in it can take the keys.
+pub(crate) fn new_frame() {
+    TYPING.with_borrow_mut(|t| *t = None);
+}
+
+/// A child, taking no room, that makes the menu of the field `id` the one the keyboard types
+/// into while it is drawn: letters go to its filter, Backspace edits it, Escape clears it before
+/// it closes the menu, and Enter picks the first match (`first`).
 fn typing(id: SharedString, first: Option<usize>, pick: Pick, close: Close) -> Div {
-    let owner = Owner::default();
-    div().absolute().size_0().child(owner.noting()).child(
-        gpui::canvas(
-            |_, _, _| {},
-            move |_, _, window: &mut Window, _: &mut App| {
-                window.on_key_event(move |ev: &gpui::KeyDownEvent, phase, window, cx| {
-                    let k = &ev.keystroke;
-                    if phase != gpui::DispatchPhase::Capture
-                        || k.modifiers.control
-                        || k.modifiers.platform
-                        || k.modifiers.alt
-                    {
-                        return;
-                    }
-                    let mut text = typed(&id);
-                    match k.key.as_str() {
-                        "escape" if !text.is_empty() => text.clear(),
-                        "backspace" if !text.is_empty() => {
-                            text.pop();
-                        }
-                        "enter" if !text.is_empty() => {
-                            cx.stop_propagation();
-                            if let Some(n) = first {
-                                pick(n, window, cx);
-                                close(window, cx);
-                            }
-                            return;
-                        }
-                        // The first Space is a press on the row, as it was.
-                        "space" if !text.is_empty() => text.push(' '),
-                        _ => match k.key_char.as_deref() {
-                            Some(ch)
-                                if !ch.is_empty()
-                                    && !ch.chars().any(char::is_control)
-                                    && !(text.is_empty() && ch.trim().is_empty()) =>
-                            {
-                                if text.chars().count() < FILTER_MAX {
-                                    text.push_str(ch);
-                                }
-                            }
-                            _ => return,
-                        },
-                    }
-                    set_typed(&id, text);
-                    cx.stop_propagation();
-                    owner.redraw(window, cx);
-                });
-            },
-        )
-        .absolute()
-        .size_0(),
-    )
+    TYPING.with_borrow_mut(|t| {
+        *t = Some(Typing {
+            id,
+            first,
+            pick,
+            close,
+        })
+    });
+    div().absolute().size_0()
+}
+
+/// A key pressed anywhere in the window, offered to the open filterable menu first. True when
+/// the menu took it (the caller stops it and redraws).
+pub(crate) fn type_key(ev: &gpui::KeyDownEvent, window: &mut Window, cx: &mut App) -> bool {
+    let Some((id, first, pick, close)) = TYPING.with_borrow(|t| {
+        t.as_ref()
+            .map(|t| (t.id.clone(), t.first, t.pick.clone(), t.close.clone()))
+    }) else {
+        return false;
+    };
+    let k = &ev.keystroke;
+    if k.modifiers.control || k.modifiers.platform || k.modifiers.alt {
+        return false;
+    }
+    let mut text = typed(&id);
+    match k.key.as_str() {
+        "escape" if !text.is_empty() => text.clear(),
+        "backspace" if !text.is_empty() => {
+            text.pop();
+        }
+        "enter" if !text.is_empty() => {
+            if let Some(n) = first {
+                pick(n, window, cx);
+                close(window, cx);
+            }
+            return true;
+        }
+        // The first Space is a press on the row, as it was.
+        "space" if !text.is_empty() => text.push(' '),
+        _ => match k.key_char.as_deref() {
+            Some(ch)
+                if !ch.is_empty()
+                    && !ch.chars().any(char::is_control)
+                    && !(text.is_empty() && ch.trim().is_empty()) =>
+            {
+                if text.chars().count() < FILTER_MAX {
+                    text.push_str(ch);
+                }
+            }
+            _ => return false,
+        },
+    }
+    set_typed(&id, text);
+    true
 }
 
 /// A child of the field, taking no room, that notes where the field is as it is laid out.
