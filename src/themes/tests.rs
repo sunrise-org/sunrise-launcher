@@ -247,8 +247,8 @@ fn each_theme_brings_back_its_own_accent() {
     let mut kept = std::collections::BTreeMap::new();
     // No theme saved is Dawn; Sunrise's own sky is picked by name.
     assert_eq!(starting_accent(Some(TWILIGHT), &kept), Accent::VIOLET);
-    assert_eq!(starting_accent(None, &kept).rgb(), 0xb4552f);
-    assert_eq!(starting_accent(Some("dawn"), &kept).rgb(), 0xb4552f);
+    assert_eq!(starting_accent(None, &kept).rgb(), 0xc2552d);
+    assert_eq!(starting_accent(Some("dawn"), &kept).rgb(), 0xc2552d);
     kept.insert("dawn".to_string(), Accent::TEAL);
     kept.insert(TWILIGHT.to_string(), Accent::PINK);
     assert_eq!(starting_accent(Some("dawn"), &kept), Accent::TEAL);

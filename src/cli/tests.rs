@@ -128,7 +128,7 @@ fn settings_choose_the_look_as_appearance_does() {
     assert_eq!(settings.theme_accents["nord"].rgb(), 0xc2366f);
     set_setting(&mut settings, "theme", "default").unwrap();
     assert_eq!(settings.theme, None);
-    assert_eq!(settings.accent.rgb(), 0xb4552f, "no saved theme is Dawn");
+    assert_eq!(settings.accent.rgb(), 0xc2552d, "no saved theme is Dawn");
     set_setting(&mut settings, "theme", "nord").unwrap();
     assert_eq!(settings.accent.rgb(), 0xc2366f, "its colour is back");
     set_setting(&mut settings, "accent", "theme").unwrap();

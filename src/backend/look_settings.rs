@@ -78,7 +78,7 @@ mod tests {
         for theme in ["null", "\"dawn\""] {
             let legacy = format!(r##"{{"theme":{theme}, "accent":"#C2366F"}}"##);
             let settled = Settings::parse(&legacy);
-            assert_eq!(settled.accent.rgb(), 0xb4552f);
+            assert_eq!(settled.accent.rgb(), 0xc2552d);
             let saved = serde_json::to_string(&settled).unwrap();
             assert_eq!(Settings::parse(&saved).accent, settled.accent);
             let picked = format!(
@@ -199,7 +199,7 @@ mod tests {
         // The orange one is untouched: saved as dawn it stays dawn, and none saved is the same.
         for text in [r#"{"theme": "dawn"}"#, "{}"] {
             let orange = Settings::parse(text);
-            assert_eq!(orange.accent.rgb(), 0xb4552f, "{text}");
+            assert_eq!(orange.accent.rgb(), 0xc2552d, "{text}");
             assert!(matches!(
                 themes::resolve(orange.theme.as_deref()),
                 themes::Resolved::Builtin(t) if t.id == "dawn" && t.name == "Sunrise"

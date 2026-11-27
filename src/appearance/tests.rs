@@ -23,7 +23,7 @@ fn no_saved_theme_and_dawn_are_the_same_dawn() {
     let dawn = Settings::parse(r#"{"theme": "dawn"}"#);
     for settings in [&none, &dawn] {
         assert_eq!(effective_id(settings), "dawn");
-        assert_eq!(accent(settings).rgb(), 0xb4552f);
+        assert_eq!(accent(settings).rgb(), 0xc2552d);
         assert!(!missing(settings));
     }
     // They share one remembered accent, and neither choice is rewritten when it is read.
@@ -183,7 +183,7 @@ fn a_missing_theme_is_dawn_for_now_and_the_choice_stays() {
     }]);
     assert!(missing(&settings));
     assert_eq!(effective_id(&settings), "dawn");
-    assert_eq!(accent(&settings).rgb(), 0xb4552f);
+    assert_eq!(accent(&settings).rgb(), 0xc2552d);
     // Nothing of the fallback is saved, and its accent can't be edited meanwhile.
     assert!(type_accent(&mut settings, "teal").is_err());
     assert!(reset_accent(&mut settings).is_err());

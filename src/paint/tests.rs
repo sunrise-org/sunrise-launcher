@@ -299,7 +299,7 @@ fn dawns_play_is_the_brand_orange_under_white() {
         let settings = Settings::parse(json);
         let theme = from_settings(&settings, WindowAppearance::Dark);
         let p = Palette::of(&settings, &theme);
-        assert_eq!((p.accent, p.accent_on), (0xb4552f, 0xffffff));
+        assert_eq!((p.accent, p.accent_on), (0xc2552d, 0xffffff));
         assert!(contrast(p.accent_on, p.play_stops[1]) >= TEXT);
     }
     assert!(

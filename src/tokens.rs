@@ -51,13 +51,13 @@ pub(crate) const HERO: f32 = 40.;
 /// Progress bars and other hairlines.
 pub(crate) const R_BAR: f32 = 2.;
 /// Checkboxes, tags and small tiles.
-pub(crate) const R_SMALL: f32 = 5.;
-/// Buttons, fields and chips.
-pub(crate) const R_CONTROL: f32 = 9.;
+pub(crate) const R_SMALL: f32 = 4.;
+/// Buttons, fields and chips (chips are not pills).
+pub(crate) const R_CONTROL: f32 = 6.;
 /// Cards and the rows' pictures.
-pub(crate) const R_CARD: f32 = 12.;
+pub(crate) const R_CARD: f32 = 8.;
 /// Sheets, and the page itself.
-pub(crate) const R_PANEL: f32 = 16.;
+pub(crate) const R_PANEL: f32 = 12.;
 
 // ---- shared sizes
 
