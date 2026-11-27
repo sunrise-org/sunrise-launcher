@@ -1873,5 +1873,21 @@
   "Private compiler work was kept because the launcher couldn't prove all workers had stopped.": "Il lavoro privato del compilatore è stato conservato perché il launcher non ha potuto verificare che tutti i processi fossero terminati.",
   "Profile": "Profilo",
   "Profile game build: {build}": "Build di gioco del profilo: {build}",
-  "Published from github.com/{repo}": "Pubblicato da github.com/{repo}"
+  "Published from github.com/{repo}": "Pubblicato da github.com/{repo}",
+  "Ranked by relevance": "In ordine di rilevanza",
+  "Reading build changes…": "Lettura delle modifiche alla build…",
+  "Refresh": "Aggiorna",
+  "Refreshing Installed mods…": "Aggiornamento delle mod installate…",
+  "Registry mods must fit the profile's game build.": "Le mod del registro devono essere compatibili con la build di gioco del profilo.",
+  "Reinstall for this architecture": "Reinstalla per questa architettura",
+  "Release": "Release",
+  "Release: {tag}": "Release: {tag}",
+  "Remove 1 old build?": "Rimuovere 1 vecchia build?",
+  "Remove build": "Rimuovi build",
+  "Remove old game builds automatically": "Rimuovi automaticamente le vecchie build di gioco",
+  "Remove {build}?": "Rimuovere {build}?",
+  "Remove {count} old builds?": "Rimuovere {count} vecchie build?",
+  "Remove {name}?": "Rimuovere {name}?",
+  "Remove: {mods}.": "Rimuovi: {mods}.",
+  "Removed {mod}.": "{mod} rimossa."
 }

@@ -1774,5 +1774,21 @@
   "Install {mod} {version}": "تثبيت {mod} ‏{version}",
   "Installed archive": "أرشيف مثبّت",
   "Installed game builds": "إصدارات اللعبة المثبّتة",
-  "Installed mods aren't settled yet. Wait or retry before changing them.": "لم يستقر وضع الإضافات المثبّتة بعد. انتظر أو أعد المحاولة قبل تغييرها."
+  "Installed mods aren't settled yet. Wait or retry before changing them.": "لم يستقر وضع الإضافات المثبّتة بعد. انتظر أو أعد المحاولة قبل تغييرها.",
+  "Installed {version}": "تم تثبيت {version}",
+  "Installed {version} · awaiting build": "تم تثبيت {version} · بانتظار البناء",
+  "Installed, couldn't build": "تم التثبيت، لكن تعذّر البناء",
+  "Invalid GitHub test response.": "استجابة اختبار GitHub غير صالحة.",
+  "Invalid Nightly source listing: {id}": "قائمة مصدر Nightly غير صالحة: {id}",
+  "Issues": "المشكلات",
+  "It needs an update from its author; when one is out, it shows here and under Mods.": "تحتاج إلى تحديث من مؤلفها؛ عند توفره سيظهر هنا وتحت الإضافات.",
+  "It needs {mod} to be on and compatible.": "تتطلب تفعيل {mod} وتوافقها.",
+  "Its code couldn't build on your computer.": "تعذّر بناء شيفرتها على كمبيوترك.",
+  "Keep browsing": "متابعة التصفح",
+  "Keep installed version {version}": "الإبقاء على الإصدار المثبّت {version}",
+  "Keep installed, but off": "الإبقاء عليها مثبّتة لكن متوقفة",
+  "Kept for a profile": "تم الاحتفاظ بها لملف شخصي",
+  "Kept the working version": "تم الاحتفاظ بالإصدار العامل",
+  "Last detected public IP: {ip}.": "آخر عنوان IP عام تم اكتشافه: {ip}.",
+  "Last played {when}": "آخر لعب {when}"
 }

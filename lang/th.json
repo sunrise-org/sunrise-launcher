@@ -2269,5 +2269,21 @@
   "Modrinth asks to slow down: try again in a minute.": "Modrinth ขอให้ลดความถี่ ลองอีกครั้งในหนึ่งนาที",
   "Modrinth answered {code}.": "Modrinth ตอบกลับ {code}",
   "No connection to Modrinth: {error}": "เชื่อมต่อ Modrinth ไม่ได้: {error}",
-  "Modrinth's answer wasn't readable: {error}": "อ่านคำตอบจาก Modrinth ไม่ได้: {error}"
+  "Modrinth's answer wasn't readable: {error}": "อ่านคำตอบจาก Modrinth ไม่ได้: {error}",
+  "Modrinth is searched for resource packs, data packs and shader packs only.": "ค้นหา Modrinth เฉพาะแพ็กทรัพยากร ดาต้าแพ็ก และแพ็ก shader",
+  "{url} is not a GitHub release asset URL allowed by the Sunrise v2 registry.": "{url} ไม่ใช่ URL แอสเซ็ตรีลีส GitHub ที่รีจิสทรี Sunrise v2 อนุญาต",
+  "download failed for {url}: {error}": "ดาวน์โหลด {url} ไม่สำเร็จ: {error}",
+  "reading {url}: {error}": "อ่าน {url}: {error}",
+  "{url} exceeded maximum allowed size of {max_bytes} bytes": "{url} มีขนาดเกินค่าสูงสุดที่อนุญาต {max_bytes} ไบต์",
+  "Cannot locate the platform configuration folder for the launcher location file": "หาโฟลเดอร์การตั้งค่าแพลตฟอร์มสำหรับไฟล์ตำแหน่ง launcher ไม่พบ",
+  "Cannot open the data folder: {error}": "เปิดโฟลเดอร์ข้อมูลไม่ได้: {error}",
+  "Invalid {path}: {error}; restore this file or the previous data folder": "{path} ไม่ถูกต้อง: {error}; กู้คืนไฟล์นี้หรือโฟลเดอร์ข้อมูลก่อนหน้า",
+  "Unsupported data location version {version} in {path}": "ไม่รองรับตำแหน่งข้อมูลเวอร์ชัน {version} ใน {path}",
+  "Data folder {path} is missing; reconnect its drive or restore location.json": "ไม่มีโฟลเดอร์ข้อมูล {path}; เชื่อมต่อไดรฟ์อีกครั้งหรือกู้คืน location.json",
+  "Bootstrap needs a parent folder": "Bootstrap ต้องมีโฟลเดอร์แม่",
+  "Unset SUNRISE_LAUNCHER_HOME and SUNRISE_HOME before moving data": "ยกเลิกการตั้งค่า SUNRISE_LAUNCHER_HOME และ SUNRISE_HOME ก่อนย้ายข้อมูล",
+  "Data location changed while waiting; restart the launcher and retry the move": "ตำแหน่งข้อมูลเปลี่ยนระหว่างรอ เริ่ม launcher ใหม่แล้วลองย้ายอีกครั้ง",
+  "Destination {target} overlaps existing data or its bootstrap {bootstrap}": "ปลายทาง {target} ซ้อนทับกับข้อมูลที่มีอยู่หรือ bootstrap {bootstrap}",
+  "Destination {path} must be an empty folder": "ปลายทาง {path} ต้องเป็นโฟลเดอร์ว่าง",
+  "Copying and verifying launcher data": "กำลังคัดลอกและตรวจสอบข้อมูล launcher"
 }
