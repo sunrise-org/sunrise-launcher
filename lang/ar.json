@@ -2553,5 +2553,15 @@
   "How the game starts. Its build is chosen beside Play on Home.": "طريقة بدء اللعبة. اختر إصدارها بجوار زر «العب» في الصفحة الرئيسية.",
   "Install a Sunrise game build first, then prepare it.": "ثبّت إصدارًا من لعبة Sunrise أولًا، ثم أعدّ تثبيته.",
   "Install a game build first. An import reuses its game files.": "ثبّت إصدارًا من اللعبة أولًا. ستعيد عملية الاستيراد استخدام ملفاته.",
-  "Installed mods": "الإضافات المثبّتة"
+  "Installed mods": "الإضافات المثبّتة",
+  "Installed resource and shader packs": "حزم الموارد والتظليل المثبّتة",
+  "Keep editing": "متابعة التعديل",
+  "Keyboard shortcuts": "اختصارات لوحة المفاتيح",
+  "Language, network and this version.": "اللغة والشبكة وهذا الإصدار.",
+  "Manage game builds, downloads and where your files are kept.": "إدارة إصدارات اللعبة والتنزيلات ومكان حفظ ملفاتك.",
+  "Not reviewed by the Sunrise registry. Native mods run with full access to this computer. Read the source first.": "لم يراجع سجل Sunrise هذه الإضافة. تعمل الإضافات الأصلية بصلاحية كاملة على هذا الكمبيوتر. اقرأ الشيفرة المصدرية أولًا.",
+  "Not signed in": "لم تسجّل الدخول",
+  "Open access controls": "فتح عناصر التحكم في الوصول",
+  "Privacy": "الخصوصية",
+  "Quit Sunrise Launcher": "إنهاء مشغّل Sunrise"
 }
