@@ -2588,5 +2588,13 @@
   "Withdraw": "ถอน",
   "a .zip, a .sshader or a Sunrise game build": "ไฟล์ .zip, .sshader หรือบิลด์เกม Sunrise",
   "teal, 176 or #2563eb": "teal, 176 หรือ #2563eb",
-  "{mod} stays off. Fit could not be verified.": "{mod} ยังคงปิดอยู่ ยืนยันความเข้ากันไม่ได้"
+  "{mod} stays off. Fit could not be verified.": "{mod} ยังคงปิดอยู่ ยืนยันความเข้ากันไม่ได้",
+  "{mod} stays off. Needs an update from its author.": "{mod} ยังคงปิดอยู่ ต้องรอผู้เขียนอัปเดต",
+  "{mod} was turned off. Fit could not be verified.": "ปิด {mod} แล้ว ยืนยันความเข้ากันไม่ได้",
+  "{mod} was turned off. Needs an update from its author.": "ปิด {mod} แล้ว ต้องรอผู้เขียนอัปเดต",
+  "A short report when the game crashes, so the crash can be fixed.": "รายงานสั้นๆ เมื่อเกมขัดข้องเพื่อช่วยแก้ปัญหา",
+  "Backing up": "กำลังสำรองข้อมูล",
+  "Changing operators": "กำลังเปลี่ยนผู้ดูแล",
+  "Copying the game files": "กำลังคัดลอกไฟล์เกม",
+  "Core shaders": "เชดเดอร์หลัก"
 }

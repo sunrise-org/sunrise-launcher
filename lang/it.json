@@ -2192,5 +2192,13 @@
   "The keychain said: {why}": "Il portachiavi ha segnalato: {why}",
   "This system has no keychain.": "Questo sistema non dispone di un portachiavi.",
   "{file} can't be read ({kind} error at line {line}, column {column}).": "Impossibile leggere {file} (errore {kind} alla riga {line}, colonna {column}).",
-  "{key} is damaged. Remove it and {file} and sign in again.": "{key} è danneggiato. Rimuovilo insieme a {file} e accedi di nuovo."
+  "{key} is damaged. Remove it and {file} and sign in again.": "{key} è danneggiato. Rimuovilo insieme a {file} e accedi di nuovo.",
+  "Account operation failed. Restart the launcher.": "Operazione dell’account non riuscita. Riavvia il launcher.",
+  "Could not create the account lock.": "Impossibile creare il lock dell’account.",
+  "Could not open the account lock.": "Impossibile aprire il lock dell’account.",
+  "Could not lock account operations.": "Impossibile bloccare le operazioni dell’account.",
+  "Could not read the keychain. Unlock it and retry.": "Impossibile leggere il portachiavi. Sbloccala e riprova.",
+  "Your Microsoft sign-in expired. Sign in again.": "La sessione Microsoft è scaduta. Accedi di nuovo.",
+  "This account doesn't own Minecraft: Java Edition.": "Questo account non possiede Minecraft: Java Edition.",
+  "This account has no Minecraft profile yet. Create one at minecraft.net, then sign in again.": "Questo account non ha ancora un profilo Minecraft. Creane uno su minecraft.net, poi accedi di nuovo."
 }

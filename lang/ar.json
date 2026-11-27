@@ -2093,5 +2093,13 @@
   "{mod}'s package was made with a newer tool than this game uses. Update the game to read its list.": "تم إنشاء حزمة {mod} بأداة أحدث مما تستخدمه اللعبة. حدّث اللعبة لقراءة قائمتها.",
   "{mod}'s package was made with an older tool and doesn't record enough to show it fits this game. Its author can pack it again with `cargo sunrise-mod build`.": "تم إنشاء حزمة {mod} بأداة أقدم ولا تسجل معلومات كافية لإثبات توافقها مع هذه اللعبة. يمكن لمؤلفها إعادة تعبئتها باستخدام `cargo sunrise-mod build`.",
   "{mod}: {disposition}. {reason}": "{mod}: {disposition}. {reason}",
-  "{mod}: {reason}": "{mod}: {reason}"
+  "{mod}: {reason}": "{mod}: {reason}",
+  "{mod}: {reason}.": "{mod}: {reason}.",
+  "{names} need it. They'll be turned off, and their files stay installed.": "تحتاج {names} إليها. ستتوقف، لكن ستظل ملفاتها مثبّتة.",
+  "{names} need one or more of these mods. They'll be turned off, and their files stay installed.": "تحتاج {names} إلى واحدة أو أكثر من هذه الإضافات. ستتوقف، لكن ستظل ملفاتها مثبّتة.",
+  "{name} could not go to the Trash: {error}": "تعذّر نقل {name} إلى المهملات: {error}",
+  "{name} is the game's own folder: it can't be deleted.": "{name} هو مجلد اللعبة نفسه، ولا يمكن حذفه.",
+  "{name} needs it. It'll be turned off, and its files stay installed.": "يحتاج {name} إليها. ستتوقف، لكن ستظل ملفاتها مثبّتة.",
+  "{name} needs one or more of these mods. It'll be turned off, and its files stay installed.": "يحتاج {name} إلى واحدة أو أكثر من هذه الإضافات. ستتوقف، لكن ستظل ملفاتها مثبّتة.",
+  "{name} was left out of this build: fit could not be verified ({why}).": "تم استبعاد {name} من هذا البناء: تعذّر التحقق من التوافق ({why})."
 }
