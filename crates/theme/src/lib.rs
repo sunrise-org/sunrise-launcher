@@ -175,9 +175,6 @@ pub mod icons {
     }
 }
 
-/// Sunrise's icon at 64 px (PNG), for window title bars and task bars at run time. Rendered from
-/// `docs/media/brand/icon.svg` by `cargo run -p xtask -- icons`.
-pub const ICON_PNG: &[u8] = include_bytes!("../icons/sunrise-64.png");
 
 /// How a type step sizes on the web.
 #[derive(Clone, Copy, Debug, PartialEq)]
