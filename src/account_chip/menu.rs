@@ -26,7 +26,7 @@ const LEAVE_DELAY: Duration = Duration::from_millis(220);
 const SLIDE: f32 = 4.;
 
 /// One 32 px row: an icon and a label, filled on hover, a Tab stop.
-fn item(id: &'static str, icon: &'static str, label: &str, ink: u32) -> Stateful<Div> {
+fn item(id: impl Into<ElementId>, icon: &'static str, label: &str, ink: u32) -> Stateful<Div> {
     div()
         .id(id)
         .reach()
@@ -44,8 +44,20 @@ fn item(id: &'static str, icon: &'static str, label: &str, ink: u32) -> Stateful
         .child(label.to_string())
 }
 
+/// One of an account's actions as a menu row (`account_entries`), drawn the same wherever the
+/// account's menu opens.
+pub(crate) fn entry_item(entry: &Entry, id: impl Into<ElementId>) -> Stateful<Div> {
+    let p = palette();
+    item(
+        id,
+        entry.icon,
+        entry.label,
+        if entry.danger { p.danger } else { p.text },
+    )
+}
+
 /// The shared menu card: raised fill, line border, 4 px padding.
-fn card() -> Div {
+pub(crate) fn card() -> Div {
     div()
         .flex()
         .flex_col()
@@ -120,32 +132,12 @@ impl Launcher {
             .px(px(6.))
             .cursor_pointer()
             .child(self.face(&row.uuid, FACE))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(0.))
-                    .child(
-                        div()
-                            .truncate()
-                            .line_height(px(16.))
-                            .text_size(px(tokens::LABEL))
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(row.name),
-                    )
-                    .when(row.signed_out, |d| {
-                        d.child(
-                            div()
-                                .truncate()
-                                .line_height(px(14.))
-                                .text_size(px(tokens::SMALL))
-                                .text_color(rgb(p.warning))
-                                .child(tr("Signed out")),
-                        )
-                    }),
-            )
+            .child(crate::widgets::label::name_over(
+                row.name,
+                tokens::LABEL,
+                row.signed_out
+                    .then(|| (SharedString::from(tr("Signed out")), p.warning)),
+            ))
             .children(
                 row.plays
                     .then(|| crate::glass_ui::icon("tick-02", 16., rgb(p.accent_ink).into())),
@@ -211,18 +203,13 @@ impl Launcher {
     fn account_submenu(&self, right: f32, cx: &mut Context<Self>) -> Option<AnyElement> {
         let p = palette();
         let uuid = self.account_menu.sub.clone()?;
-        let row = rows(&self.accounts, &self.auth_status)
-            .into_iter()
-            .find(|r| r.uuid == uuid)?;
+        let listed = rows(&self.accounts, &self.auth_status);
+        let total = listed.len();
+        let index = listed.iter().position(|r| r.uuid == uuid)?;
+        let row = listed.into_iter().nth(index)?;
         let at = self.account_menu.rows.borrow().get(&uuid).copied()?;
         let top = f32::from(at.top()) - 4.;
         let base = right + MENU_WIDTH + SUB_GAP;
-        let go = |action: Action| {
-            cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.account_action(action.clone());
-                cx.notify();
-            })
-        };
         let mut list = card()
             .id("account-submenu")
             .absolute()
@@ -238,53 +225,18 @@ impl Launcher {
                     .text_color(rgb(p.muted))
                     .child(row.name.clone()),
             );
-        if row.signed_out {
-            list = list.child(
-                item(
-                    "account-sub-sign-in",
-                    "refresh",
-                    tr("Sign in again"),
-                    p.text,
-                )
-                .on_click(go(Action::SignInAgain(uuid.clone()))),
-            );
+        for entry in account_entries(&row, index, total) {
+            if entry.rule_before {
+                list = list.child(dropdown::rule());
+            }
+            let action = entry.action.clone();
+            list = list.child(entry_item(&entry, entry.id).on_click(cx.listener(
+                move |this, _: &ClickEvent, _, cx| {
+                    this.account_entry(action.clone(), cx);
+                    cx.notify();
+                },
+            )));
         }
-        if !row.plays && !row.signed_out {
-            list = list.child(
-                item(
-                    "account-sub-play",
-                    "play",
-                    tr("Play as this account"),
-                    p.text,
-                )
-                .on_click(go(Action::PlayAs(uuid.clone()))),
-            );
-        }
-        let copied = uuid.clone();
-        list = list
-            .child(
-                item("account-sub-copy", "copy-01", tr("Copy UUID"), p.text).on_click(cx.listener(
-                    move |this, _: &ClickEvent, _, cx| {
-                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(copied.clone()));
-                        this.account_action(Action::CopyUuid(copied.clone()));
-                        cx.notify();
-                    },
-                )),
-            )
-            .child(
-                item("account-sub-skin", "t-shirt", tr("Manage skin…"), p.text)
-                    .on_click(go(Action::ManageSkin(uuid.clone()))),
-            )
-            .child(dropdown::rule())
-            .child(
-                item(
-                    "account-sub-remove",
-                    "delete-02",
-                    tr("Remove account"),
-                    p.danger,
-                )
-                .on_click(go(Action::Remove(uuid.clone()))),
-            );
         let list = list
             .on_hover(cx.listener({
                 let uuid = uuid.clone();

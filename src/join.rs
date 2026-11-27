@@ -495,6 +495,7 @@ impl Launcher {
             })),
             None => secondary(format!("alt-server-{i}-more"), "…").on_click(cx.listener(
                 move |this, _: &ClickEvent, _, cx| {
+                    this.close_menus();
                     this.multiplayer.menu = Some((i, false));
                     cx.notify();
                 },

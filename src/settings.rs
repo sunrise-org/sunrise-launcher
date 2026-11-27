@@ -89,6 +89,14 @@ impl Section {
     }
 }
 
+impl SettingsView {
+    /// Shuts the menus this page holds open: the language dropdown and an account's ⋮ menu.
+    pub(crate) fn close_menus(&mut self) {
+        self.languages = false;
+        self.account_menu = None;
+    }
+}
+
 #[derive(Default)]
 pub(super) struct SettingsView {
     pub(super) section: Section,
@@ -494,6 +502,7 @@ impl Launcher {
                 self.corners_focused,
                 preview.as_ref().unwrap_or(&self.corners_input),
                 "",
+                tokens::FIELD,
                 |this| &mut this.corners_input,
                 |this| this.save_corners(),
                 cx,
@@ -550,18 +559,24 @@ impl Launcher {
         focused: bool,
         input: &line_edit::LineEdit,
         placeholder: &'static str,
+        height: f32,
         get: fn(&mut Self) -> &mut line_edit::LineEdit,
         edited: fn(&mut Self),
         cx: &mut Context<Self>,
     ) -> Div {
         let theme = crate::mods::field_theme(self.theme);
         let to_focus = focus.clone();
+        // A box taller than one line keeps its text at the top and room on the right for a
+        // button laid over its top-right corner.
+        let tall = height > tokens::FIELD;
         let field = crate::widgets::field::field_box(focused, false)
             .id(id)
             .track_focus(&focus)
             .seen()
-            .h(px(tokens::FIELD))
+            .w_full()
+            .h(px(height))
             .px(px(12.))
+            .when(tall, |d| d.items_start().pt(px(10.)).pr(px(96.)))
             .font_family(theme::MONO)
             .text_size(px(tokens::LABEL))
             .text_color(rgb(palette().text))
@@ -588,7 +603,8 @@ impl Launcher {
                 cx.stop_propagation();
                 cx.notify();
             }));
-        div().child(line_edit::mouse(field, cx, get))
+        // As wide as its caller makes it, whatever is typed in it.
+        div().w_full().child(line_edit::mouse(field, cx, get))
     }
 }
 

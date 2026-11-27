@@ -156,7 +156,8 @@ impl Launcher {
         };
         let tall = H as f32 * SIZE;
         // The cat's highest opaque row in this very picture, for the bubble to sit above.
-        let top = outing_bubble.map(|_| top_row(&image, scale));
+        let spot = outing_bubble.and_then(|_| head_spot(&image, scale));
+        let top = spot.map(|(top, _)| top);
         if let Some(up) = view.perch {
             // A window above Play's top edge, as tall as the cat: it climbs into it from below,
             // its feet on the edge, and nothing of it is ever drawn over the button. Keep it
@@ -201,20 +202,15 @@ impl Launcher {
         } else {
             cat
         });
-        let facing_left = view.left;
         let bubble = outing_bubble.and_then(|b| {
             let alpha = bubble_alpha(now - b.since, b.lasts, crate::motion::still())?;
             // The cat's head, from the right edge the cat itself is placed from: the sprite
-            // stands `out + UNDER - WIDTH` in from it, and the head sits `head` pixels into the
-            // sprite from its left (the mirror image moves it across).
-            let head = if facing_left {
-                W as f32 - 1. - HEAD_AT
-            } else {
-                HEAD_AT
-            };
+            // stands `out + UNDER - WIDTH` in from it, and the head is `head` sprite pixels in
+            // from the sprite's left, read off the picture drawn.
+            let head = spot.map_or(W as f32 / 2., |(_, x)| x);
             Some(speech_bubble(
                 tr(b.line),
-                out + UNDER - (head + 0.5) * SIZE,
+                out + UNDER - head * SIZE,
                 self.ui.cat.lane.get(),
                 alpha,
                 tall,
@@ -261,25 +257,35 @@ impl Launcher {
     }
 }
 
-/// Where the cat's head is in its sprite, facing right, in sprite pixels from the left: the
-/// head's middle when it sits (see `layout` in drawing.rs).
-const HEAD_AT: f32 = 32.;
-
 /// How far the bubble's tail tip stays above the cat's highest pixel, in px.
 const TIP_GAP: f32 = 4.;
 
-/// The first sprite row, from the top, that has anything drawn in it, in a picture `scale` times
-/// the sprite's size (BGRA, so the alpha is the fourth byte). A bubble over the cat sits above it,
-/// whether the cat sits, stands or has its tail up.
-fn top_row(image: &RenderImage, scale: usize) -> usize {
-    let Some(bytes) = image.as_bytes(0) else {
-        return 0;
-    };
+/// Where the cat's head is in the picture actually drawn (already turned the way the cat faces):
+/// its highest opaque row, and the middle of the widest stretch of the rows under it, in sprite
+/// pixels. The head is the bulk up there; a raised tail is thin, so it never wins.
+fn head_spot(image: &RenderImage, scale: usize) -> Option<(usize, f32)> {
+    const BAND: usize = 14;
+    const HEAD: usize = 12;
+    let bytes = image.as_bytes(0)?;
     let row = W * scale * 4;
-    bytes
-        .chunks_exact(row)
-        .position(|r| r.as_chunks::<4>().0.iter().any(|px| px[3] > 0))
-        .map_or(0, |y| y / scale)
+    let opaque = |y: usize, x: usize| {
+        let at = (y * scale) * row + (x * scale) * 4 + 3;
+        bytes.get(at).is_some_and(|a| *a > 0)
+    };
+    let rows = bytes.len() / row / scale;
+    let top = (0..rows).find(|y| (0..W).any(|x| opaque(*y, x)))?;
+    let mass: Vec<usize> = (0..W)
+        .map(|x| {
+            (top..(top + BAND).min(rows))
+                .filter(|y| opaque(*y, x))
+                .count()
+        })
+        .collect();
+    let width = HEAD.min(W);
+    let start = (0..=W - width)
+        .max_by_key(|x| mass[*x..*x + width].iter().sum::<usize>())
+        .unwrap_or(0);
+    Some((top, start as f32 + width as f32 / 2.))
 }
 
 /// The lane's box: as wide as the bar's gap leaves, as tall as the cat. It does not cut what is

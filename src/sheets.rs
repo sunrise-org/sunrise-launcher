@@ -174,9 +174,38 @@ impl Launcher {
 
     /// Opens `sheet`. A pending question opens its own sheet.
     pub(crate) fn open_sheet(&mut self, sheet: Sheet) {
+        self.close_menus();
         self.ui.sheets.error = None;
         self.ui.sheets.details = false;
         self.ui.sheet = Some(sheet);
+    }
+
+    /// Closes every open menu and popover: the sheets that hang from a control (the build
+    /// chooser, the profile and account menus, the update card), the account chip's submenu, the
+    /// profile's action menu, the Settings account and language menus, the Mods filter dropdowns,
+    /// a server row's menu and the profile dialog's dropdown (the dialog itself stays). Every
+    /// action that opens a menu calls this first, so a new menu replaces the old one and two are
+    /// never up together.
+    pub(crate) fn close_menus(&mut self) {
+        if matches!(
+            self.ui.sheet,
+            Some(Sheet::Build | Sheet::ProfileMenu | Sheet::AccountMenu | Sheet::LauncherUpdate)
+        ) {
+            self.ui.sheet = None;
+        }
+        self.account_menu.sub = None;
+        if matches!(
+            self.ui.sheets.profile_action,
+            Some(crate::profile_delete::Action::Menu { .. })
+        ) {
+            self.close_profile_action();
+        }
+        self.ui.settings.close_menus();
+        self.mods_state.close_menu();
+        self.multiplayer.menu = None;
+        if let Some(dialog) = self.instances.dialog.as_mut() {
+            dialog.menu = None;
+        }
     }
 
     /// Opens a problem's whole text as a sheet, with the way out of it when there is one.

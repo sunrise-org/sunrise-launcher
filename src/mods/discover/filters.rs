@@ -339,7 +339,9 @@ impl Launcher {
         let mut menu = Dropdown::new(id, items, open)
             .on_toggle(move |_, cx| {
                 toggle.update(cx, |view, cx| {
-                    view.mods_state.menu = match view.mods_state.menu {
+                    let was = view.mods_state.menu;
+                    view.close_menus();
+                    view.mods_state.menu = match was {
                         Some(m) if m == which => None,
                         _ => Some(which),
                     };

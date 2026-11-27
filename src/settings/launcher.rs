@@ -15,7 +15,7 @@ impl Launcher {
             .map(|choice| match choice {
                 // The first choice stands apart from the languages under it, and says which
                 // language it follows.
-                None => Item::new(tr("Same as the system"))
+                None => Item::new(tr("System"))
                     .sub(system)
                     .current(chosen.is_none())
                     .rule_after(),
@@ -27,7 +27,10 @@ impl Launcher {
                 let this = cx.entity();
                 move |_, cx| {
                     this.update(cx, |this, cx| {
-                        this.ui.settings.languages = !this.ui.settings.languages;
+                        // One menu at a time: this one replaces whatever else was open.
+                        let was = this.ui.settings.languages;
+                        this.close_menus();
+                        this.ui.settings.languages = !was;
                         cx.notify();
                     })
                 }
@@ -67,6 +70,7 @@ impl Launcher {
             self.proxy_focused,
             &self.proxy_input,
             "For example http://127.0.0.1:7890",
+            tokens::FIELD,
             |this| &mut this.proxy_input,
             |this| this.save_proxy(),
             cx,
@@ -74,7 +78,8 @@ impl Launcher {
         let proxy = self.wide_row(
             tr("Proxy"),
             tr("Downloads, sign-ins and updates go through it. Empty means none; HTTPS_PROXY then applies if the launcher was started with one."),
-            field.w(px(340.)),
+            // Out to the row's right edge, in line with the buttons on the other rows.
+            field.w(px(360.)),
         );
         let proxy = match refused {
             Some(why) => div()

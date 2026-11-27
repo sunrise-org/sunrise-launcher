@@ -27,7 +27,7 @@ impl Launcher {
         });
     }
 
-    fn move_account(&mut self, uuid: &str, delta: isize) {
+    pub(crate) fn move_account(&mut self, uuid: &str, delta: isize) {
         match Accounts::reorder(uuid, delta) {
             Ok(accounts) => self.accounts = accounts,
             Err(error) => self.ui.settings.note = Some(error),
@@ -39,6 +39,7 @@ impl Launcher {
         let selected = self.accounts.selected.clone();
         let total = self.accounts.accounts.len();
         let open_menu = self.ui.settings.account_menu.clone();
+        let listed = crate::account_chip::rows(&self.accounts, &self.auth_status);
         let mut rows = Vec::new();
         for (i, a) in self.accounts.accounts.clone().into_iter().enumerate() {
             let plays = selected.as_ref() == Some(&a.uuid);
@@ -117,109 +118,40 @@ impl Launcher {
                 ))
                 .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    if this.ui.settings.account_menu.as_deref() == Some(toggle_uuid.as_str()) {
-                        this.ui.settings.account_menu = None;
-                    } else {
+                    let shut =
+                        this.ui.settings.account_menu.as_deref() == Some(toggle_uuid.as_str());
+                    this.close_menus();
+                    if !shut {
                         this.ui.settings.account_menu = Some(toggle_uuid.clone());
                     }
                     cx.notify();
                 }));
             let menu = menu_open.then(|| {
-                let item = |id: (&'static str, usize), label: &'static str, danger: bool| {
-                    div()
-                        .id(id)
-                        .reach()
-                        .flex()
-                        .items_center()
-                        .px(px(10.))
-                        .py(px(7.))
-                        .rounded(tokens::r(tokens::R_SMALL))
-                        .text_size(px(tokens::LABEL))
-                        .text_color(rgb(if danger {
-                            palette().danger
-                        } else {
-                            palette().text
-                        }))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(rgb(palette().hover)))
-                        .child(label)
-                };
-                let mut list = div()
+                // The same actions, icons and conditions as the account chip's submenu.
+                let entries = listed
+                    .get(i)
+                    .map(|row| crate::account_chip::account_entries(row, i, total))
+                    .unwrap_or_default();
+                let mut list = crate::account_chip::entry_card()
                     .id(ElementId::named_usize("alt-account-menu-list", i))
-                    .w(px(180.))
-                    .p(px(6.))
-                    .rounded(tokens::r(tokens::R_CONTROL))
-                    .border_1()
-                    .border_color(palette().input_edge())
-                    .bg(rgb(palette().raised))
-                    .shadow_lg()
-                    .occlude()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .flex()
-                    .flex_col();
-                if !plays {
-                    let uuid = a.uuid.clone();
-                    list = list.child(
-                        item(("alt-account-default", i), tr("Set default"), false).on_click(
-                            cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.ui.settings.account_menu = None;
-                                this.play_as(&uuid);
-                                cx.notify();
-                            }),
-                        ),
+                    .w(px(208.))
+                    .occlude();
+                for entry in entries {
+                    if entry.rule_before {
+                        list = list.child(crate::widgets::dropdown::rule());
+                    }
+                    let removing = matches!(entry.action, crate::account_chip::Action::Remove(_));
+                    let action = entry.action.clone();
+                    let item = crate::account_chip::entry_item(
+                        &entry,
+                        ElementId::named_usize(entry.id, i),
                     );
-                }
-                if i > 0 {
-                    let uuid = a.uuid.clone();
-                    list = list.child(item(("alt-account-up", i), tr("Move up"), false).on_click(
-                        cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.ui.settings.account_menu = None;
-                            this.move_account(&uuid, -1);
-                            cx.notify();
-                        }),
-                    ));
-                }
-                if i + 1 < total {
-                    let uuid = a.uuid.clone();
-                    list = list.child(
-                        item(("alt-account-down", i), tr("Move down"), false).on_click(
-                            cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.ui.settings.account_menu = None;
-                                this.move_account(&uuid, 1);
-                                cx.notify();
-                            }),
-                        ),
-                    );
-                }
-                {
-                    let uuid = a.uuid.clone();
-                    list = list.child(
-                        item(("alt-account-skins", i), tr("Manage skins"), false).on_click(
-                            cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.ui.settings.account_menu = None;
-                                if this.accounts.selected.as_deref() != Some(uuid.as_str()) {
-                                    if this.account_locked() {
-                                        this.say_account_locked();
-                                        cx.notify();
-                                        return;
-                                    }
-                                    this.play_as(&uuid);
-                                }
-                                this.navigate(crate::frame::Page::Skins);
-                                cx.notify();
-                            }),
-                        ),
-                    );
-                }
-                {
-                    let uuid = a.uuid.clone();
-                    let remove = item(("alt-account-remove", i), tr("Remove"), true);
-                    list = list.child(if busy {
-                        off(remove)
+                    list = list.child(if busy && removing {
+                        off(item)
                     } else {
-                        remove.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        item.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             this.ui.settings.account_menu = None;
-                            this.remove_account(&uuid);
+                            this.account_entry(action.clone(), cx);
                             cx.notify();
                         }))
                     });
@@ -252,27 +184,18 @@ impl Launcher {
                                 .draw(Some(&a.uuid), 36., self.scale, &theme),
                         ),
                 )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .gap(px(2.))
-                        .child(
-                            div()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child(a.name.clone()),
-                        )
-                        .child(if needs_sign_in && progress.is_none() {
-                            div()
-                                .text_size(px(tokens::SMALL))
-                                .text_color(rgb(palette().warning))
-                                .child(said)
+                .child(crate::widgets::label::name_over(
+                    a.name.clone(),
+                    tokens::BODY,
+                    Some((
+                        SharedString::from(said),
+                        if needs_sign_in && progress.is_none() {
+                            palette().warning
                         } else {
-                            hint(said)
-                        }),
-                );
+                            palette().muted
+                        },
+                    )),
+                ));
             rows.push(
                 div()
                     .flex()
@@ -287,29 +210,34 @@ impl Launcher {
         let none = rows.is_empty();
         // Short of room, the button is the logo and "Sign in", as the top bar's is.
         let narrow = self.settings_pane_width() < 520.;
-        rows.push(row(
-            tr(if none {
-                "Not signed in"
+        let sign_in = microsoft_button(
+            "alt-add-account",
+            if narrow {
+                tr("Sign in")
             } else {
-                "Another account"
-            }),
-            tr("Sign in with the Microsoft account that owns Minecraft: Java Edition."),
-            div().child(
-                microsoft_button(
-                    "alt-add-account",
-                    if narrow {
-                        tr("Sign in")
-                    } else {
-                        tr("Sign in with Microsoft")
-                    },
-                    self.theme.dark,
-                )
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.sign_in_to_play();
-                    cx.notify();
-                })),
-            ),
-        ));
+                tr("Sign in with Microsoft")
+            },
+            self.theme.dark,
+        )
+        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            this.sign_in_to_play();
+            cx.notify();
+        }));
+        let title = tr(if none {
+            "Not signed in"
+        } else {
+            "Another account"
+        });
+        // Narrow, the title and the button share one line and the description is left out.
+        rows.push(if narrow {
+            row_with(title, None, div().child(sign_in))
+        } else {
+            row(
+                title,
+                tr("Sign in with the Microsoft account that owns Minecraft: Java Edition."),
+                div().child(sign_in),
+            )
+        });
         group(rows)
     }
 }

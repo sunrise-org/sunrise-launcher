@@ -50,6 +50,10 @@ thread_local! {
     /// closes (`forget`).
     static FILTER: std::cell::RefCell<std::collections::HashMap<SharedString, String>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
+    /// The focus of each open menu, by the field's id, so opening it hands it the keyboard.
+    /// Dropped when the menu closes (`forget`).
+    static FOCUS: std::cell::RefCell<std::collections::HashMap<SharedString, gpui::FocusHandle>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
     static PLACES: std::cell::RefCell<std::collections::HashMap<SharedString, Place>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
@@ -58,6 +62,32 @@ thread_local! {
 pub(crate) fn forget(id: &str) {
     HANDLES.with_borrow_mut(|m| m.retain(|key, _| !key.starts_with(id)));
     FILTER.with_borrow_mut(|m| m.retain(|key, _| key.as_ref() != id));
+    FOCUS.with_borrow_mut(|m| m.retain(|key, _| key.as_ref() != id));
+}
+
+/// A child, taking no room, that gives the open menu of the field `id` the keyboard the first time
+/// it is drawn, so typing reaches its filter without a click. (The key listener only runs for a
+/// focus inside the menu; until now the page kept the focus.) The menu tracks the handle from the
+/// next frame on.
+fn claim_focus(id: SharedString) -> impl IntoElement {
+    gpui::canvas(
+        move |_, window, cx| {
+            if FOCUS.with_borrow(|m| m.contains_key(&id)) {
+                return;
+            }
+            let handle = cx.focus_handle();
+            FOCUS.with_borrow_mut(|m| {
+                m.insert(id.clone(), handle.clone());
+            });
+            window.defer(cx, move |window, cx| {
+                window.focus(&handle, cx);
+                window.refresh();
+            });
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_0()
 }
 
 /// What has been typed into the menu of the field `id`.
@@ -128,14 +158,39 @@ fn search_line(text: &str) -> Div {
             div()
                 .flex_1()
                 .min_w_0()
-                .truncate()
+                .flex()
+                .items_center()
+                .overflow_hidden()
                 .text_size(px(tokens::BODY))
-                .text_color(c(if text.is_empty() { p.muted } else { p.text }))
-                .child(if text.is_empty() {
+                .when(!text.is_empty(), |d| {
+                    d.child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(c(p.text))
+                            .child(SharedString::from(text.to_owned())),
+                    )
+                })
+                // The caret: this is a text field that has the keyboard.
+                .child(
+                    div()
+                        .flex_none()
+                        .w(px(1.5))
+                        .h(px(16.))
+                        .ml(px(if text.is_empty() { 0. } else { 1. }))
+                        .rounded(px(1.))
+                        .bg(c(p.accent)),
+                )
+                .when(text.is_empty(), |d| {
                     let hint: SharedString = tr("Type to filter").into();
-                    hint
-                } else {
-                    SharedString::from(text.to_owned())
+                    d.child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .ml(px(4.))
+                            .text_color(c(p.muted))
+                            .child(hint),
+                    )
                 }),
         )
 }
@@ -451,8 +506,10 @@ pub(crate) fn layer_with(
                 close(window, cx)
             })
     };
+    let focus = FOCUS.with_borrow(|m| m.get(id).cloned());
     let menu = div()
         .id(SharedString::from(format!("{id}-menu")))
+        .when_some(focus, |d, handle| d.track_focus(&handle))
         .absolute()
         .left_0()
         .when(width > 0., |d| d.w(px(width)))
@@ -469,6 +526,7 @@ pub(crate) fn layer_with(
         .occlude()
         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_scroll(|_: &gpui::ScrollEvent, _, cx| cx.stop_propagation())
+        .child(claim_focus(id.clone()))
         .children(head)
         .child(
             div()

@@ -81,6 +81,8 @@ fn adding_keeps_the_menu_and_every_other_action_closes_it() {
         Action::CopyUuid("a1".into()),
         Action::ManageSkin("a1".into()),
         Action::Remove("a1".into()),
+        Action::MoveUp("a1".into()),
+        Action::MoveDown("a1".into()),
     ] {
         assert_eq!(sheet_after(&closes), None, "{closes:?}");
     }

@@ -20,6 +20,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 mod menu;
+pub(crate) use menu::{card as entry_card, entry_item};
 
 /// The side of a face on the chip, the same height as the search field's icon row.
 const CHIP_FACE: f32 = 22.;
@@ -41,7 +42,7 @@ pub(crate) struct Menu {
     /// Where each account's row was last painted: its submenu opens level with it.
     rows: Rc<RefCell<HashMap<String, Bounds<Pixels>>>>,
     /// The account whose submenu is open.
-    sub: Option<String>,
+    pub(crate) sub: Option<String>,
     /// Counts the pointer's comings and goings, so a close timer started by a leave does nothing
     /// when the pointer has come back since.
     leaves: u64,
@@ -93,6 +94,91 @@ pub(crate) enum Action {
     ManageSkin(String),
     /// Signs the account out of this launcher.
     Remove(String),
+    /// Moves the account one place up or down the list.
+    MoveUp(String),
+    MoveDown(String),
+}
+
+/// One action of an account's own menu, as both menus that offer it draw it.
+pub(crate) struct Entry {
+    pub id: &'static str,
+    pub icon: &'static str,
+    pub label: &'static str,
+    /// Drawn in the danger colour.
+    pub danger: bool,
+    /// A divider goes above it.
+    pub rule_before: bool,
+    pub action: Action,
+}
+
+/// What an account's menu offers, in order: the chip's submenu and Settings › Account's ⋮ menu
+/// both draw exactly this list, so they can't differ. `at` is the account's place among `total`.
+pub(crate) fn account_entries(row: &Row, at: usize, total: usize) -> Vec<Entry> {
+    let entry = |id, icon, label, action| Entry {
+        id,
+        icon,
+        label,
+        danger: false,
+        rule_before: false,
+        action,
+    };
+    let uuid = || row.uuid.clone();
+    let mut list = Vec::new();
+    if row.signed_out {
+        list.push(entry(
+            "account-sub-sign-in",
+            "refresh",
+            tr("Sign in again"),
+            Action::SignInAgain(uuid()),
+        ));
+    }
+    if !row.plays && !row.signed_out {
+        list.push(entry(
+            "account-sub-play",
+            "play",
+            tr("Play as this account"),
+            Action::PlayAs(uuid()),
+        ));
+    }
+    if at > 0 {
+        list.push(entry(
+            "account-sub-up",
+            "arrow-up-01",
+            tr("Move up"),
+            Action::MoveUp(uuid()),
+        ));
+    }
+    if at + 1 < total {
+        list.push(entry(
+            "account-sub-down",
+            "arrow-down-01",
+            tr("Move down"),
+            Action::MoveDown(uuid()),
+        ));
+    }
+    list.push(entry(
+        "account-sub-copy",
+        "copy-01",
+        tr("Copy UUID"),
+        Action::CopyUuid(uuid()),
+    ));
+    list.push(entry(
+        "account-sub-skin",
+        "t-shirt",
+        tr("Manage skin…"),
+        Action::ManageSkin(uuid()),
+    ));
+    list.push(Entry {
+        danger: true,
+        rule_before: true,
+        ..entry(
+            "account-sub-remove",
+            "delete-02",
+            tr("Remove account"),
+            Action::Remove(uuid()),
+        )
+    });
+    list
 }
 
 /// The sheet left open by `action`. Adding an account keeps the menu: the sign-in opens over it
@@ -247,16 +333,23 @@ impl Launcher {
                 rgb(palette().chrome_muted).into(),
             ))
             .on_click(cx.listener(|this, _, _, cx| {
-                this.account_menu.sub = None;
-                if this.ui.sheet == Some(Sheet::AccountMenu) {
-                    this.close_sheet();
-                } else {
+                let was_open = this.ui.sheet == Some(Sheet::AccountMenu);
+                this.close_menus();
+                if !was_open {
                     this.open_sheet(Sheet::AccountMenu);
                 }
                 cx.notify();
             }));
         // Pressed, it sits a pixel lower, as the dropdown's and the buttons' faces do.
         crate::widgets::press(chip, &SharedString::from("account-chip"), |d| d.top(px(1.)))
+    }
+
+    /// Does what a row of an account's menu says; the UUID goes on the clipboard first.
+    pub(crate) fn account_entry(&mut self, action: Action, cx: &mut Context<Self>) {
+        if let Action::CopyUuid(uuid) = &action {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(uuid.clone()));
+        }
+        self.account_action(action);
     }
 
     /// Does what a row of the menu says.
@@ -294,6 +387,8 @@ impl Launcher {
                 self.navigate(Page::Skins);
             }
             Action::Remove(uuid) => self.remove_account(&uuid),
+            Action::MoveUp(uuid) => self.move_account(&uuid, -1),
+            Action::MoveDown(uuid) => self.move_account(&uuid, 1),
         }
     }
 }

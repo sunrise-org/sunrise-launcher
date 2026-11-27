@@ -172,6 +172,11 @@ pub(crate) struct ModsState {
 }
 
 impl ModsState {
+    /// Shuts the open filter dropdown.
+    pub(crate) fn close_menu(&mut self) {
+        self.menu = None;
+    }
+
     pub(super) fn visible_notice(
         &self,
         shared: Option<&Result<String, String>>,

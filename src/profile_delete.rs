@@ -65,6 +65,7 @@ impl Launcher {
     }
 
     pub(super) fn open_profile_menu(&mut self, target: &Instance, top: f32) {
+        self.close_menus();
         self.ui.sheets.profile_action = Some(Action::Menu {
             target: target.clone(),
             top,
@@ -78,6 +79,7 @@ impl Launcher {
         target: &Instance,
         button: gpui::Bounds<gpui::Pixels>,
     ) {
+        self.close_menus();
         self.ui.sheets.profile_action = Some(Action::Menu {
             target: target.clone(),
             top: f32::from(button.bottom()) + 4.,
