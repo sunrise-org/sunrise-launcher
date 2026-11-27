@@ -2128,5 +2128,15 @@
   "The theme, its accent and what is behind the pages.": "Il tema, il suo colore principale e lo sfondo delle pagine.",
   "Download stopped.": "Download interrotto.",
   "Installing {build}": "Installazione di {build}",
-  "Starting the game": "Avvio del gioco"
+  "Starting the game": "Avvio del gioco",
+  "Building {mods}": "Compilazione di {mods}",
+  "{done} of {total}": "{done} di {total}",
+  "Waiting for your answer": "In attesa della tua risposta",
+  "Updating the launcher to {version}": "Aggiornamento del launcher a {version}",
+  "Importing a game build": "Importazione di una build di gioco",
+  "Clearing downloads": "Pulizia dei download",
+  "Preparing the game": "Preparazione del gioco",
+  "Downloading the build": "Download della build",
+  "Downloading build tools": "Download degli strumenti di build",
+  "Show less": "Mostra meno"
 }

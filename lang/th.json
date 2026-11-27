@@ -2524,5 +2524,15 @@
   "Show more": "แสดงเพิ่มเติม",
   "You're offline · showing the saved list from {date}": "คุณออฟไลน์ · กำลังแสดงรายการที่บันทึกไว้เมื่อ {date}",
   "{count} source projects": "โปรเจกต์ซอร์ส {count} รายการ",
-  "Address to share": "ที่อยู่สำหรับแชร์"
+  "Address to share": "ที่อยู่สำหรับแชร์",
+  "Local network": "เครือข่ายท้องถิ่น",
+  "Internet": "อินเทอร์เน็ต",
+  "Last detected public address": "ที่อยู่สาธารณะที่ตรวจพบล่าสุด",
+  "Public IP not detected": "ยังไม่พบ IP สาธารณะ",
+  "Finding public IP…": "กำลังค้นหา IP สาธารณะ…",
+  "Public IP unavailable": "IP สาธารณะไม่พร้อมใช้งาน",
+  "Refresh public IP": "รีเฟรช IP สาธารณะ",
+  "Detect public IP": "ตรวจหา IP สาธารณะ",
+  "Local connections only": "การเชื่อมต่อภายในเครื่องเท่านั้น",
+  "Public IPv4 unavailable for this listener": "IPv4 สาธารณะไม่พร้อมใช้งานสำหรับตัวรับการเชื่อมต่อนี้"
 }

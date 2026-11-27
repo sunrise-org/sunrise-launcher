@@ -2029,5 +2029,15 @@
   "Update available: {version}": "يتوفر تحديث: {version}",
   "Update {name}?": "هل تريد تحديث {name}؟",
   "Update: {mods}.": "تحديث: {mods}.",
-  "Updated {mod} from {from} to {to}": "تم تحديث {mod} من {from} إلى {to}"
+  "Updated {mod} from {from} to {to}": "تم تحديث {mod} من {from} إلى {to}",
+  "Use default": "استخدام الافتراضي",
+  "Use the newest Dev": "استخدام أحدث إصدار تطويري",
+  "Used by a build with mods": "يستخدمه بناء يتضمن إضافات",
+  "Used by {profile}": "يستخدمه {profile}",
+  "Using plain {build}: all native mods were left out. Nothing was built.": "استخدام {build} العادي: تم استبعاد جميع الإضافات الأصلية. لم يُبنَ شيء.",
+  "Version {version} is out. You chose its version: update it on its own.": "يتوفر الإصدار {version}. لقد اخترت نسخته: حدّثه بشكل منفصل.",
+  "Versions that fit {target}": "الإصدارات المتوافقة مع {target}",
+  "View build log": "عرض سجل البناء",
+  "View source": "عرض المصدر",
+  "Wait for the current operation to finish before changing profiles.": "انتظر انتهاء العملية الحالية قبل تغيير الملفات الشخصية."
 }
