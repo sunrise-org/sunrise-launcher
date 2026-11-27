@@ -74,16 +74,14 @@ pub(super) fn chip_group(
         .unwrap_or(0);
     let values: Vec<&'static str> = options.iter().map(|&(value, _)| value).collect();
     let this = cx.entity();
-    div().flex().child(
-        choices(id, &chips, at, move |n, _, cx| {
-            let set = set.clone();
-            let value = values[n];
-            this.update(cx, |this, cx| {
-                set(this, value);
-                cx.notify();
-            })
-        }),
-    )
+    div().flex().child(choices(id, &chips, at, move |n, _, cx| {
+        let set = set.clone();
+        let value = values[n];
+        this.update(cx, |this, cx| {
+            set(this, value);
+            cx.notify();
+        })
+    }))
 }
 
 impl Launcher {

@@ -33,10 +33,7 @@ impl Row {
 
     /// A 32 px row: a 16 px icon and its label, filled on hover, a Tab stop while it works.
     /// `go` runs on a press, unless the row is off.
-    fn draw(
-        self,
-        go: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> AnyElement {
+    fn draw(self, go: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> AnyElement {
         let p = palette();
         let row = div()
             .id(self.id)
@@ -97,32 +94,45 @@ impl Launcher {
         let mut rows: Vec<AnyElement> = Vec::new();
         let edited = target.clone();
         rows.push(
-            Row::new("profile-menu-edit", "settings-01", tr("Profile settings…"), p.text).draw(
-                cx.listener(move |this, _, _, cx| {
-                    this.close_profile_action();
-                    this.edit_profile(&edited, cx);
-                }),
-            ),
+            Row::new(
+                "profile-menu-edit",
+                "settings-01",
+                tr("Profile settings…"),
+                p.text,
+            )
+            .draw(cx.listener(move |this, _, _, cx| {
+                this.close_profile_action();
+                this.edit_profile(&edited, cx);
+            })),
         );
         let copied = target.clone();
         let locked = self.copy_lock_for(target);
         rows.push(
-            Row::new("profile-menu-duplicate", "copy-01", tr("Duplicate…"), p.text)
-                .unless(locked.is_some(), locked.unwrap_or_default())
-                .draw(cx.listener(move |this, _, _, cx| {
-                    this.close_profile_action();
-                    this.duplicate_profile(&copied, cx);
-                })),
+            Row::new(
+                "profile-menu-duplicate",
+                "copy-01",
+                tr("Duplicate…"),
+                p.text,
+            )
+            .unless(locked.is_some(), locked.unwrap_or_default())
+            .draw(cx.listener(move |this, _, _, cx| {
+                this.close_profile_action();
+                this.duplicate_profile(&copied, cx);
+            })),
         );
         let folder = target.home.clone();
         rows.push(
-            Row::new("profile-menu-folder", "folder-01", tr("Open folder"), p.text).draw(
-                cx.listener(move |this, _, _, cx| {
-                    this.close_profile_action();
-                    crate::toast::open(cx, &folder);
-                    cx.notify();
-                }),
-            ),
+            Row::new(
+                "profile-menu-folder",
+                "folder-01",
+                tr("Open folder"),
+                p.text,
+            )
+            .draw(cx.listener(move |this, _, _, cx| {
+                this.close_profile_action();
+                crate::toast::open(cx, &folder);
+                cx.notify();
+            })),
         );
         if target.kind != instances::Kind::Default {
             let (up, down) = self.can_move(target);
@@ -137,13 +147,15 @@ impl Launcher {
                 ),
             ] {
                 let moved = target.id.clone();
-                rows.push(Row::new(id, icon, label, p.text).unless(!on, "").draw(
-                    cx.listener(move |this, _, _, cx| {
-                        this.close_profile_action();
-                        this.move_profile(&moved, way);
-                        cx.notify();
-                    }),
-                ));
+                rows.push(
+                    Row::new(id, icon, label, p.text)
+                        .unless(!on, "")
+                        .draw(cx.listener(move |this, _, _, cx| {
+                            this.close_profile_action();
+                            this.move_profile(&moved, way);
+                            cx.notify();
+                        })),
+                );
             }
         }
         rows
@@ -192,11 +204,16 @@ impl Launcher {
                     .into_any_element(),
             );
             rows.push(
-                Row::new("profile-menu-delete", "delete-02", tr("Delete profile…"), p.danger)
-                    .draw(cx.listener(move |this, _, _, cx| {
-                        this.confirm_profile_delete(&doomed);
-                        cx.notify();
-                    })),
+                Row::new(
+                    "profile-menu-delete",
+                    "delete-02",
+                    tr("Delete profile…"),
+                    p.danger,
+                )
+                .draw(cx.listener(move |this, _, _, cx| {
+                    this.confirm_profile_delete(&doomed);
+                    cx.notify();
+                })),
             );
             count += 1;
         }

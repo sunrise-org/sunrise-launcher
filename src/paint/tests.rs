@@ -411,9 +411,7 @@ accent = "#101010""##,
 
 #[test]
 fn unboxed_home_text_reads_over_the_shaded_backdrop() {
-    let themes = looks(false)
-        .into_iter()
-        .map(|(_, t)| Palette::of(&t));
+    let themes = looks(false).into_iter().map(|(_, t)| Palette::of(&t));
     let light = Palette::plain(theme::night::DAWN, 0x6a4910);
     assert!(luminance(light.hero.shade) > 0.5);
     for p in themes.chain([light]) {

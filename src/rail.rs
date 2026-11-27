@@ -319,10 +319,7 @@ mod tests {
                 .debug_bounds("selected-profile-actions")
                 .unwrap_or_else(|| panic!("at {open} the button is drawn"));
             cx.simulate_click(button.center(), gpui::Modifiers::none());
-            assert!(
-                menu(cx),
-                "at {open} a press on the button opens its menu"
-            );
+            assert!(menu(cx), "at {open} a press on the button opens its menu");
         }
         for open in [0.05, 0.15, 0.25] {
             draw(cx, open);

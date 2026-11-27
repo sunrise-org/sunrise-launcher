@@ -1,6 +1,6 @@
 //! Chips: filter chips, source chips (Sunrise, Modrinth, GitHub) and tags.
 #![allow(dead_code)] // Used by the shell and pages that the next redesign steps move over; removed in the final sweep.
-use super::focus::{c, Reach};
+use super::focus::c;
 use super::*;
 use crate::paint::palette;
 

@@ -355,8 +355,7 @@ impl Launcher {
     ) -> LogBox {
         let logs = &self.ui.home.tabs.logs;
         let search = logs.search.text().trim();
-        let (all, revision, nothing): (Vec<&str>, u64, Option<Nothing>) = if self.log_is_run(home)
-        {
+        let (all, revision, nothing): (Vec<&str>, u64, Option<Nothing>) = if self.log_is_run(home) {
             let lines = self.prepare_log.iter().map(String::as_str).collect();
             (lines, self.log_revision, None)
         } else {
@@ -411,13 +410,7 @@ impl Launcher {
     }
 
     /// The scrolling list of `shown`, in `sunken`, following the newest line when Follow is on.
-    fn log_list(
-        &self,
-        sunken: Div,
-        shown: &[&str],
-        revision: u64,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    fn log_list(&self, sunken: Div, shown: &[&str], revision: u64, cx: &mut Context<Self>) -> Div {
         let logs = &self.ui.home.tabs.logs;
         let view = &self.ui.home.tabs.views[Tab::Logs.index()];
         let scroll = view.scroll.clone();
@@ -432,9 +425,11 @@ impl Launcher {
             logs.seen.set(now);
         }
         let (built, place) = view.near.list(&view.scroll, shown.len(), 1, LINE, 0.);
-        let rows = shown[built].iter().fold(div().flex().flex_col(), |rows, line| {
-            rows.child(log_line(line))
-        });
+        let rows = shown[built]
+            .iter()
+            .fold(div().flex().flex_col(), |rows, line| {
+                rows.child(log_line(line))
+            });
         let keys = scroll.clone();
         let list = div()
             .id("home-logs-lines")

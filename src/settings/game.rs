@@ -21,15 +21,18 @@ impl Launcher {
             .map(|(way, label)| (way, tr(label).into()))
             .collect();
         let this = cx.entity();
-        let picker = div().child(
-            choices("alt-while-playing", &ways, current, move |way, _, cx| {
+        let picker = div().child(choices(
+            "alt-while-playing",
+            &ways,
+            current,
+            move |way, _, cx| {
                 this.update(cx, |this, cx| {
                     this.settings.while_playing = way;
                     this.save_settings();
                     cx.notify();
                 })
-            }),
-        );
+            },
+        ));
         let while_playing = row(
             tr("While you play"),
             tr(match current {

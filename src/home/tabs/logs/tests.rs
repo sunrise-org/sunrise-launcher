@@ -5,7 +5,10 @@ use super::*;
 fn a_line_is_as_bad_as_its_level() {
     assert_eq!(severity("[12:00:01] [main/INFO]: Starting"), 0);
     assert_eq!(severity("[12:00:02] [main/WARN]: Slow tick"), 1);
-    assert_eq!(severity("[12:00:03] [Render thread/ERROR]: Shader failed"), 2);
+    assert_eq!(
+        severity("[12:00:03] [Render thread/ERROR]: Shader failed"),
+        2
+    );
     assert_eq!(severity("ERROR: no display"), 2);
 }
 

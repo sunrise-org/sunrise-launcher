@@ -76,8 +76,11 @@ impl Launcher {
         .map(|(kind, label)| (kind, label.into()))
         .collect();
         let this = cx.entity();
-        div().flex().child(
-            choices("alt-collection", &tabs, chosen, move |kind, _, cx| {
+        div().flex().child(choices(
+            "alt-collection",
+            &tabs,
+            chosen,
+            move |kind, _, cx| {
                 this.update(cx, |this, cx| {
                     if this.mods_state.shelf != kind {
                         this.mods_state.shelf = kind;
@@ -87,8 +90,8 @@ impl Launcher {
                     }
                     cx.notify();
                 })
-            }),
-        )
+            },
+        ))
     }
 
     fn can_edit_packs(&self, home: &Path, kind: Kind) -> bool {

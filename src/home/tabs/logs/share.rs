@@ -70,11 +70,7 @@ impl Launcher {
         .detach();
     }
 
-    fn finish_share(
-        &mut self,
-        task: gpui::Task<Result<Shared, String>>,
-        cx: &mut Context<Self>,
-    ) {
+    fn finish_share(&mut self, task: gpui::Task<Result<Shared, String>>, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let done = task.await;
             let _ = this.update(cx, |this, cx| {

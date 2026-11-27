@@ -4,8 +4,8 @@ use super::*;
 
 pub(crate) mod button;
 pub(crate) mod check;
-pub(crate) mod choice;
 pub(crate) mod chip;
+pub(crate) mod choice;
 pub(crate) mod copies;
 pub(crate) mod feedback;
 pub(crate) mod field;

@@ -112,9 +112,7 @@ pub fn from_settings(settings: &Settings, system: WindowAppearance) -> Theme {
     theme = match themes::resolve(settings.theme.as_deref()) {
         themes::Resolved::Twilight => theme,
         themes::Resolved::Builtin(picked) => theme.with_launcher_theme(picked, dark),
-        themes::Resolved::Local(local) => {
-            theme.with_night(local.roles.night())
-        }
+        themes::Resolved::Local(local) => theme.with_night(local.roles.night()),
         themes::Resolved::Missing => theme.with_launcher_theme(&themes::DAWN_THEME, dark),
     };
     // Reduced graphics keeps the sky's colours and drops its decorative effects.
@@ -130,13 +128,11 @@ impl Theme {
     /// A launcher theme from Settings: its sky, or its whole palette when it brings one (in the
     /// light look, its light palette if it has one).
     pub fn with_launcher_theme(mut self, picked: &themes::Theme, dark: bool) -> Self {
-        let sky = if let Some(night) = picked.palette_in(dark) {
+        if let Some(night) = picked.palette_in(dark) {
             self = self.with_night(*night);
-            night.sky
         } else {
             self.night.sky = picked.sky;
-            picked.sky
-        };
+        }
         self.play_seed = match picked.id {
             "cherry_blossom" if self.accent_choice == picked.accent.accent() => Some(0xc8297e),
             "nord" if self.accent_choice == picked.accent.accent() => Some(0x087d95),

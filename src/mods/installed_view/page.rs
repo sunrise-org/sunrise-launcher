@@ -4,8 +4,8 @@ use super::items::{installed_items_key, InstalledItem};
 use super::*;
 use crate::widgets::button::{primary, secondary};
 use crate::widgets::check::{checkbox, Tick};
-use crate::widgets::choice::choices;
 use crate::widgets::chip;
+use crate::widgets::choice::choices;
 use crate::widgets::feedback::empty_state;
 use gpui::SharedString;
 
