@@ -2331,5 +2331,15 @@
   "Could not export {name}: {error}": "تعذّر تصدير {name}: {error}",
   "Log sharing is not configured for this build.": "مشاركة السجل غير مهيأة لهذا البناء.",
   "mclo.gs didn't take the log: {error}": "لم يقبل mclo.gs السجل: {error}",
-  "mclo.gs answered something unexpected: {error}": "أجاب mclo.gs بشيء غير متوقع: {error}"
+  "mclo.gs answered something unexpected: {error}": "أجاب mclo.gs بشيء غير متوقع: {error}",
+  "mclo.gs didn't take the log: {reason}": "لم يقبل mclo.gs السجل: {reason}",
+  "no reason given": "لم يُذكر سبب",
+  "mclo.gs didn't delete it: {error}": "لم يحذفه mclo.gs: ‏{error}",
+  "{url} answered 404": "أجاب {url} بالرمز 404",
+  "{url} didn't answer with a release list.": "لم يُرجع {url} قائمة إصدارات.",
+  "{repo}'s release list exceeds {pages} pages.": "تتجاوز قائمة إصدارات {repo} ‏{pages} صفحة.",
+  "GitHub answered 304 without a saved copy": "أجاب GitHub بالرمز 304 دون نسخة محفوظة",
+  "too many requests from this network": "طلبات كثيرة جدًا من هذه الشبكة",
+  "an unexpected 304": "استجابة 304 غير متوقعة",
+  "{why}, and Sunrise's mirror of GitHub couldn't help either ({mirror}). Try again in a few minutes.": "{why}، ولم يتمكن مرآة GitHub لدى Sunrise من المساعدة أيضًا ({mirror}). حاول بعد بضع دقائق."
 }

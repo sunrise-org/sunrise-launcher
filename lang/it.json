@@ -2430,5 +2430,15 @@
   "Could not move {name} to the trash: {error}": "Impossibile spostare {name} nel Cestino: {error}",
   "A server needs an address.": "Un server richiede un indirizzo.",
   "There is no server {number}.": "Il server {number} non esiste.",
-  "Could not save the server list: {error}": "Impossibile salvare l’elenco dei server: {error}"
+  "Could not save the server list: {error}": "Impossibile salvare l’elenco dei server: {error}",
+  "No server {query} in the list": "Nessun server {query} nell’elenco",
+  "the panel gave no link": "il pannello non ha fornito un link",
+  "This server is no longer in the launcher’s list.": "Questo server non è più nell’elenco del launcher.",
+  "Turn off running in the background before deleting this server.": "Disattiva l’esecuzione in background prima di eliminare questo server.",
+  "The server was moved to the trash, but its list could not be saved: {error}": "Il server è stato spostato nel Cestino, ma non è stato possibile salvare l’elenco: {error}",
+  "This is not a server folder.": "Questa non è una cartella server.",
+  "Could not move the server to the trash: {error}": "Impossibile spostare il server nel Cestino: {error}",
+  "Public IP lookup failed": "Ricerca dell’IP pubblico non riuscita",
+  "Public IP lookup did not return HTTP 200": "La ricerca dell’IP pubblico non ha restituito HTTP 200",
+  "Could not read the public IP address": "Impossibile leggere l’indirizzo IP pubblico"
 }
