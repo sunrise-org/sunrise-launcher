@@ -42,14 +42,10 @@ pub struct Theme {
     pub well: Hsla,
     /// The night look's own tokens (the sky, plates with their opacity), for rebuilt screens.
     pub night: Night,
-    /// The built-in scene's tint source. Local themes instead supply their own plate colours.
-    pub(crate) scene_tone: Option<u32>,
     /// A stronger version of the default accent for the primary Home action, if authored.
     pub(crate) play_seed: Option<u32>,
     /// The accent this look was built from, before the glass look's mixes.
     pub accent_choice: Accent,
-    /// A Home picture is configured: automatic panel opacity stays solid.
-    pub photo: bool,
     pub dark: bool,
     /// Whether the pages draw the redesign's glass look: both appearances do (light with ink
     /// for white and light plates, `glass_ui::light`).
@@ -104,7 +100,7 @@ fn is_dark(choice: Appearance, system: WindowAppearance) -> bool {
     pinned_dark(choice).unwrap_or(system_dark)
 }
 
-/// The look Settings ask for: the accent and launcher theme, at the player's Glass and Blur. A
+/// The look Settings ask for: the accent and launcher theme, A
 /// theme is one look, except Sunrise: its night in the dark look, its day (`DAWN_LIGHT`) in the
 /// light one. Other themes stay dark in both.
 pub fn from_settings(settings: &Settings, system: WindowAppearance) -> Theme {
@@ -113,43 +109,26 @@ pub fn from_settings(settings: &Settings, system: WindowAppearance) -> Theme {
     let accent = sunrise_launcher::appearance::accent(settings);
     let dark = is_dark(settings.appearance, system);
     let mut theme = Theme::for_appearance(Appearance::Dark, accent, system);
-    let mut photo = settings.background.is_some();
     theme = match themes::resolve(settings.theme.as_deref()) {
-        themes::Resolved::Twilight => {
-            theme.scene_tone = Some(twilight_tone());
-            theme
-        }
+        themes::Resolved::Twilight => theme,
         themes::Resolved::Builtin(picked) => theme.with_launcher_theme(picked, dark),
         themes::Resolved::Local(local) => {
-            photo |= local.picture.is_some();
             theme.with_night(local.roles.night())
         }
         themes::Resolved::Missing => theme.with_launcher_theme(&themes::DAWN_THEME, dark),
     };
-    theme.photo = photo && settings.scenery();
     // Reduced graphics keeps the sky's colours and drops its decorative effects.
     if settings.reduced_graphics() {
         theme.night.art.mood = night::Mood::Plain;
     }
-    theme.with_glass(settings.glass_tint(), settings.glass_blur())
-}
-
-/// Favour the horizon, where the built-in skies are warmest or most saturated.
-pub(crate) fn sky_tone(sky: [u32; 6]) -> u32 {
-    tokens::glass::mix_oklab(sky[5], sky[3], 0.72)
-}
-
-/// Twilight draws the violet coast poster, not the flat sky in its fallback tokens.
-pub(crate) fn twilight_tone() -> u32 {
-    let sky = sunrise_launcher_scenery::coast::SUNRISE.sky;
-    tokens::glass::mix_oklab(sky[6], sky[4], 0.72)
+    theme.with_solid_plates()
 }
 
 impl Theme {
     /// The pinned look (`pinned_dark`: dark unless the player picked another), the system's when
     /// they asked to follow it, in the player's accent.
     /// A launcher theme from Settings: its sky, or its whole palette when it brings one (in the
-    /// light look, its light palette if it has one), keeping the player's Glass and Blur.
+    /// light look, its light palette if it has one).
     pub fn with_launcher_theme(mut self, picked: &themes::Theme, dark: bool) -> Self {
         let sky = if let Some(night) = picked.palette_in(dark) {
             self = self.with_night(*night);
@@ -158,7 +137,6 @@ impl Theme {
             self.night.sky = picked.sky;
             picked.sky
         };
-        self.scene_tone = Some(sky_tone(sky));
         self.play_seed = match picked.id {
             "cherry_blossom" if self.accent_choice == picked.accent.accent() => Some(0xc8297e),
             "nord" if self.accent_choice == picked.accent.accent() => Some(0x087d95),
@@ -174,16 +152,12 @@ impl Theme {
         Self::from(accent.apply(night.blocks()), night, accent).glass(accent)
     }
 
-    /// The glass look with the player's Glass (how much white the plates take, 0 to 1) and Blur
-    /// (px).
-    pub fn with_glass(mut self, tint: f32, blur: f32) -> Self {
-        self.look = tokens::glass::Glass::new(self.look.accent, tint, blur);
+    /// The dark look's plates as the theme's own solid card: nothing stands behind the pages to
+    /// show through them.
+    pub fn with_solid_plates(mut self) -> Self {
         if self.dark {
-            // Nothing behind the pages to frost: the plates are the theme's own solid card.
             self.look.plate = self.night.card;
             self.look.plate_alpha = 1.;
-        } else {
-            self.look = light_look(self.look);
         }
         self
     }
@@ -242,10 +216,8 @@ impl Theme {
             raised: c(p.raised),
             well: c(p.well),
             night,
-            scene_tone: None,
             play_seed: None,
             accent_choice: accent,
-            photo: false,
             dark: p.dark,
             glass: false,
         }

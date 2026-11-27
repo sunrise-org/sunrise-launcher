@@ -37,13 +37,6 @@ pub(super) fn tidy(fields: &mut Map<String, Value>) {
             accents.entry(TWILIGHT).or_insert(kept);
         }
     }
-    // An opacity outside the percentage scale, or not a whole number, loses only itself.
-    if fields
-        .get("panel_opacity")
-        .is_some_and(|value| !value.is_null() && !matches!(value.as_u64(), Some(0..=100)))
-    {
-        fields.remove("panel_opacity");
-    }
     // A switch that isn't on or off is as if never set, not a reason to lose the rest.
     for key in ["performance", "reduce_motion", "cat"] {
         if fields
@@ -69,7 +62,6 @@ pub(super) fn settle(settings: &mut Settings) {
         settings.appearance = Appearance::Dark;
         settings.look_version = LOOK_VERSION;
     }
-    settings.set_panel_opacity(settings.panel_opacity);
 
     // Old Dawn saved its pink default like a picked accent. If it wasn't saved under
     // the theme as a choice, follow the updated default instead of keeping the old one.
@@ -180,35 +172,6 @@ mod tests {
         ] {
             assert_eq!(Settings::parse(json).accent.rgb(), expected);
         }
-    }
-
-    #[test]
-    fn panel_opacity_defaults_on_bad_values_without_losing_other_settings() {
-        use super::super::{PANEL_OPACITY_MAX, PANEL_OPACITY_MIN};
-        for bad in [
-            "null", "true", "{}", "\"82\"", "-1", "80.5", "101", "256", "1e128",
-        ] {
-            let parsed = Settings::parse(&format!(
-                r#"{{"panel_opacity":{bad}, "theme":"cherry_blossom", "game_args":"--x"}}"#
-            ));
-            assert_eq!(parsed.panel_opacity, None, "{bad}");
-            assert_eq!(parsed.theme.as_deref(), Some("cherry_blossom"), "{bad}");
-            assert_eq!(parsed.game_args, "--x", "{bad}");
-        }
-        let old = Settings::parse(r#"{"game_args":"--x"}"#);
-        assert_eq!(old.panel_opacity, None);
-        assert!(serde_json::to_value(&old)
-            .unwrap()
-            .get("panel_opacity")
-            .is_none());
-        // 0% is a choice like any other, read back as 0 and not raised.
-        let clear = Settings::parse(r#"{"panel_opacity":0,"game_args":"--x"}"#);
-        assert_eq!(clear.panel_opacity, Some(PANEL_OPACITY_MIN));
-        assert_eq!(clear.panel_opacity, Some(0));
-        let maximum = Settings::parse(r#"{"panel_opacity":100,"game_args":"--x"}"#);
-        assert_eq!(maximum.panel_opacity, Some(PANEL_OPACITY_MAX));
-        let saved = serde_json::to_string(&maximum).unwrap();
-        assert_eq!(Settings::parse(&saved).panel_opacity, maximum.panel_opacity);
     }
 
     /// A wrong accent under one theme, or a motion choice that isn't one, loses only itself.
@@ -334,5 +297,23 @@ mod tests {
             Settings::parse(r#"{"cat": null, "game_args": "--y"}"#).game_args,
             "--y"
         );
+    }
+
+    /// Panel opacity, glass and blur are gone: a file that still carries them is read as before,
+    /// whatever their values, and the next save leaves them out.
+    #[test]
+    fn a_file_with_the_removed_look_settings_still_loads() {
+        for old in [
+            r#"{"panel_opacity":40,"glass":12,"blur":8.5,"theme":"nord","game_args":"--x"}"#,
+            r#"{"panel_opacity":"x","glass":"frosty","blur":null,"theme":"nord","game_args":"--x"}"#,
+        ] {
+            let read = Settings::parse(old);
+            assert_eq!(read.theme.as_deref(), Some("nord"), "{old}");
+            assert_eq!(read.game_args, "--x", "{old}");
+            let saved = serde_json::to_value(&read).unwrap();
+            for key in ["panel_opacity", "glass", "blur"] {
+                assert!(saved.get(key).is_none(), "{key} is not written again");
+            }
+        }
     }
 }

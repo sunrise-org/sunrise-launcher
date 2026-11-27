@@ -153,27 +153,6 @@ fn settings_choose_the_look_as_appearance_does() {
 }
 
 #[test]
-fn panel_opacity_takes_every_percent_and_can_reset() {
-    let mut settings = backend::Settings::default();
-    assert!(settings_json(&settings)["panel_opacity"].is_null());
-    let cli = Cli::try_parse_from(["sunrise-launcher", "settings", "panel-opacity", "0"]);
-    assert!(cli.is_ok());
-    // 0 is saved as 0, not raised to a floor.
-    set_setting(&mut settings, "panel-opacity", "0").unwrap();
-    assert_eq!(settings_json(&settings)["panel_opacity"], 0);
-    set_setting(&mut settings, "panel-opacity", "40").unwrap();
-    assert_eq!(settings.panel_opacity, Some(40));
-    set_setting(&mut settings, "panel-opacity", "100").unwrap();
-    assert_eq!(settings.panel_opacity, Some(backend::PANEL_OPACITY_MAX));
-    for bad in ["-1", "101", "80.5", "opaque"] {
-        assert!(set_setting(&mut settings, "panel-opacity", bad).is_err());
-        assert_eq!(settings.panel_opacity, Some(backend::PANEL_OPACITY_MAX));
-    }
-    set_setting(&mut settings, "panel-opacity", "default").unwrap();
-    assert!(settings_json(&settings)["panel_opacity"].is_null());
-}
-
-#[test]
 fn appearance_cli_sets_dark_light_or_system_and_the_json_says_so() {
     let mut settings = backend::Settings::parse("{}");
     assert_eq!(settings_json(&settings)["appearance"], "dark");
@@ -190,7 +169,7 @@ fn appearance_cli_sets_dark_light_or_system_and_the_json_says_so() {
 #[test]
 fn reduced_graphics_cli_sets_and_reads_the_shared_choice() {
     let mut settings = backend::Settings::parse(
-        r#"{"blur":8.5,"reduce_motion":false,"cat":true,
+        r#"{"reduce_motion":false,"cat":true,
             "scenery":false,"background":"background-0123456789ab.png"}"#,
     );
     assert_eq!(settings_json(&settings)["reduced_graphics"], false);
@@ -210,7 +189,6 @@ fn reduced_graphics_cli_sets_and_reads_the_shared_choice() {
         assert_eq!(serde_json::to_value(&settings).unwrap(), before);
         settings = backend::Settings::parse(&before.to_string());
         assert_eq!(settings_json(&settings)["reduced_graphics"], on);
-        assert_eq!(settings.glass_blur(), if on { 0. } else { 8.5 });
         assert_eq!(settings.reduce_motion, Some(false));
         assert!(settings.show_cat());
         assert!(!settings.scenery());

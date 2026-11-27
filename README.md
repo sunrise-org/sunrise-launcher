@@ -201,7 +201,7 @@ The opening, then Play ([clip](docs/opening.webm)):
 - **Themes, accent and custom background**: Settings > Appearance picks a theme (Dawn, the warm
   orange one, unless another is chosen; ten more are built in, and any you make yourself are read
   from the `themes` folder), an accent under it (a name, any hue, or any colour typed as hex) and
-  what is behind every page (a picture of your own, your theme's, or the theme's scene). Every colour
+  what is in the Home banner (a picture of your own, your theme's, or the theme's scene). Every colour
   on screen comes from the theme. Play is a solid fill with a white label in every one: under a
   pale accent only Play's fill is darkened, until white reads on it at 4.5:1 (a test holds every
   theme and accent to it). `sunrise-launcher settings theme default|ID|local:SLUG`,

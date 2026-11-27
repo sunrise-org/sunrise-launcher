@@ -1,4 +1,4 @@
-//! Settings › Appearance: the theme cards' preview, and the rows for colours, opacity,
+//! Settings › Appearance: the theme cards' preview, and the rows for colours,
 //! layout and the section's own picture and cat settings.
 use super::*;
 use crate::paint::Palette;
@@ -7,7 +7,6 @@ use crate::widgets::check::switch;
 use crate::widgets::feedback::{banner, Tone};
 use gpui::SharedString;
 use sunrise_launcher::appearance::{self, Behind};
-use sunrise_launcher::backend::{PANEL_OPACITY_MAX, PANEL_OPACITY_MIN};
 use sunrise_launcher::theme_files::{self, Entry};
 use sunrise_launcher::themes::{self, Accent};
 
@@ -116,26 +115,7 @@ fn preview(p: &Palette) -> Div {
         )
 }
 
-const OPACITY_SPAN: f32 = (PANEL_OPACITY_MAX - PANEL_OPACITY_MIN) as f32;
-
-fn opacity_percent(value: f32) -> u8 {
-    PANEL_OPACITY_MIN + (value * OPACITY_SPAN).round() as u8
-}
-
 impl Launcher {
-    /// The frame previews a held slider, but navigation away discards it without saving.
-    pub(crate) fn panel_opacity_preview(&self) -> Option<u8> {
-        let slider = &self.ui.settings.appearance.panel_opacity;
-        if self.ui.page == crate::frame::Page::Settings
-            && self.ui.settings.section == Section::Appearance
-        {
-            slider.preview().map(opacity_percent)
-        } else {
-            slider.cancel();
-            None
-        }
-    }
-
     pub(in crate::settings) fn settings_appearance(
         &mut self,
         window: &Window,
@@ -286,7 +266,7 @@ impl Launcher {
         });
         let theme = stacked(
             tr("Theme"),
-            tr("Colours and scenery for the whole launcher. Play uses white text in every theme."),
+            tr("Colours for the whole launcher and the scene in the Home banner. Play uses white text in every theme."),
             div()
                 .flex()
                 .flex_col()
@@ -294,7 +274,7 @@ impl Launcher {
                 .children(gone)
                 .child(cards),
         );
-        let mut rows = vec![self.panel_opacity_row(cx), theme];
+        let mut rows = vec![theme];
         if !bad.is_empty() {
             rows.push(div().flex().flex_col().gap(px(10.)).children(bad));
         }
@@ -305,7 +285,7 @@ impl Launcher {
         let reduced = self.settings.reduced_graphics();
         rows.push(row(
             tr("Reduced graphics"),
-            tr("Turns off glass blur and keeps the scenery and cat still. Also reduces motion in the launcher."),
+            tr("Keeps the Home banner's scene and the cat still. Also reduces motion in the launcher."),
             div().child(
                 switch("alt-reduced-graphics", reduced)
                     .seen()
@@ -425,56 +405,6 @@ impl Launcher {
             .gap(px(10.))
             .child(group(rows))
             .children(said)
-    }
-
-    fn panel_opacity_row(&self, cx: &mut Context<Self>) -> Div {
-        let saved = self.settings.panel_opacity();
-        let control = &self.ui.settings.appearance.panel_opacity;
-        let actual = (palette().alpha * 100.).round() as u8;
-        let chosen = control.preview().map(opacity_percent).or(saved);
-        let percent = chosen.unwrap_or(actual);
-        let thumb = (f32::from(percent) - f32::from(PANEL_OPACITY_MIN)) / OPACITY_SPAN;
-        let slider = control.render(
-            "panel-opacity",
-            thumb.clamp(0., 1.),
-            1. / OPACITY_SPAN,
-            |this, value, cx| {
-                this.settings
-                    .set_panel_opacity(Some(opacity_percent(value)));
-                this.save_settings();
-                cx.notify();
-            },
-            cx,
-        );
-        let reset = secondary("panel-opacity-reset", tr("Use default"));
-        let reset = if saved.is_none() {
-            off(reset)
-        } else {
-            reset.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.settings.set_panel_opacity(None);
-                this.save_settings();
-                cx.notify();
-            }))
-        };
-        let about = if !self.settings.scenery() {
-            tr("Turn on scenery to see how the backdrop shows through panels.")
-        } else {
-            tr("How much of the backdrop shows through cards and panels.")
-        };
-        self.wide_row(
-            tr("Panel opacity"),
-            about,
-            div()
-                .child(slider)
-                .child(
-                    div()
-                        .min_w(px(44.))
-                        .text_size(px(tokens::LABEL))
-                        .text_center()
-                        .child(format!("{percent}%")),
-                )
-                .child(reset),
-        )
     }
 
     /// The accent: the theme's own colour and the named ones to pick from, and one field that
@@ -634,9 +564,9 @@ impl Launcher {
         };
         let lost = appearance::background_lost(&self.settings, &data);
         let source = match &behind {
-            Behind::Plain => tr("Off: the theme's plain background."),
-            Behind::Personal(_) => tr("Your picture, behind every page."),
-            Behind::Theme(_) => tr("The theme's picture, behind every page."),
+            Behind::Plain => tr("Off: the Home banner is plain."),
+            Behind::Personal(_) => tr("Your picture, in the Home banner."),
+            Behind::Theme(_) => tr("The theme's picture, in the Home banner."),
             Behind::Scene => tr("The theme's scene."),
         };
         let about = if unshown {
@@ -772,6 +702,6 @@ impl Launcher {
                 cx.notify();
             },
         ));
-        row(tr("Show background"), "", div().child(show))
+        row(tr("Show the Home banner scene"), "", div().child(show))
     }
 }

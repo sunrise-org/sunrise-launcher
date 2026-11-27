@@ -1467,37 +1467,6 @@ fn the_language_follows_the_system_unless_picked() {
 }
 
 #[test]
-fn glass_and_blur_default_to_the_mockups_and_stay_in_range() {
-    let unset = Settings::parse("{}");
-    assert_eq!((unset.glass_tint(), unset.glass_blur()), (0.06, 24.));
-    let set = Settings::parse(r#"{"glass": 12, "blur": 8.5}"#);
-    assert_eq!((set.glass_tint(), set.glass_blur()), (0.12, 8.5));
-    let wild = Settings::parse(r#"{"glass": 90, "blur": -3}"#);
-    assert_eq!((wild.glass_tint(), wild.glass_blur()), (0.16, 0.));
-    // Not a number: the default, and the other settings survive.
-    let wrong = Settings::parse(r#"{"glass": "frosty", "blur": null, "game_args": "--x"}"#);
-    assert_eq!(
-        (
-            wrong.glass_tint(),
-            wrong.glass_blur(),
-            wrong.game_args.as_str()
-        ),
-        (0.06, 24., "--x")
-    );
-}
-
-#[test]
-fn reduced_graphics_turns_off_blur_without_forgetting_its_value() {
-    let mut s = Settings::parse(r#"{"blur":8.5,"performance":true}"#);
-    assert_eq!(s.glass_blur(), 0.);
-    let saved = serde_json::to_string(&s).unwrap();
-    s = Settings::parse(&saved);
-    assert_eq!(s.glass_blur(), 0.);
-    s.reduced_graphics = Some(false);
-    assert_eq!(s.glass_blur(), 8.5);
-}
-
-#[test]
 fn a_malformed_sidebar_choice_keeps_every_other_setting_through_a_save() {
     for bad in ["null", "\"yes\"", "1", "[true]"] {
         let saved = format!(

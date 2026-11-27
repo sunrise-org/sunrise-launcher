@@ -112,11 +112,6 @@ impl WhilePlaying {
 pub const DEFAULT_CORNER_RADIUS: u8 = 9;
 pub const MAX_CORNER_RADIUS: u8 = 30;
 
-/// Custom panel opacity, in whole percentages. Unset keeps the theme's existing opacity. The whole
-/// range is the player's: at 0% the panels are gone, and text over a bright backdrop may not read.
-pub const PANEL_OPACITY_MIN: u8 = 0;
-pub const PANEL_OPACITY_MAX: u8 = 100;
-
 /// Explicit permission to build one GitHub source mod. A rename within the same owner
 /// retains consent; a change of owner, repository ID or mod ID never does.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -194,22 +189,11 @@ pub struct Settings {
     /// settings, parsing uses the theme's own accent.
     #[serde(default)]
     pub accent: crate::themes::Accent,
-    /// How much white the glass look's plates take, in percent (the mockup's Glass, 0 to 16).
-    /// Unset is the mockup's 6.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub glass: Option<f32>,
-    /// How much the glass look's plates blur the scene behind them, in px (0 to 48). Unset is
-    /// the mockup's 24.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub blur: Option<f32>,
-    /// Explicit glass panel opacity; unset preserves the theme's existing material.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub panel_opacity: Option<u8>,
     /// The launcher theme (`themes::theme`): its sky behind the light appearance. Unset is Dawn;
     /// the indigo one is `themes::TWILIGHT`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
-    /// Keep launcher effects still and use opaque glass. Unset is off. On disk this is
+    /// Keep the scenery and the cat still and cut decorative motion. Unset is off. On disk this is
     /// still `performance`, the setting saved by earlier launchers.
     #[serde(
         rename = "performance",
@@ -258,17 +242,6 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// The saved panel opacity override. `None` keeps the theme's default paint.
-    pub fn panel_opacity(&self) -> Option<u8> {
-        self.panel_opacity
-    }
-
-    /// Choose a custom panel opacity, from 0 to 100%, or reset to the theme's default.
-    pub fn set_panel_opacity(&mut self, opacity: Option<u8>) {
-        self.panel_opacity =
-            opacity.map(|percent| percent.clamp(PANEL_OPACITY_MIN, PANEL_OPACITY_MAX));
-    }
-
     /// A button's corner radius in px, as the player set it.
     pub fn corner_radius(&self) -> u8 {
         self.corner_radius_px
@@ -396,12 +369,6 @@ impl Settings {
             }) {
                 fields.remove("accent");
             }
-            // A glass or blur that isn't a number is the default, not a reason to lose the rest.
-            for key in ["glass", "blur"] {
-                if fields.get(key).is_some_and(|v| !v.is_number()) {
-                    fields.remove(key);
-                }
-            }
             // A sidebar choice that isn't yes or no starts collapsed, not a reason to lose the rest.
             if fields
                 .get("sidebar_expanded")
@@ -452,23 +419,6 @@ impl Settings {
     /// Whether old versions are deleted after an install.
     pub fn auto_prune(&self) -> bool {
         self.prune_old_versions.unwrap_or(true)
-    }
-    /// The plates' white as a fraction (0 to 0.16): [`glass`](Self::glass) in percent.
-    pub fn glass_tint(&self) -> f32 {
-        self.glass
-            .filter(|v| v.is_finite())
-            .map_or(sunrise_launcher_theme::glass::TINT, |v| {
-                v.clamp(0., 16.) / 100.
-            })
-    }
-    /// The plates' effective blur in px (0 to 48), never applied under Reduced graphics.
-    pub fn glass_blur(&self) -> f32 {
-        if self.reduced_graphics() {
-            return 0.;
-        }
-        self.blur
-            .filter(|v| v.is_finite())
-            .map_or(sunrise_launcher_theme::glass::BLUR, |v| v.clamp(0., 48.))
     }
     /// Whether the launcher reduces graphics effects.
     pub fn reduced_graphics(&self) -> bool {

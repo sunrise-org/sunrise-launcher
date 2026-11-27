@@ -27,7 +27,6 @@ pub(crate) struct State {
     pub(super) accent_focus: Option<FocusHandle>,
     /// Whether the accent field had the keyboard when last drawn: leaving it takes what is typed.
     pub(super) accent_editing: bool,
-    pub(super) panel_opacity: crate::slider::Slider,
     /// The keyboard's place on "Worlds on Home", and the search's request to be taken to it:
     /// whether that was done yet.
     pub(super) worlds_focus: Option<FocusHandle>,
@@ -56,7 +55,6 @@ impl Default for State {
             accent: line_edit::LineEdit::new(String::new(), 32, 18),
             accent_focus: None,
             accent_editing: false,
-            panel_opacity: crate::slider::Slider::default(),
             worlds_focus: None,
             worlds_asked: None,
             error: None,
@@ -104,9 +102,8 @@ impl Launcher {
         if self.ui.settings.appearance.choices.is_some() {
             return;
         }
-        let tint = self.settings.glass_tint();
         let in_use = appearance::effective_id(&self.settings);
-        let choice = |id: String, name: SharedString, about: SharedString, night, tone| {
+        let choice = |id: String, name: SharedString, about: SharedString, night| {
             // Each preview wears its theme's own accent; the one in use, the accent in use.
             let accent = if id == in_use {
                 appearance::accent(&self.settings).rgb()
@@ -114,7 +111,7 @@ impl Launcher {
                 themes::own_accent(Some(&id)).rgb()
             };
             Choice {
-                palette: Palette::plain(night, accent, tint, tone),
+                palette: Palette::plain(night, accent),
                 id,
                 name,
                 about,
@@ -126,7 +123,6 @@ impl Launcher {
                 tr(t.name).into(),
                 tr(t.description).into(),
                 t.palette.copied().unwrap_or(theme::night::NIGHT),
-                Some(theme::sky_tone(t.sky)),
             )
         };
         let mut all = vec![
@@ -136,7 +132,6 @@ impl Launcher {
                 tr(themes::TWILIGHT_NAME).into(),
                 tr(themes::TWILIGHT_DESCRIPTION).into(),
                 theme::night::NIGHT,
-                Some(theme::twilight_tone()),
             ),
         ];
         all.extend(
@@ -152,7 +147,6 @@ impl Launcher {
                     local.name.clone().into(),
                     trf("Your theme · {folder}", &[("folder", &local.slug)]).into(),
                     local.roles.night(),
-                    None,
                 ));
             }
         }

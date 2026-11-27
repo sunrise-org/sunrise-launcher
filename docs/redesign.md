@@ -121,7 +121,7 @@ collapsed, toasts sliding in, a page rising in. Use `motion::eased`, `motion::Fa
 | 6 | Servers, Skins, Settings | done |
 | 7 | Sheets and popups | in progress |
 | 8 | Compact window (800×600), light theme | light theme in progress |
-| 9 | Final sweep: remove every leftover of the old design (incl. the panel opacity and glass tint settings, `HomePhoto::tone`, `Plates`, the resolve sheet's own button colours) | to do |
+| 9 | Final sweep: remove every leftover of the old design (the panel opacity, glass and blur settings, `HomePhoto::tone` and `Plates` are gone; the resolve sheet's own button colours are left) | to do |
 
 Not built because the backend has no data for them yet (see the Figma Notes page): a
 Modpacks kind in Discover, a Logs tab, ping on server rows, the mods count and loader in the

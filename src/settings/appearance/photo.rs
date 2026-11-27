@@ -1,5 +1,5 @@
 //! Settings › Appearance: what stands behind Home — the player's own picture or their
-//! theme's — its tone, and its decode off the window's thread.
+//! theme's — and its decode off the window's thread.
 use super::*;
 use crate::paint::HomePhoto;
 use gpui::RenderImage;
@@ -7,41 +7,6 @@ use std::sync::Arc;
 use sunrise_launcher::appearance::{self, Behind};
 use sunrise_launcher::theme_files;
 use sunrise_launcher::themes;
-
-/// Sample the centres of a grid bounded to 32 × 32, independent of image size. Weight sRGB
-/// channels by coverage, so transparent pixels (which may carry arbitrary RGB) do not tint us.
-pub(super) fn photo_tone(image: &image::RgbaImage) -> Option<u32> {
-    let (w, h) = image.dimensions();
-    let (cols, rows) = (w.min(32), h.min(32));
-    let mut sum = [0_u32; 3];
-    let mut weight = 0;
-    let mut strongest = (0, 0);
-    for y in 0..rows {
-        for x in 0..cols {
-            let [r, g, b, a] =
-                image[((2 * x + 1) * w / (2 * cols), (2 * y + 1) * h / (2 * rows))].0;
-            let a = u32::from(a);
-            weight += a;
-            let chroma = a * u32::from(r.max(g).max(b) - r.min(g).min(b));
-            if chroma > strongest.0 {
-                strongest = (chroma, u32::from_be_bytes([0, r, g, b]));
-            }
-            for (total, channel) in sum.iter_mut().zip([r, g, b]) {
-                *total += u32::from(channel) * a;
-            }
-        }
-    }
-    (weight > 0).then(|| {
-        let [r, g, b] = sum.map(|c| (c + weight / 2) / weight);
-        // A colourful picture can average to gray if its hues cancel. In that case use
-        // the most visibly chromatic sample instead of losing its colour altogether.
-        if r == g && g == b && strongest.0 > 0 {
-            strongest.1
-        } else {
-            r << 16 | g << 8 | b
-        }
-    })
-}
 
 impl Launcher {
     /// What stands behind Home, for the frame's backdrop: the player's picture, else their
@@ -93,11 +58,7 @@ impl Launcher {
             } else {
                 theme_files::picture(&read).map_err(|reason| reason.text())
             }
-            .map(|still| {
-                let rgba = theme_files::fitted(still, sunrise_launcher::pictures::gpu_limit());
-                let tone = photo_tone(&rgba);
-                (rgba, tone)
-            })
+            .map(|still| theme_files::fitted(still, sunrise_launcher::pictures::gpu_limit()))
         });
         cx.spawn(async move |this, cx| {
             let decoded = task.await;
@@ -105,7 +66,7 @@ impl Launcher {
                 let state = &mut this.ui.settings.appearance;
                 state.decoding = false;
                 let picture = match decoded {
-                    Ok((mut rgba, tone)) => {
+                    Ok(mut rgba) => {
                         // The window draws BGRA, its alpha premultiplied.
                         for px in rgba.pixels_mut() {
                             let a = u16::from(px.0[3]);
@@ -114,7 +75,6 @@ impl Launcher {
                         }
                         Some(HomePhoto {
                             image: Arc::new(RenderImage::new([image::Frame::new(rgba)])),
-                            tone,
                         })
                     }
                     Err(said) => {

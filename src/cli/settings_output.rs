@@ -39,7 +39,6 @@ fn settings_json_with_paths(
         "theme_choice": s.theme,
         "accent": sunrise_launcher::appearance::accent(s).name(),
         "scenery": s.scenery(),
-        "panel_opacity": s.panel_opacity(),
         "reduced_graphics": s.reduced_graphics(),
         "themes_dir": themes.display().to_string(),
         "background": background.map(|kept| kept.display().to_string()),

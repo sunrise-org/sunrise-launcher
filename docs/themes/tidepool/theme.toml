@@ -1,6 +1,6 @@
 version = 1
 name = "Tidepool"
-# background = "shore.webp"   # optional: one picture beside this file, shown behind every page
+# background = "shore.webp"   # optional: one picture beside this file, shown in the Home banner
 
 [palette]
 card = "#1A3135"

@@ -84,7 +84,7 @@ impl Setup {
         Self {
             mode,
             theme: Theme::for_appearance(settings.appearance, settings.accent, window.appearance())
-                .with_glass(settings.glass_tint(), settings.glass_blur()),
+                .with_solid_plates(),
             coast: cx.new(|cx| crate::coast::Coast::new(window, cx)),
             wake: None,
             settings_stamp: Self::settings_stamp(),
@@ -423,7 +423,7 @@ impl Render for Setup {
             titlebar::apply_appearance(window, settings.appearance);
             self.theme =
                 Theme::for_appearance(settings.appearance, settings.accent, window.appearance())
-                    .with_glass(settings.glass_tint(), settings.glass_blur());
+                    .with_solid_plates();
         }
         // Look again twice a second, so a settings change shows even while the scene stands
         // still, without drawing the window at 60 fps and reading the file's metadata every

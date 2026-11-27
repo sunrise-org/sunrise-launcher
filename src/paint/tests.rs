@@ -5,22 +5,19 @@ use sunrise_launcher::backend::Appearance;
 use sunrise_launcher::themes::{self, Accent};
 use sunrise_launcher_theme::glass;
 
-fn look(id: Option<&str>, accent: Accent, glass: f32, scenery: bool) -> (Settings, Theme) {
+fn look(id: Option<&str>, accent: Accent) -> Theme {
     let settings = Settings {
         accent,
         theme: id.map(Into::into),
-        glass: Some(glass),
-        scenery_on: Some(scenery),
         ..Settings::default()
     };
-    let theme = from_settings(&settings, WindowAppearance::Dark);
-    (settings, theme)
+    from_settings(&settings, WindowAppearance::Dark)
 }
 
 /// The classes of look: each theme at its own accent; one theme in every named accent and
-/// in a pale, a dark, a grey and a saturated typed one; the least and most Glass; scenery
-/// off; and the light appearance. `all` is every theme with every accent and setting.
-fn looks(all: bool) -> Vec<(String, Settings, Theme)> {
+/// in a pale, a dark, a grey and a saturated typed one; and the light appearance. `all` is
+/// every theme with every accent.
+fn looks(all: bool) -> Vec<(String, Theme)> {
     let ids = std::iter::once(None).chain(themes::THEMES.iter().map(|t| Some(t.id)));
     let typed = [0xffe39a, 0x101040, 0x808080, 0xff0000].map(Accent::from_rgb);
     let mut looks = Vec::new();
@@ -32,28 +29,12 @@ fn looks(all: bool) -> Vec<(String, Settings, Theme)> {
             vec![own]
         };
         for accent in accents {
-            for (glass, scenery) in [(6., true), (0., true), (16., true), (6., false)] {
-                if all || id.is_none() || (glass == 6. && scenery) {
-                    let (settings, theme) = look(id, accent, glass, scenery);
-                    looks.push((
-                        format!("{id:?} {} {glass} {scenery}", accent.name()),
-                        settings,
-                        theme,
-                    ));
-                }
-            }
+            looks.push((format!("{id:?} {}", accent.name()), look(id, accent)));
         }
     }
     for accent in Accent::ALL {
         let theme = Theme::for_appearance(Appearance::Light, accent, WindowAppearance::Light);
-        looks.push((
-            format!("light {}", accent.name()),
-            Settings {
-                accent,
-                ..Settings::default()
-            },
-            theme,
-        ));
+        looks.push((format!("light {}", accent.name()), theme));
     }
     looks
 }
@@ -97,8 +78,8 @@ fn spread(c: u32) -> u32 {
 }
 
 /// Everything the palette promises, for one look.
-fn check(name: &str, settings: &Settings, theme: &Theme) {
-    let p = Palette::of(settings, theme);
+fn check(name: &str, theme: &Theme) {
+    let p = Palette::of(theme);
     let reads = |role: &str, fg: u32, on: &[u32], min: f32| {
         for &s in on {
             let r = contrast(fg, s);
@@ -154,32 +135,8 @@ fn check(name: &str, settings: &Settings, theme: &Theme) {
     reads("chrome muted", p.chrome_muted, &chrome, TEXT);
     reads("chrome edge", p.chrome_line, &chrome, MARK);
 
-    // Plates: opaque without scenery, else at least the Glass setting, and text on them
-    // reads over each band of the theme's sky.
-    assert_eq!(p.card().a, p.alpha, "{name}");
-    if !settings.scenery() {
-        assert_eq!(p.alpha, 1., "{name}: opaque without scenery");
-    }
-    let tint = settings.glass_tint();
-    assert!(
-        p.alpha + f32::EPSILON >= (tint + (1. - tint) * PLATE_BASE).min(1.),
-        "{name}"
-    );
-    for sky in theme.night.sky {
-        for (fg, plate) in [
-            (p.text, p.card_color),
-            (p.muted, p.card_color),
-            (p.chrome_text, p.chrome),
-            (p.chrome_muted, p.chrome),
-        ] {
-            reads(
-                "text on a plate over the sky",
-                fg,
-                &[over(plate, p.alpha, sky)],
-                TEXT,
-            );
-        }
-    }
+    // Cards and captions are solid: nothing shows through them, so nothing else to fit.
+    assert_eq!(p.card().a, 1., "{name}");
     // A tile without a picture: its letter reads, and every tile stands the same small way
     // off the card (lighter on a dark theme, darker on a light one), in a quiet colour.
     let lighter = luminance(p.text) > luminance(p.card_color);
@@ -234,16 +191,16 @@ fn check(name: &str, settings: &Settings, theme: &Theme) {
 
 #[test]
 fn a_sample_of_every_class_of_look_holds_the_palette_contract() {
-    for (name, settings, theme) in looks(false) {
-        check(&name, &settings, &theme);
+    for (name, theme) in looks(false) {
+        check(&name, &theme);
     }
 }
 
 #[test]
 #[ignore = "exhaustive: every theme with every accent and setting"]
 fn every_look_holds_the_palette_contract() {
-    for (name, settings, theme) in looks(true) {
-        check(&name, &settings, &theme);
+    for (name, theme) in looks(true) {
+        check(&name, &theme);
     }
 }
 
@@ -256,8 +213,8 @@ fn a_tile_is_one_colour_per_id() {
         .chain(themes::THEMES.iter().map(|t| Some(t.id)));
     for id in ids {
         let own = themes::starting_accent(id, &Default::default());
-        let (settings, theme) = look(id, own, 6., true);
-        let p = Palette::of(&settings, &theme);
+        let theme = look(id, own);
+        let p = Palette::of(&theme);
         let tiles = IDS.map(|mod_id| p.tile(mod_id));
         assert_eq!(tiles, IDS.map(|mod_id| p.tile(mod_id)), "{id:?}: stable");
         for (i, a) in tiles.iter().enumerate() {
@@ -294,7 +251,7 @@ fn dawns_play_is_the_brand_orange_under_white() {
     ] {
         let settings = Settings::parse(json);
         let theme = from_settings(&settings, WindowAppearance::Dark);
-        let p = Palette::of(&settings, &theme);
+        let p = Palette::of(&theme);
         assert_eq!((p.accent, p.accent_on), (0xc2552d, 0xffffff));
         assert!(contrast(p.accent_on, p.play_stops[1]) >= TEXT);
     }
@@ -317,7 +274,7 @@ fn sunrise_in_the_light_look_paints_from_dawn_light() {
     let theme = from_settings(&light, WindowAppearance::Dark);
     assert_eq!(theme.night, DAWN_LIGHT);
     assert!(!theme.dark);
-    let p = Palette::of(&light, &theme);
+    let p = Palette::of(&theme);
     assert_eq!(p.background, DAWN_LIGHT.page);
     assert!(contrast(p.text, p.background) >= TEXT);
 
@@ -328,7 +285,7 @@ fn sunrise_in_the_light_look_paints_from_dawn_light() {
     let theme = from_settings(&dark, WindowAppearance::Light);
     assert_eq!(theme.night, DAWN_DARK);
     assert!(theme.dark);
-    assert_eq!(Palette::of(&dark, &theme).background, DAWN_DARK.page);
+    assert_eq!(Palette::of(&theme).background, DAWN_DARK.page);
 }
 
 #[test]
@@ -340,7 +297,7 @@ fn every_builtin_play_is_its_accent_toned_to_the_theme_at_readable_white_contras
         let own = themes::own_accent(Some(id)).rgb();
         let settings = Settings::parse(&format!(r#"{{"theme":"{id}"}}"#));
         let theme = from_settings(&settings, WindowAppearance::Dark);
-        let p = Palette::of(&settings, &theme);
+        let p = Palette::of(&theme);
         assert_eq!(p.accent, own, "{id}: the theme's accent is unchanged");
         assert_eq!(p.accent_on, 0xffffff, "{id}: white label and icon");
         let [dark, light] = p.play_stops;
@@ -376,7 +333,7 @@ fn cherry_and_nord_keep_their_swatches_with_vivid_primary_actions() {
     ] {
         let settings = Settings::parse(&format!(r#"{{"theme":"{id}"}}"#));
         let theme = from_settings(&settings, WindowAppearance::Dark);
-        let p = Palette::of(&settings, &theme);
+        let p = Palette::of(&theme);
         assert_eq!(p.accent, accent);
         // The authored face, toned like every Play, stays more vivid than the toned swatch.
         assert_eq!(p.play_glow, mix_oklab(p.chrome, seed, PLAY_TONE), "{id}");
@@ -388,8 +345,8 @@ fn cherry_and_nord_keep_their_swatches_with_vivid_primary_actions() {
     }
 
     let custom = Accent::from_rgb(0x206fcc);
-    let (settings, theme) = look(Some("cherry_blossom"), custom, 6., true);
-    let p = Palette::of(&settings, &theme);
+    let theme = look(Some("cherry_blossom"), custom);
+    let p = Palette::of(&theme);
     assert_eq!(
         p.play_glow,
         mix_oklab(p.chrome, custom.rgb(), PLAY_TONE),
@@ -442,50 +399,13 @@ accent = "#101010""##,
             .unwrap_or_else(|e| panic!("{name}: {e:?}"))
             .roles;
         let accent = Accent::from_rgb(roles.accent);
-        for scenery in [true, false] {
-            let settings = Settings {
-                accent,
-                scenery_on: Some(scenery),
-                ..Settings::default()
-            };
-            let theme = Theme::for_appearance(Appearance::Dark, accent, WindowAppearance::Dark)
-                .with_night(roles.night());
-            check(
-                &format!("local {name}, scenery {scenery}"),
-                &settings,
-                &theme,
-            );
-            let p = Palette::of(&settings, &theme);
-            assert_eq!(p.accent, roles.accent, "{name}");
-            assert_eq!(p.accent_on, 0xffffff, "{name}");
-            assert_eq!(p.background, roles.background, "{name}");
-        }
-    }
-}
-
-#[test]
-fn even_a_pale_blue_source_makes_slate_blue_plates() {
-    let pale_blue = 0xe5e9ef;
-    let tint = Palette::plain(
-        theme::night::NIGHT,
-        glass::ACCENT,
-        glass::TINT,
-        Some(pale_blue),
-    );
-    for plate in [tint.chrome, tint.card_color, tint.raised] {
-        let [_, a, b] = oklab(plate);
-        assert!(b < 0., "{plate:06x} should be blue");
-        assert!(a.hypot(b) >= 0.044, "{plate:06x} should not read as gray");
-        assert!((hue(plate) - hue(pale_blue)).abs() < 0.1, "{plate:06x}");
-    }
-    let gray = Palette::plain(
-        theme::night::NIGHT,
-        glass::ACCENT,
-        glass::TINT,
-        Some(0xe9e9e9),
-    );
-    for plate in [gray.chrome, gray.card_color, gray.raised] {
-        assert_eq!(spread(plate), 0);
+        let theme = Theme::for_appearance(Appearance::Dark, accent, WindowAppearance::Dark)
+            .with_night(roles.night());
+        check(&format!("local {name}"), &theme);
+        let p = Palette::of(&theme);
+        assert_eq!(p.accent, roles.accent, "{name}");
+        assert_eq!(p.accent_on, 0xffffff, "{name}");
+        assert_eq!(p.background, roles.background, "{name}");
     }
 }
 
@@ -493,8 +413,8 @@ fn even_a_pale_blue_source_makes_slate_blue_plates() {
 fn unboxed_home_text_reads_over_the_shaded_backdrop() {
     let themes = looks(false)
         .into_iter()
-        .map(|(_, s, t)| Palette::of(&s, &t));
-    let light = Palette::plain(theme::night::DAWN, 0x6a4910, glass::TINT, None);
+        .map(|(_, t)| Palette::of(&t));
+    let light = Palette::plain(theme::night::DAWN, 0x6a4910);
     assert!(luminance(light.hero.shade) > 0.5);
     for p in themes.chain([light]) {
         for pixel in [0, 0xffffff] {
@@ -508,12 +428,12 @@ fn unboxed_home_text_reads_over_the_shaded_backdrop() {
 
 #[test]
 fn white_text_on_a_pale_accent_darkens_the_fill_only() {
-    let (settings, theme) = look(None, Accent::from_rgb(0xffe39a), 6., true);
-    let p = Palette::of(&settings, &theme);
+    let theme = look(None, Accent::from_rgb(0xffe39a));
+    let p = Palette::of(&theme);
     assert_eq!(p.accent, 0xffe39a);
     assert_ne!(p.play_stops[0], p.accent);
-    let (settings, theme) = look(None, Accent::from_rgb(0x372890), 6., true);
-    let p = Palette::of(&settings, &theme);
+    let theme = look(None, Accent::from_rgb(0x372890));
+    let p = Palette::of(&theme);
     let toned = mix_oklab(p.chrome, p.accent, PLAY_TONE);
     assert_eq!(p.play_stops[0], toned, "a dark accent needs no shading");
     assert_eq!(p.play_stops[1], mix_oklab(p.accent_on, toned, 0.25));
@@ -523,14 +443,14 @@ fn white_text_on_a_pale_accent_darkens_the_fill_only() {
 /// the same inputs are not computed again.
 #[test]
 fn begin_sets_the_frames_palette_from_the_inputs() {
-    let (violet, a) = look(None, Accent::default(), 6., true);
+    let a = look(None, Accent::default());
     let nord = Settings {
         theme: Some("nord".into()),
         accent: Accent::from_rgb(0x88c0d0),
         ..Settings::default()
     };
     let b = from_settings(&nord, WindowAppearance::Dark);
-    let (pa, pb) = (Palette::of(&violet, &a), Palette::of(&nord, &b));
+    let (pa, pb) = (Palette::of(&a), Palette::of(&b));
     assert_eq!(
         (pb.background, pb.accent),
         (0x2e3440, 0x88c0d0),
@@ -540,12 +460,12 @@ fn begin_sets_the_frames_palette_from_the_inputs() {
         pb.play_stops[0], pb.accent,
         "pale frost cannot hold white text"
     );
-    begin(&nord, &b, None, None);
+    begin(&b);
     assert_eq!(palette(), pb);
     let kept = CURRENT.get().1;
-    begin(&nord, &b, None, None);
+    begin(&b);
     assert_eq!(CURRENT.get().1, kept);
-    begin(&violet, &a, None, None);
+    begin(&a);
     assert_eq!(palette(), pa);
     assert_eq!(pa.accent, glass::ACCENT);
 }

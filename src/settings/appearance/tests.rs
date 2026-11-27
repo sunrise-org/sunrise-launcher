@@ -1,4 +1,3 @@
-use super::photo::photo_tone;
 use image::{Rgba, RgbaImage};
 
 /// Runs `test` again in a child process with its own scratch homes; Some(root) inside it.
@@ -102,22 +101,6 @@ fn the_players_picture_is_behind_pages_other_than_home() {
             "the picture is decoded for the backdrop on Settings"
         );
     });
-}
-
-#[test]
-fn picture_tone_is_weighted_by_visible_coverage() {
-    let mut image = RgbaImage::from_pixel(3, 1, Rgba([255, 0, 0, 0]));
-    assert_eq!(photo_tone(&image), None);
-    image.put_pixel(1, 0, Rgba([90, 150, 210, 60]));
-    image.put_pixel(2, 0, Rgba([30, 90, 150, 120]));
-    assert_eq!(photo_tone(&image), Some(0x326eaa));
-}
-
-#[test]
-fn complementary_colours_do_not_cancel_a_pictures_tint() {
-    let mut image = RgbaImage::from_pixel(2, 1, Rgba([255, 0, 0, 255]));
-    image.put_pixel(1, 0, Rgba([0, 255, 255, 255]));
-    assert_eq!(photo_tone(&image), Some(0xff0000));
 }
 
 #[test]

@@ -210,10 +210,9 @@ enum Cmd {
     /// (a built-in theme, or one of yours from the themes folder; "default" is Dawn; a wrong id
     /// lists them all), accent
     /// violet|blue|teal|green|amber|red|pink|#rrggbb|DEGREES (a named accent, any colour, or any
-    /// hue; "theme" goes back to the theme's own), background PATH (your picture behind every page;
-    /// "default" goes back to the theme's), scenery on|off (whether anything is behind the
-    /// pages), panel-opacity PERCENT|default (glass panels over the background),
-    /// reduced-graphics on|off (no glass blur or decorative motion)
+    /// hue; "theme" goes back to the theme's own), background PATH (your picture in the Home banner;
+    /// "default" goes back to the theme's), scenery on|off (whether the Home banner shows its
+    /// scene or picture), reduced-graphics on|off (a still scene and no decorative motion)
     #[command(after_help = tr("worlds rows|tiles: how Home lists the worlds under Continue playing."))]
     Settings {
         #[arg(value_parser = SETTING_KEYS)]

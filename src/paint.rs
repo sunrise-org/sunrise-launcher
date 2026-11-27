@@ -1,20 +1,15 @@
 //! The launcher's paint: every colour a screen draws with, as named roles. A screen asks
 //! [`palette`] for a role (`palette().text`), never for a hex value or a dark/light branch.
 //!
-//! The roles are Xmilon's 1.0.x glass material (a theme-tinted plate over the scenery, white
-//! text, one accent) under the names of the theme-file contract, for the player's theme and
-//! accent. [`begin`] sets the palette once per frame from the settings and the theme in use;
-//! [`Palette::of`] computes it. The accent the player (or the theme) picked is never changed:
-//! [`Palette::accent`] is that colour, and each role that must read is a separate fit of it, toward
-//! white or black (`fit`), so a pale or dark accent keeps its character.
+//! The roles are the redesign's flat material (a solid chrome, one solid page panel, opaque
+//! cards) under the names of the theme-file contract, for the player's theme and accent. [`begin`]
+//! sets the palette once per frame from the theme in use; [`Palette::of`] computes it. The accent
+//! the player (or the theme) picked is never changed: [`Palette::accent`] is that colour, and each
+//! role that must read is a separate fit of it, toward white or black (`fit`), so a pale or dark
+//! accent keeps its character.
 //!
-//! Every `u32` is an opaque `0xRRGGBB`, so a field, a menu, a selection or a tooltip reads on
-//! its own, whatever is behind it. Only the plates are see-through: [`Palette::card`] and
-//! [`Palette::chrome_plate`] take the scene or photo's tint. Automatic opacity guards against
-//! the theme's sky and stays solid over a photo. An explicit opacity is the player's, down to 0%:
-//! it is drawn as chosen, and the ink is fitted against the worst possible backdrop as far as
-//! that plate allows, so a thin plate over a bright picture may not read. Without scenery the
-//! plates stay solid.
+//! Every `u32` is an opaque `0xRRGGBB`, so a field, a menu, a selection or a tooltip reads on its
+//! own. Nothing the palette names is see-through: the scenery stands only in the Home banner.
 use crate::theme::Theme;
 use gpui::RenderImage;
 use gpui::{rgb, Hsla};
@@ -31,12 +26,6 @@ use sunrise_launcher_theme::night::{over, Night};
 #[derive(Clone)]
 pub(crate) struct HomePhoto {
     pub image: Arc<RenderImage>,
-    /// Representative colour of the visible pixels, computed once with the decode.
-    #[expect(
-        dead_code,
-        reason = "the flat window no longer tints from the picture; goes with the panel opacity setting in the final sweep"
-    )]
-    pub tone: Option<u32>,
 }
 
 /// What a dialog's scrim may dim a bright page by: the opacity is the one in this range that
@@ -44,8 +33,6 @@ pub(crate) struct HomePhoto {
 const SCRIM_ALPHAS: std::ops::RangeInclusive<u32> = 45..=75;
 /// The brightest pages a scrim is judged over (`BRIGHT_BACKDROP`, and white).
 const BRIGHT: [u32; 2] = [sunrise_launcher_theme::BRIGHT_BACKDROP, 0xffffff];
-/// The glass plates' own opacity, as the mockup's `.hzl-glass` mixes it (`Glass::new`).
-const PLATE_BASE: f32 = 0.81;
 /// How far Play's colour is pulled toward the theme's own chrome (OKLab), so it sits in the theme
 /// instead of shouting over it. The white label's fit comes after, unchanged.
 pub(crate) const PLAY_TONE: f32 = 0.15;
@@ -79,7 +66,7 @@ pub(crate) struct Palette {
     ///
     /// [`chrome_plate`]: Palette::chrome_plate
     pub chrome: u32,
-    /// Plates and captions (see [`card`](Palette::card) for the see-through one).
+    /// Cards and captions.
     pub card_color: u32,
     /// Menus, dialogs and tooltips.
     pub raised: u32,
@@ -117,14 +104,8 @@ pub(crate) struct Palette {
     pub info: u32,
     pub success: u32,
     pub warning: u32,
-    /// How opaque the plates are: see the module's note.
-    pub alpha: f32,
     /// How opaque the dialogs' scrim is.
     pub scrim_alpha: f32,
-    /// How opaque the rules and outlines on the plates are. Under a chosen panel opacity they
-    /// fade along its square root: slower than the plates, so a thin panel keeps its outline
-    /// (at 50% the lines are at 71%), and gone with them at 0%. Else solid.
-    pub rule_alpha: f32,
 }
 
 /// The colours of a picture's stand-in ([`Palette::tile`]): its fill, and the letter on it.
@@ -162,24 +143,13 @@ fn hue_colour(turn: f32) -> u32 {
 }
 
 impl Inputs {
-    fn of(
-        settings: &Settings,
-        theme: &Theme,
-        photo: Option<&HomePhoto>,
-        preview: Option<u8>,
-    ) -> Inputs {
-        // The window is flat (docs/redesign.md): the scenery stands only in the profile banner,
-        // so every plate is solid and in the theme's own colours, never tinted by the scene.
-        let _ = (settings, photo, preview);
-        let plates = Plates::Opaque;
+    /// The window is flat (docs/redesign.md): the scenery stands only in the profile banner, so
+    /// every surface is solid and in the theme's own colours, never tinted by the scene.
+    fn of(theme: &Theme) -> Inputs {
         Inputs {
             night: theme.night,
-            scene_tone: None,
-            photo_tone: None,
             accent: theme.accent_choice.rgb(),
             play_seed: theme.play_seed,
-            tint: settings.glass_tint(),
-            plates,
         }
     }
 }
@@ -188,7 +158,7 @@ thread_local! {
     static CURRENT: Cell<(Inputs, Palette)> = Cell::new({
         let settings = Settings::default();
         let theme = crate::theme::from_settings(&settings, gpui::WindowAppearance::Dark);
-        let inputs = Inputs::of(&settings, &theme, None, None);
+        let inputs = Inputs::of(&theme);
         (inputs, inputs.palette())
     });
 }
@@ -199,13 +169,8 @@ pub(crate) fn palette() -> Palette {
 }
 
 /// Starts a frame: the palette its screens draw with, computed again only for new inputs.
-pub(crate) fn begin(
-    settings: &Settings,
-    theme: &Theme,
-    photo: Option<&HomePhoto>,
-    preview: Option<u8>,
-) {
-    let inputs = Inputs::of(settings, theme, photo, preview);
+pub(crate) fn begin(theme: &Theme) {
+    let inputs = Inputs::of(theme);
     if CURRENT.get().0 != inputs {
         CURRENT.set((inputs, inputs.palette()));
     }
@@ -245,83 +210,27 @@ fn reads_over(ink: f32, plate: f32, lighter: bool, min: f32) -> bool {
     (light + 0.05) / (dark + 0.05) >= min
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum Plates {
-    Opaque,
-    Automatic,
-    #[expect(
-        dead_code,
-        reason = "the panel opacity setting has no effect on the flat window; removed in the final sweep"
-    )]
-    Custom(u8),
-}
-
 /// Everything a palette depends on: it is computed again only when one of these changes.
 #[derive(Clone, Copy, PartialEq)]
 struct Inputs {
     night: Night,
-    /// If neither tone is available, use the theme file's authored plates.
-    scene_tone: Option<u32>,
-    photo_tone: Option<u32>,
     accent: u32,
     play_seed: Option<u32>,
-    tint: f32,
-    plates: Plates,
 }
 
 impl Inputs {
     fn palette(&self) -> Palette {
         let Inputs {
             night: n,
-            scene_tone,
-            photo_tone,
             accent: raw,
             play_seed,
-            tint,
-            plates,
         } = *self;
         // Light text on dark surfaces fits lighter; dark text on light ones fits darker.
         let lighter = n.dark;
-        // The theme's own plates with the player's Glass: white (or the light theme's ink)
-        // at `tint`.
-        let veil = |plate: u32| {
-            over(
-                n.ink,
-                (tint - sunrise_launcher_theme::glass::TINT).max(0.),
-                plate,
-            )
-        };
-        let bases = |tone: Option<u32>| {
-            if let Some(tone) = tone {
-                let [l, a, b] = oklab(tone);
-                let chroma = a.hypot(b);
-                let levels = if n.dark {
-                    [0.30, 0.35, 0.42]
-                } else {
-                    [0.86, 0.90, 0.94]
-                };
-                // Keep the source's hue. Scale chroma with lightness, with a minimum to keep a
-                // pale sky recognisably tinted, and a maximum so vivid sources aren't loud.
-                // Exact neutral RGB has no hue; don't amplify the matrix's rounding noise.
-                let neutral = tone == (tone & 255) * 0x01_01_01;
-                [0, 1, 2].map(|i| {
-                    let level = levels[i];
-                    let gain = if neutral {
-                        0.
-                    } else {
-                        let floor = if i == 0 { 0.046 } else { 0.055 };
-                        (chroma * level / l.max(0.25)).clamp(floor, 0.10) / chroma
-                    };
-                    from_oklab([level, a * gain, b * gain])
-                })
-            } else {
-                [n.side, n.card, n.card_hi]
-            }
-        };
-        let [chrome_base, card_base, raised_base] = bases(photo_tone.or(scene_tone));
+        let [chrome_base, card_base, raised_base] = [n.side, n.card, n.card_hi];
         let background = n.page;
-        let card_color = veil(card_base);
-        let raised = veil(raised_base);
+        let card_color = card_base;
+        let raised = raised_base;
         let field = over(n.ink, fill::FIELD, card_color);
         let hover = over(n.ink, fill::ACTIVE, card_color);
         // The selection is the raised surface (Figma bg/selected), as long as the text reads on
@@ -330,7 +239,7 @@ impl Inputs {
             .filter(|&s| contrast(n.ink, s) >= TEXT)
             .unwrap_or(hover);
         let surfaces = [background, card_color, raised, field, hover, selected];
-        let chrome = veil(chrome_base);
+        let chrome = chrome_base;
         let chrome_raised = over(n.ink, fill::ACTIVE, chrome);
         let on_chrome = [chrome, chrome_raised];
         let everywhere = [
@@ -344,31 +253,7 @@ impl Inputs {
             chrome_raised,
         ];
 
-        // Solid fills blend encoded sRGB (`over`); white and black bound all possible backdrop
-        // pixels, including scenery. Use that bound rather than trusting the picture's wash.
-        let backdrop = if lighter { 0xffffff } else { 0 };
-        let custom = if let Plates::Custom(percent) = plates {
-            // The player's opacity is drawn as chosen. Where no ink can read over the worst
-            // backdrop under a plate that thin, `fit` takes the inks to their end (white or
-            // black): the most any text can do there.
-            let alpha = f32::from(percent) / 100.;
-            let card = luminance(over(card_color, alpha, backdrop));
-            let chrome = luminance(over(chrome, alpha, backdrop));
-            let worst = if lighter {
-                card.max(chrome)
-            } else {
-                card.min(chrome)
-            };
-            Some((alpha, worst))
-        } else {
-            None
-        };
-        let ink = |color, solid: &[u32], min| {
-            fit(color, lighter, |c| {
-                reads(solid, min)(c)
-                    && custom.is_none_or(|(_, plate)| reads_over(luminance(c), plate, lighter, min))
-            })
-        };
+        let ink = |color, solid: &[u32], min| fit(color, lighter, reads(solid, min));
         let text = ink(n.ink, &surfaces, TEXT);
         let muted = ink(n.muted, &surfaces, TEXT);
         let line = ink(over(n.ink, 0.4, card_color), &surfaces[..4], MARK);
@@ -384,7 +269,7 @@ impl Inputs {
         let play_text = |c| contrast(accent_on, c) >= 4.65;
         // Play takes the theme's own colour: its accent (or the theme's authored face) is pulled
         // [`PLAY_TONE`] toward the theme's chrome, never a photo's, before the fits below.
-        let theme_chrome = veil(bases(scene_tone)[0]);
+        let theme_chrome = chrome_base;
         let toned = |c: u32| mix_oklab(theme_chrome, c, PLAY_TONE);
         let play_glow = toned(play_seed.unwrap_or(raw));
         let base = fit(play_glow, false, play_text);
@@ -403,10 +288,9 @@ impl Inputs {
         let status = |c: u32| ink(c, &surfaces[..5], TEXT);
         let warning = status(n.warn);
 
-        // On a pale photo, a light feather and dark type leave much more of the picture
-        // visible than a dark shadow. Either way fit against the worst sRGB pixel, not the
-        // photo's average (individual pixels may have any colour).
-        let light_ink = photo_tone.map_or(lighter, |tone| luminance(tone) < 0.54);
+        // The banner's art may have any colour under the text, so fit against the worst sRGB
+        // pixel: the ink's own end.
+        let light_ink = lighter;
         // The worst pixel is the ink's own end: white behind light text, black behind dark.
         let end: u32 = if light_ink { 0xffffff } else { 0 };
         let holds = |shade: u32| {
@@ -435,31 +319,6 @@ impl Inputs {
             link: hero_ink(accent_ink),
             shade,
             shade_alpha,
-        };
-
-        // Keep the legacy automatic path unchanged.
-        let alpha = if let Some((alpha, _)) = custom {
-            alpha
-        } else if plates == Plates::Automatic {
-            let base = tint + (1. - tint) * PLATE_BASE;
-            let holds = |a: f32| {
-                n.sky.iter().all(|&sky| {
-                    [
-                        (text, card_color),
-                        (muted, card_color),
-                        (chrome_text, chrome),
-                        (chrome_muted, chrome),
-                    ]
-                    .iter()
-                    .all(|&(ink, plate)| contrast(ink, over(plate, a, sky)) >= TEXT)
-                })
-            };
-            (0..=100)
-                .map(|i| i as f32 / 100.)
-                .find(|&a| a >= base && holds(a))
-                .unwrap_or(1.)
-        } else {
-            1.
         };
 
         let scrim_alpha = SCRIM_ALPHAS
@@ -500,33 +359,26 @@ impl Inputs {
             info: status(if n.dark { INFO_ON_DARK } else { INFO_ON_LIGHT }),
             success: status(n.success),
             warning,
-            alpha,
             scrim_alpha,
-            rule_alpha: custom.map_or(1., |(alpha, _)| alpha.sqrt()),
         }
     }
 }
 
 impl Palette {
-    /// The palette of `night` under `accent` with opaque plates: a theme's preview, whatever
-    /// theme is in use.
-    pub(crate) fn plain(night: Night, accent: u32, tint: f32, tone: Option<u32>) -> Palette {
+    /// The palette of `night` under `accent`: a theme's preview, whatever theme is in use.
+    pub(crate) fn plain(night: Night, accent: u32) -> Palette {
         Inputs {
             night,
-            scene_tone: tone,
-            photo_tone: None,
             accent,
             play_seed: None,
-            tint,
-            plates: Plates::Opaque,
         }
         .palette()
     }
 
     /// The palette `begin` would set for these settings and this theme.
     #[cfg(test)]
-    pub(crate) fn of(settings: &Settings, theme: &Theme) -> Palette {
-        Inputs::of(settings, theme, None, None).palette()
+    pub(crate) fn of(theme: &Theme) -> Palette {
+        Inputs::of(theme).palette()
     }
 
     /// What stands in for the picture of a mod or pack that has none: a quiet colour of its own
@@ -565,15 +417,14 @@ impl Palette {
         Tile { fill, ink }
     }
 
-    /// A rule between rows on a plate, or a plate's outline: the divider, fading with the
-    /// plates when the player chose their opacity.
+    /// A rule between rows on a card, or a card's outline: the divider.
     pub(crate) fn rule(&self) -> Hsla {
-        Hsla::from(rgb(self.divider)).opacity(self.rule_alpha)
+        Hsla::from(rgb(self.divider))
     }
 
-    /// A card, caption or plate: the theme's tint at the plates' opacity.
+    /// A card or caption.
     pub(crate) fn card(&self) -> Hsla {
-        Hsla::from(rgb(self.card_color)).opacity(self.alpha)
+        Hsla::from(rgb(self.card_color))
     }
 
     /// A text input's fill, and the account chip's: the field colour, part see-through, so
@@ -597,13 +448,6 @@ impl Palette {
     /// A resting input's outline: faint. The focus ring, not this line, marks the one in use.
     pub(crate) fn input_edge(&self) -> Hsla {
         Hsla::from(rgb(self.text)).opacity(0.14)
-    }
-
-    /// The input edge drawn as a plate's outline: it fades with the plates, as [`rule`] does.
-    ///
-    /// [`rule`]: Palette::rule
-    pub(crate) fn plate_edge(&self) -> Hsla {
-        self.input_edge().opacity(self.rule_alpha)
     }
 
     /// What a dialog dims the launcher with.

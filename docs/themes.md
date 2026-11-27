@@ -24,7 +24,7 @@ A copy to start from is in [`themes/tidepool`](themes/tidepool/theme.toml).
 |---|---|
 | `version` | Required. The number `1`. |
 | `name` | Required. 1 to 64 characters of plain text on one line. |
-| `background` | Optional. The name of one PNG, JPEG or still WebP picture in the same folder, shown behind every page. Without it, the pages show Dawn's scene. |
+| `background` | Optional. The name of one PNG, JPEG or still WebP picture in the same folder, shown in the Home banner. Without it, the pages show Dawn's scene. |
 | `[palette]` | Required, with at least one of the six colours below. A colour you leave out is Dawn's. |
 | `palette.background` | The page behind the scenery. |
 | `palette.card` | The tint of the panels on a page. |
@@ -57,7 +57,7 @@ sunrise-launcher settings theme local:tidepool
 sunrise-launcher settings theme default          # Dawn
 sunrise-launcher settings accent '#8edbcb'       # or a name, or a hue in degrees
 sunrise-launcher settings accent theme           # back to the theme's own
-sunrise-launcher settings background ~/shore.png # your own picture behind every page
+sunrise-launcher settings background ~/shore.png # your own picture in the Home banner
 sunrise-launcher settings background default     # back to the theme's
 sunrise-launcher settings scenery off
 sunrise-launcher settings reduced-graphics on    # keep the background, reduce effects and motion

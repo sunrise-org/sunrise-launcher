@@ -71,7 +71,7 @@ pub(super) fn browse_card(
         .overflow_hidden()
         .rounded(crate::tokens::r(crate::tokens::R_CARD))
         .border_1()
-        .border_color(palette().plate_edge())
+        .border_color(palette().input_edge())
         .bg(palette().card())
         .cursor_pointer()
         .hover(|s| s.border_color(c(palette().muted)))

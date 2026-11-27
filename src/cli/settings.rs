@@ -2,7 +2,7 @@
 use super::*;
 
 /// The keys `settings` sets.
-pub(super) const SETTING_KEYS: [&str; 19] = [
+pub(super) const SETTING_KEYS: [&str; 18] = [
     "selected-version",
     "minecraft-dir",
     "server-dir",
@@ -20,7 +20,6 @@ pub(super) const SETTING_KEYS: [&str; 19] = [
     "accent",
     "background",
     "scenery",
-    "panel-opacity",
     "reduced-graphics",
 ];
 
@@ -91,19 +90,6 @@ pub(super) fn set_setting(s: &mut backend::Settings, key: &str, value: &str) -> 
             )?,
         },
         "scenery" => s.scenery_on = Some(on_off(value)?),
-        "panel-opacity" => {
-            let percent =
-                match value.trim() {
-                    "default" => None,
-                    value => Some(value.parse::<u8>().ok().filter(|n| *n <= 100).ok_or_else(
-                        || {
-                            tr("Enter a whole panel opacity percentage from 0 to 100, or default.")
-                                .to_string()
-                        },
-                    )?),
-                };
-            s.set_panel_opacity(percent);
-        }
         "reduced-graphics" => s.reduced_graphics = Some(on_off(value)?),
         "language" => {
             use sunrise_launcher::i18n::Language;
