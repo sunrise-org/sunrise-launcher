@@ -22,12 +22,32 @@ use sunrise_launcher::backend::lock::recover;
 pub(crate) struct HoverState {
     lit: Option<SharedString>,
     fades: Vec<(SharedString, motion::Fade)>,
+    /// Elements held as hovered whatever the pointer does: what they opened is still open.
+    pinned: Vec<SharedString>,
 }
 
 pub(crate) static HOVER: Mutex<HoverState> = Mutex::new(HoverState {
     lit: None,
     fades: Vec::new(),
+    pinned: Vec::new(),
 });
+
+/// Holds `id` as hovered while `pinned` (a menu or dialog it opened is open), and lets it ease
+/// out once it isn't and the pointer isn't on it. Called as the element is built.
+pub(crate) fn pin_hover(id: &SharedString, pinned: bool) {
+    let mut state = recover(&HOVER);
+    let held = state.pinned.contains(id);
+    let now = Instant::now();
+    if pinned && !held {
+        state.pinned.push(id.clone());
+        state.turn(id, true, now);
+    } else if !pinned && held {
+        state.pinned.retain(|p| p != id);
+        if state.lit.as_ref() != Some(id) {
+            state.turn(id, false, now);
+        }
+    }
+}
 
 impl HoverState {
     fn fade(&self, id: &SharedString) -> Option<motion::Fade> {
@@ -94,12 +114,18 @@ pub(crate) fn note_hover(
     if hovered && !is_lit {
         // One element is lit at a time: the one the pointer last entered.
         if let Some(left) = state.lit.replace(id.clone()) {
-            state.turn(&left, false, now);
+            if !state.pinned.contains(&left) {
+                state.turn(&left, false, now);
+            }
         }
-        state.turn(id, true, now);
+        if !state.pinned.contains(id) {
+            state.turn(id, true, now);
+        }
     } else if !hovered && is_lit {
         state.lit = None;
-        state.turn(id, false, now);
+        if !state.pinned.contains(id) {
+            state.turn(id, false, now);
+        }
     } else {
         return;
     }

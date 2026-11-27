@@ -51,6 +51,19 @@ pub(super) enum Action {
 }
 
 impl Launcher {
+    /// Whether the profile `id` has its menu open, or a dialog opened from it (delete, edit,
+    /// duplicate) is up.
+    pub(crate) fn profile_busy_with(&self, id: &str) -> bool {
+        let menu = match &self.ui.sheets.profile_action {
+            Some(Action::Menu { target, .. } | Action::Confirm(target)) => target.id == id,
+            _ => false,
+        };
+        let dialog = self.instances.dialog.as_ref().is_some_and(|d| {
+            d.editing.as_deref() == Some(id) || d.copy.as_ref().is_some_and(|c| c.source().id == id)
+        });
+        menu || dialog
+    }
+
     pub(super) fn open_profile_menu(&mut self, target: &Instance, top: f32) {
         self.ui.sheets.profile_action = Some(Action::Menu {
             target: target.clone(),

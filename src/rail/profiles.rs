@@ -506,6 +506,8 @@ impl Launcher {
         }
         entry = entry.child(face).children(actions);
         if folded && !self.location_unavailable {
+            // The dots stay out while the menu they opened, or a dialog it led to, is open.
+            crate::widgets::pin_hover(&hover_id, self.profile_busy_with(&i.id));
             entry = entry.child(folded_dots(&i, &hover_id, cx));
         }
         entry
