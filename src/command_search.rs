@@ -18,7 +18,7 @@ use crate::line_edit::{self, Key, LineEdit};
 use crate::paint::palette;
 use crate::settings::Section;
 use crate::sheets::Sheet;
-use crate::widgets::field::{field_box, search_box};
+use crate::widgets::field::search_box;
 use gpui::{rgb, MouseButton, MouseDownEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,10 +34,15 @@ const ART: f32 = 28.;
 const WIDTH: f32 = 620.;
 /// A result row: one line, its picture, label and hint.
 const ROW_H: f32 = 36.;
-/// Below this window width the top bar's field is its icon alone.
-const COMPACT_BELOW: f32 = 960.;
-/// From this width the field has room for its key beside the word.
-const BADGE_FROM: f32 = 1100.;
+/// From this width the title bar's field shows its key and the long placeholder.
+const SEARCH_ROOMY: f32 = 260.;
+
+/// The title bar's search field width for a `window` this wide: what the middle of the bar
+/// leaves between the brand (about 200) and the account and window controls (about 260) on
+/// each side, between 160 and 300.
+pub(crate) fn search_width(window: f32) -> f32 {
+    (window - 2. * 260.).clamp(160., 300.)
+}
 
 /// What a key did.
 #[derive(PartialEq)]
@@ -224,35 +229,22 @@ impl Launcher {
     /// for it and not at all where it has not; on a narrow window the field is its icon alone,
     /// with the word as its tooltip.
     pub(crate) fn search_button(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        // What the sidebar, open or on its way, leaves the bar.
-        let bar = self.bar_width();
-        let compact = bar < COMPACT_BELOW;
-        let badge = bar >= BADGE_FROM;
-        let keys = keys("K");
-        let body = if compact {
-            field_box(false, false)
-                .w(px(tokens::FIELD))
-                .justify_center()
-                .child(blocks::icon(
-                    "search",
-                    16.,
-                    rgb(palette().chrome_muted).into(),
-                ))
-        } else {
-            let key = badge.then(|| SharedString::from(keys));
-            let word = div()
-                .text_size(px(tokens::LABEL))
-                .text_color(rgb(palette().chrome_muted))
-                .truncate()
-                .child(if badge {
-                    tr("Search profiles, mods and packs")
-                } else {
-                    tr("Search…")
-                });
-            search_box(false, key, word)
-                .h(px(34.))
-                .w(px(if badge { 300. } else { 150. }))
-        };
+        // The field sits in the middle of the title bar, between the brand and the account: it
+        // is always a field, narrowing with the window (300 wide where it fits, never under
+        // 160), and drops its key and long words only when it is narrow.
+        let width = search_width(self.window_width);
+        let roomy = width >= SEARCH_ROOMY;
+        let key = roomy.then(|| SharedString::from(keys("K")));
+        let word = div()
+            .text_size(px(tokens::LABEL))
+            .text_color(rgb(palette().chrome_muted))
+            .truncate()
+            .child(if roomy {
+                tr("Search profiles, mods and packs")
+            } else {
+                tr("Search…")
+            });
+        let body = search_box(false, key, word).h(px(34.)).w(px(width));
         let button = body
             .id("search-open")
             .flex_none()
@@ -263,9 +255,6 @@ impl Launcher {
                 this.toggle_search();
                 cx.notify();
             }));
-        if compact {
-            return button.tooltip(crate::glass_ui::tip(tr("Search")));
-        }
         button
     }
 
