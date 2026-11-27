@@ -2176,5 +2176,13 @@
   "Microsoft sign-in failed ({error}).": "Accesso a Microsoft non riuscito ({error}).",
   "Microsoft sign-in failed.": "Accesso a Microsoft non riuscito.",
   "This Microsoft account has no Xbox profile yet. Sign in once at xbox.com to create one, then try again.": "Questo account Microsoft non ha ancora un profilo Xbox. Accedi una volta su xbox.com per crearne uno, poi riprova.",
-  "Xbox Live is not available in your country or region.": "Xbox Live non è disponibile nel tuo Paese o nella tua area geografica."
+  "Xbox Live is not available in your country or region.": "Xbox Live non è disponibile nel tuo Paese o nella tua area geografica.",
+  "This account needs adult verification on xbox.com before it can play.": "Questo account deve completare la verifica per adulti su xbox.com prima di poter giocare.",
+  "Xbox Live refused the sign-in (error {code}).": "Xbox Live ha rifiutato l’accesso (errore {code}).",
+  "Xbox Live refused the sign-in.": "Xbox Live ha rifiutato l’accesso.",
+  "The Minecraft services refused this launcher: its app is not approved by Mojang yet.": "I servizi Minecraft hanno rifiutato questo launcher: l’app non è ancora approvata da Mojang.",
+  "Too many sign-ins in a short time. Wait a minute and try again.": "Troppi accessi in poco tempo. Attendi un minuto e riprova.",
+  "The Minecraft services refused the sign-in.": "I servizi Minecraft hanno rifiutato l’accesso.",
+  "Could not check which games this account owns.": "Impossibile verificare quali giochi possiede questo account.",
+  "Could not read the Minecraft profile.": "Impossibile leggere il profilo Minecraft."
 }

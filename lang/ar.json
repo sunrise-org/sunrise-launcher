@@ -2077,5 +2077,13 @@
   "{count} stayed off: see their rows.": "بقيت {count} متوقفة: راجع صفوفها.",
   "{disposition} · {reason}": "{disposition} · {reason}",
   "{error}\n{stay}: nothing changed.": "{error}\n{stay}: لم يتغير شيء.",
-  "{first} and {count} more": "{first} و{count} أخرى"
+  "{first} and {count} more": "{first} و{count} أخرى",
+  "{first} and {second} both own the {namespace} namespace.": "يستخدم كل من {first} و{second} مساحة الاسم {namespace}.",
+  "{first} {version} doesn't work with {second} {other_version}.": "لا يعمل {first} ‏{version} مع {second} ‏{other_version}.",
+  "{folder} has no level.dat": "لا يحتوي {folder} على level.dat",
+  "{mods} — content may be lost when you open the world {world}.": "{mods} — قد يُفقد محتوى عند فتح العالم {world}.",
+  "{mod} build log": "سجل بناء {mod}",
+  "{mod} couldn't be read from GitHub. {why}": "تعذّرت قراءة {mod} من GitHub. {why}",
+  "{mod} is already installed. Update it from Installed.": "{mod} مثبّتة بالفعل. حدّثها من «المثبّتة».",
+  "{mod} is on. The game reads this when it starts.": "{mod} مفعّلة. تقرؤها اللعبة عند بدء التشغيل."
 }

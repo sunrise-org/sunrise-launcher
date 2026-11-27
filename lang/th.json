@@ -2572,5 +2572,13 @@
   "Server address or a friend's invite code": "ที่อยู่เซิร์ฟเวอร์หรือรหัสเชิญของเพื่อน",
   "Shader pack": "แพ็ก shader",
   "Show or hide the sidebar": "แสดงหรือซ่อนแถบด้านข้าง",
-  "Spectator": "ผู้ชม"
+  "Spectator": "ผู้ชม",
+  "Stay open": "เปิดค้างไว้",
+  "Stop sharing": "หยุดแชร์",
+  "Sunrise Launcher": "Sunrise Launcher",
+  "Sunrise server": "เซิร์ฟเวอร์ Sunrise",
+  "Sunrise's own server": "เซิร์ฟเวอร์ของ Sunrise เอง",
+  "The game failed to start while checking support for offline developer play. Repeat your sunrise-launcher developer-install command, rebuild this build’s native mods with native-build, then try Play again. If it still fails, report this message on the Sunrise Discord (linked in the launcher).\nDetails: {reason}": "เกมเริ่มทำงานไม่ได้ระหว่างตรวจสอบการรองรับการเล่นแบบนักพัฒนาออฟไลน์ เรียกคำสั่ง sunrise-launcher developer-install อีกครั้ง บิลด์ม็อดเนทีฟของบิลด์นี้ใหม่ด้วย native-build แล้วลองเล่นอีกครั้ง หากยังไม่สำเร็จ ให้รายงานข้อความนี้ใน Sunrise Discord (ลิงก์อยู่ใน launcher)\nรายละเอียด: {reason}",
+  "The launcher stays open beside the game.": "launcher จะเปิดค้างอยู่ข้างเกม",
+  "This version has a {installed} game build, but Settings selects {selected}. Reinstall it from the version picker beside Play before launching.": "เวอร์ชันนี้มีบิลด์เกม {installed} แต่การตั้งค่าเลือก {selected} ติดตั้งใหม่จากตัวเลือกเวอร์ชันข้างปุ่มเล่นก่อนเริ่มเกม"
 }
