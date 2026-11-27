@@ -2540,5 +2540,15 @@
   "Address coming soon": "Indirizzo in arrivo",
   "Another installed mod uses this ID.": "Un’altra mod installata usa questo ID.",
   "Coming soon": "Prossimamente",
-  "Continue playing lists one world a row.": "Continua a giocare mostra un mondo per riga."
+  "Continue playing lists one world a row.": "Continua a giocare mostra un mondo per riga.",
+  "Continue playing shows the worlds' pictures side by side, as many as fit across; the rest wrap under them.": "Continua a giocare mostra le immagini dei mondi affiancate, quante ne entrano; le altre vanno a capo.",
+  "Discard": "Scarta",
+  "Discard your changes?": "Scartare le modifiche?",
+  "Every AI feature in the launcher and the game is hidden and turned off: agent control of the launcher and the game, sunrise-ctl and the MCP servers.": "Tutte le funzioni IA del launcher e del gioco sono nascoste e disattivate: controllo tramite agent di launcher e gioco, sunrise-ctl e server MCP.",
+  "Game storage is unavailable": "Archiviazione del gioco non disponibile",
+  "Go to": "Vai a",
+  "Hardcore": "Hardcore",
+  "Hides and turns off every AI feature.": "Nasconde e disattiva tutte le funzioni IA.",
+  "Horizon Minecraft": "Horizon Minecraft",
+  "How the game starts. Its build is chosen beside Play on Home.": "Come si avvia il gioco. La build viene scelta accanto a Gioca nella Home."
 }

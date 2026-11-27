@@ -2441,5 +2441,15 @@
   "Public IP lookup failed": "فشل البحث عن عنوان IP عام",
   "Public IP lookup did not return HTTP 200": "لم يُرجع البحث عن IP عام استجابة HTTP 200",
   "Could not read the public IP address": "تعذّرت قراءة عنوان IP العام",
-  "Invalid public IP response": "استجابة عنوان IP العام غير صالحة"
+  "Invalid public IP response": "استجابة عنوان IP العام غير صالحة",
+  "The lookup did not return a public IPv4 address": "لم يُرجع البحث عنوان IPv4 عامًا",
+  "Running a server needs your agreement to the Minecraft EULA.": "يتطلب تشغيل خادم موافقتك على اتفاقية Minecraft.",
+  "Setting up the server programs from Sunrise {tag}": "جارٍ إعداد برامج الخادم من Sunrise ‏{tag}",
+  "Copying the world {folder}": "جارٍ نسخ العالم {folder}",
+  "Couldn't copy the world: {error}": "تعذّر نسخ العالم: {error}",
+  "Writing the server's settings": "جارٍ كتابة إعدادات الخادم",
+  "Sunrise {tag} isn't prepared yet: press Prepare on the Play page (it uses your own Minecraft {version})": "لم يتم تجهيز Sunrise ‏{tag} بعد: اضغط «تجهيز» في صفحة اللعب (يستخدم Minecraft ‏{version} الخاص بك)",
+  "copying {tag}: {error}": "جارٍ نسخ {tag}: ‏{error}",
+  "The server programs aren't set up yet: create a server, or press Prepare on its page.": "لم يتم إعداد برامج الخادم بعد: أنشئ خادمًا أو اضغط «تجهيز» في صفحته.",
+  "Port {port} is already used by another program (maybe another server). Use a free port instead: friends then add it to the address.": "المنفذ {port} مستخدم بالفعل من برنامج آخر (ربما خادم آخر). استخدم منفذًا متاحًا، ثم يضيفه أصدقاؤك إلى العنوان."
 }
