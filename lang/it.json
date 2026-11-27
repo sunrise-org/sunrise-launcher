@@ -2368,5 +2368,17 @@
   "Done: friends you share this computer with reach only the Minecraft server.": "Fatto: gli amici con cui condividi questo computer possono raggiungere solo il server Minecraft.",
   "Tailscale's default access controls are back.": "I controlli di accesso predefiniti di Tailscale sono stati ripristinati.",
   "{url}: HTTP {status}": "{url}: HTTP {status}",
-  "Mojang has no Java {name}. Known: {known}.": "Mojang non offre Java {name}. Versioni note: {known}."
+  "Mojang has no Java {name}. Known: {known}.": "Mojang non offre Java {name}. Versioni note: {known}.",
+  "{word}: write it as NAME=value": "{word}: inseriscilo come NOME=valore",
+  "{key}: a variable's name is letters, digits and _, not starting with a digit": "{key}: il nome di una variabile può contenere lettere, numeri e _, ma non iniziare con un numero",
+  "The pre-launch command didn't run: {error}": "Il comando prima dell’avvio non è stato eseguito: {error}",
+  "The pre-launch command failed (exit {code}), so the game did not start.\n{output}": "Il comando prima dell’avvio non è riuscito (codice {code}), quindi il gioco non è partito.\n{output}",
+  "Checking Java and your Minecraft install": "Verifica di Java e dell’installazione di Minecraft",
+  "The app has no folder.": "L’app non ha una cartella.",
+  "Could not stage the new app: {error}": "Impossibile preparare la nuova app: {error}",
+  "Could not copy the new app next to {path}.": "Impossibile copiare la nuova app accanto a {path}.",
+  "The downloaded app's signature doesn't hold; the launcher stays as it is.": "La firma dell’app scaricata non è valida; il launcher resta invariato.",
+  "Could not move {path} aside: {error}": "Impossibile spostare {path}: {error}",
+  "Could not put the new app at {path}: {error}": "Impossibile inserire la nuova app in {path}: {error}",
+  "The new app's signature doesn't hold at {path}; the launcher stays as it was.": "La firma della nuova app in {path} non è valida; il launcher resta invariato."
 }

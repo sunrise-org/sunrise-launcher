@@ -2269,5 +2269,17 @@
   "Modrinth asks to slow down: try again in a minute.": "يطلب Modrinth إبطاء الطلبات: حاول بعد دقيقة.",
   "Modrinth answered {code}.": "أجاب Modrinth بـ {code}.",
   "No connection to Modrinth: {error}": "لا يوجد اتصال بـ Modrinth: {error}",
-  "Modrinth's answer wasn't readable: {error}": "تعذّرت قراءة إجابة Modrinth: {error}"
+  "Modrinth's answer wasn't readable: {error}": "تعذّرت قراءة إجابة Modrinth: {error}",
+  "Modrinth is searched for resource packs, data packs and shader packs only.": "يتم البحث في Modrinth عن حزم الموارد وحزم البيانات وحزم التظليل فقط.",
+  "{url} is not a GitHub release asset URL allowed by the Sunrise v2 registry.": "{url} ليس رابط ملف إصدار GitHub يسمح به سجل Sunrise v2.",
+  "download failed for {url}: {error}": "فشل تنزيل {url}: ‏{error}",
+  "reading {url}: {error}": "قراءة {url}: ‏{error}",
+  "{url} exceeded maximum allowed size of {max_bytes} bytes": "تجاوز {url} الحد الأقصى المسموح به وهو {max_bytes} بايت",
+  "Cannot locate the platform configuration folder for the launcher location file": "تعذّر العثور على مجلد إعدادات المنصة لملف موقع المشغّل",
+  "Cannot open the data folder: {error}": "تعذّر فتح مجلد البيانات: {error}",
+  "Invalid {path}: {error}; restore this file or the previous data folder": "{path} غير صالح: {error}؛ استعد هذا الملف أو مجلد البيانات السابق",
+  "Unsupported data location version {version} in {path}": "إصدار موقع البيانات {version} غير مدعوم في {path}",
+  "Data folder {path} is missing; reconnect its drive or restore location.json": "مجلد البيانات {path} مفقود؛ أعد توصيل محركه أو استعد location.json",
+  "Bootstrap needs a parent folder": "يحتاج Bootstrap إلى مجلد أب",
+  "Unset SUNRISE_LAUNCHER_HOME and SUNRISE_HOME before moving data": "ألغِ تعيين SUNRISE_LAUNCHER_HOME وSUNRISE_HOME قبل نقل البيانات"
 }
