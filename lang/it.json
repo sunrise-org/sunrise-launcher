@@ -2380,5 +2380,15 @@
   "The downloaded app's signature doesn't hold; the launcher stays as it is.": "La firma dell’app scaricata non è valida; il launcher resta invariato.",
   "Could not move {path} aside: {error}": "Impossibile spostare {path}: {error}",
   "Could not put the new app at {path}: {error}": "Impossibile inserire la nuova app in {path}: {error}",
-  "The new app's signature doesn't hold at {path}; the launcher stays as it was.": "La firma della nuova app in {path} non è valida; il launcher resta invariato."
+  "The new app's signature doesn't hold at {path}; the launcher stays as it was.": "La firma della nuova app in {path} non è valida; il launcher resta invariato.",
+  "Downloading Minecraft {version} from Mojang: the game and {libraries} libraries": "Download di Minecraft {version} da Mojang: gioco e {libraries} librerie",
+  "Downloading the sounds ({count} files)": "Download dei suoni ({count} file)",
+  "The sounds could not all be downloaded: {error}": "Impossibile scaricare tutti i suoni: {error}",
+  "Mojang has no Java for this system": "Mojang non offre Java per questo sistema",
+  "Mojang's Java index: {error}": "Indice Java di Mojang: {error}",
+  "Mojang has no {component} for {platform}": "Mojang non offre {component} per {platform}",
+  "Mojang's {component} manifest: {error}": "Manifest {component} di Mojang: {error}",
+  "Downloading Minecraft's Java {name} from Mojang ({count} files)": "Download di Java {name} di Minecraft da Mojang ({count} file)",
+  "is {actual} bytes, not the {expected} Mojang lists": "è di {actual} byte, invece dei {expected} indicati da Mojang",
+  "is not the one Sunrise pins (sha1 {actual})": "non corrisponde a quello bloccato da Sunrise (sha1 {actual})"
 }

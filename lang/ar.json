@@ -2281,5 +2281,15 @@
   "Unsupported data location version {version} in {path}": "إصدار موقع البيانات {version} غير مدعوم في {path}",
   "Data folder {path} is missing; reconnect its drive or restore location.json": "مجلد البيانات {path} مفقود؛ أعد توصيل محركه أو استعد location.json",
   "Bootstrap needs a parent folder": "يحتاج Bootstrap إلى مجلد أب",
-  "Unset SUNRISE_LAUNCHER_HOME and SUNRISE_HOME before moving data": "ألغِ تعيين SUNRISE_LAUNCHER_HOME وSUNRISE_HOME قبل نقل البيانات"
+  "Unset SUNRISE_LAUNCHER_HOME and SUNRISE_HOME before moving data": "ألغِ تعيين SUNRISE_LAUNCHER_HOME وSUNRISE_HOME قبل نقل البيانات",
+  "Data location changed while waiting; restart the launcher and retry the move": "تغيّر موقع البيانات أثناء الانتظار؛ أعد تشغيل المشغّل وحاول النقل مجددًا",
+  "Destination {target} overlaps existing data or its bootstrap {bootstrap}": "يتداخل الموقع الهدف {target} مع البيانات الحالية أو Bootstrap الخاص به {bootstrap}",
+  "Destination {path} must be an empty folder": "يجب أن يكون الموقع الهدف {path} مجلدًا فارغًا",
+  "Copying and verifying launcher data": "جارٍ نسخ بيانات المشغّل والتحقق منها",
+  "Copying and verifying game data": "جارٍ نسخ بيانات اللعبة والتحقق منها",
+  "Copying and verifying build data": "جارٍ نسخ بيانات البناء والتحقق منها",
+  "Committing data location": "جارٍ تثبيت موقع البيانات",
+  "{error}. Original data was kept. Partial copies may remain in {path}; choose an empty folder to retry": "{error}. تم الاحتفاظ بالبيانات الأصلية. قد تبقى نسخ جزئية في {path}؛ اختر مجلدًا فارغًا لإعادة المحاولة",
+  "Data root must be a folder: {path}": "يجب أن يكون جذر البيانات مجلدًا: {path}",
+  "Source data roots overlap; only a build folder inside/equal to launcher is supported": "تتداخل جذور بيانات المصدر؛ يُدعم فقط مجلد بناء داخل مجلد المشغّل أو مطابق له"
 }
