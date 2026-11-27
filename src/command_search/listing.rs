@@ -92,11 +92,10 @@ impl Entry {
 }
 
 /// The rows of Settings found by name, as their sections title them.
-pub(super) const SETTINGS_ROWS: [(&str, Section); 17] = [
+pub(super) const SETTINGS_ROWS: [(&str, Section); 16] = [
     (crate::i18n::tr_key("While you play"), Section::Game),
+    (crate::i18n::tr_key("Game arguments"), Section::Game),
     (crate::i18n::tr_key("Minecraft folder"), Section::Game),
-    (crate::i18n::tr_key("Profiles"), Section::Game),
-    (crate::i18n::tr_key("Appearance"), Section::Appearance),
     (crate::i18n::tr_key("Theme"), Section::Appearance),
     (crate::i18n::tr_key("Accent"), Section::Appearance),
     (

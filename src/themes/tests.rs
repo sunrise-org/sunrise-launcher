@@ -357,3 +357,17 @@ fn only_a_bounded_still_picture_is_kept_or_shown() {
     assert!(background_picture(&dir, "background-gif.png").is_err());
     assert!(background_picture(&dir, "background-gone.png").is_err());
 }
+
+#[test]
+fn the_light_theme_is_the_only_light_choice() {
+    assert!(is_light(Some("dawn_light")));
+    for id in [None, Some("dawn"), Some("nord"), Some("twilight")] {
+        assert!(!is_light(id), "{id:?}");
+    }
+    for t in THEMES.iter() {
+        assert_eq!(t.is_light(), t.id == "dawn_light", "{}", t.id);
+        assert_eq!(t.is_sunrise(), t.id.starts_with("dawn"), "{}", t.id);
+    }
+    assert_eq!(accent_key(Some("dawn_light")), "dawn_light");
+    assert_eq!(own_accent(Some("dawn_light")).rgb(), 0xc2552d);
+}

@@ -1,4 +1,4 @@
-//! The player's own look, on top of Dark, Light or System: an accent colour and a picture behind
+//! The player's own look: a theme (one of them light), an accent colour and a picture behind
 //! Home.
 //!
 //! An accent is a hue, and the player may pick any of them; seven hues have names, as shortcuts.
@@ -42,8 +42,9 @@ impl ThemeAccent {
 
 /// A launcher theme: free for everyone in Settings › Appearance, never sold or claimed. Each
 /// has a sky (six stops, top to bottom) and the accent it brings. A theme that brings a whole
-/// palette carries its one [`Night`] (there is no light and dark of a theme) and paints Sunrise's
-/// own pages with it; the other themes only change the sky.
+/// palette carries its one [`Night`] (there is no light and dark of a theme: Sunrise Light is a
+/// theme of its own) and paints Sunrise's own pages with it; the other themes only change the
+/// sky.
 pub struct Theme {
     /// Its name in `Settings::theme`.
     pub id: &'static str,
@@ -56,12 +57,22 @@ pub struct Theme {
     pub accent: ThemeAccent,
     /// The theme's own palette, for a theme that is more than a sky: every theme is one look.
     pub palette: Option<&'static Night>,
-    /// Its palette in the light look, for the one theme that has a light version (Sunrise). The
-    /// other themes have none, so they stay dark in both looks.
+    /// Its palette in the light look, for the themes that have one (Sunrise, and its light card).
+    /// A player gets the light look by choosing the light theme; the others are dark.
     pub light_palette: Option<&'static Night>,
 }
 
 impl Theme {
+    /// Whether choosing this theme makes the launcher light.
+    pub fn is_light(&self) -> bool {
+        self.palette.is_some_and(|p| !p.dark)
+    }
+
+    /// Whether this is Sunrise, in its night or its day: they share one scene and banner.
+    pub fn is_sunrise(&self) -> bool {
+        self.id == DAWN_THEME.id || self.id == DAWN_LIGHT_THEME.id
+    }
+
     /// The palette this theme paints Sunrise's pages with in the dark or the light look.
     pub fn palette_in(&self, dark: bool) -> Option<&'static Night> {
         if dark {
@@ -77,8 +88,9 @@ pub const TWILIGHT_NAME: &str = crate::i18n::tr_key("Twilight");
 pub const TWILIGHT_DESCRIPTION: &str = crate::i18n::tr_key("Indigo night and violet");
 
 /// The launcher themes past Sunrise's own sky: the featured families first, then the older ones.
-pub const THEMES: [Theme; 10] = [
+pub const THEMES: [Theme; 11] = [
     DAWN_THEME,
+    DAWN_LIGHT_THEME,
     HYPR_NEON,
     DEEP_OCEAN,
     AUTUMN_FOREST,
@@ -105,6 +117,12 @@ pub fn accent_key(id: Option<&str>) -> &str {
         Some(local) if local.starts_with(crate::theme_files::PREFIX) => local,
         _ => theme(id).map_or(TWILIGHT, |t| t.id),
     }
+}
+
+/// Whether the theme saved as `id` is the light one: what the launcher paints light is decided
+/// by this choice alone.
+pub fn is_light(id: Option<&str>) -> bool {
+    id == Some(DAWN_LIGHT_THEME.id)
 }
 
 /// The accent a theme brings, before any the player picked under it.

@@ -45,7 +45,11 @@ impl Launcher {
             self.settings.ping_notice_seen = true;
             self.save_settings();
         }
-        self.collection.view = None;
+        // What would be sent may have changed with the answer: an open view shows it afresh and
+        // stays open until Hide, or until the player leaves the page.
+        if self.collection.view.is_some() {
+            self.collection.view = Some(telemetry::preview());
+        }
     }
 
     pub(crate) fn toggle_view(&mut self) {

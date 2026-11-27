@@ -204,10 +204,9 @@ impl Launcher {
         let facing_left = view.left;
         let bubble = outing_bubble.and_then(|b| {
             let alpha = bubble_alpha(now - b.since, b.lasts, crate::motion::still())?;
-            // The cat's head, from the lane's left edge: the sprite's left edge (it is drawn
-            // `out + UNDER - WIDTH` in from the lane's right, so its left edge is `out + UNDER`
-            // in from it) and the head's place in it, which the mirror image moves across.
-            let sprite_left = self.ui.cat.lane.get() - out - UNDER;
+            // The cat's head, from the right edge the cat itself is placed from: the sprite
+            // stands `out + UNDER - WIDTH` in from it, and the head sits `head` pixels into the
+            // sprite from its left (the mirror image moves it across).
             let head = if facing_left {
                 W as f32 - 1. - HEAD_AT
             } else {
@@ -215,7 +214,7 @@ impl Launcher {
             };
             Some(speech_bubble(
                 tr(b.line),
-                sprite_left + head * SIZE,
+                out + UNDER - (head + 0.5) * SIZE,
                 self.ui.cat.lane.get(),
                 alpha,
                 tall,
@@ -301,6 +300,7 @@ fn lane_box(beside: bool, clipped: Div, bubble: Option<Div>) -> Div {
 /// wide): a small pixel box in the page's colours, its tail pointing down at the cat. It is kept
 /// inside the lane, so the banner never cuts it, and the tail still points at the cat. `above`
 /// is how far down the lane's box the cat's highest pixel is: the tail's tip stops `TIP_GAP` short of it.
+/// `head` is how far the cat's head is in from the right edge both are placed from.
 fn speech_bubble(text: &str, head: f32, lane: f32, alpha: f32, tall: f32, above: f32) -> Div {
     use crate::tokens::{r, R_SMALL, SMALL};
     const MAX: f32 = 220.;
@@ -309,10 +309,12 @@ fn speech_bubble(text: &str, head: f32, lane: f32, alpha: f32, tall: f32, above:
     let p = crate::paint::palette();
     // A guess at the text's width, so the box hugs a short line and wraps a long one at MAX.
     let wide = (text.chars().count() as f32 * SMALL * 0.56 + 2. * PAD + 4.).clamp(48., MAX);
-    let left = (head - wide / 2.).min(lane - wide).max(0.);
+    // Centred over the head where it fits, kept inside the lane.
+    let right = (head - wide / 2.).min(lane - wide).max(0.);
     // The tail's left edge, so its tip is over the head, kept clear of the bubble's rounded corners.
     let corner = crate::tokens::R_SMALL;
-    let tail_x = (head - left - TAIL / 2.).clamp(corner, (wide - corner - TAIL).max(corner));
+    let tip_from_left = wide - (head - right);
+    let tail_x = (tip_from_left - TAIL / 2.).clamp(corner, (wide - corner - TAIL).max(corner));
     let line = gpui::rgb(p.line);
     let fill = gpui::rgb(p.raised);
     // The tail in three steps, 10, 6 and 2 px wide, each 2 px tall: a pixel arrow.
@@ -332,7 +334,7 @@ fn speech_bubble(text: &str, head: f32, lane: f32, alpha: f32, tall: f32, above:
     };
     div()
         .absolute()
-        .left(px(left))
+        .right(px(right))
         .bottom(px(tall - above + TIP_GAP))
         .w(px(wide))
         .opacity(alpha)

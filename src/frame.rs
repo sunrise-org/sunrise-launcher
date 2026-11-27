@@ -50,6 +50,10 @@ impl Launcher {
             _ => self.ui.page = page,
         }
         if self.ui.page != before {
+            // "Your data" stays open while the player is on Settings, and closes once they leave.
+            if before == Page::Settings {
+                self.collection.view = None;
+            }
             if before == Page::Hosting {
                 self.servers.reset_public_lookup();
             }
@@ -100,8 +104,7 @@ impl Launcher {
             let sunrise = photo.is_none()
                 && matches!(
                     sunrise_launcher::themes::resolve(self.settings.theme.as_deref()),
-                    sunrise_launcher::themes::Resolved::Builtin(t)
-                        if t.id == sunrise_launcher::themes::DAWN_THEME.id
+                    sunrise_launcher::themes::Resolved::Builtin(t) if t.is_sunrise()
                 );
             if sunrise {
                 crate::home::Art::Fading(
@@ -354,7 +357,7 @@ impl Launcher {
             .flatten();
         let sheet = self.live_sheet(window, cx);
         let sign_in = self.sign_in_screen.open.then(|| self.owner_screen(cx));
-        let profile = self.profile_dialog(window, cx);
+        let profile = self.profile_dialog(cx);
         let mut layers: Vec<_> = [create, profile, sheet, sign_in]
             .into_iter()
             .flatten()

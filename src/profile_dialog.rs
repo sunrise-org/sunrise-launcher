@@ -24,7 +24,6 @@ impl Launcher {
             copy: None,
             icon: None,
             picture: None,
-            picture_focus: cx.focus_handle().tab_index(0).tab_stop(true),
             error: None,
             busy: false,
             pin: None,
@@ -56,7 +55,6 @@ impl Launcher {
             copy: None,
             icon: target.icon.clone(),
             picture: None,
-            picture_focus: cx.focus_handle().tab_index(0).tab_stop(true),
             error: None,
             busy: false,
             pin: target.version.clone(),
@@ -68,11 +66,7 @@ impl Launcher {
         cx.notify();
     }
 
-    pub(super) fn profile_dialog(
-        &mut self,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Stateful<Div>> {
+    pub(super) fn profile_dialog(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let d = self.instances.dialog.as_ref()?;
         if d.discarding {
             return Some(self.discard_profile_sheet(cx));
@@ -94,7 +88,7 @@ impl Launcher {
         } else {
             tr("New profile")
         };
-        let side = self.profile_side(window, &name, cx);
+        let side = self.profile_side(&name, cx);
         let mut body = div()
             .flex()
             .flex_col()

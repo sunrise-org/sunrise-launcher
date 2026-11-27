@@ -10,19 +10,12 @@ use instances::Icon;
 const SWATCH: f32 = 39.;
 
 impl Launcher {
-    pub(super) fn profile_side(
-        &mut self,
-        window: &Window,
-        name: &str,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    pub(super) fn profile_side(&mut self, name: &str, cx: &mut Context<Self>) -> Div {
         let p = palette();
         let Some(d) = self.instances.dialog.as_ref() else {
             return div();
         };
         let (busy, icon, channel, pin) = (d.busy, d.icon.clone(), d.channel, d.pin.clone());
-        let picture_focus = d.picture_focus.clone();
-        let picture_focused = picture_focus.is_focused(window);
         let picture = d
             .picture
             .as_ref()
@@ -98,22 +91,11 @@ impl Launcher {
                 _ => crate::mark(88.),
             }
         };
+        // Only a preview: a picture is chosen with "Use a picture…" under the colours.
         let icon_button = div()
             .id("new-picture-preview")
             .flex_none()
             .rounded(tokens::r(18.))
-            .border_2()
-            .border_color(gpui::transparent_black())
-            .when(!busy, |d| {
-                d.track_focus(&picture_focus)
-                    .cursor_pointer()
-                    .focus_visible(|s| s.border_color(rgb(p.focus)))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.choose_profile_picture(cx);
-                        cx.notify();
-                    }))
-            })
-            .when(picture_focused && !busy, |d| d.border_color(rgb(p.focus)))
             .child(face);
         let muted = |text: String| {
             div()

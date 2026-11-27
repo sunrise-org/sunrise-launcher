@@ -4,7 +4,7 @@
 use super::*;
 use crate::launch_state::{Act, Main, View};
 use crate::sheets::Sheet;
-use crate::widgets::button::{button, icon_button, Look, Size, Style};
+use crate::widgets::button::{button, icon_button_opening, Look, Size, Style};
 use crate::widgets::feedback::{banner, progress, Tone};
 use gpui::rgb;
 
@@ -261,6 +261,7 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let at = self.ui.home.picker.clone();
+        let build_open = self.ui.sheet == Some(Sheet::Build);
         let p = palette();
         // A quiet picker under Play: the build's glyph, its name and age, a chevron. No fill
         // until the pointer is on it.
@@ -290,12 +291,14 @@ impl Launcher {
                     .flex_none()
                     .child(crate::widgets::motion_bits::chevron(
                         "alt-build-chevron",
-                        self.ui.sheet == Some(Sheet::Build),
+                        build_open,
                         14.,
                         rgb(p.muted).into(),
                     )),
             )
-            .when_some(tag, |d, tag| d.tooltip(crate::glass_ui::tip(tag)))
+            .when_some(tag, |d, tag| {
+                d.tooltip(crate::glass_ui::tip_unless(build_open, tag))
+            })
             .child(
                 gpui::canvas(
                     move |bounds, window, cx| {
@@ -373,11 +376,12 @@ impl Launcher {
     /// The profile's own options (Sunrise Extras, its folder), in a menu like the build chooser's.
     fn profile_options_button(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         let at = self.ui.home.menu.clone();
-        icon_button(
+        icon_button_opening(
             "alt-quick-menu",
             "settings-01",
             tr("Profile options"),
             Style::Secondary,
+            self.ui.sheet == Some(Sheet::ProfileMenu),
         )
         .size(px(tokens::PLAY))
         .child(

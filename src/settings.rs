@@ -95,7 +95,6 @@ pub(super) struct SettingsView {
     languages: bool,
     /// UUID of the account whose 3-dots menu is open in Settings › Account.
     account_menu: Option<String>,
-    setup: bool,
     note: Option<String>,
     pub(crate) appearance: appearance::State,
 }
@@ -133,6 +132,33 @@ pub(crate) fn row(
     actions: Div,
 ) -> Div {
     let about = about.into();
+    let about = (!about.is_empty()).then(|| hint(about));
+    row_with(title, about, actions)
+}
+
+/// A hint that is one of several lines for a choice, and as tall as the tallest of them: every
+/// line sits in the same grid cell and only the current one is seen, so the row it is in
+/// doesn't change height when the choice does.
+pub(crate) fn hint_of(lines: Vec<SharedString>, current: usize) -> Div {
+    let mut cell = div().grid().grid_cols(1);
+    for (n, line) in lines.into_iter().enumerate() {
+        let said = if n == current {
+            hint(line)
+        } else {
+            // Unseen, and not selectable or clickable: it is only there for its height.
+            div()
+                .text_color(rgb(palette().muted))
+                .text_size(px(tokens::SMALL))
+                .opacity(0.)
+                .child(line)
+        };
+        cell = cell.child(said.col_start(1).row_start(1).min_w_0());
+    }
+    cell
+}
+
+/// [`row`] with its words under the title already made.
+pub(crate) fn row_with(title: impl Into<SharedString>, about: Option<Div>, actions: Div) -> Div {
     // When the words would get narrower than a short line, the controls go under them instead:
     // the words never squeeze to a word a line beside them.
     div()
@@ -153,7 +179,7 @@ pub(crate) fn row(
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(crate::selectable::selectable(title)),
                 )
-                .when(!about.is_empty(), |d| d.child(hint(about))),
+                .children(about),
         )
         .child(actions.flex_none().flex().items_center().gap(px(6.)))
 }
@@ -422,12 +448,12 @@ impl Launcher {
         if self.ui.settings.section != section {
             crate::frame::scrolls("settings").set_offset(gpui::point(px(0.), px(0.)));
             self.settings_sticky.reset();
+            self.collection.view = None;
         }
         let view = &mut self.ui.settings;
         view.section = section;
         view.languages = false;
         view.account_menu = None;
-        view.setup = false;
         view.note = None;
         self.storage_confirm = None;
         self.storage_builds.confirm = None;

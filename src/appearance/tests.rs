@@ -43,7 +43,7 @@ fn every_built_in_theme_can_be_chosen_and_brings_its_own_accent() {
         assert_eq!(effective_id(&settings), theme.id);
         assert_eq!(settings.accent, theme.accent.accent(), "{}", theme.id);
     }
-    assert_eq!(themes::THEMES.len(), 10);
+    assert_eq!(themes::THEMES.len(), 11);
     // Twilight is the violet one, and an id from another launcher falls to it.
     select_theme(&mut settings, "twilight").unwrap();
     assert_eq!(

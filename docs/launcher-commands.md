@@ -253,7 +253,7 @@ Show the launcher's settings, or set one (the Settings page): selected-version T
 
     sunrise-launcher settings [KEY] [VALUE]
 
-- `KEY` (selected-version, minecraft-dir, server-dir, prune-old-versions, keep-versions, opening-animation, cat, game-architecture, proxy, while-playing, worlds, language, appearance, theme, accent, background, scenery, reduced-graphics)
+- `KEY` (selected-version, minecraft-dir, server-dir, prune-old-versions, keep-versions, opening-animation, cat, game-architecture, proxy, while-playing, worlds, language, theme, accent, background, scenery, reduced-graphics)
 - `VALUE`: The new value (with KEY)
 
 worlds rows|tiles: how Home lists the worlds under Continue playing.

@@ -29,17 +29,24 @@ impl Slider {
         self.held.set(None);
     }
 
-    fn along(&self, at: Point<Pixels>) -> f32 {
+    /// The value under the pointer, from its x against the track's bounds alone (so a pointer
+    /// that wanders above or below the track still counts), clamped and snapped to `step`.
+    fn along(&self, at: Point<Pixels>, step: f32) -> f32 {
         let bounds = self.track.bounds();
         let travel = f32::from(bounds.size.width) - THUMB;
         if travel <= 0. {
             return 0.;
         }
-        ((f32::from(at.x - bounds.left()) - THUMB / 2.) / travel).clamp(0., 1.)
+        let raw = ((f32::from(at.x - bounds.left()) - THUMB / 2.) / travel).clamp(0., 1.);
+        if step > 0. {
+            ((raw / step).round() * step).clamp(0., 1.)
+        } else {
+            raw
+        }
     }
 
     /// A slider at `value` (0 to 1), stepping by `step` from the keyboard. The callback runs
-    /// on release or a keyboard step, never during a drag.
+    /// on release or a keyboard step, never during a drag; the knob itself follows `preview()`.
     pub(crate) fn render(
         &self,
         id: &'static str,
@@ -56,12 +63,13 @@ impl Slider {
             |_, _, _| {},
             move |_, _, window: &mut Window, _: &mut App| {
                 let (me_move, moving) = (me.clone(), pointer.clone());
+                let (step_move, step_up) = (step, step);
                 window.on_mouse_event(move |ev: &MouseMoveEvent, phase, _, cx| {
                     if phase == DispatchPhase::Capture && moving.preview().is_some() {
                         // If the window never received the release, discard the preview.
                         moving.held.set(
                             (ev.pressed_button == Some(MouseButton::Left))
-                                .then(|| moving.along(ev.position)),
+                                .then(|| moving.along(ev.position, step_move)),
                         );
                         let _ = me_move.update(cx, |_, cx| cx.notify());
                     }
@@ -72,7 +80,7 @@ impl Slider {
                         && ev.button == MouseButton::Left
                         && lifting.held.take().is_some()
                     {
-                        let v = lifting.along(ev.position);
+                        let v = lifting.along(ev.position, step_up);
                         let _ = me_up.update(cx, |this, cx| released(this, v, cx));
                     }
                 });
@@ -84,6 +92,9 @@ impl Slider {
         let keyboard = self.clone();
         let p = palette();
         let dragging = self.preview().is_some();
+        // The knob and fill follow the pointer while it is held; the callers pass the saved
+        // value, which only changes on release.
+        let value = self.preview().unwrap_or(value);
         div()
             .id(id)
             .tab_index(0)
@@ -101,7 +112,7 @@ impl Slider {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |_, ev: &MouseDownEvent, _, cx| {
-                    pointer.held.set(Some(pointer.along(ev.position)));
+                    pointer.held.set(Some(pointer.along(ev.position, step)));
                     cx.notify();
                 }),
             )

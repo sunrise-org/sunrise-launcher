@@ -280,8 +280,7 @@ impl Launcher {
                 .children(gone)
                 .child(cards),
         );
-        // The mode comes first: it applies to whichever theme is chosen below.
-        let mut rows = vec![self.appearance_row(cx), theme];
+        let mut rows = vec![theme];
         if !bad.is_empty() {
             rows.push(div().flex().flex_col().gap(px(10.)).children(bad));
         }
@@ -317,41 +316,44 @@ impl Launcher {
         .map(|(way, label)| (way, tr(label).into()))
         .collect();
         let this = cx.entity();
-        rows.push(row(
-            tr("Worlds on Home"),
-            tr(match layout {
-                backend::WorldLayout::Rows => "Continue playing lists one world a row.",
-                backend::WorldLayout::Tiles => {
-                    "Continue playing shows the worlds' pictures side by side, as many as fit across; the rest wrap under them."
-                }
-            }),
-            {
-                let state = &mut self.ui.settings.appearance;
-                let focus = state
-                    .worlds_focus
-                    .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
-                    .clone();
-                // Opened from the search: the page scrolls here and the keyboard is on it.
-                let asked = state.worlds_asked.clone().map(|done| {
-                    crate::mods::reveal(
-                        crate::frame::scrolls("settings"),
-                        done,
-                        Some(focus.clone()),
-                    )
-                });
-                div().child(
-                    crate::widgets::choice::choices("alt-world-layout", &layouts, layout, move |way, _, cx| {
+        // Both descriptions are laid out, so the row is as tall for Rows as for Tiles.
+        let about = hint_of(
+            vec![
+                tr("Continue playing lists one world a row.").into(),
+                tr("Continue playing shows the worlds' pictures side by side, as many as fit across; the rest wrap under them.").into(),
+            ],
+            match layout {
+                backend::WorldLayout::Rows => 0,
+                backend::WorldLayout::Tiles => 1,
+            },
+        );
+        rows.push(row_with(tr("Worlds on Home"), Some(about), {
+            let state = &mut self.ui.settings.appearance;
+            let focus = state
+                .worlds_focus
+                .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
+                .clone();
+            // Opened from the search: the page scrolls here and the keyboard is on it.
+            let asked = state.worlds_asked.clone().map(|done| {
+                crate::mods::reveal(crate::frame::scrolls("settings"), done, Some(focus.clone()))
+            });
+            div().child(
+                crate::widgets::choice::choices(
+                    "alt-world-layout",
+                    &layouts,
+                    layout,
+                    move |way, _, cx| {
                         this.update(cx, |this, cx| {
                             this.settings.world_layout = way;
                             this.save_settings();
                             cx.notify();
                         })
-                    })
-                    .track_focus(&focus)
-                        .children(asked),
+                    },
                 )
-            },
-        ));
+                .track_focus(&focus)
+                .children(asked),
+            )
+        }));
         rows.push(
             self.wide_row(
                 tr("Your themes"),
@@ -396,13 +398,21 @@ impl Launcher {
         rows.push(row(
             tr("Show the cat"),
             tr("It visits Home now and then. It stays away while motion is reduced."),
-            div().child(switch("alt-cat-toggle", cat).seen().on_click(cx.listener(
-                move |this, _: &ClickEvent, _, cx| {
-                    this.settings.cat = Some(!cat);
-                    this.save_settings();
-                    cx.notify();
-                },
-            ))),
+            // On, the switch runs from the pointer (a keyboard still turns it off).
+            crate::widgets::shy_switch::wrap(
+                "alt-cat-toggle",
+                cat,
+                switch("alt-cat-toggle", cat).seen().on_click(cx.listener(
+                    move |this, ev: &ClickEvent, _, cx| {
+                        if cat && !ev.is_keyboard() && !crate::motion::still() {
+                            return;
+                        }
+                        this.settings.cat = Some(!cat);
+                        this.save_settings();
+                        cx.notify();
+                    },
+                )),
+            ),
         ));
         div()
             .flex()
@@ -647,48 +657,6 @@ impl Launcher {
             about,
             div().child(choose).child(theirs),
         )
-    }
-
-    /// Dark, light or the system's look, as three chips. Sunrise has a light look; the other
-    /// themes stay dark in both, which the hint says when the theme isn't Sunrise.
-    fn appearance_row(&self, cx: &mut Context<Self>) -> Div {
-        let options: Vec<(backend::Appearance, SharedString)> = [
-            (backend::Appearance::Dark, crate::i18n::tr_key("Dark")),
-            (backend::Appearance::Light, crate::i18n::tr_key("Light")),
-            (backend::Appearance::System, crate::i18n::tr_key("System")),
-        ]
-        .into_iter()
-        .map(|(choice, label)| (choice, tr(label).into()))
-        .collect();
-        let dark_only = appearance::effective_id(&self.settings) != themes::DAWN_THEME.id;
-        let about = if dark_only {
-            format!(
-                "{} {}",
-                tr("System follows your computer's light or dark mode."),
-                tr("This theme has only a dark look.")
-            )
-        } else {
-            tr("System follows your computer's light or dark mode.").to_string()
-        };
-        let this = cx.entity();
-        let control = crate::widgets::choice::choices(
-            "alt-appearance",
-            &options,
-            self.settings.appearance,
-            move |picked, window, cx| {
-                this.update(cx, |this, cx| {
-                    this.appearance_change(
-                        |s| {
-                            s.appearance = picked;
-                            Ok(())
-                        },
-                        window,
-                    );
-                    cx.notify();
-                })
-            },
-        );
-        row(tr("Appearance"), about, div().child(control))
     }
 
     /// Whether Home shows its background at all: a row of its own, its switch on the right like

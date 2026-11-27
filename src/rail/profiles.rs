@@ -84,7 +84,12 @@ fn folds_open(look: Look) -> bool {
 /// A click handler that several closures share.
 type OnClick = dyn Fn(&gpui::ClickEvent, &mut Window, &mut App);
 
-fn folded_dots(i: &Instance, hover_id: &SharedString, cx: &mut Context<Launcher>) -> AnyElement {
+fn folded_dots(
+    i: &Instance,
+    hover_id: &SharedString,
+    busy: bool,
+    cx: &mut Context<Launcher>,
+) -> AnyElement {
     let p = palette();
     let button = Rc::new(Cell::new(gpui::Bounds::<gpui::Pixels>::default()));
     let menu_of = i.clone();
@@ -122,7 +127,7 @@ fn folded_dots(i: &Instance, hover_id: &SharedString, cx: &mut Context<Launcher>
                     .cursor_pointer()
                     .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                     .hover(move |d| d.bg(hover))
-                    .tooltip(crate::glass_ui::tip(tr("Profile actions")))
+                    .tooltip(crate::glass_ui::tip_unless(busy, tr("Profile actions")))
                     .child(
                         div()
                             .flex()
@@ -230,6 +235,7 @@ fn profile_actions(
     i: &Instance,
     open: f32,
     hover_id: &SharedString,
+    busy: bool,
     cx: &mut Context<Launcher>,
 ) -> Vec<AnyElement> {
     if !actions_shown(open) {
@@ -289,7 +295,7 @@ fn profile_actions(
         .justify_center()
         .cursor_pointer()
         .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-        .tooltip(crate::glass_ui::tip(tr("Profile actions")))
+        .tooltip(crate::glass_ui::tip_unless(busy, tr("Profile actions")))
         .child(dots_mark(ink))
         .child(
             gpui::canvas(move |bounds, _, _| button.set(bounds), |_, _, _, _| {})
@@ -635,8 +641,10 @@ impl Launcher {
         let folded = folds_open(look);
         // Open, the dots slide in under the pointer, so the entry tracks it as the folded one does.
         let dots_out = more && actions_shown(look.open);
+        // The menu or dialog the dots opened is up: their tooltip stays away.
+        let busy = self.profile_busy_with(&i.id);
         let actions = if dots_out {
-            profile_actions(&i, look.open, &hover_id, cx)
+            profile_actions(&i, look.open, &hover_id, busy, cx)
         } else {
             Vec::new()
         };
@@ -664,10 +672,10 @@ impl Launcher {
         entry = entry.child(face).children(actions);
         if (folded || dots_out) && !self.location_unavailable {
             // The dots stay out while the menu they opened, or a dialog it led to, is open.
-            crate::widgets::pin_hover(&hover_id, self.profile_busy_with(&i.id));
+            crate::widgets::pin_hover(&hover_id, busy);
         }
         if folded && !self.location_unavailable {
-            entry = entry.child(folded_dots(&i, &hover_id, cx));
+            entry = entry.child(folded_dots(&i, &hover_id, busy, cx));
         }
         entry
     }

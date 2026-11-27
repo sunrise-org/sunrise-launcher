@@ -226,7 +226,7 @@ impl Launcher {
             )
             .child(face)
             .when(compact, |chip| {
-                chip.tooltip(crate::glass_ui::tip(name.clone()))
+                chip.tooltip(crate::glass_ui::tip_unless(open, name.clone()))
             })
             .when(!compact, |chip| {
                 chip.child(

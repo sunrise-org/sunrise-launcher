@@ -19,7 +19,6 @@ pub(super) struct InstanceDialog {
     pub(super) icon: Option<Icon>,
     /// A picture chosen since it opened (None in it: the instance's is removed on Save).
     pub(super) picture: Option<Option<instance_icons::Chosen>>,
-    pub(super) picture_focus: FocusHandle,
     pub(super) error: Option<String>,
     pub(super) busy: bool,
     /// The Sunrise version it keeps (`Instance::version`); None follows the launcher's.

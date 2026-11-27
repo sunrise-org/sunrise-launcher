@@ -159,6 +159,22 @@ pub fn tip(label: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> 
     tip_with(move |_| label.clone())
 }
 
+/// [`tip`] for a control that opens a menu, popover or dialog: while that is `open` the tooltip
+/// shows nothing, so it never sits on top of what the control opened.
+pub fn tip_unless(
+    open: bool,
+    label: impl Into<SharedString>,
+) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
+    let shown = tip(label);
+    move |window, cx| {
+        if open {
+            cx.new(|_| NoTip).into()
+        } else {
+            shown(window, cx)
+        }
+    }
+}
+
 /// A tooltip whose label is read when it shows, not when the pointer arrived: a click in
 /// between can change what the control does.
 pub fn tip_with(

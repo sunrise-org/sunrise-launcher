@@ -1559,21 +1559,21 @@ fn an_old_appearance_moves_to_a_theme_and_an_unknown_one_keeps_the_rest() {
     // moved again.
     let text = serde_json::to_string(&Settings::parse(r#"{"appearance": "light"}"#)).unwrap();
     assert!(text.contains(r#""appearance":"dark""#), "{text}");
-    assert!(text.contains(r#""look_version":1"#), "{text}");
+    assert!(text.contains(r#""look_version":2"#), "{text}");
 }
 
 #[test]
-fn a_chosen_light_or_system_look_is_not_forced_to_dark() {
-    // Chosen in Settings (the file carries its look version), Light and System are kept.
-    for (saved, expected) in [("light", Appearance::Light), ("system", Appearance::System)] {
-        let text = format!(r#"{{"appearance": "{saved}", "look_version": 1}}"#);
-        assert_eq!(Settings::parse(&text).appearance, expected, "{saved}");
-    }
-    let mut chosen = Settings::parse("{}");
-    chosen.appearance = Appearance::Light;
-    let saved = serde_json::to_string(&chosen).unwrap();
-    assert!(saved.contains(r#""appearance":"light""#), "{saved}");
-    assert_eq!(Settings::parse(&saved).appearance, Appearance::Light);
+fn light_is_the_light_theme_and_the_system_choice_is_dark() {
+    // A light chosen while the mode existed is the Sunrise Light theme now; the system's is dark.
+    let light = Settings::parse(r#"{"appearance": "light", "look_version": 1}"#);
+    assert_eq!(
+        (light.appearance, light.theme.as_deref()),
+        (Appearance::Light, Some("dawn_light"))
+    );
+    let system = Settings::parse(r#"{"appearance": "system", "look_version": 1}"#);
+    assert_eq!(system.appearance, Appearance::Dark);
+    let saved = serde_json::to_string(&light).unwrap();
+    assert_eq!(Settings::parse(&saved).theme.as_deref(), Some("dawn_light"));
 }
 
 #[test]

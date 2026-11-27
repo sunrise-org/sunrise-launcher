@@ -153,17 +153,17 @@ fn settings_choose_the_look_as_appearance_does() {
 }
 
 #[test]
-fn appearance_cli_sets_dark_light_or_system_and_the_json_says_so() {
+fn the_light_look_is_a_theme_and_the_appearance_setting_is_gone() {
     let mut settings = backend::Settings::parse("{}");
-    assert_eq!(settings_json(&settings)["appearance"], "dark");
-    for value in ["light", "system", "dark"] {
-        set_setting(&mut settings, "appearance", value).unwrap();
-        // Saved and read back, the choice is still the one the player made.
-        settings = backend::Settings::parse(&serde_json::to_string(&settings).unwrap());
-        assert_eq!(settings_json(&settings)["appearance"], value);
-    }
-    assert!(set_setting(&mut settings, "appearance", "sepia").is_err());
-    assert_eq!(settings_json(&settings)["appearance"], "dark");
+    assert!(settings_json(&settings).get("appearance").is_none());
+    assert!(set_setting(&mut settings, "appearance", "light").is_err());
+    set_setting(&mut settings, "theme", "dawn_light").unwrap();
+    assert_eq!(settings_json(&settings)["theme"], "dawn_light");
+    // Saved and read back, it is still the light theme.
+    settings = backend::Settings::parse(&serde_json::to_string(&settings).unwrap());
+    assert_eq!(settings.appearance, backend::Appearance::Light);
+    set_setting(&mut settings, "theme", "nord").unwrap();
+    assert_eq!(settings.appearance, backend::Appearance::Dark);
 }
 
 #[test]

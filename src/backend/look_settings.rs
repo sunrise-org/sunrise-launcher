@@ -1,11 +1,13 @@
 //! The launcher look's part of `settings.json`: malformed choices dropped alone, an old light
-//! appearance moved to Taiga, and the indigo theme once saved as "sunrise" read as Twilight.
+//! appearance moved to the Sunrise Light theme, and the indigo theme once saved as "sunrise" read
+//! as Twilight.
 use super::{Appearance, Settings};
 use serde_json::{Map, Value};
 
 /// The settling that files saved by this launcher carry (`Settings::look_version`). Files without
-/// one predate the appearance choice.
-pub(super) const LOOK_VERSION: u8 = 1;
+/// one predate the appearance choice; version 1 files may carry a light or system appearance,
+/// which version 2 has folded into the theme.
+pub(super) const LOOK_VERSION: u8 = 2;
 
 /// Drops the look's fields that aren't what they say, each alone, before the rest is read.
 pub(super) fn tidy(fields: &mut Map<String, Value>) {
@@ -49,19 +51,20 @@ pub(super) fn tidy(fields: &mut Map<String, Value>) {
 }
 
 /// Settles the look of a file as it was read. A file from before the appearance choice (no
-/// `look_version`) was always dark: a saved light moves to the Taiga theme, and everything else
-/// opens dark on the saved theme. From then on the appearance is kept as the player saved it
-/// (dark, light or the system's), and the file is marked so this doesn't run again.
+/// `look_version`) was always dark: a saved light moves to the Taiga theme, as it always did.
+/// Light is a theme now (Sunrise Light) and no longer a mode: a version 1 file whose appearance
+/// was light on Sunrise (or on no saved theme, which is Sunrise) moves to that theme, and any
+/// other appearance (the system's too) opens dark, which is how every other theme painted. The
+/// appearance kept in memory follows the theme from then on.
 pub(super) fn settle(settings: &mut Settings) {
-    if settings.look_version < LOOK_VERSION {
-        if settings.appearance == Appearance::Light {
-            settings.theme = Some(crate::themes::TAIGA.id.to_string());
-            settings.accent =
-                crate::themes::starting_accent(settings.theme.as_deref(), &settings.theme_accents);
-        }
+    let from = settings.look_version;
+    if from < 1 && settings.appearance == Appearance::Light {
+        settings.theme = Some(crate::themes::TAIGA.id.to_string());
+        settings.accent =
+            crate::themes::starting_accent(settings.theme.as_deref(), &settings.theme_accents);
         settings.appearance = Appearance::Dark;
-        settings.look_version = LOOK_VERSION;
     }
+    settings.look_version = LOOK_VERSION;
 
     // Old Dawn saved its pink default like a picked accent. If it wasn't saved under
     // the theme as a choice, follow the updated default instead of keeping the old one.
@@ -75,6 +78,30 @@ pub(super) fn settle(settings: &mut Settings) {
     {
         settings.accent = DAWN_THEME.accent.accent();
     }
+
+    use crate::themes::DAWN_LIGHT_THEME;
+    if from == 1
+        && settings.appearance == Appearance::Light
+        && settings
+            .theme
+            .as_deref()
+            .is_none_or(|id| id == DAWN_THEME.id)
+    {
+        // The accent picked under Sunrise comes along to its light card.
+        if let Some(kept) = settings.theme_accents.get(DAWN_THEME.id).copied() {
+            settings
+                .theme_accents
+                .entry(DAWN_LIGHT_THEME.id.to_string())
+                .or_insert(kept);
+        }
+        settings.theme = Some(DAWN_LIGHT_THEME.id.to_string());
+    }
+    // The theme alone says whether the launcher is light.
+    settings.appearance = if crate::themes::is_light(settings.theme.as_deref()) {
+        Appearance::Light
+    } else {
+        Appearance::Dark
+    };
 }
 
 #[cfg(test)]
@@ -100,44 +127,47 @@ mod tests {
         assert_eq!(Settings::parse("{}").appearance, Appearance::Dark);
     }
 
-    /// Light and the system's, saved by the choice, are kept: a light under a theme stays under
-    /// it, and nothing moves to Taiga on every read. Round trips keep them too.
+    /// A light chosen while the mode existed (version 1) on Sunrise, or on no saved theme, is the
+    /// Sunrise Light theme now, with the accent picked under Sunrise. It stays there through
+    /// saves, and the system's choice opens dark.
     #[test]
-    fn a_saved_light_or_system_appearance_is_kept_through_reads_and_saves() {
-        for (appearance, expected) in [
-            ("light", Appearance::Light),
-            ("system", Appearance::System),
-            ("dark", Appearance::Dark),
+    fn a_saved_light_appearance_becomes_the_light_theme() {
+        for text in [
+            r##"{"appearance": "light", "look_version": 1, "theme_accents": {"dawn": "teal"}}"##,
+            r##"{"appearance": "light", "theme": "dawn", "look_version": 1, "theme_accents": {"dawn": "teal"}}"##,
         ] {
-            let text = format!(
-                r#"{{"appearance": "{appearance}", "theme": "dawn", "look_version": 1, "game_args": "--x"}}"#
-            );
-            let read = Settings::parse(&text);
-            assert_eq!(read.appearance, expected, "{appearance}");
-            assert_eq!(read.theme.as_deref(), Some("dawn"), "{appearance}");
-            let saved = serde_json::to_string(&read).unwrap();
-            assert!(
-                saved.contains(&format!(r#""appearance":"{appearance}""#)),
-                "{saved}"
-            );
-            let again = Settings::parse(&saved);
-            assert_eq!(again.appearance, expected, "{appearance} after a save");
+            let read = Settings::parse(text);
+            assert_eq!(read.theme.as_deref(), Some("dawn_light"), "{text}");
+            assert_eq!(read.appearance, Appearance::Light, "{text}");
+            assert_eq!(read.look_version, super::LOOK_VERSION);
             assert_eq!(
-                again.theme.as_deref(),
-                Some("dawn"),
-                "{appearance} after a save"
+                read.theme_accents["dawn_light"],
+                crate::themes::Accent::TEAL
             );
+            let again = Settings::parse(&serde_json::to_string(&read).unwrap());
+            assert_eq!(again.theme.as_deref(), Some("dawn_light"), "{text}");
+            assert_eq!(again.appearance, Appearance::Light, "{text}");
         }
+        let system = Settings::parse(r#"{"appearance": "system", "look_version": 1}"#);
+        assert_eq!(
+            (system.appearance, system.theme.as_deref()),
+            (Appearance::Dark, None)
+        );
     }
 
-    /// A light saved by the choice under another theme stays light under it: only a file without
-    /// a look version has a light moved to Taiga.
+    /// A light under another theme painted dark (only Sunrise had a light look), so it stays
+    /// that theme, dark. Choosing the light theme is light, and nothing else is.
     #[test]
-    fn a_light_chosen_under_another_theme_stays_under_it() {
-        let read =
+    fn light_is_only_the_light_theme() {
+        let other =
             Settings::parse(r#"{"appearance": "light", "theme": "nord", "look_version": 1}"#);
-        assert_eq!(read.appearance, Appearance::Light);
-        assert_eq!(read.theme.as_deref(), Some("nord"));
+        assert_eq!(other.appearance, Appearance::Dark);
+        assert_eq!(other.theme.as_deref(), Some("nord"));
+        let chosen = Settings::parse(r#"{"theme": "dawn_light", "look_version": 2}"#);
+        assert_eq!(chosen.appearance, Appearance::Light);
+        let stale =
+            Settings::parse(r#"{"appearance": "light", "theme": "nord", "look_version": 2}"#);
+        assert_eq!(stale.appearance, Appearance::Dark);
     }
 
     /// An appearance this launcher doesn't know is dark; a look version that isn't a number is

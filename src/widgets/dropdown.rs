@@ -26,6 +26,10 @@ const MENU_MAX: f32 = 300.;
 const MENU_MIN: f32 = 96.;
 /// The gap between the field and its menu.
 const GAP: f32 = 4.;
+/// A menu with more rows than this can be filtered by typing.
+const FILTER_OVER: usize = 6;
+/// The most that can be typed into the filter.
+const FILTER_MAX: usize = 40;
 
 /// Where a field was last drawn, and how tall the window was: what decides which side of the field
 /// its menu opens on, and how wide it is.
@@ -42,6 +46,10 @@ thread_local! {
     /// menu closes (`forget`), so the next opening starts at its current row again.
     static HANDLES: std::cell::RefCell<std::collections::HashMap<SharedString, gpui::ScrollHandle>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
+    /// What was typed into each open menu's filter, by the field's id. Dropped when the menu
+    /// closes (`forget`).
+    static FILTER: std::cell::RefCell<std::collections::HashMap<SharedString, String>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
     static PLACES: std::cell::RefCell<std::collections::HashMap<SharedString, Place>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
@@ -49,6 +57,145 @@ thread_local! {
 /// Drops the scroll positions of the menus of the field `id`: call it while that menu is closed.
 pub(crate) fn forget(id: &str) {
     HANDLES.with_borrow_mut(|m| m.retain(|key, _| !key.starts_with(id)));
+    FILTER.with_borrow_mut(|m| m.retain(|key, _| key.as_ref() != id));
+}
+
+/// What has been typed into the menu of the field `id`.
+fn typed(id: &SharedString) -> String {
+    FILTER.with_borrow(|m| m.get(id).cloned().unwrap_or_default())
+}
+
+fn set_typed(id: &SharedString, text: String) {
+    FILTER.with_borrow_mut(|m| {
+        if text.is_empty() {
+            m.remove(id);
+        } else {
+            m.insert(id.clone(), text);
+        }
+    });
+}
+
+/// The indices of the rows that match `typed` (case-insensitive, anywhere in the label or the
+/// sub line), best first: a label that starts with it, then one that has it at a word, then
+/// anywhere in the label, then the sub line. Ties keep their order. Nothing typed keeps all.
+fn ranked(rows: &[(String, Option<String>)], typed: &str) -> Vec<usize> {
+    let needle = typed.trim().to_lowercase();
+    if needle.is_empty() {
+        return (0..rows.len()).collect();
+    }
+    let mut hits: Vec<(u8, usize)> = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(n, (label, sub))| {
+            let label = label.to_lowercase();
+            let score = if label.starts_with(&needle) {
+                0
+            } else if label.contains(&format!(" {needle}")) {
+                1
+            } else if label.contains(&needle) {
+                2
+            } else if sub
+                .as_ref()
+                .is_some_and(|sub| sub.to_lowercase().contains(&needle))
+            {
+                3
+            } else {
+                return None;
+            };
+            Some((score, n))
+        })
+        .collect();
+    hits.sort();
+    hits.into_iter().map(|(_, n)| n).collect()
+}
+
+/// The line at the top of a filterable menu: a muted magnifier and what has been typed (a hint
+/// before anything is).
+fn search_line(text: &str) -> Div {
+    let p = palette();
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .h(px(ROW_H))
+        .px(px(10.))
+        .mb(px(3.))
+        .border_b_1()
+        .border_color(c(p.divider))
+        .child(crate::glass_ui::icon("search-01", 16., c(p.muted)))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_size(px(tokens::BODY))
+                .text_color(c(if text.is_empty() { p.muted } else { p.text }))
+                .child(if text.is_empty() {
+                    let hint: SharedString = tr("Type to filter").into();
+                    hint
+                } else {
+                    SharedString::from(text.to_owned())
+                }),
+        )
+}
+
+/// A child, taking no room, that reads the keyboard while the menu is drawn: letters go to the
+/// filter of the field `id`, Backspace edits it, Escape clears it before it closes the menu,
+/// and Enter picks the first match (`first`).
+fn typing(id: SharedString, first: Option<usize>, pick: Pick, close: Close) -> Div {
+    let owner = Owner::default();
+    div().absolute().size_0().child(owner.noting()).child(
+        gpui::canvas(
+            |_, _, _| {},
+            move |_, _, window: &mut Window, _: &mut App| {
+                window.on_key_event(move |ev: &gpui::KeyDownEvent, phase, window, cx| {
+                    let k = &ev.keystroke;
+                    if phase != gpui::DispatchPhase::Capture
+                        || k.modifiers.control
+                        || k.modifiers.platform
+                        || k.modifiers.alt
+                    {
+                        return;
+                    }
+                    let mut text = typed(&id);
+                    match k.key.as_str() {
+                        "escape" if !text.is_empty() => text.clear(),
+                        "backspace" if !text.is_empty() => {
+                            text.pop();
+                        }
+                        "enter" if !text.is_empty() => {
+                            cx.stop_propagation();
+                            if let Some(n) = first {
+                                pick(n, window, cx);
+                                close(window, cx);
+                            }
+                            return;
+                        }
+                        // The first Space is a press on the row, as it was.
+                        "space" if !text.is_empty() => text.push(' '),
+                        _ => match k.key_char.as_deref() {
+                            Some(ch)
+                                if !ch.is_empty()
+                                    && !ch.chars().any(char::is_control)
+                                    && !(text.is_empty() && ch.trim().is_empty()) =>
+                            {
+                                if text.chars().count() < FILTER_MAX {
+                                    text.push_str(ch);
+                                }
+                            }
+                            _ => return,
+                        },
+                    }
+                    set_typed(&id, text);
+                    cx.stop_propagation();
+                    owner.redraw(window, cx);
+                });
+            },
+        )
+        .absolute()
+        .size_0(),
+    )
 }
 
 /// A child of the field, taking no room, that notes where the field is as it is laid out.
@@ -249,9 +396,23 @@ pub(crate) fn layer(
     min_width: Option<f32>,
     close: Close,
 ) -> [gpui::Deferred; 2] {
+    layer_with(id, None, rows, count, current, min_width, close)
+}
+
+/// [`layer`] with a `head` above the rows that does not scroll (the filter's line).
+pub(crate) fn layer_with(
+    id: &SharedString,
+    head: Option<Div>,
+    rows: Vec<AnyElement>,
+    count: usize,
+    current: Option<usize>,
+    min_width: Option<f32>,
+    close: Close,
+) -> [gpui::Deferred; 2] {
     let p = palette();
     let place = PLACES.with_borrow(|m| m.get(id).copied());
-    let height = (count as f32 * (ROW_H + 1.) + 8.).min(MENU_MAX);
+    let head_h = if head.is_some() { ROW_H + 4. } else { 0. };
+    let height = (count as f32 * (ROW_H + 1.) + 8. + head_h).min(MENU_MAX);
     let room_below = place.map(|at| at.window - at.bottom - 12. - GAP);
     let room_above = place.map(|at| at.top - 12. - GAP);
     let flip = match (room_below, room_above) {
@@ -308,6 +469,7 @@ pub(crate) fn layer(
         .occlude()
         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_scroll(|_: &gpui::ScrollEvent, _, cx| cx.stop_propagation())
+        .children(head)
         .child(
             div()
                 .id(SharedString::from(format!("{id}-menu-rows")))
@@ -528,10 +690,28 @@ impl Dropdown {
             return wrap;
         }
         let key = SharedString::from(format!("{id}-row"));
+        let filterable = items.len() > FILTER_OVER;
+        let text = if filterable {
+            typed(&id)
+        } else {
+            String::new()
+        };
+        let order = if filterable {
+            let names: Vec<(String, Option<String>)> = items
+                .iter()
+                .map(|i| (i.label.to_string(), i.sub.as_ref().map(|s| s.to_string())))
+                .collect();
+            ranked(&names, &text)
+        } else {
+            (0..items.len()).collect()
+        };
+        let first = order.iter().copied().find(|&n| items[n].enabled);
+        let filtering = !text.trim().is_empty();
         let mut at: Option<usize> = None;
-        let count = items.len();
         let mut rows: Vec<AnyElement> = Vec::new();
-        for (n, item) in items.into_iter().enumerate() {
+        let mut items: Vec<Option<Item>> = items.into_iter().map(Some).collect();
+        for n in order {
+            let item = items[n].take().expect("each index is listed once");
             if item.current && at.is_none() {
                 at = Some(rows.len());
             }
@@ -552,10 +732,26 @@ impl Dropdown {
                 line
             };
             rows.push(line.into_any_element());
-            if item.rule_after {
+            if item.rule_after && !filtering {
                 rows.push(rule());
             }
         }
-        wrap.children(layer(&id, rows, count, at, menu_min, close))
+        if rows.is_empty() {
+            rows.push(
+                div()
+                    .px(px(10.))
+                    .min_h(px(ROW_H))
+                    .flex()
+                    .items_center()
+                    .text_size(px(tokens::BODY))
+                    .text_color(c(palette().muted))
+                    .child(tr("No matches"))
+                    .into_any_element(),
+            );
+        }
+        let count = rows.len();
+        let head = filterable
+            .then(|| search_line(&text).child(typing(id.clone(), first, pick, close.clone())));
+        wrap.children(layer_with(&id, head, rows, count, at, menu_min, close))
     }
 }

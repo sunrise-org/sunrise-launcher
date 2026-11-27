@@ -183,8 +183,21 @@ pub(crate) fn icon_button(
     tooltip: impl Into<SharedString>,
     style: Style,
 ) -> Stateful<Div> {
+    icon_button_opening(id, icon, tooltip, style, false)
+}
+
+/// An [`icon_button`] that opens a menu, popover or dialog: while that is `open` its tooltip
+/// stays away, so it never covers what the button opened.
+pub(crate) fn icon_button_opening(
+    id: impl Into<ElementId>,
+    icon: &'static str,
+    tooltip: impl Into<SharedString>,
+    style: Style,
+    open: bool,
+) -> Stateful<Div> {
     let tip: SharedString = tooltip.into();
-    icon_only(id, Look::new(style, Size::Medium).icon(icon)).tooltip(crate::glass_ui::tip(tip))
+    icon_only(id, Look::new(style, Size::Medium).icon(icon))
+        .tooltip(crate::glass_ui::tip_unless(open, tip))
 }
 
 /// A square button showing only `look`'s icon, with no tooltip: for a caller that names it in a

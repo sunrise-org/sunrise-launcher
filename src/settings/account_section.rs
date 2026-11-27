@@ -1,7 +1,6 @@
 //! Settings › Account: who plays, and the Microsoft accounts signed in here.
 use super::*;
-use crate::widgets::button::secondary;
-use crate::widgets::feedback::{banner, Tone};
+use crate::widgets::button::{button, secondary, Look, Size, Style};
 
 impl Launcher {
     pub(crate) fn remove_account(&mut self, uuid: &str) {
@@ -50,14 +49,19 @@ impl Launcher {
             let busy = self.auth_busy.contains_key(&a.uuid);
             let said = match (progress, status) {
                 (Some(doing), _) => tr(doing).to_string(),
-                (None, Some(s)) if needs_sign_in => tr(&s.message).to_string(),
+                _ if needs_sign_in => tr("Signed out").to_string(),
                 _ if plays => tr("Plays when you press Play").to_string(),
                 _ => tr("Signed in").to_string(),
             };
             let mut actions = div();
             if needs_sign_in {
                 let uuid = a.uuid.clone();
-                let again = secondary(format!("alt-account-again-{}", i), tr("Sign in again"));
+                // The warning mark sits in the button, where the banner's used to stand apart.
+                let again = button(
+                    format!("alt-account-again-{}", i),
+                    tr("Sign in again"),
+                    Look::new(Style::Secondary, Size::Medium).icon("alert-02"),
+                );
                 actions = actions.child(if busy {
                     off(again)
                 } else {
@@ -102,7 +106,10 @@ impl Launcher {
                 .flex()
                 .items_center()
                 .justify_center()
-                .tooltip(crate::glass_ui::tip(tr("Account options")))
+                .tooltip(crate::glass_ui::tip_unless(
+                    menu_open,
+                    tr("Account options"),
+                ))
                 .child(crate::glass_ui::icon(
                     "more-vertical",
                     16.,
@@ -257,8 +264,11 @@ impl Launcher {
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child(a.name.clone()),
                         )
-                        .child(if needs_sign_in {
-                            banner(Tone::Danger, said, None)
+                        .child(if needs_sign_in && progress.is_none() {
+                            div()
+                                .text_size(px(tokens::SMALL))
+                                .text_color(rgb(palette().warning))
+                                .child(said)
                         } else {
                             hint(said)
                         }),
@@ -275,6 +285,8 @@ impl Launcher {
             );
         }
         let none = rows.is_empty();
+        // Short of room, the button is the logo and "Sign in", as the top bar's is.
+        let narrow = self.settings_pane_width() < 520.;
         rows.push(row(
             tr(if none {
                 "Not signed in"
@@ -283,14 +295,54 @@ impl Launcher {
             }),
             tr("Sign in with the Microsoft account that owns Minecraft: Java Edition."),
             div().child(
-                secondary("alt-add-account", tr("Sign in with Microsoft")).on_click(cx.listener(
-                    |this, _: &ClickEvent, _, cx| {
-                        this.sign_in_to_play();
-                        cx.notify();
+                microsoft_button(
+                    "alt-add-account",
+                    if narrow {
+                        tr("Sign in")
+                    } else {
+                        tr("Sign in with Microsoft")
                     },
-                )),
+                    self.theme.dark,
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.sign_in_to_play();
+                    cx.notify();
+                })),
             ),
         ));
         group(rows)
     }
+}
+
+/// Microsoft's sign-in button at the settings row's height: its four-square logo (the one the
+/// top bar draws, `microsoft::logo`) before `label`, in Microsoft's dark or light colours.
+fn microsoft_button(id: &'static str, label: impl Into<SharedString>, dark: bool) -> Stateful<Div> {
+    let (fill, ink, border) = if dark {
+        (0x2f2f2f, 0xffffff, 0x2f2f2f)
+    } else {
+        (0xffffff, 0x5e5e5e, 0x8c8c8c)
+    };
+    div()
+        .id(id)
+        .reach()
+        .tab_index(0)
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(10.))
+        .h(px(tokens::CONTROL))
+        .px(px(12.))
+        .rounded(tokens::r(tokens::R_CONTROL))
+        .border_1()
+        .border_color(rgb(border))
+        .bg(rgb(fill))
+        .text_size(px(tokens::BODY))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(rgb(ink))
+        .whitespace_nowrap()
+        .cursor_pointer()
+        .hover(|s| s.opacity(0.9))
+        .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
+        .child(crate::microsoft::logo(16.))
+        .child(label.into())
 }

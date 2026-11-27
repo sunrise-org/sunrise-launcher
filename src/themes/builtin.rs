@@ -186,6 +186,20 @@ pub const DAWN_THEME: Theme = Theme {
     sky: DAWN_DARK.sky,
     accent: ThemeAccent::Colour(0xc2552d),
     palette: Some(&DAWN_DARK),
+    // Only reached when the look is forced light (`SUNRISE_LAUNCHER_APPEARANCE=light`); the
+    // light look a player picks is `DAWN_LIGHT_THEME`.
+    light_palette: Some(&DAWN_LIGHT),
+};
+
+/// Sunrise Light: Sunrise's day, as a card of its own in the theme grid. Choosing it is what
+/// makes the launcher light; every other theme is dark (`appearance::select_theme`).
+pub const DAWN_LIGHT_THEME: Theme = Theme {
+    id: "dawn_light",
+    name: "Sunrise Light",
+    description: "Cream and orange",
+    sky: DAWN_LIGHT.sky,
+    accent: ThemeAccent::Colour(0xc2552d),
+    palette: Some(&DAWN_LIGHT),
     light_palette: Some(&DAWN_LIGHT),
 };
 

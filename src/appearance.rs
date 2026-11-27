@@ -92,6 +92,12 @@ pub fn select_theme(settings: &mut Settings, choice: &str) -> Result<(), String>
             .insert(old_key.to_string(), settings.accent);
     }
     settings.theme = id.map(str::to_string);
+    // The light theme is what makes the launcher light, and every other one is dark.
+    settings.appearance = if themes::is_light(id) {
+        crate::backend::Appearance::Light
+    } else {
+        crate::backend::Appearance::Dark
+    };
     settings.accent = themes::starting_accent(id, &settings.theme_accents);
     Ok(())
 }

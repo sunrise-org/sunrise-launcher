@@ -33,17 +33,10 @@ impl Launcher {
                 })
             },
         ));
+        // One line for every choice, so the row keeps its height as the choice changes.
         let while_playing = row(
             tr("While you play"),
-            tr(match current {
-                WhilePlaying::Stay => "The launcher stays open beside the game.",
-                WhilePlaying::Minimize => {
-                    "The launcher goes down when the game starts, and comes back when it closes."
-                }
-                WhilePlaying::Hide => {
-                    "The launcher hides when the game starts, and comes back when it closes."
-                }
-            }),
+            tr("What the launcher does while the game runs. It comes back when the game closes."),
             picker,
         );
         let minecraft = self.settings.minecraft_dir.as_deref().map_or_else(
@@ -74,64 +67,23 @@ impl Launcher {
             },
             cx,
         );
-        let args = self.wide_row(
+        // The arguments get the row's whole width under its words, with a copy button inside.
+        let copy = crate::widgets::motion_bits::copy_button(
+            "alt-game-args-copy",
+            tr("Copy"),
+            self.settings.game_args.clone(),
+        );
+        let args = stacked(
             tr("Game arguments"),
             tr("Extra arguments for the game, passed through as they are. They apply the next time it starts."),
-            args.w(px(260.)),
-        );
-        let asking = self.ui.settings.setup;
-        let mut setup = row(
-            tr("Profiles"),
-            tr("A profile keeps its own mods, worlds and servers. Switch between profiles in the sidebar."),
-            div().child(
-                secondary("alt-create", tr(if asking { "Cancel" } else { "New profile…" })).on_click(
-                    cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.ui.settings.setup = !this.ui.settings.setup;
-                        this.ui.settings.note = None;
-                        cx.notify();
-                    }),
-                ),
-            ),
-        );
-        if asking {
-            let input = self.field(
-                servers_page::Field::InstanceName,
-                tr("Profile name"),
-                250.,
-                cx,
-            );
-            setup = div().flex().flex_col().gap(px(12.)).child(setup).child(
-                div().flex().items_center().gap(px(8.)).child(input).child(
-                    secondary("alt-create-empty", tr("Create profile")).on_click(cx.listener(
-                        |this, _: &ClickEvent, _, cx| {
-                            let name = this.servers.value(servers_page::Field::InstanceName).trim();
-                            match instances::create(name, None) {
-                                Ok(_) => {
-                                    this.reload_instances();
-                                    this.ui.settings.setup = false;
-                                    this.servers
-                                        .text(servers_page::Field::InstanceName)
-                                        .set(String::new());
-                                    this.ui.settings.note = Some(
-                                        tr("Profile created. Select it in the sidebar.").into(),
-                                    );
-                                }
-                                Err(e) => this.ui.settings.note = Some(e),
-                            };
-                            cx.notify();
-                        },
-                    )),
-                ),
-            );
-        }
-        if let Some(note) = self.ui.settings.note.clone() {
-            setup = div()
+            div()
+                .w_full()
                 .flex()
-                .flex_col()
+                .items_center()
                 .gap(px(8.))
-                .child(setup)
-                .child(hint(note));
-        }
+                .child(args.flex_1().min_w_0())
+                .child(div().flex_none().child(copy)),
+        );
         // Deleting the profile is the one danger on the page: its own card, tinted red.
         let delete = self
             .selected_instance()
@@ -169,7 +121,6 @@ impl Launcher {
             .gap(px(14.))
             .child(group(vec![while_playing, args]))
             .child(group(vec![source]))
-            .child(group(vec![setup]))
             .children(delete)
     }
 }

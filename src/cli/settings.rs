@@ -2,7 +2,7 @@
 use super::*;
 
 /// The keys `settings` sets.
-pub(super) const SETTING_KEYS: [&str; 18] = [
+pub(super) const SETTING_KEYS: [&str; 17] = [
     "selected-version",
     "minecraft-dir",
     "server-dir",
@@ -15,7 +15,6 @@ pub(super) const SETTING_KEYS: [&str; 18] = [
     "while-playing",
     "worlds",
     "language",
-    "appearance",
     "theme",
     "accent",
     "background",
@@ -74,10 +73,6 @@ pub(super) fn set_setting(s: &mut backend::Settings, key: &str, value: &str) -> 
                     &[("value", value), ("one", "rows"), ("other", "tiles")],
                 )
             })?
-        }
-        "appearance" => {
-            s.appearance = backend::Appearance::parse(value)
-                .ok_or_else(|| trf("{value}: say dark, light or system", &[("value", value)]))?
         }
         "theme" => sunrise_launcher::appearance::select_theme(s, value)?,
         "accent" => sunrise_launcher::appearance::type_accent(s, value)?,

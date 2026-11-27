@@ -437,6 +437,7 @@ impl Launcher {
         let wait = self.launcher_update_wait();
         let action = offer.action(wait, self.restart_for_launcher_update);
         let available = trf("Update available: {version}", &[("version", offer.version)]);
+        let update_open = self.ui.sheet == Some(Sheet::LauncherUpdate);
         let open = cx.listener(|this, _, _, cx| {
             this.open_sheet(Sheet::LauncherUpdate);
             cx.notify();
@@ -447,7 +448,7 @@ impl Launcher {
                     secondary("launcher-update-dot", "")
                         .size(px(tokens::FIELD))
                         .px_0()
-                        .tooltip(crate::glass_ui::tip(available))
+                        .tooltip(crate::glass_ui::tip_unless(update_open, available))
                         .child(div().size(px(7.)).rounded_full().bg(rgb(p.accent)))
                         .on_click(open),
                 ),
@@ -481,7 +482,7 @@ impl Launcher {
             .overflow_hidden()
             .h(px(tokens::FIELD))
             .gap(px(6.))
-            .tooltip(crate::glass_ui::tip(tip))
+            .tooltip(crate::glass_ui::tip_unless(update_open, tip))
             .child(div().min_w_0().truncate().child(label))
             .when(action.is_none(), |b| {
                 b.child(
@@ -509,7 +510,7 @@ impl Launcher {
                         secondary("launcher-update-notes", "")
                             .size(px(tokens::FIELD))
                             .px_0()
-                            .tooltip(crate::glass_ui::tip(tr("What's new")))
+                            .tooltip(crate::glass_ui::tip_unless(update_open, tr("What's new")))
                             .child(crate::glass_ui::icon(
                                 "information-circle",
                                 16.,

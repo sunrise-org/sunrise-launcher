@@ -14,6 +14,7 @@ pub(crate) mod focus;
 pub(crate) mod motion_bits;
 pub(crate) mod nav;
 pub(crate) mod scrolls;
+pub(crate) mod shy_switch;
 use sunrise_launcher::backend::lock::recover;
 
 /// The element under the pointer, and every element whose hover is easing in or out, each on

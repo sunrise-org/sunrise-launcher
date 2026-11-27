@@ -644,7 +644,8 @@ mod tests {
             "each group is listed once: {groups:?}"
         );
         // A row of Settings is found by its own title, in its own group.
-        assert!(listed(&entries, "profiles").contains(&(Group::Settings, "Profiles".to_string())));
+        assert!(listed(&entries, "arguments")
+            .contains(&(Group::Settings, "Game arguments".to_string())));
     }
 
     #[test]

@@ -41,6 +41,8 @@ impl Backdrop {
         let resolved = themes::resolve(settings.theme.as_deref());
         let own = matches!(resolved, themes::Resolved::Local(_));
         let scene = match resolved {
+            // Sunrise Light shares Sunrise's scene.
+            themes::Resolved::Builtin(t) if t.is_sunrise() => Some(themes::DAWN_THEME.id),
             themes::Resolved::Builtin(t) => Some(t.id),
             themes::Resolved::Local(_) | themes::Resolved::Missing => Some(themes::DAWN_THEME.id),
             themes::Resolved::Twilight => None,
