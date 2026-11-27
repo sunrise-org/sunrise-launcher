@@ -2030,5 +2030,17 @@
   "Update {name}?": "Aggiornare {name}?",
   "Update: {mods}.": "Aggiorna: {mods}.",
   "Updated {mod} from {from} to {to}": "{mod} aggiornata da {from} a {to}",
-  "Use default": "Usa predefinito"
+  "Use default": "Usa predefinito",
+  "Use the newest Dev": "Usa la Dev più recente",
+  "Used by a build with mods": "Usata da una build con mod",
+  "Used by {profile}": "Usata da {profile}",
+  "Using plain {build}: all native mods were left out. Nothing was built.": "Uso di {build} senza mod: tutte le mod native sono state escluse. Non è stato compilato nulla.",
+  "Version {version} is out. You chose its version: update it on its own.": "È disponibile la versione {version}. Hai scelto la sua versione: aggiornala separatamente.",
+  "Versions that fit {target}": "Versioni compatibili con {target}",
+  "View build log": "Visualizza log della build",
+  "View source": "Visualizza sorgente",
+  "Wait for the current operation to finish before changing profiles.": "Attendi il completamento dell’operazione corrente prima di cambiare profilo.",
+  "Wait for the game to start before changing accounts.": "Attendi l’avvio del gioco prima di cambiare account.",
+  "Waiting to install…": "In attesa dell’installazione…",
+  "Works on": "Compatibile con"
 }

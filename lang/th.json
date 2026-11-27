@@ -2426,5 +2426,17 @@
   "Install them in a terminal, then build again:\n{command}": "ติดตั้งในเทอร์มินัลแล้วบิลด์อีกครั้ง:\n{command}",
   "Install them with your distribution's package manager, then build again (on Debian, Ubuntu or Mint: {apt}).": "ติดตั้งด้วยตัวจัดการแพ็กเกจของดิสโทร แล้วบิลด์อีกครั้ง (บน Debian, Ubuntu หรือ Mint: {apt})",
   "Native mods need these to build the game on Linux, and this computer lacks them: {missing}. {how}": "ม็อดเนทีฟต้องใช้สิ่งเหล่านี้เพื่อบิลด์เกมบน Linux แต่คอมพิวเตอร์นี้ไม่มี: {missing} {how}",
-  "No screenshot {query} in {path}": "ไม่มีภาพหน้าจอ {query} ใน {path}"
+  "No screenshot {query} in {path}": "ไม่มีภาพหน้าจอ {query} ใน {path}",
+  "Could not move {name} to the trash: {error}": "ย้าย {name} ไปถังขยะไม่ได้: {error}",
+  "A server needs an address.": "เซิร์ฟเวอร์ต้องมีที่อยู่",
+  "There is no server {number}.": "ไม่มีเซิร์ฟเวอร์ {number}",
+  "Could not save the server list: {error}": "บันทึกรายการเซิร์ฟเวอร์ไม่ได้: {error}",
+  "No server {query} in the list": "ไม่มีเซิร์ฟเวอร์ {query} ในรายการ",
+  "the panel gave no link": "แผงควบคุมไม่ได้ให้ลิงก์",
+  "This server is no longer in the launcher’s list.": "เซิร์ฟเวอร์นี้ไม่อยู่ในรายการของ launcher แล้ว",
+  "Turn off running in the background before deleting this server.": "ปิดการทำงานเบื้องหลังก่อนลบเซิร์ฟเวอร์นี้",
+  "The server was moved to the trash, but its list could not be saved: {error}": "ย้ายเซิร์ฟเวอร์ไปถังขยะแล้ว แต่บันทึกรายการไม่ได้: {error}",
+  "This is not a server folder.": "นี่ไม่ใช่โฟลเดอร์เซิร์ฟเวอร์",
+  "Could not move the server to the trash: {error}": "ย้ายเซิร์ฟเวอร์ไปถังขยะไม่ได้: {error}",
+  "Public IP lookup failed": "ค้นหา IP สาธารณะไม่สำเร็จ"
 }

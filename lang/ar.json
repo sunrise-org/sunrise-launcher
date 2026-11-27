@@ -1931,5 +1931,17 @@
   "Sunrise couldn't settle the profile's install transaction. The profile can't be used yet. Any recovery data was kept.": "تعذّر على Sunrise إنهاء معاملة تثبيت الملف الشخصي. لا يمكن استخدام الملف الشخصي بعد. تم الاحتفاظ ببيانات الاسترداد.",
   "Sunrise couldn't verify the full mod set for this build. Nothing was switched.": "تعذّر على Sunrise التحقق من مجموعة الإضافات كاملة لهذا البناء. لم يتم التبديل.",
   "Sunrise couldn't verify the installed mod set. Nothing was installed.": "تعذّر على Sunrise التحقق من مجموعة الإضافات المثبّتة. لم يتم تثبيت شيء.",
-  "Sunrise didn't start: the game launch is no longer active or could not be verified.": "لم يبدأ Sunrise: لم يعد تشغيل اللعبة نشطًا أو تعذّر التحقق منه."
+  "Sunrise didn't start: the game launch is no longer active or could not be verified.": "لم يبدأ Sunrise: لم يعد تشغيل اللعبة نشطًا أو تعذّر التحقق منه.",
+  "Sunrise hasn't reviewed this code. Building and playing run the author's code on your computer.": "لم يراجع Sunrise هذه الشيفرة. يؤدي البناء واللعب إلى تشغيل شيفرة المؤلف على كمبيوترك.",
+  "Sunrise may have started. Close the game if it opened before trying again.\nWrapper: {wrapper}\n{reason}": "قد يكون Sunrise قد بدأ. أغلق اللعبة إن فُتحت قبل المحاولة مجددًا.\nWrapper: {wrapper}\n{reason}",
+  "Sunrise started, but the launcher couldn't confirm that it stopped. Close the game if it's still open.\n{reason}": "بدأ Sunrise، لكن تعذّر على المشغّل تأكيد توقفه. أغلق اللعبة إن كانت لا تزال مفتوحة.\n{reason}",
+  "Switch anyway": "التبديل على أي حال",
+  "Switch anyway? [y/N]": "هل تريد التبديل على أي حال؟ [y/N]",
+  "Switch cancelled. Nothing was switched.": "أُلغي التبديل. لم يتم التبديل.",
+  "Switch to {build}": "التبديل إلى {build}",
+  "That GitHub archive is already installed. Nothing was changed.": "أرشيف GitHub هذا مثبّت بالفعل. لم يتغير شيء.",
+  "The Downloads folder isn't available.": "مجلد التنزيلات غير متاح.",
+  "The GitHub download has more than one package for {mod}.": "يحتوي تنزيل GitHub على أكثر من حزمة لـ {mod}.",
+  "The GitHub mod download is too large.": "تنزيل إضافة GitHub كبير جدًا.",
+  "The GitHub mod package was not valid.": "حزمة إضافة GitHub غير صالحة."
 }
