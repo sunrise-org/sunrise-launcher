@@ -2533,5 +2533,15 @@
   "Public IP unavailable": "عنوان IP العام غير متاح",
   "Refresh public IP": "تحديث عنوان IP العام",
   "Detect public IP": "اكتشاف عنوان IP عام",
-  "Local connections only": "الاتصالات المحلية فقط"
+  "Local connections only": "الاتصالات المحلية فقط",
+  "Public IPv4 unavailable for this listener": "عنوان IPv4 العام غير متاح لهذا المستمع",
+  "A Horizon community server": "خادم مجتمعي من Horizon",
+  "Added · builds when you play": "أُضيف · يُبنى أثناء اللعب",
+  "Address coming soon": "سيُتاح العنوان قريبًا",
+  "Another installed mod uses this ID.": "تستخدم إضافة أخرى مثبّتة هذا المعرّف.",
+  "Coming soon": "قريبًا",
+  "Continue playing lists one world a row.": "تعرض صفحة متابعة اللعب عالمًا واحدًا في كل صف.",
+  "Continue playing shows the worlds' pictures side by side, as many as fit across; the rest wrap under them.": "تعرض صفحة متابعة اللعب صور العوالم جنبًا إلى جنب بحسب المساحة، وتنتقل الصور الباقية إلى الصفوف التالية.",
+  "Discard": "تجاهل",
+  "Discard your changes?": "هل تريد تجاهل تغييراتك؟"
 }
