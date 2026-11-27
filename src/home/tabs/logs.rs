@@ -23,6 +23,7 @@ pub(super) struct Logs {
     search: LineEdit,
     focus: Option<FocusHandle>,
     follow: bool,
+    level: Level,
     /// The last run's `latest.log`, shown while this session has no lines.
     file: Option<FileLog>,
     /// A read of `file` is running off the UI thread.
@@ -42,6 +43,7 @@ impl Default for Logs {
             search: LineEdit::new(String::new(), 128, 24),
             focus: None,
             follow: true,
+            level: Level::All,
             file: None,
             reading: false,
             checked: None,
@@ -96,6 +98,25 @@ fn scroll_key(scroll: &ScrollHandle, key: &str) -> bool {
     };
     scroll.set_offset(gpui::point(old.x, y.clamp(-max, px(0.))));
     true
+}
+
+/// Which lines show: every one, warnings and errors, or errors only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Level {
+    All,
+    Warnings,
+    Errors,
+}
+
+impl Level {
+    /// The least `severity` a line has to have.
+    fn floor(self) -> u8 {
+        match self {
+            Self::All => 0,
+            Self::Warnings => 1,
+            Self::Errors => 2,
+        }
+    }
 }
 
 /// What the log area has to say when it has no line to show.
@@ -194,6 +215,11 @@ impl Launcher {
             let folder = folder.clone();
             folder_button("home-logs-folder").on_click(move |_, _, cx| open_logs(cx, &folder))
         };
+        let latest = folder.join("latest.log");
+        let open_file = latest.is_file().then(|| {
+            secondary("home-logs-open-file", tr("Open file"))
+                .on_click(move |_, _, cx| crate::toast::open(cx, &latest))
+        });
         let toolbar = has_lines.then(|| self.log_toolbar(&focus, copy, window, cx));
         div()
             .flex_1()
@@ -213,7 +239,7 @@ impl Launcher {
                     .justify_between()
                     .gap(px(10.))
                     .child(strip)
-                    .child(open),
+                    .child(div().flex().items_center().gap(px(8.)).child(open_file).child(open)),
             )
             .children(toolbar)
             .children(self.share_panel(&instance.home, cx))
@@ -285,6 +311,7 @@ impl Launcher {
                     .items_center()
                     .gap(px(16.))
                     .child(self.log_search(focus, window, cx))
+                    .child(self.level_choice(cx))
                     .child(follow),
             )
             .child(
@@ -295,6 +322,29 @@ impl Launcher {
                     .child(copy_button("home-logs-copy", tr("Copy"), copy))
                     .child(share),
             )
+    }
+
+    /// All, Warnings or Errors: which lines the log shows.
+    fn level_choice(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let this = cx.entity().downgrade();
+        let options = [
+            (Level::All, SharedString::from(tr("All"))),
+            (Level::Warnings, SharedString::from(tr("Warnings"))),
+            (Level::Errors, SharedString::from(tr("Errors"))),
+        ];
+        crate::widgets::choice::choices(
+            "home-logs-level",
+            &options,
+            self.ui.home.tabs.logs.level,
+            move |level, _, cx| {
+                let _ = this.update(cx, |this, cx| {
+                    let logs = &mut this.ui.home.tabs.logs;
+                    logs.level = level;
+                    logs.seen.set((u64::MAX, 0));
+                    cx.notify();
+                });
+            },
+        )
     }
 
     /// The search field: the text lines must contain, Escape to leave it.
@@ -374,6 +424,7 @@ impl Launcher {
         let total = all.len();
         let shown: Vec<&str> = all
             .into_iter()
+            .filter(|line| severity(line) >= logs.level.floor())
             .filter(|line| search.is_empty() || game_log::matches(line, search))
             .collect();
         let sunken = div()
@@ -396,7 +447,7 @@ impl Launcher {
         let body = if shown.is_empty() {
             sunken.child(empty_state(
                 tr("No line matches"),
-                tr("Clear the search to see the whole log."),
+                tr("Clear the search or pick All to see the whole log."),
                 None,
             ))
         } else {
