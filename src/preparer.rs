@@ -206,17 +206,21 @@ impl Handoff<'_> {
 /// Runs `command` to its end, each stdout line to `out`; stderr is read beside it (so no pipe
 /// fills) and its lines returned.
 ///
-/// A stop is checked while the child runs, not only once its output ends: after a stop, the
-/// output, the child's exit and the stderr reader are each waited for at most
-/// [`STOPPED_WAIT`], as the stop kills the child's group once its grace is over (review of
-/// #615).
+/// Nothing here waits without a deadline: one loop takes the output, sees whether the child
+/// ended and checks the stop, each with a timed wait (review of #670). The child's process group
+/// is its own, and the child is reaped only at the very end, so until then its zombie keeps its
+/// PID, and the group's ID, from going to another process: a kill of the group can't reach
+/// anything else ([`next`], [`finish`]). After a stop the group gets SIGTERM, then SIGKILL once
+/// the grace is over or as soon as the child has ended, whichever is first, so nothing it left in
+/// the group keeps the preparation lock. The output is read through a bounded queue, so a child
+/// that floods it is held back by its pipe rather than grow the launcher's memory.
 fn run(
     mut command: Command,
     out: &mut dyn FnMut(String),
     handoff: Option<&Handoff<'_>>,
 ) -> Result<(ExitStatus, Vec<String>), String> {
     use crate::process::owned::Owned;
-    use std::sync::mpsc::RecvTimeoutError;
+    use std::sync::mpsc::{sync_channel, RecvTimeoutError, TryRecvError};
     let stop = handoff.and_then(Handoff::stop);
     if let Some(stop) = stop {
         stop.check()?;
@@ -231,81 +235,191 @@ fn run(
         Owned::spawn(&mut command)
     }
     .map_err(unrun)?;
-    let _tracked = match stop {
-        Some(stop) => Some(stop.track_process(child.child().id())?),
+    let pid = child.child().id();
+    let tracked = match stop {
+        Some(stop) => Some(stop.track_process(pid)?),
         None => None,
     };
     drop(child.child().stdin.take());
     let stderr = child.child().stderr.take().expect("piped");
-    let (errors_tx, errors_rx) = std::sync::mpsc::channel();
+    let (errors_tx, errors_rx) = sync_channel(1);
     std::thread::spawn(move || {
         let _ = errors_tx.send(tail(stderr));
     });
     let stdout = child.child().stdout.take().expect("piped");
-    let (lines_tx, lines_rx) = std::sync::mpsc::channel();
+    let (lines_tx, lines_rx) = sync_channel::<std::io::Result<String>>(QUEUE);
     std::thread::spawn(move || {
+        let mut read = 0;
         for text in lines(stdout) {
-            if lines_tx.send(text).is_err() {
+            let text = match text {
+                Ok(text) => text,
+                Err(error) => {
+                    let _ = lines_tx.send(Err(error));
+                    break;
+                }
+            };
+            read += text.len();
+            // Past the cap the rest is drained unread, so the preparer never blocks on a full
+            // pipe and nothing past it is queued.
+            if read > MAX_OUTPUT {
+                continue;
+            }
+            if lines_tx.send(Ok(text)).is_err() {
                 break;
             }
         }
     });
     let stopped = || stop.is_some_and(crate::native_mods::Cancellation::is_stopped);
-    // When the stop came, once one did: from then on every wait is bounded.
-    let mut stopped_at = None;
-    let give_up = |stopped_at: &mut Option<Instant>| {
-        if stopped() {
-            stopped_at.get_or_insert_with(Instant::now).elapsed() > STOPPED_WAIT
-        } else {
-            false
-        }
-    };
-    let mut read = 0;
+    let mut watch = Watch::default();
+    let (mut stdout_open, mut errors, mut exited, mut failed) = (true, None, false, None);
     loop {
-        match lines_rx.recv_timeout(POLL) {
-            Ok(text) => {
-                let text = text.map_err(unrun)?;
-                read += text.len();
-                // Past the cap the rest is drained unread, so the preparer never blocks on a full pipe.
-                if read <= MAX_OUTPUT {
-                    out(text);
+        if stdout_open {
+            match lines_rx.recv_timeout(POLL) {
+                Ok(Ok(text)) => out(text),
+                Ok(Err(error)) => {
+                    failed = Some(unrun(error));
+                    stdout_open = false;
                 }
+                Err(RecvTimeoutError::Disconnected) => stdout_open = false,
+                Err(RecvTimeoutError::Timeout) => {}
             }
-            Err(RecvTimeoutError::Disconnected) => break,
-            Err(RecvTimeoutError::Timeout) => {}
+        } else {
+            std::thread::sleep(POLL);
         }
-        if give_up(&mut stopped_at) {
-            return Err(crate::native_mods::CANCELLED.into());
+        if errors.is_none() {
+            match errors_rx.try_recv() {
+                Ok(lines) => errors = Some(lines),
+                Err(TryRecvError::Disconnected) => errors = Some(Vec::new()),
+                Err(TryRecvError::Empty) => {}
+            }
+        }
+        if !exited {
+            exited = ended_unreaped(&mut child).map_err(unrun)?;
+        }
+        let pipes_open = stdout_open || errors.is_none();
+        match next(&mut watch, stopped(), exited, pipes_open, Instant::now()) {
+            Next::Wait => {}
+            Next::Kill => crate::native_mods::kill_group(pid),
+            // Given up only once the stop's wait is over, or once the child had ended and its
+            // group was killed: whatever still holds its output left the group.
+            Next::Done | Next::GiveUp => break,
         }
     }
-    let status = loop {
-        if !stopped() {
-            break child.wait().map_err(unrun)?;
-        }
-        if let Some(status) = child.try_wait().map_err(unrun)? {
-            break status;
-        }
-        if give_up(&mut stopped_at) {
-            return Err(crate::native_mods::CANCELLED.into());
-        }
-        std::thread::sleep(POLL);
-    };
-    let errors = if stopped() {
-        errors_rx.recv_timeout(STOPPED_WAIT).unwrap_or_default()
-    } else {
-        errors_rx.recv().unwrap_or_default()
-    };
-    if let Some(stop) = stop {
-        stop.check()?;
+    let status = finish(move || drop(tracked), move || reap(child, exited));
+    if stopped() {
+        return Err(crate::native_mods::CANCELLED.into());
     }
-    Ok((status, errors))
+    if let Some(failed) = failed {
+        return Err(failed);
+    }
+    // Without a stop the loop ends only once the child has, so it was reaped.
+    let status = status.ok_or_else(|| unrun(std::io::Error::other("it did not end")))?;
+    Ok((status, errors.unwrap_or_default()))
 }
 
 /// How often a running child's stop is checked while its output is awaited.
 const POLL: Duration = Duration::from_millis(100);
-/// The longest a stopped child is waited for: its grace, then a margin for the kill to land.
+/// The longest a stopped child, or the output of one that ended, is waited for: the grace,
+/// then a margin for the kill to land.
 const STOPPED_WAIT: Duration =
     crate::native_mods::STOP_GRACE.saturating_add(Duration::from_secs(3));
+/// The most stdout lines queued between the reader and [`run`]: a child that writes faster
+/// than they are taken waits on its pipe. Each line is at most [`MAX_LINE`].
+const QUEUE: usize = 64;
+
+/// What [`run`] has seen of a child's end so far.
+#[derive(Default)]
+struct Watch {
+    stopped_at: Option<Instant>,
+    ended_at: Option<Instant>,
+    killed: bool,
+}
+
+/// What [`run`] does next.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Next {
+    Wait,
+    /// SIGKILL to the child's group, which is safe while the child is not reaped.
+    Kill,
+    /// Reap the child and return.
+    Done,
+    /// Stop waiting: reap the child if it ended, and return.
+    GiveUp,
+}
+
+/// The next step of [`run`], given whether a stop came, whether the child has ended (it is not
+/// reaped yet) and whether its output is still open. A stopped child's group is killed before
+/// the child is reaped, as soon as the child has ended or the grace is over. So a process it left
+/// in the group, that ignores SIGTERM or holds the lock, is ended too.
+fn next(watch: &mut Watch, stopped: bool, ended: bool, pipes_open: bool, now: Instant) -> Next {
+    if stopped {
+        let at = *watch.stopped_at.get_or_insert(now);
+        if !watch.killed && (ended || now.duration_since(at) >= crate::native_mods::STOP_GRACE) {
+            watch.killed = true;
+            return Next::Kill;
+        }
+        if ended && !pipes_open {
+            return Next::Done;
+        }
+        if now.duration_since(at) > STOPPED_WAIT {
+            return Next::GiveUp;
+        }
+        return Next::Wait;
+    }
+    if ended {
+        if !pipes_open {
+            return Next::Done;
+        }
+        // Something it started still holds its output: its group is killed after the grace.
+        let at = *watch.ended_at.get_or_insert(now);
+        if !watch.killed && now.duration_since(at) >= crate::native_mods::STOP_GRACE {
+            watch.killed = true;
+            return Next::Kill;
+        }
+        if now.duration_since(at) > STOPPED_WAIT {
+            return Next::GiveUp;
+        }
+    }
+    Next::Wait
+}
+
+/// The end of a run, in the order that keeps a signal from reaching another process: the stop
+/// forgets the child's PID first, then the child is reaped and its PID can go to another one.
+fn finish<T>(untrack: impl FnOnce(), reap: impl FnOnce() -> T) -> T {
+    untrack();
+    reap()
+}
+
+/// Reaps a child that has ended. One that hasn't, after a stop and a kill, is left to a thread
+/// to reap, so the run never waits on it.
+fn reap(mut child: crate::process::owned::Owned, ended: bool) -> Option<ExitStatus> {
+    if ended {
+        return child.wait().ok();
+    }
+    std::thread::spawn(move || drop(child));
+    None
+}
+
+/// Whether the child has ended, without reaping it: on Unix its zombie stays, keeping its PID.
+#[cfg(unix)]
+fn ended_unreaped(child: &mut crate::process::owned::Owned) -> std::io::Result<bool> {
+    // SAFETY: a zeroed siginfo_t is valid for waitid to fill, and the PID is this run's child.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let pid = child.child().id() as libc::id_t;
+    let flags = libc::WEXITED | libc::WNOWAIT | libc::WNOHANG;
+    if unsafe { libc::waitid(libc::P_PID, pid, &mut info, flags) } == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: waitid filled `info`; si_pid is 0 when the child has not ended.
+    Ok(unsafe { info.si_pid() } != 0)
+}
+
+/// Whether the child has ended. On Windows the child's handle keeps its PID from reuse until it
+/// is dropped, and its job object ends the whole tree.
+#[cfg(windows)]
+fn ended_unreaped(child: &mut crate::process::owned::Owned) -> std::io::Result<bool> {
+    Ok(child.child().try_wait()?.is_some())
+}
 
 pub(crate) fn run_staged(
     command: Command,
@@ -806,5 +920,113 @@ esac"#,
             std::thread::sleep(Duration::from_millis(25));
         }
         panic!("preparer child {child_pid} survived process-group cancellation");
+    }
+
+    /// A stopped child's group is killed before the child is reaped, as soon as the child has
+    /// ended, so nothing it left in the group survives; and the run's last steps forget the PID
+    /// before the reap that frees it (review of #670).
+    #[test]
+    fn a_stopped_childs_group_is_killed_before_it_is_reaped_and_untracked_before_the_reap() {
+        let start = Instant::now();
+        let grace = crate::native_mods::STOP_GRACE;
+        // The child ended at once on SIGTERM and its output closed: the group is killed first.
+        let mut watch = Watch::default();
+        assert_eq!(next(&mut watch, true, true, false, start), Next::Kill);
+        assert_eq!(next(&mut watch, true, true, false, start), Next::Done);
+        // Still running after a stop: it gets the grace, then the kill, then a bounded wait.
+        let mut watch = Watch::default();
+        assert_eq!(next(&mut watch, true, false, true, start), Next::Wait);
+        assert_eq!(
+            next(&mut watch, true, false, true, start + grace),
+            Next::Kill
+        );
+        assert_eq!(
+            next(&mut watch, true, false, true, start + grace),
+            Next::Wait
+        );
+        assert_eq!(
+            next(&mut watch, true, false, true, start + STOPPED_WAIT + POLL),
+            Next::GiveUp
+        );
+        // No stop: a child that ended with its output closed is done.
+        let mut watch = Watch::default();
+        assert_eq!(next(&mut watch, false, true, false, start), Next::Done);
+        // Ended, but something it started holds its output: its group is killed after the grace.
+        let mut watch = Watch::default();
+        assert_eq!(next(&mut watch, false, true, true, start), Next::Wait);
+        assert_eq!(
+            next(&mut watch, false, true, true, start + grace),
+            Next::Kill
+        );
+        // The stop's record of the PID goes before the reap.
+        let order = std::cell::RefCell::new(Vec::new());
+        finish(
+            || order.borrow_mut().push("untrack"),
+            || order.borrow_mut().push("reap"),
+        );
+        assert_eq!(order.into_inner(), ["untrack", "reap"]);
+    }
+
+    /// A child that floods its stdout while the caller is slow to take it is held back by its
+    /// pipe: the launcher's memory doesn't grow with what the child writes (review of #670).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_child_flooding_its_output_does_not_grow_the_launchers_memory() {
+        const CHILD: &str = "SUNRISE_PREPARER_FLOOD_TEST";
+        if std::env::var_os(CHILD).is_none() {
+            let status = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "preparer::tests::a_child_flooding_its_output_does_not_grow_the_launchers_memory",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(
+                status.success(),
+                "the flood test failed in its child process"
+            );
+            return;
+        }
+        let peak = || {
+            let status = fs::read_to_string("/proc/self/status").unwrap();
+            let line = status
+                .lines()
+                .find(|l| l.starts_with("VmHWM:"))
+                .unwrap()
+                .to_owned();
+            line.split_whitespace()
+                .nth(1)
+                .unwrap()
+                .parse::<u64>()
+                .unwrap()
+                * 1024
+        };
+        let before = peak();
+        // 200 MB of 1000-byte lines, as fast as awk writes them.
+        let mut command = Command::new("sh");
+        command.args([
+            "-c",
+            "awk 'BEGIN { s = sprintf(\"%1000s\", \"\"); for (i = 0; i < 200000; i++) print s }'",
+        ]);
+        let mut first = true;
+        let (status, _) = run(
+            command,
+            &mut |_| {
+                // A slow caller: everything the child writes meanwhile would pile up unbounded.
+                if std::mem::take(&mut first) {
+                    std::thread::sleep(Duration::from_secs(3));
+                }
+            },
+            None,
+        )
+        .unwrap();
+        assert!(status.success());
+        let grew = peak().saturating_sub(before);
+        assert!(
+            grew < 64 << 20,
+            "the launcher's peak memory grew by {} MiB",
+            grew >> 20
+        );
     }
 }

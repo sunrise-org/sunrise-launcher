@@ -42,7 +42,7 @@ pub mod sdk_cache;
 pub use isolate::{kept as kept_left_out, kept_current, kept_stamp, Detail, LeftOut, Why};
 pub use picker::{Route, Routes};
 pub use tool::Cancellation;
-pub(crate) use tool::{is_cancelled_io, STOP_GRACE};
+pub(crate) use tool::{is_cancelled_io, kill_group, STOP_GRACE};
 mod workspace;
 pub(crate) use workspace::{ATTEMPT_PREFIX, OLD_ATTEMPT_PREFIX};
 mod uses;

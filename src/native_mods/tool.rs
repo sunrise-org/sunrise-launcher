@@ -162,25 +162,21 @@ impl Cancellation {
             return;
         }
         if let Some(pid) = state.tool {
+            // The one that runs it ends it outright once the grace is over: it alone knows the
+            // child is not reaped yet, so the PID is still the child's (review of #670).
             terminate_process(pid);
-            // One that ignores the request, or is stuck in the file system, is killed once
-            // the grace is over, if it still runs for this attempt (review of #615).
-            #[cfg(unix)]
-            {
-                let cancellation = self.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(STOP_GRACE);
-                    if cancellation.state().tool == Some(pid) {
-                        kill_process(pid);
-                    }
-                });
-            }
         }
     }
 }
 
 /// How long a stopped child's process group gets to end on its own before it is killed.
 pub(crate) const STOP_GRACE: Duration = Duration::from_secs(2);
+
+/// Ends the process group of child `pid` outright. Only for a child not reaped yet: its zombie
+/// keeps the PID, and so the group's ID, from going to another process.
+pub(crate) fn kill_group(pid: u32) {
+    kill_process(pid);
+}
 
 /// Asks the child's process group to end: SIGTERM on Unix. On Windows the tree is ended at once
 /// (`taskkill /T /F`), which is already the hard kill.
