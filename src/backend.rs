@@ -5382,9 +5382,10 @@ pub(crate) fn prepare_lock_at(
 /// Runs `tag`'s preparer on this thread to its end, each line it prints to `line`, then completes
 /// the version's resources under the same lock: a switch's preparation, and Prepare's.
 ///
-/// The child goes through the preparer's one runner ([`crate::preparer::run_staged`]), as every
-/// preparer child does: its group is stopped by `stop`, no wait on it is unbounded, and no early
-/// return leaves it running (review of #670).
+/// The child goes through the preparer's one runner
+/// ([`crate::preparer::run_staged_every_line`]), as every preparer child does: its group is
+/// stopped by `stop`, no wait on it is unbounded, and no early return leaves it running, and
+/// every line it writes reaches `line`, as on the release base (review of #670).
 pub fn run_preparation(
     tag: &str,
     cmd: Command,
@@ -5414,7 +5415,8 @@ fn run_preparer(
         .map_or(Ok(()), crate::native_mods::Cancellation::check)
         .and_then(|()| {
             let (cmd, runtime) = prepare_command(cmd)?;
-            let result = crate::preparer::run_staged(cmd, handoff, line).and_then(|()| then());
+            let result =
+                crate::preparer::run_staged_every_line(cmd, handoff, line).and_then(|()| then());
             runtime.game_exited();
             result
         });
