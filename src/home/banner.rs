@@ -285,11 +285,16 @@ impl Launcher {
                 rgb(p.muted).into(),
             ))
             .child(build)
-            .child(crate::glass_ui::icon(
-                "arrow-down-01",
-                14.,
-                rgb(p.muted).into(),
-            ))
+            .child(
+                div()
+                    .flex_none()
+                    .child(crate::widgets::motion_bits::chevron(
+                        "alt-build-chevron",
+                        self.ui.sheet == Some(Sheet::Build),
+                        14.,
+                        rgb(p.muted).into(),
+                    )),
+            )
             .when_some(tag, |d, tag| d.tooltip(crate::glass_ui::tip(tag)))
             .child(
                 gpui::canvas(
@@ -307,12 +312,15 @@ impl Launcher {
                 .absolute()
                 .inset_0(),
             );
-        change.on_click(cx.listener(|this, _, _, cx| {
-            if !this.launch_busy() && this.client.is_none() {
-                this.open_sheet(Sheet::Build);
-            }
-            cx.notify();
-        }))
+        // It sinks a pixel while held, as the shared dropdown's field does.
+        crate::widgets::press(change, &SharedString::from("alt-build"), |d| d.top(px(1.))).on_click(
+            cx.listener(|this, _, _, cx| {
+                if !this.launch_busy() && this.client.is_none() {
+                    this.open_sheet(Sheet::Build);
+                }
+                cx.notify();
+            }),
+        )
     }
 
     /// Play: a Primary button at Play's height. It is still the one entry point for Play's

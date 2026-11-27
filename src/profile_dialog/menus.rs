@@ -186,15 +186,17 @@ impl Launcher {
                     (Channel::Dev, true) => tr("No Dev build yet."),
                     _ => describe(option),
                 };
-                let row = menu_row(
+                // A channel with no build yet can't be picked: Stable and Dev rows are dimmed.
+                let row = dropdown::row_when(
                     id,
                     follows(option),
-                    Some(sub.to_owned()),
+                    Some(SharedString::from(sub)),
                     pin.is_none() && channel == option,
+                    !unavailable,
                 );
                 rows.push(
-                    (if option == Channel::Dev && unavailable {
-                        row.opacity(0.5).cursor_default().tab_stop(false)
+                    (if unavailable {
+                        row
                     } else {
                         row.on_click(cx.listener(move |this, _, _, cx| {
                             if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {

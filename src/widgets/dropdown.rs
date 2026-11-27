@@ -97,8 +97,9 @@ pub(crate) fn trigger(
             ),
         )
         .child(div().truncate().child(face.text));
-    super::field::field_box(open, false)
+    let el = super::field::field_box(open, false)
         .id(id.clone())
+        .relative()
         .reach_edge()
         .gap(px(8.))
         .when(fill, |d| d.w_full())
@@ -126,7 +127,13 @@ pub(crate) fn trigger(
             14.,
             c(p.muted),
         )))
-        .child(marker(id))
+        .child(marker(id.clone()));
+    // The field sinks a pixel while it is held, as a button does.
+    if enabled {
+        press(el, &id, |d| d.top(px(1.)))
+    } else {
+        el
+    }
 }
 
 /// One row of a menu: a heading, a muted line under it when there is one, and a tick when it is
@@ -136,6 +143,18 @@ pub(crate) fn row(
     head: impl Into<SharedString>,
     sub: Option<SharedString>,
     current: bool,
+) -> Stateful<Div> {
+    row_when(id, head, sub, current, true)
+}
+
+/// A [`row`] that is pressable only when `enabled`: a disabled one is dimmed, takes no hover and
+/// is not a Tab stop. The caller adds no press to it.
+pub(crate) fn row_when(
+    id: impl Into<ElementId>,
+    head: impl Into<SharedString>,
+    sub: Option<SharedString>,
+    current: bool,
+    enabled: bool,
 ) -> Stateful<Div> {
     let p = palette();
     div()
@@ -148,8 +167,10 @@ pub(crate) fn row(
         .py(px(4.))
         .min_h(px(ROW_H))
         .rounded(tokens::r(tokens::R_SMALL))
-        .cursor_pointer()
-        .hover(|s| s.bg(c(p.hover)))
+        .when(enabled, |d| d.cursor_pointer().hover(|s| s.bg(c(p.hover))))
+        .when(!enabled, |d| {
+            d.opacity(0.5).cursor_default().tab_stop(false)
+        })
         .child(
             div()
                 .flex_1()
@@ -469,11 +490,12 @@ impl Dropdown {
         let count = items.len();
         let mut rows: Vec<AnyElement> = Vec::new();
         for (n, item) in items.into_iter().enumerate() {
-            let line = row(
+            let line = row_when(
                 ElementId::from((key.clone(), n)),
                 item.label,
                 item.sub,
                 item.current,
+                item.enabled,
             );
             let line = if item.enabled {
                 let (pick, close) = (pick.clone(), close.clone());
@@ -482,7 +504,7 @@ impl Dropdown {
                     close(window, cx);
                 })
             } else {
-                line.opacity(0.5).cursor_default().tab_stop(false)
+                line
             };
             rows.push(line.into_any_element());
             if item.rule_after {

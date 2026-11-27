@@ -9,12 +9,6 @@ use sunrise_launcher::{
 };
 
 impl Launcher {
-    /// Queue the saved profile's Play target, not the former dialog draft.
-    pub(super) fn profile_creation_download(&self, saved: &instances::Instance) -> Option<Release> {
-        let tag = self.target_version(saved.version.as_ref(), saved.channel)?;
-        self.release_to_install(tag)
-    }
-
     /// The exact build the profile will play, including an explicit pin.
     pub(super) fn target_version<'a>(
         &'a self,
@@ -449,7 +443,7 @@ mod tests {
     }
 
     #[test]
-    fn creation_download_uses_the_saved_copy_pin_instead_of_follow_latest() {
+    fn a_new_profile_targets_its_saved_pin_instead_of_follow_latest() {
         let saved = "nightly-2026-11-16-aaaaaaa".to_owned();
         let newest = "nightly-2026-11-20-bbbbbbb";
         let releases = [release(newest, true, true), release(&saved, true, true)];

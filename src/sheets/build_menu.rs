@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::widgets::button::secondary;
+use gpui::AnimationExt as _;
 
 impl Launcher {
     /// The latest published build, or the latest installed one when the channel is offline.
@@ -307,7 +308,14 @@ impl Launcher {
                     .text_color(rgb(palette().text))
                     .on_mouse_down(MouseButton::Left, |_: &MouseDownEvent, _, cx| {
                         cx.stop_propagation()
-                    }),
+                    })
+                    // It fades in from 4 px higher up, as the shared dropdown's menu does, and
+                    // is simply there under reduced motion.
+                    .with_animation(
+                        SharedString::from(format!("{plate}-in")),
+                        crate::motion::eased(sunrise_launcher_theme::QUICK),
+                        move |d, t| d.top(px(top - 4. * (1. - t))).opacity(t),
+                    ),
             )
     }
 }

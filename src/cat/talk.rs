@@ -56,8 +56,11 @@ const FADE_OUT: f32 = 300.;
 /// How long a bubble of a line `chars` long lives in ms, fades included: a base and a little
 /// per character so a longer line can be read, but never more than the cap.
 pub(super) fn lasts(chars: usize) -> f32 {
-    (3500. + 60. * chars as f32).min(7000.)
+    (2800. + 45. * chars as f32).min(5500.)
 }
+
+/// How many clicks a random line sits out after it was said.
+const REST: usize = 4;
 
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 pub(super) struct Talk {
@@ -66,7 +69,9 @@ pub(super) struct Talk {
     stage: usize,
     /// Which of the escalations it is saying, once the pestering has started.
     sequence: usize,
-    last_line: Option<usize>,
+    /// The random lines said last, newest first: none of them comes again until it has sat out
+    /// [`REST`] clicks.
+    recent: [Option<usize>; REST],
 }
 
 /// One answer to a click: the line (an English key, for `tr`) and whether the cat leaves after it.
@@ -92,25 +97,27 @@ pub(super) fn next_line(talk: Talk, now: f32, roll: f32) -> (Said, Talk) {
         let line = steps[talk.stage.min(steps.len() - 1)];
         let leaves = talk.stage + 1 >= steps.len();
         let next = if leaves {
-            // It is gone; whatever comes back starts from nothing.
-            Talk::default()
+            // It is gone; whatever comes back starts from nothing but the lines it just said.
+            Talk {
+                recent: talk.recent,
+                ..Talk::default()
+            }
         } else {
             Talk {
                 last_click: Some(now),
                 stage: talk.stage + 1,
                 sequence,
-                last_line: talk.last_line,
+                recent: talk.recent,
             }
         };
         return (Said { line, leaves }, next);
     }
-    // One of the others than the last, spread evenly over them.
-    let count = LINES.len() - usize::from(talk.last_line.is_some());
-    let k = ((roll.clamp(0., 0.999_999) * count as f32) as usize).min(count - 1);
-    let pick = match talk.last_line {
-        Some(last) if k >= last => k + 1,
-        _ => k,
-    };
+    // One of the lines not said in the last few clicks, spread evenly over them.
+    let open: Vec<usize> = (0..LINES.len())
+        .filter(|n| !talk.recent.contains(&Some(*n)))
+        .collect();
+    let k = ((roll.clamp(0., 0.999_999) * open.len() as f32) as usize).min(open.len() - 1);
+    let pick = open[k];
     let said = Said {
         line: LINES[pick],
         leaves: false,
@@ -119,7 +126,7 @@ pub(super) fn next_line(talk: Talk, now: f32, roll: f32) -> (Said, Talk) {
         last_click: Some(now),
         stage: 0,
         sequence: 0,
-        last_line: Some(pick),
+        recent: [Some(pick), talk.recent[0], talk.recent[1], talk.recent[2]],
     };
     (said, next)
 }

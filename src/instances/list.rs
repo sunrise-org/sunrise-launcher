@@ -1,8 +1,8 @@
 //! Listing the instances, finding one by name or id, and the Play selection.
 use super::*;
 
-/// The instances, by the default game home and the launcher's data folder: Sunrise first, then
-/// by group and name.
+/// The instances, by the default game home and the launcher's data folder: by group and the
+/// player's order, then name. Sunrise is first until it is moved.
 pub fn list() -> Vec<Instance> {
     list_in(&backend::game_home(), &backend::data_dir())
 }
@@ -208,10 +208,12 @@ fn list_snapshot(
             (order, instance)
         })
         .collect();
-    // The default profile stays first; the rest go by group, then the player's own order (the
-    // ones never moved come after, by name).
-    out[1..].sort_by_key(|(order, i)| {
+    // By group, then the player's own order (the ones never moved come after, by name). The
+    // default profile is placed like the rest, but until it is first moved it stays first, as it
+    // always was.
+    out.sort_by_key(|(order, i)| {
         (
+            !(i.kind == Kind::Default && order.is_none()),
             i.group.clone(),
             order.is_none(),
             order.unwrap_or(0),
@@ -219,6 +221,14 @@ fn list_snapshot(
         )
     });
     out.into_iter().map(|(_, i)| i).collect()
+}
+
+/// The default profile of `all`, which is no longer always the first of them.
+fn default_of(all: &[Instance]) -> Instance {
+    all.iter()
+        .find(|i| i.kind == Kind::Default)
+        .unwrap_or(&all[0])
+        .clone()
 }
 
 /// The instance an id, a name (any case) or a pack's folder name names.
@@ -261,7 +271,7 @@ pub fn selected() -> Instance {
     backend::Settings::load()
         .instance
         .and_then(|id| all.iter().find(|i| i.id == id).cloned())
-        .unwrap_or_else(|| all[0].clone())
+        .unwrap_or_else(|| default_of(&all))
 }
 
 /// The saved selection when it names an instance that isn't listed any more: a pack an earlier
@@ -305,7 +315,7 @@ pub(super) fn selection_in(all: &[Instance], saved: Option<&str>) -> Result<Inst
     }
     Ok(saved
         .and_then(|id| all.iter().find(|i| i.id == id).cloned())
-        .unwrap_or_else(|| all[0].clone()))
+        .unwrap_or_else(|| default_of(all)))
 }
 
 pub fn select(query: &str) -> Result<Instance, String> {

@@ -114,30 +114,28 @@ impl Launcher {
                 cx.notify();
             })),
         );
-        if target.kind != instances::Kind::Default {
-            let (up, down) = instances::move_options(&self.instances.list, target);
-            for (id, icon, label, way, on) in [
-                ("profile-menu-up", "arrow-up-01", tr("Move up"), true, up),
-                (
-                    "profile-menu-down",
-                    "arrow-down-01",
-                    tr("Move down"),
-                    false,
-                    down,
-                ),
-            ] {
-                if !on {
-                    continue;
-                }
-                let moved = target.id.clone();
-                rows.push(Row::new(id, icon, label, p.text).draw(cx.listener(
-                    move |this, _, _, cx| {
-                        this.close_profile_action();
-                        this.move_profile(&moved, way);
-                        cx.notify();
-                    },
-                )));
+        let (up, down) = instances::move_options(&self.instances.list, target);
+        for (id, icon, label, way, on) in [
+            ("profile-menu-up", "arrow-up-01", tr("Move up"), true, up),
+            (
+                "profile-menu-down",
+                "arrow-down-01",
+                tr("Move down"),
+                false,
+                down,
+            ),
+        ] {
+            if !on {
+                continue;
             }
+            let moved = target.id.clone();
+            rows.push(Row::new(id, icon, label, p.text).draw(cx.listener(
+                move |this, _, _, cx| {
+                    this.close_profile_action();
+                    this.move_profile(&moved, way);
+                    cx.notify();
+                },
+            )));
         }
         rows
     }

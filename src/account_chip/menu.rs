@@ -2,14 +2,15 @@
 //! opens beside a row with that account's actions.
 //!
 //! The card is the shared menu look (`widgets::dropdown`, the profile menu): raised fill, line
-//! border, `R_CONTROL` corners, 4 px padding, 32 px rows filled on hover. Each account row ends in
-//! a chevron; the pointer resting on the row, or a press on the chevron, opens the submenu to the
+//! border, `R_CONTROL` corners, 4 px padding, 32 px rows filled on hover. Each account row starts
+//! with a chevron pointing left, the way its submenu opens; the pointer resting on the row, or a
+//! press on the chevron, opens the submenu to the
 //! left of the card (the card hangs from the window's right edge). It fades and slides in on
 //! `QUICK`, and closes a moment after the pointer has left both the row and the submenu, so a path
 //! across the gap between them doesn't lose it.
 use super::*;
 use crate::widgets::dropdown;
-use gpui::{MouseButton, MouseDownEvent};
+use gpui::{MouseButton, MouseDownEvent, MouseMoveEvent};
 use std::time::Duration;
 
 /// An account row: its face, and the name with its status right under it.
@@ -20,7 +21,7 @@ const SUB_GAP: f32 = 2.;
 /// How long the pointer may be away from the row and the submenu before the submenu closes.
 const LEAVE_DELAY: Duration = Duration::from_millis(220);
 /// How far the submenu slides while it fades in.
-const SLIDE: f32 = 6.;
+const SLIDE: f32 = 4.;
 
 /// One 32 px row: an icon and a label, filled on hover, a Tab stop.
 fn item(id: &'static str, icon: &'static str, label: &str, ink: u32) -> Stateful<Div> {
@@ -94,7 +95,7 @@ impl Launcher {
         .detach();
     }
 
-    /// One account's row: press the face and name to play as it; the chevron opens its submenu.
+    /// One account's row: the chevron opens its submenu; press the face and name to play as it.
     fn account_row(&self, n: usize, row: Row, cx: &mut Context<Self>) -> Stateful<Div> {
         let p = palette();
         let open = self.account_menu.sub.as_deref() == Some(row.uuid.as_str());
@@ -155,13 +156,14 @@ impl Launcher {
             .id(ElementId::named_usize("account-menu-more", n))
             .reach()
             .flex_none()
-            .size(px(28.))
+            .w(px(22.))
+            .h(px(28.))
             .flex()
             .items_center()
             .justify_center()
             .cursor_pointer()
             .child(crate::glass_ui::icon(
-                "arrow-right-01",
+                "arrow-left-01",
                 14.,
                 rgb(if open { p.text } else { p.muted }).into(),
             ))
@@ -177,6 +179,7 @@ impl Launcher {
             .flex()
             .items_center()
             .h(px(ACCOUNT_ROW))
+            .pl(px(2.))
             .pr(px(4.))
             .rounded(crate::tokens::r(crate::tokens::R_SMALL))
             .when(open, |d| d.bg(rgb(p.hover)))
@@ -191,8 +194,8 @@ impl Launcher {
                 .absolute()
                 .inset_0(),
             )
-            .child(main)
             .child(chevron)
+            .child(main)
             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                 if *hovered {
                     this.sub_enter(&enter, cx);
@@ -284,9 +287,12 @@ impl Launcher {
             .on_hover(cx.listener({
                 let uuid = uuid.clone();
                 move |this, hovered: &bool, _, cx| {
+                    this.account_menu.in_sub = *hovered;
                     if *hovered {
+                        this.menu_enter();
                         this.sub_enter(&uuid, cx);
                     } else {
+                        this.menu_leave(cx);
                         this.sub_leave(cx);
                     }
                 }
@@ -305,7 +311,12 @@ impl Launcher {
     pub(crate) fn account_menu(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         if !shows(self.ui.sheet, self.sign_in_screen.open) {
             self.account_menu.sub = None;
+            self.menu_closed();
             return None;
+        }
+        self.account_menu.was_open = true;
+        if self.account_menu.sub.is_none() {
+            self.account_menu.in_sub = false;
         }
         let (top, right) = place(self.account_menu.chip.get(), self.window_width);
         let mut list = div()
@@ -335,6 +346,7 @@ impl Launcher {
                 }))
         };
         let card = card()
+            .id("account-menu-card")
             .absolute()
             .top(px(top))
             .right(px(right))
@@ -370,7 +382,21 @@ impl Launcher {
                 "sliders-horizontal",
                 tr("Settings"),
                 Action::Settings,
-            ));
+            ))
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                this.account_menu.in_card = *hovered;
+                if *hovered {
+                    this.menu_enter();
+                } else {
+                    this.menu_leave(cx);
+                }
+            }))
+            // As the dropdown's menu: it fades in from 4 px nearer the chip.
+            .with_animation(
+                "account-menu-in",
+                crate::motion::eased(sunrise_launcher_theme::QUICK),
+                move |d, t| d.opacity(t).top(px(top - SLIDE * (1. - t))),
+            );
         Some(
             div()
                 .id("account-menu")
@@ -378,6 +404,9 @@ impl Launcher {
                 .inset_0()
                 .occlude()
                 .on_scroll(|_, _, cx| cx.stop_propagation())
+                .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
+                    this.pointer_moved(ev.position, cx)
+                }))
                 // On the layer, which has the keyboard until a row does.
                 .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                     let back = match ev.keystroke.key.as_str() {

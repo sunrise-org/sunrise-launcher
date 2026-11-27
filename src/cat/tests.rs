@@ -206,16 +206,21 @@ mod talk {
     }
 
     #[test]
-    fn a_first_click_gets_a_random_line_and_never_the_same_one_twice_in_a_row() {
+    fn a_random_line_sits_out_the_next_four_clicks() {
         let mut talk = Talk::default();
-        let mut last = "";
+        let mut said_lately: Vec<&str> = Vec::new();
         // Clicks far apart, so none escalates, with every roll there is.
         for i in 0..400 {
             let roll = (i % 20) as f32 / 20.;
             let (said, next) = click(talk, i as f32 * 10_000., roll);
             assert!(LINES.contains(&said.line) && !said.leaves);
-            assert_ne!(said.line, last);
-            last = said.line;
+            assert!(
+                !said_lately.contains(&said.line),
+                "{} came back too soon",
+                said.line
+            );
+            said_lately.insert(0, said.line);
+            said_lately.truncate(4);
             talk = next;
         }
     }
@@ -292,11 +297,11 @@ mod talk {
 
     #[test]
     fn a_longer_line_stays_longer_up_to_a_cap() {
-        assert_eq!(lasts(0), 3500.);
+        assert_eq!(lasts(0), 2800.);
         assert!(lasts(40) > lasts(10));
-        assert_eq!(lasts(500), 7000.);
+        assert_eq!(lasts(500), 5500.);
         for line in LINES.iter().chain(ESCALATIONS.iter().flatten()) {
-            assert!(lasts(line.chars().count()) >= 3500.);
+            assert!(lasts(line.chars().count()) >= 2800.);
         }
     }
 

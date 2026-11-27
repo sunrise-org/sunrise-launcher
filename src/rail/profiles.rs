@@ -3,9 +3,13 @@
 use super::*;
 use crate::widgets::button::{icon_button, Style};
 use crate::widgets::focus::Reach;
-use gpui::{rgb, AnyElement, App, MouseButton, MouseDownEvent, Window};
+use gpui::{rgb, AnimationExt, AnyElement, App, MouseButton, MouseDownEvent, Window};
 use instances::{Icon, Instance, Kind};
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    rc::Rc,
+};
 
 /// What the profiles are drawn with: how open the sidebar is, why profiles are locked (if they
 /// are), and whether the page is Home, where the selected profile is shown as selected.
@@ -280,6 +284,73 @@ fn menu_target(
         )
 }
 
+/// The gap between the list's rows.
+const ROW_GAP: f32 = 4.;
+
+/// Where each profile was last listed, and the glide the last move gave the rows it swapped.
+#[derive(Default)]
+struct Glides {
+    /// The ids in the order the list was last drawn.
+    order: Vec<String>,
+    /// Counts the moves: a row's glide plays once under its own animation id.
+    moves: usize,
+    /// Per swapped row, the move that last glided it and how far above (negative) or below
+    /// (positive) its new place it started, in px. Rows never moved are absent.
+    started: HashMap<String, (usize, f32)>,
+}
+
+thread_local! {
+    static GLIDES: RefCell<Glides> = RefCell::new(Glides::default());
+}
+
+impl Glides {
+    /// Notes the list drawn now as `ids`. When it is the last one with two neighbours swapped
+    /// (a profile moved up or down), those two rows start a glide from where they were, `step` px
+    /// per place. Any other change (a profile made, renamed, deleted) snaps, as before.
+    fn note(&mut self, ids: &[String], step: f32) {
+        let changed: Vec<usize> = (0..ids.len().min(self.order.len()))
+            .filter(|n| ids[*n] != self.order[*n])
+            .collect();
+        let swapped = ids.len() == self.order.len()
+            && changed.len() == 2
+            && changed[1] == changed[0] + 1
+            && ids[changed[0]] == self.order[changed[1]]
+            && ids[changed[1]] == self.order[changed[0]];
+        if swapped {
+            self.moves += 1;
+            // The one now above was below, so it starts `step` lower; the other the reverse.
+            self.started
+                .insert(ids[changed[0]].clone(), (self.moves, step));
+            self.started
+                .insert(ids[changed[1]].clone(), (self.moves, -step));
+        }
+        if self.order != ids {
+            self.order = ids.to_vec();
+        }
+    }
+}
+
+/// `entry` held `from` px off its place at the start of a glide, easing to it; at once under
+/// reduced motion. Layout moves with it, so the row stays clickable and its hover goes along.
+fn glide(entry: Stateful<Div>, id: &str, (moved, from): (usize, f32)) -> AnyElement {
+    let animation = if moved == 0 || from == 0. {
+        // Never moved: a one-frame animation that leaves the row where it is.
+        gpui::Animation::new(std::time::Duration::from_millis(1))
+    } else {
+        crate::motion::eased(sunrise_launcher_theme::MOVE)
+    };
+    div()
+        .flex_none()
+        .relative()
+        .child(entry)
+        .with_animation(
+            ElementId::named_usize(SharedString::from(format!("profile-glide-{id}")), moved),
+            animation,
+            move |d, progress| d.top(px(from * (1. - progress))),
+        )
+        .into_any_element()
+}
+
 impl Launcher {
     pub(crate) fn profile_lock(&self) -> Option<&'static str> {
         profile_lock_reason(
@@ -447,15 +518,26 @@ impl Launcher {
             .flex_col()
             .min_h_0()
             .flex_1()
-            .gap(px(4.))
+            .gap(px(ROW_GAP))
             .overflow_y_scroll()
             .track_scroll(&crate::frame::scrolls("sidebar"));
         let headings = group_headings(self.instances.list.iter().map(|i| i.group.as_deref()));
+        let ids: Vec<String> = self.instances.list.iter().map(|i| i.id.clone()).collect();
+        let glides = GLIDES.with_borrow_mut(|glides| {
+            glides.note(&ids, row_height(look.open) + ROW_GAP);
+            glides.started.clone()
+        });
         for (n, i) in self.instances.list.clone().into_iter().enumerate() {
             if let Some(group) = headings[n].clone() {
                 list = list.child(profile_heading(look.open, group));
             }
-            list = list.child(self.profile_entry(n, i, selected.as_deref(), look, cx));
+            let id = i.id.clone();
+            let entry = self.profile_entry(n, i, selected.as_deref(), look, cx);
+            list = list.child(glide(
+                entry,
+                &id,
+                glides.get(&id).copied().unwrap_or((0, 0.)),
+            ));
         }
         list
     }

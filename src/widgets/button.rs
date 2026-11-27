@@ -1,7 +1,7 @@
 //! Buttons: Primary, Secondary, Ghost and Accent outline, in Medium and Small, with an optional
 //! leading icon, and the square icon button. Every page draws its buttons from here.
 #![allow(dead_code)] // Used by the shell and pages that the next redesign steps move over; removed in the final sweep.
-use super::focus::{c, focus_ring, mix};
+use super::focus::{c, focus_ring, mix, Reach};
 use super::*;
 use crate::paint::palette;
 use crate::tokens;
@@ -154,6 +154,25 @@ pub(crate) fn primary(id: impl Into<ElementId>, label: impl Into<SharedString>) 
 /// A destructive action: [`Style::Danger`] at [`Size::Medium`].
 pub(crate) fn danger(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
     button(id, label, Look::new(Style::Danger, Size::Medium))
+}
+
+/// A text link: small text in the accent ink, underlined, with the pointer cursor, brightening
+/// toward the text colour under the pointer. For a quiet action inside a line of text or a
+/// header (Select all), where a button's box would be too much. The caller attaches `on_click`.
+pub(crate) fn link(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
+    let p = palette();
+    let bright = mix(c(p.accent_ink), c(p.text), 0.5);
+    div()
+        .id(id)
+        .reach()
+        .flex_none()
+        .px(px(2.))
+        .text_size(px(tokens::SMALL))
+        .text_color(c(p.accent_ink))
+        .underline()
+        .cursor_pointer()
+        .hover(move |s| s.text_color(bright))
+        .child(label.into())
 }
 
 /// A square icon button (as tall as a Medium button) showing `icon` centred, with `tooltip`

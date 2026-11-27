@@ -34,18 +34,55 @@ fn moving_swaps_a_profile_with_its_neighbour() {
     move_profile_in(&home, &data, "attic", false).expect("moves down");
     assert_eq!(names(&home, &data), ["Sunrise", "Cabin", "Attic", "Barn"]);
     // At an end it stays.
-    move_profile_in(&home, &data, "cabin", true).expect("already first");
+    move_profile_in(&home, &data, "sunrise", true).expect("already first");
     move_profile_in(&home, &data, "barn", false).expect("already last");
     assert_eq!(names(&home, &data), ["Sunrise", "Cabin", "Attic", "Barn"]);
+    // The default profile is no longer held first.
+    move_profile_in(&home, &data, "cabin", true).expect("moves past the default");
+    assert_eq!(names(&home, &data), ["Cabin", "Sunrise", "Attic", "Barn"]);
 }
 
 #[test]
-fn the_default_profile_stays_first_and_does_not_move() {
+fn the_default_profile_moves_like_any_other_and_starts_first() {
     let (_root, home, data) = with_profiles("default", &["Attic", "Barn"]);
-    assert!(move_profile_in(&home, &data, DEFAULT, false).is_err());
-    move_profile_in(&home, &data, "attic", true).expect("already first of its group");
-    move_profile_in(&home, &data, "barn", true).expect("moves up");
-    assert_eq!(names(&home, &data), ["Sunrise", "Barn", "Attic"]);
+    // Never moved, it keeps the place it always had.
+    assert_eq!(names(&home, &data), ["Sunrise", "Attic", "Barn"]);
+    move_profile_in(&home, &data, DEFAULT, true).expect("already first: nothing happens");
+    assert_eq!(names(&home, &data), ["Sunrise", "Attic", "Barn"]);
+    let saved = fs::read_to_string(data.join(FILE)).expect("the saved choices");
+    assert!(!saved.contains("order"), "an edge move writes nothing");
+    move_profile_in(&home, &data, DEFAULT, false).expect("moves down");
+    assert_eq!(names(&home, &data), ["Attic", "Sunrise", "Barn"]);
+    move_profile_in(&home, &data, "barn", true).expect("moves up past it");
+    assert_eq!(names(&home, &data), ["Attic", "Barn", "Sunrise"]);
+    move_profile_in(&home, &data, DEFAULT, false).expect("already last");
+    assert_eq!(names(&home, &data), ["Attic", "Barn", "Sunrise"]);
+    // The order is on disk, the default's place included.
+    let saved = Store::load(&data);
+    assert_eq!(saved.instances[DEFAULT].order, Some(2));
+    assert_eq!(saved.instances["attic"].order, Some(0));
+    assert_eq!(saved.instances["barn"].order, Some(1));
+}
+
+#[test]
+fn two_profiles_swap_either_way() {
+    let (_root, home, data) = with_profiles("two", &["Attic"]);
+    move_profile_in(&home, &data, DEFAULT, false).expect("down");
+    assert_eq!(names(&home, &data), ["Attic", "Sunrise"]);
+    move_profile_in(&home, &data, DEFAULT, true).expect("up");
+    assert_eq!(names(&home, &data), ["Sunrise", "Attic"]);
+    move_profile_in(&home, &data, "attic", true).expect("the other one up");
+    assert_eq!(names(&home, &data), ["Attic", "Sunrise"]);
+    move_profile_in(&home, &data, "attic", false).expect("and down");
+    assert_eq!(names(&home, &data), ["Sunrise", "Attic"]);
+}
+
+#[test]
+fn a_profile_made_after_the_default_moved_comes_last() {
+    let (_root, home, data) = with_profiles("made", &["Attic"]);
+    move_profile_in(&home, &data, DEFAULT, false).expect("down");
+    create_whole_in(&home, &data, "Aaa", None, None, |_| {}).expect("a new one");
+    assert_eq!(names(&home, &data), ["Attic", "Sunrise", "Aaa"]);
 }
 
 #[test]
@@ -86,24 +123,26 @@ fn only_the_moves_that_are_possible_are_offered() {
         let target = list.iter().find(|i| i.name == name).expect("listed");
         move_options(&list, target)
     };
-    assert_eq!(options("Sunrise"), (false, false));
-    assert_eq!(options("Attic"), (false, true));
+    assert_eq!(options("Sunrise"), (false, true));
+    assert_eq!(options("Attic"), (true, true));
     assert_eq!(options("Barn"), (true, true));
     assert_eq!(options("Cabin"), (true, false));
-    // A profile alone in its group, and one alone after the default, has nowhere to go.
+    // A profile alone in its group has nowhere to go.
     edit_in(&home, &data, "attic", |m| m.group = Some("Farm".into())).expect("grouped");
     let list = list_in(&home, &data);
     let attic = list.iter().find(|i| i.name == "Attic").expect("listed");
     assert_eq!(move_options(&list, attic), (false, false));
-    let (_root, home, data) = with_profiles("alone", &["s"]);
+    // With one other profile, each can go one way.
+    let (_root, home, data) = with_profiles("two", &["s"]);
     let list = list_in(&home, &data);
-    assert_eq!(move_options(&list, &list[1]), (false, false));
+    assert_eq!(move_options(&list, &list[0]), (false, true));
+    assert_eq!(move_options(&list, &list[1]), (true, false));
 }
 
 #[test]
 fn a_move_at_an_edge_changes_nothing_on_disk() {
     let (_root, home, data) = with_profiles("edge", &["s"]);
-    move_profile_in(&home, &data, "s", true).expect("nothing above the default");
+    move_profile_in(&home, &data, DEFAULT, true).expect("nothing above the default");
     move_profile_in(&home, &data, "s", false).expect("nothing below");
     assert_eq!(names(&home, &data), ["Sunrise", "s"]);
     let saved = fs::read_to_string(data.join(FILE)).expect("the saved choices");

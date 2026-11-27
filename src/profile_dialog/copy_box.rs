@@ -1,6 +1,6 @@
 //! "What to copy": the options of a copy, as a two-column grid of checkboxes.
 use super::*;
-use crate::widgets::button::{button, Look, Size, Style};
+use crate::widgets::button::link;
 use crate::widgets::check::{checkbox, Tick};
 use crate::widgets::focus::Reach;
 use gpui::AnimationExt as _;
@@ -56,14 +56,13 @@ impl Launcher {
                     .child(tr("What to copy")),
             )
             .child(
-                button(
+                link(
                     "new-copy-all",
                     if all_on {
                         tr("Select none")
                     } else {
                         tr("Select all")
                     },
-                    Look::new(Style::Ghost, Size::Small),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if let Some(copy) = this

@@ -53,7 +53,12 @@ pub(super) struct Instances {
 impl Instances {
     pub(super) fn selected(&self, id: Option<&str>) -> Option<&Instance> {
         let id = id.unwrap_or(instances::DEFAULT);
-        self.list.iter().find(|i| i.id == id).or(self.list.first())
+        // A saved id that is gone falls back to the default profile, wherever it now sorts.
+        self.list
+            .iter()
+            .find(|i| i.id == id)
+            .or_else(|| self.list.iter().find(|i| i.id == instances::DEFAULT))
+            .or(self.list.first())
     }
 }
 
@@ -314,11 +319,9 @@ impl Launcher {
                             (true, Some(d)) => d.busy = false,
                             _ => this.instances.dialog = None,
                         }
-                        // Download the saved target, not a draft choice a bound copy replaced.
+                        // Nothing downloads until the player presses Install (or Play): a new
+                        // profile only shows what it would install.
                         this.refresh_installed();
-                        if let Some(release) = this.profile_creation_download(&instance) {
-                            this.install_for_instance(release);
-                        }
                         if matches!(instance.kind, InstanceKind::Default | InstanceKind::Own) {
                             this.navigate(crate::frame::Page::Home);
                         }

@@ -19,6 +19,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+mod hover;
 mod menu;
 
 /// The side of a face on the chip, the same height as the search field's icon row.
@@ -45,6 +46,17 @@ pub(crate) struct Menu {
     /// Counts the pointer's comings and goings, so a close timer started by a leave does nothing
     /// when the pointer has come back since.
     leaves: u64,
+    /// The same for the chip's own open and close timers (`hover.rs`).
+    hovers: u64,
+    /// Where the pointer is: on the chip, on the card, on the submenu.
+    hover_chip: bool,
+    in_card: bool,
+    in_sub: bool,
+    /// The menu was drawn last frame.
+    was_open: bool,
+    /// The menu has just closed with the pointer still on the chip: it stays shut until the
+    /// pointer has left.
+    blocked: bool,
 }
 
 /// One account under "Play as".
@@ -193,7 +205,7 @@ impl Launcher {
                 .draw(None, CHIP_FACE, self.scale, &self.theme),
         };
         let seen = self.account_menu.chip.clone();
-        div()
+        let chip = div()
             .id("account-chip")
             .min_w_0()
             .flex()
@@ -232,11 +244,12 @@ impl Launcher {
                 )
             })
             .child(crate::widgets::motion_bits::chevron(
-                "account-chip",
+                "account-chip-chevron",
                 open,
                 12.,
                 rgb(palette().chrome_muted).into(),
             ))
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| this.chip_hover(*hovered, cx)))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.account_menu.sub = None;
                 if this.ui.sheet == Some(Sheet::AccountMenu) {
@@ -245,7 +258,9 @@ impl Launcher {
                     this.open_sheet(Sheet::AccountMenu);
                 }
                 cx.notify();
-            }))
+            }));
+        // Pressed, it sits a pixel lower, as the dropdown's and the buttons' faces do.
+        crate::widgets::press(chip, &SharedString::from("account-chip"), |d| d.top(px(1.)))
     }
 
     /// Does what a row of the menu says.

@@ -84,7 +84,7 @@ pub(super) enum InstanceCmd {
         group: Option<String>,
     },
     /// Move a profile up or down in the sidebar, among the profiles of its group. Sunrise's
-    /// own profile stays first
+    /// own profile moves like the others
     Move {
         instance: String,
         #[arg(value_enum)]
