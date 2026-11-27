@@ -2462,5 +2462,17 @@
   "Install a Sunrise version first.": "ติดตั้งเวอร์ชัน Sunrise ก่อน",
   "Type the line players see under the name.": "พิมพ์ข้อความที่ผู้เล่นจะเห็นใต้ชื่อ",
   "Letting {name} in": "กำลังอนุญาตให้ {name} เข้าร่วม",
-  "Made by hand": "สร้างด้วยตนเอง"
+  "Made by hand": "สร้างด้วยตนเอง",
+  "Before an update": "ก่อนอัปเดต",
+  "Before updating to {version}": "ก่อนอัปเดตเป็น {version}",
+  "{name} is ready. Press Start, then give your friends the address below.": "{name} พร้อมแล้ว กดเริ่ม จากนั้นส่งที่อยู่ด้านล่างให้เพื่อน",
+  "Server moved to the trash.": "ย้ายเซิร์ฟเวอร์ไปถังขยะแล้ว",
+  "{name} is already on the desktop, and isn't this profile's shortcut.": "มี {name} บนเดสก์ท็อปแล้ว และไม่ใช่ทางลัดของโปรไฟล์นี้",
+  "This computer has no desktop folder.": "คอมพิวเตอร์นี้ไม่มีโฟลเดอร์เดสก์ท็อป",
+  "{tag} is not a Sunrise release.": "{tag} ไม่ใช่รีลีสของ Sunrise",
+  "{file} is not the {version} release Sunrise was made for": "{file} ไม่ใช่รีลีส {version} ที่สร้าง Sunrise มาให้",
+  "{file} is here but not the game itself: play {version} once in that launcher to download it": "พบ {file} แต่ไม่ใช่ตัวเกม: เปิดเล่น {version} หนึ่งครั้งใน launcher นั้นเพื่อดาวน์โหลด",
+  "no Minecraft {version} client jar": "ไม่มี client jar ของ Minecraft {version}",
+  "Minecraft {version} was not found. Sunrise looked in:": "ไม่พบ Minecraft {version} Sunrise ค้นหาใน:",
+  "\nTo fix it:\n  • ": "\nวิธีแก้:\n  • "
 }

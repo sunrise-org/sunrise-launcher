@@ -1967,5 +1967,17 @@
   "The installed GitHub archive or origin for {mod} changed. Nothing was changed; try again.": "تغيّر أرشيف GitHub المثبّت أو مصدر {mod}. لم يتغير شيء؛ حاول مجددًا.",
   "The last game build is unknown for these worlds: {worlds}": "إصدار اللعبة الأخير لهذه العوالم غير معروف: {worlds}",
   "The launcher couldn't check for unfinished mod updates. You can still play.": "تعذّر على المشغّل التحقق من تحديثات الإضافات غير المكتملة. يمكنك اللعب رغم ذلك.",
-  "The launcher couldn't prove all native build workers stopped. Their build files were kept.": "تعذّر على المشغّل التأكد من توقف جميع عمليات البناء الأصلية. تم الاحتفاظ بملفات بنائها."
+  "The launcher couldn't prove all native build workers stopped. Their build files were kept.": "تعذّر على المشغّل التأكد من توقف جميع عمليات البناء الأصلية. تم الاحتفاظ بملفات بنائها.",
+  "The launcher lock folder is not private": "مجلد قفل المشغّل ليس خاصًا",
+  "The mod changes aren't known until Sunrise checks this build.": "لن تُعرف تغييرات الإضافات حتى يتحقق Sunrise من هذا البناء.",
+  "The mods couldn't be built.": "تعذّر بناء الإضافات.",
+  "The native build tool gave an incomplete or inconsistent answer. Update the launcher.": "قدمت أداة البناء الأصلية إجابة غير مكتملة أو غير متسقة. حدّث المشغّل.",
+  "The native build tool stopped, but its output was still open.": "توقفت أداة البناء الأصلية، لكن مخرجاتها ظلت مفتوحة.",
+  "The native build tool's output couldn't be verified. See the build log.": "تعذّر التحقق من مخرجات أداة البناء الأصلية. راجع سجل البناء.",
+  "The other mods": "الإضافات الأخرى",
+  "The post-exit command didn't run: {error}": "لم يُشغّل الأمر بعد الإنهاء: {error}",
+  "The pre-launch command didn't run: {reason}": "لم يُشغّل الأمر قبل البدء: {reason}",
+  "The pre-launch command failed (exit {code}), so the game did not start.": "فشل الأمر قبل البدء (رمز الخروج {code})، لذا لم تبدأ اللعبة.",
+  "The profile folder couldn't be verified.": "تعذّر التحقق من مجلد الملف الشخصي.",
+  "The profile's runtime copy was not prepared.": "لم يتم إعداد نسخة وقت التشغيل للملف الشخصي."
 }

@@ -2066,5 +2066,17 @@
   "{build} isn't in the Sunrise registry yet: mods are checked on this computer.": "{build} non è ancora nel registro Sunrise: le mod vengono verificate su questo computer.",
   "{build} · {commit}": "{build} · {commit}",
   "{channel} · {month}": "{channel} · {month}",
-  "{channel} · {version}": "{channel} · {version}"
+  "{channel} · {version}": "{channel} · {version}",
+  "{count} mods are available on other Sunrise builds. Turn on Show all to see which builds they fit.": "{count} mod sono disponibili su altre build Sunrise. Attiva Mostra tutto per vedere quali build supportano.",
+  "{count} mods don't work with {build} yet: {mods}.": "{count} mod non funzionano ancora con {build}: {mods}.",
+  "{count} mods fit {target}": "{count} mod compatibili con {target}",
+  "{count} mods match \"{query}\" on other Sunrise builds. Turn on Show all to see which builds they fit.": "{count} mod corrispondono a \"{query}\" su altre build Sunrise. Attiva Mostra tutto per vedere quali build supportano.",
+  "{count} releases for other builds hidden": "{count} release per altre build nascoste",
+  "{count} saved worlds may lose blocks and items from these mods.": "{count} mondi salvati potrebbero perdere blocchi e oggetti di queste mod.",
+  "{count} saved worlds may lose blocks and items from this mod.": "{count} mondi salvati potrebbero perdere blocchi e oggetti di questa mod.",
+  "{count} stayed off: see their rows.": "{count} sono rimaste disattivate: vedi le relative righe.",
+  "{disposition} · {reason}": "{disposition} · {reason}",
+  "{error}\n{stay}: nothing changed.": "{error}\n{stay}: non è stata apportata alcuna modifica.",
+  "{first} and {count} more": "{first} e altre {count}",
+  "{first} and {second} both own the {namespace} namespace.": "Sia {first} sia {second} utilizzano lo spazio dei nomi {namespace}."
 }
