@@ -126,6 +126,13 @@ pub(crate) struct ModsState {
     /// The worlds' data packs and the world picker (`data_packs`).
     pub(super) data: data_packs::DataState,
     pub(super) selection: BTreeSet<String>,
+    /// The selection a Remove was asked for on Installed; pressing Remove again on the same
+    /// selection confirms it.
+    pub(super) remove_armed: Option<BTreeSet<String>>,
+    /// The shelf's ticked packs, by file.
+    pub(super) pack_selection: super::selection::Selection,
+    /// A bulk change was started from Home, where no notice shows: say its result as a toast.
+    pub(super) bulk_toast: bool,
     /// The last clicked archive path, resolved in the current list for Shift-click.
     pub(super) anchor: Option<String>,
     pub(super) snapshot: Option<Snapshot>,
@@ -210,6 +217,9 @@ impl Default for ModsState {
             packs: Default::default(),
             data: Default::default(),
             selection: BTreeSet::new(),
+            remove_armed: None,
+            pack_selection: Default::default(),
+            bulk_toast: false,
             anchor: None,
             snapshot: None,
             home_mod_labels: None,

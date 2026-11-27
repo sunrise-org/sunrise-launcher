@@ -90,6 +90,11 @@ pub(super) enum InstanceCmd {
         #[arg(value_enum)]
         direction: Way,
     },
+    /// The sidebar's groups: list them (the default), rename, move, fold or dissolve one
+    Groups {
+        #[command(subcommand)]
+        action: Option<GroupCmd>,
+    },
     /// Make Play start this profile
     Select { instance: String },
     /// Export a profile to share as a zip: its settings, packs, Sunrise mods and the worlds
@@ -129,6 +134,29 @@ pub(super) enum InstanceCmd {
         #[arg(long)]
         instance: Option<String>,
     },
+}
+
+/// What `instance groups` does to a group of the sidebar.
+#[derive(Subcommand)]
+pub(super) enum GroupCmd {
+    /// The groups from top to bottom, with their profiles and whether each is folded
+    List,
+    /// Rename a group: every profile in it moves to the new name. A name another group has
+    /// joins the two
+    Rename { group: String, name: String },
+    /// Move a group up or down among the groups. Groups never moved sit after the moved ones,
+    /// by name
+    Move {
+        group: String,
+        #[arg(value_enum)]
+        direction: Way,
+    },
+    /// Fold a group in the sidebar, its profiles hidden under the heading
+    Collapse { group: String },
+    /// Unfold a group
+    Expand { group: String },
+    /// Take every profile out of a group. The profiles stay, with no group
+    Ungroup { group: String },
 }
 
 /// Runs the profile's post-exit command in this terminal, if it has one, and waits for it.
@@ -188,6 +216,7 @@ pub(super) fn instance(action: InstanceCmd, as_json: bool) -> Result<(), Error> 
             instances::move_profile(&instance, matches!(direction, Way::Up))?;
             changed(instances::find(&instance)?)
         }
+        InstanceCmd::Groups { action } => groups(action.unwrap_or(GroupCmd::List), as_json)?,
         InstanceCmd::Select { instance } => changed(instances::select(&instance)?),
         InstanceCmd::Launch(args) => launch(args, as_json)?,
         InstanceCmd::Shortcut { instance, remove } => shortcut(instance, remove, as_json)?,
@@ -197,6 +226,80 @@ pub(super) fn instance(action: InstanceCmd, as_json: bool) -> Result<(), Error> 
             world,
             out,
         } => export_profile(instance, world, out, as_json)?,
+    }
+    Ok(())
+}
+
+/// The groups as the sidebar lists them: name, profiles in it and whether it is folded.
+fn group_values() -> Vec<serde_json::Value> {
+    let all = instances::list();
+    let folded = instances::group_choices().collapsed;
+    instances::group_names(&all)
+        .into_iter()
+        .map(|name| {
+            let inside: Vec<&str> = all
+                .iter()
+                .filter(|i| i.group.as_deref() == Some(name.as_str()))
+                .map(|i| i.id.as_str())
+                .collect();
+            serde_json::json!({
+                "group": name, "collapsed": folded.contains(&name), "profiles": inside,
+            })
+        })
+        .collect()
+}
+
+/// Whether the sidebar has a group of this name.
+fn known_group(group: &str) -> Result<(), Error> {
+    match instances::group_names(&instances::list())
+        .iter()
+        .any(|g| g == group)
+    {
+        true => Ok(()),
+        false => Err(trf(
+            "No group {name}: sunrise-launcher instance groups shows them",
+            &[("name", group)],
+        )
+        .into()),
+    }
+}
+
+fn groups(action: GroupCmd, as_json: bool) -> Result<(), Error> {
+    match action {
+        GroupCmd::List => {}
+        GroupCmd::Rename { group, name } => instances::rename_group(&group, &name)?,
+        GroupCmd::Move { group, direction } => {
+            instances::move_group(&group, matches!(direction, Way::Up))?
+        }
+        GroupCmd::Collapse { group } => {
+            known_group(&group)?;
+            instances::collapse_group(&group, true)?
+        }
+        GroupCmd::Expand { group } => {
+            known_group(&group)?;
+            instances::collapse_group(&group, false)?
+        }
+        GroupCmd::Ungroup { group } => {
+            known_group(&group)?;
+            instances::ungroup_group(&group)?
+        }
+    }
+    let all = group_values();
+    if as_json {
+        json(serde_json::Value::Array(all));
+    } else {
+        for g in &all {
+            let inside = g["profiles"].as_array().map_or(0, Vec::len);
+            let folded = if g["collapsed"] == true {
+                "  (folded)"
+            } else {
+                ""
+            };
+            println!(
+                "{}  {inside} profiles{folded}",
+                g["group"].as_str().unwrap_or("")
+            );
+        }
     }
     Ok(())
 }

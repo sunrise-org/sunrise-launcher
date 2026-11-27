@@ -1,7 +1,9 @@
 //! A fixed panel; only the selected collection owns a vertical viewport.
 use super::*;
 use crate::frame::Page;
+use crate::mods::selection::{Gesture, Selection};
 use crate::mods::Installed;
+use crate::widgets::check::{checkbox, Tick};
 use gpui::{ScrollHandle, StatefulInteractiveElement};
 
 mod logs;
@@ -68,7 +70,7 @@ struct View {
 }
 
 #[derive(Default)]
-pub(super) struct Tabs {
+pub(crate) struct Tabs {
     profile: Option<String>,
     selected: Tab,
     views: [View; 5],
@@ -76,6 +78,11 @@ pub(super) struct Tabs {
     opener: Option<FocusHandle>,
     /// Stable even as a virtual row is recycled. Cleared when leaving the selected profile.
     rows: HashMap<SharedString, FocusHandle>,
+    /// The ticked rows of the Mods tab and of the Packs tab, in that order.
+    picks: [Selection; 2],
+    /// The bar of the list drawn this frame, if rows are ticked: set while the rows are built,
+    /// taken when the panel is.
+    bar: Option<AnyElement>,
 }
 
 impl Tabs {
@@ -88,7 +95,7 @@ impl Tabs {
         }
     }
 
-    pub(super) fn remember(&mut self, opener: Option<FocusHandle>) {
+    pub(crate) fn remember(&mut self, opener: Option<FocusHandle>) {
         self.opener = opener;
     }
 
@@ -107,6 +114,18 @@ pub(crate) struct RowDisplay {
     pub(crate) detail: Option<String>,
     pub(crate) badge: Option<crate::mods::ManualBadge>,
     pub(crate) tail: Option<String>,
+}
+
+/// How a row takes part in ticking: which list it is in, and what the list and its ticks are.
+pub(crate) struct Pick {
+    /// The Packs tab, else the Mods tab.
+    pub(crate) packs: bool,
+    pub(crate) key: String,
+    /// Every row's key in the order shown, for a Shift range.
+    pub(crate) order: std::rc::Rc<Vec<String>>,
+    pub(crate) ticked: bool,
+    /// Some row of the list is ticked: every row shows its box.
+    pub(crate) any: bool,
 }
 
 pub(crate) struct Content {
@@ -210,6 +229,7 @@ impl Launcher {
                 }))
         });
         let separator = count.is_some() && off_link.is_some();
+        let bar = self.ui.home.tabs.bar.take();
         let view = &self.ui.home.tabs.views[active.index()];
         let scroll = view.scroll.clone();
         crate::frame::scrolls_with(&scroll);
@@ -304,12 +324,26 @@ impl Launcher {
                     )
                     .child(view.scrollbar.draw(&view.scroll, cx)),
             )
+            // Under the list, not over it: the last rows stay in reach while rows are ticked.
+            .children(bar)
     }
 
-    /// The shared read-only Home row. Destination pages own all mutations.
-    pub(crate) fn home_overview_row(
+    /// A Home row that can be ticked. A press opens it as it does today; a press with Ctrl (Cmd)
+    /// or Shift held, or on its box, ticks it instead.
+    pub(crate) fn home_pick_row(
         &mut self,
         display: RowDisplay,
+        pick: Pick,
+        cx: &mut Context<Self>,
+        open: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+    ) -> Stateful<Div> {
+        self.home_row(display, Some(pick), cx, open)
+    }
+
+    fn home_row(
+        &mut self,
+        display: RowDisplay,
+        pick: Option<Pick>,
         cx: &mut Context<Self>,
         open: impl Fn(&mut Self, &mut Context<Self>) + 'static,
     ) -> Stateful<Div> {
@@ -328,12 +362,38 @@ impl Launcher {
             .chain(&tail)
             .fold(title.clone(), |label, next| format!("{label} · {next}"));
         let focus = self.ui.home.tabs.focus_for(id.clone(), cx);
+        let ticked = pick.as_ref().is_some_and(|pick| pick.ticked);
+        // Its box shows under the pointer, and on every row once one is ticked.
+        let check = pick.as_ref().map(|pick| {
+            let (packs, key, order) = (pick.packs, pick.key.clone(), pick.order.clone());
+            div()
+                .flex_none()
+                .opacity(if pick.any { 1. } else { 0. })
+                .group_hover("home-pick", |s| s.opacity(1.))
+                .child(
+                    checkbox(
+                        SharedString::from(format!("{id}-pick")),
+                        if pick.ticked { Tick::On } else { Tick::Off },
+                    )
+                    .on_click(cx.listener(
+                        move |this, ev: &ClickEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.home_pick(packs)
+                                .click(&order, &key, ev.modifiers().shift);
+                            cx.notify();
+                        },
+                    )),
+                )
+        });
         row(id)
+            .group("home-pick")
             .track_focus(&focus)
             .reach()
             .cursor_pointer()
             .pr(px(12.))
+            .when(ticked, |d| d.bg(rgb(palette().selected)))
             .tooltip(crate::glass_ui::tip(full))
+            .children(check)
             .child(picture)
             .child(
                 div()
@@ -356,11 +416,43 @@ impl Launcher {
                 14.,
                 rgb(palette().muted).into(),
             ))
-            .on_click(cx.listener(move |this, _, _, cx| {
+            .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
+                if let Some(pick) = &pick {
+                    let gesture = Gesture::of(&ev.modifiers());
+                    if gesture.selects() {
+                        this.home_pick(pick.packs)
+                            .click(&pick.order, &pick.key, gesture.range);
+                        cx.notify();
+                        return;
+                    }
+                }
                 this.ui.home.tabs.remember(Some(focus.clone()));
                 open(this, cx);
                 cx.notify();
             }))
+    }
+
+    /// Which list the Home tab shown ticks rows in: the Packs tab (true) or the Mods tab
+    /// (false). None on any other tab or page.
+    pub(crate) fn home_pick_scope(&self) -> Option<bool> {
+        if self.ui.page != Page::Home {
+            return None;
+        }
+        match self.ui.home.tabs.selected {
+            Tab::Mods => Some(false),
+            Tab::Packs => Some(true),
+            _ => None,
+        }
+    }
+
+    /// The ticked rows of the Packs tab (true) or the Mods tab (false).
+    pub(crate) fn home_pick(&mut self, packs: bool) -> &mut Selection {
+        &mut self.ui.home.tabs.picks[usize::from(packs)]
+    }
+
+    /// Hands the bar of the list being built to the panel that holds it.
+    pub(crate) fn home_set_bar(&mut self, bar: Option<AnyElement>) {
+        self.ui.home.tabs.bar = bar;
     }
 
     pub(crate) fn home_installed_list(

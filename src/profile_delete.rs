@@ -10,6 +10,8 @@ use crate::{
 use gpui::{rgb, Global, MouseButton, MouseDownEvent};
 use instances::{DeleteError, Instance};
 
+mod group_menu;
+mod groups;
 mod menu;
 
 /// A native close or Quit must not abandon a folder in the middle of the move.
@@ -37,8 +39,26 @@ pub(super) enum Action {
         /// Opened from the actions button: its left edge and top (the menu goes above it when
         /// there is no room below). A right-click has none and uses the rail's edge.
         button: Option<(f32, f32)>,
+        /// The list of groups to move it to is open beside the menu.
+        groups: bool,
+        /// A group's menu (opened from its heading) rather than the profile's: `target` is
+        /// then the group's first profile, which only stands for the group.
+        group: Option<String>,
     },
     Confirm(Instance),
+    /// Asking for a group's name: renaming the group `rename`, or (None) making a group for
+    /// the profile `profile`.
+    GroupName {
+        rename: Option<String>,
+        profile: Option<String>,
+    },
+    /// Deleting the group `group`: the profiles `doomed` go to the Trash, and `kept` others in it
+    /// (the default profile, packs) can't be deleted and only leave the group.
+    ConfirmGroup {
+        group: String,
+        doomed: Vec<Instance>,
+        kept: usize,
+    },
     Deleting(String),
     Interrupted(Vec<instances::InterruptedDeletion>),
     Problem {
@@ -55,7 +75,14 @@ impl Launcher {
     /// duplicate) is up.
     pub(crate) fn profile_busy_with(&self, id: &str) -> bool {
         let menu = match &self.ui.sheets.profile_action {
-            Some(Action::Menu { target, .. } | Action::Confirm(target)) => target.id == id,
+            Some(
+                Action::Menu {
+                    target,
+                    group: None,
+                    ..
+                }
+                | Action::Confirm(target),
+            ) => target.id == id,
             _ => false,
         };
         let dialog = self.instances.dialog.as_ref().is_some_and(|d| {
@@ -70,6 +97,8 @@ impl Launcher {
             target: target.clone(),
             top,
             button: None,
+            groups: false,
+            group: None,
         });
     }
 
@@ -84,6 +113,8 @@ impl Launcher {
             target: target.clone(),
             top: f32::from(button.bottom()) + 4.,
             button: Some((f32::from(button.left()), f32::from(button.top()))),
+            groups: false,
+            group: None,
         });
     }
 
@@ -184,7 +215,11 @@ impl Launcher {
         };
     }
 
-    pub(super) fn profile_action_sheet(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    pub(super) fn profile_action_sheet(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        if let Some(Action::GroupName { rename, .. }) = &self.ui.sheets.profile_action {
+            let rename = rename.clone();
+            return Some(self.group_name_sheet(rename.is_some(), cx));
+        }
         let action = self.ui.sheets.profile_action.as_ref()?;
         let body = div().flex().flex_col();
         let footer = || div().flex().justify_end().gap(px(8.));
@@ -199,7 +234,20 @@ impl Launcher {
                 target,
                 top,
                 button,
-            } => return Some(self.profile_actions_menu(target, *top, *button, cx)),
+                groups,
+                group,
+            } => {
+                return Some(match group {
+                    Some(group) => self.group_actions_menu(group, *top, *button, cx),
+                    None => self.profile_actions_menu(target, *groups, *top, *button, cx),
+                })
+            }
+            Action::GroupName { .. } => return None,
+            Action::ConfirmGroup {
+                group,
+                doomed,
+                kept,
+            } => self.group_delete_body(body, group, doomed, *kept, cx),
             Action::Confirm(target) => body
                 .child(title(trf("Delete {name}?", &[("name", &target.name)])))
                 .child(

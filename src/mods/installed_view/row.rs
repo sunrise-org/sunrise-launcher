@@ -2,6 +2,7 @@
 //! the name and author, the source chip, the status, the action, the version, the switch and the
 //! more button.
 use super::*;
+use crate::mods::selection::Gesture;
 use crate::widgets::button::{icon_button, secondary, Style};
 use crate::widgets::check::{checkbox, switch, Tick};
 use crate::widgets::chip::{self, tag};
@@ -92,8 +93,10 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let selected = self.mods_state.selection.contains(&r.id);
+        // Its box shows under the pointer, and on every row once one is ticked.
+        let any_selected = !self.mods_state.selection.is_empty();
         let artwork = self.row_artwork(&r, cx);
-        let check = self.row_check(n, &r, selected, shown, cx);
+        let check = self.row_check(n, &r, selected, shown.clone(), cx);
         let error = self.mods_state.errors.get(&r.id).cloned();
         use super::build_run::State;
         let building = self
@@ -122,6 +125,7 @@ impl Launcher {
         let version = row_version(&cells);
         let row = div()
             .id(("alt-row", n))
+            .group("installed-row")
             .flex()
             .items_center()
             .gap(px(12.))
@@ -134,7 +138,10 @@ impl Launcher {
                 d.bg(c(palette().hover)).child(reveal)
             })
             .child(if r.selectable_archive() {
-                cell(cols::CHECK).child(check)
+                cell(cols::CHECK)
+                    .opacity(if any_selected { 1. } else { 0. })
+                    .group_hover("installed-row", |s| s.opacity(1.))
+                    .child(check)
             } else {
                 div().flex_none().w(px(cols::CHECK))
             })
@@ -164,7 +171,17 @@ impl Launcher {
         row.reach()
             .cursor_pointer()
             .hover(|s| s.bg(c(palette().hover)))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
+                // Ctrl (Cmd) or Shift ticks the row where a plain press opens it.
+                let gesture = Gesture::of(&ev.modifiers());
+                if gesture.selects() && r.selectable_archive() {
+                    if let Some(file) = r.archive_file() {
+                        this.mods_state
+                            .select_installed_row(file, &shown, gesture.range);
+                        cx.notify();
+                        return;
+                    }
+                }
                 this.mods_show_installed_project(&r);
                 cx.notify();
             }))

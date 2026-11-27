@@ -1,6 +1,7 @@
 use super::*;
-use crate::widgets::button::{button, secondary, Look, Size, Style};
+use crate::widgets::button::{button, icon_button, icon_button_opening, Look, Size, Style};
 use crate::widgets::focus::c;
+use std::{cell::Cell, rc::Rc};
 use sunrise_launcher::worlds::World;
 
 impl Launcher {
@@ -49,10 +50,20 @@ impl Launcher {
                         Err(e) => crate::toast::say(format!("{}: {e}", saves.display())),
                     }
                 });
+            // Add world beside Open worlds folder.
+            let add = self.add_world_button("home-worlds-empty-add", cx);
             empty(
                 tr("No worlds yet"),
                 tr("Start the game and choose Singleplayer to make one, or copy a world into its folder."),
-                Some(open),
+                Some(
+                    div()
+                        .id("home-worlds-empty-actions")
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(add)
+                        .child(open),
+                ),
             )
         } else if self.worlds.list.is_empty() {
             div()
@@ -72,24 +83,27 @@ impl Launcher {
             }
             place(rows)
         };
+        // The header's action: Add world, once there are worlds (the empty state has its own).
+        let manage = (count.unwrap_or(0) > 0).then(|| self.add_world_button("home-worlds-add", cx));
         Content {
             count,
-            manage: None,
+            manage,
             turned_off: 0,
             items,
         }
     }
 
     /// One world as a row, in fixed columns: its picture, its name over what it is (mode, and
-    /// when it was last played), then its data packs, folder and play buttons. A long name is
-    /// cut, with all of it in a tooltip, and in the row while the keyboard is on Play.
+    /// when it was last played), then a Play icon button and a "…" menu (data packs, folder,
+    /// copy, rename, delete). A long name is cut, with all of it in a tooltip, and in the row
+    /// while the keyboard is on Play.
     fn world_list_row(
         &mut self,
         world: &World,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let (folder, path, saves) = (world.folder.clone(), world.path.clone(), world.path.clone());
+        let folder = world.folder.clone();
         let focus = self
             .worlds
             .tile_focus
@@ -97,30 +111,35 @@ impl Launcher {
             .or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
             .clone();
         let on_play = focus.is_focused(window);
-        let packs = secondary(
-            SharedString::from(format!("alt-world-packs-{}", world.folder)),
-            tr("Data packs"),
-        )
-        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.ui.home.tabs.remember(window.focused(cx));
-            this.show_world_packs(path.clone());
-            cx.notify();
-        }));
-        let folder_button = secondary(
-            SharedString::from(format!("alt-world-folder-{}", world.folder)),
-            tr("Open folder"),
-        )
-        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-            crate::toast::open(cx, &saves);
-            cx.notify();
-        }));
-        let play = secondary(
+        let play = icon_button(
             SharedString::from(format!("alt-world-play-{}", world.folder)),
-            tr("Play this world"),
+            "play",
+            trf("Play {world}", &[("world", &world.name)]),
+            Style::Secondary,
         )
         .track_focus(&focus)
         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
             this.play_to("--world", folder.clone());
+            cx.notify();
+        }));
+        // Where the "…" was drawn, for the menu that hangs from it.
+        let drawn = Rc::new(Cell::new(gpui::Bounds::<gpui::Pixels>::default()));
+        let (write, read) = (drawn.clone(), drawn);
+        let menu_of = world.clone();
+        let more = icon_button_opening(
+            SharedString::from(format!("alt-world-more-{}", world.folder)),
+            "more-horizontal",
+            tr("More actions"),
+            Style::Ghost,
+            self.world_menu_open(&world.folder),
+        )
+        .child(
+            gpui::canvas(move |bounds, _, _| write.set(bounds), |_, _, _, _| {})
+                .absolute()
+                .inset_0(),
+        )
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            this.open_world_menu(&menu_of, read.get());
             cx.notify();
         }));
         let name = div()
@@ -154,10 +173,9 @@ impl Launcher {
                     .flex()
                     .flex_none()
                     .items_center()
-                    .gap(px(8.))
-                    .child(packs)
-                    .child(folder_button)
-                    .child(play),
+                    .gap(px(6.))
+                    .child(play)
+                    .child(more),
             )
     }
 }

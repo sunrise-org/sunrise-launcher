@@ -1,7 +1,7 @@
 use super::*;
 use chrono::TimeZone;
 
-fn scratch(name: &str) -> PathBuf {
+pub(super) fn scratch(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
         "sunrise-launcher-worlds-{name}-{}",
         std::process::id()
@@ -12,7 +12,7 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 /// A world as the game saves it: a gzip level.dat with `data`'s fields under `Data`.
-fn world(home: &Path, folder: &str, data: Vec<(&str, Tag)>) -> PathBuf {
+pub(super) fn world(home: &Path, folder: &str, data: Vec<(&str, Tag)>) -> PathBuf {
     let dir = home.join("saves").join(folder);
     fs::create_dir_all(dir.join("region")).unwrap();
     let root = Tag::compound([("Data", Tag::compound(data))]);
@@ -32,7 +32,7 @@ fn world(home: &Path, folder: &str, data: Vec<(&str, Tag)>) -> PathBuf {
     dir
 }
 
-fn name(n: &str) -> Tag {
+pub(super) fn name(n: &str) -> Tag {
     Tag::String(n.into())
 }
 

@@ -46,6 +46,7 @@ mod rating;
 pub(crate) mod refused;
 mod release_builds;
 mod search;
+pub(crate) mod selection;
 mod ui;
 pub(crate) use data_packs::names;
 pub(crate) use search::Installed;

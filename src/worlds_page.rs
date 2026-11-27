@@ -1,11 +1,14 @@
 //! The selected instance's worlds on Home (`sunrise_launcher::worlds`): each with its picture,
-//! mode, version, when it was last played and its size, and Copy, Delete (to the
-//! trash, after a confirmation) and Open folder. Reading sizes and copying run in the background.
+//! mode, version, when it was last played and its size, and a "…" menu (Data packs, Open folder,
+//! Copy, Rename, Delete to the trash after a confirmation) in `actions`. Reading sizes, copying,
+//! deleting and adding run in the background.
 use super::*;
 use std::path::PathBuf;
 use sunrise_launcher::worlds::{self, World};
 
-#[derive(Default)]
+mod actions;
+pub(crate) use actions::WorldAction;
+
 pub(super) struct Worlds {
     /// The game folder the list is of, and the list as last read: kept on screen while it is
     /// read again, so the page doesn't jump.
@@ -18,6 +21,25 @@ pub(super) struct Worlds {
     /// Home's tiles: the focus of each world's picture, by folder, so what sits on the picture
     /// can show while the keyboard is on it.
     pub(super) tile_focus: std::collections::HashMap<String, FocusHandle>,
+    /// The "…" menu or the dialog open over the list.
+    pub(super) action: Option<WorldAction>,
+    /// The name typed in the rename dialog.
+    pub(super) rename: crate::line_edit::LineEdit,
+}
+
+impl Default for Worlds {
+    fn default() -> Self {
+        Self {
+            home: None,
+            list: Vec::new(),
+            cull: cull::Cull::default(),
+            fresh: false,
+            reading: false,
+            tile_focus: std::collections::HashMap::new(),
+            action: None,
+            rename: crate::line_edit::LineEdit::new(String::new(), 128, 32),
+        }
+    }
 }
 
 impl Worlds {

@@ -159,12 +159,105 @@ impl Launcher {
             column
         };
         let name = self.field(Field::InstanceName, tr("Profile name"), 300., cx);
-        let group = self.field(Field::InstanceGroup, tr("No group"), 200., cx);
+        let mut group = div()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .min_w_0()
+            .flex_1()
+            .child(menus::small_label(tr("Group").into()))
+            .child(self.profile_group_picker(cx));
+        group.style().flex_grow = Some(2.);
         div()
             .flex()
             .gap(px(12.))
             .child(part(tr("Name").into(), name, 3.))
-            .child(part(tr("Group").into(), group, 2.))
+            .child(group)
+    }
+
+    /// Group: a dropdown of the groups there are, and No group. Typing a name that is no group
+    /// yet offers to make it, so a new group needs no other place.
+    fn profile_group_picker(&mut self, cx: &mut Context<Self>) -> Div {
+        use crate::widgets::dropdown::{Dropdown, Item};
+        let now = self.servers.value(Field::InstanceGroup).trim().to_string();
+        let open = self
+            .instances
+            .dialog
+            .as_ref()
+            .is_some_and(|d| d.menu == Some(crate::instances_page::DialogMenu::Group));
+        let mut groups: Vec<String> = self
+            .instances
+            .list
+            .iter()
+            .filter_map(|i| i.group.clone())
+            .chain((!now.is_empty()).then(|| now.clone()))
+            .collect();
+        groups.sort_by_key(|g| g.to_lowercase());
+        groups.dedup();
+        let mut items = vec![Item::new(tr("No group"))
+            .current(now.is_empty())
+            .rule_after()];
+        items.extend(
+            groups
+                .iter()
+                .map(|g| Item::new(g.clone()).current(*g == now)),
+        );
+        let set = |this: &mut Launcher, value: String| {
+            this.servers.text(Field::InstanceGroup).set(value);
+            if let Some(d) = this.instances.dialog.as_mut() {
+                d.menu = None;
+            }
+        };
+        Dropdown::new("new-group", items, open)
+            .fill()
+            .on_toggle({
+                let this = cx.entity();
+                move |_, cx| {
+                    this.update(cx, |this, cx| {
+                        let was = open;
+                        this.close_menus();
+                        if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
+                            d.menu = (!was).then_some(crate::instances_page::DialogMenu::Group);
+                        }
+                        cx.notify();
+                    })
+                }
+            })
+            .on_close({
+                let this = cx.entity();
+                move |_, cx| {
+                    this.update(cx, |this, cx| {
+                        if let Some(d) = this.instances.dialog.as_mut() {
+                            d.menu = None;
+                        }
+                        cx.notify();
+                    })
+                }
+            })
+            .on_pick({
+                let this = cx.entity();
+                move |n, _, cx| {
+                    let value = if n == 0 {
+                        String::new()
+                    } else {
+                        groups.get(n - 1).cloned().unwrap_or_default()
+                    };
+                    this.update(cx, |this, cx| {
+                        set(this, value.clone());
+                        cx.notify();
+                    })
+                }
+            })
+            .on_create(|name| trf("New group “{name}”", &[("name", name)]), {
+                let this = cx.entity();
+                move |name, _, cx| {
+                    this.update(cx, |this, cx| {
+                        set(this, name.clone());
+                        cx.notify();
+                    })
+                }
+            })
+            .build()
     }
 
     /// The question a close asks once it found edits not saved: Keep editing goes back to the

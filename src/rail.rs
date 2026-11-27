@@ -12,6 +12,8 @@ mod nav;
 mod profiles;
 mod update_notice;
 
+pub(crate) use profiles::{group_collapsed, reload_group_folds};
+
 /// Each drawn profile row that opens a context menu, with its bounds in the window.
 pub(crate) type ProfileRows = Rc<RefCell<Vec<(gpui::Bounds<gpui::Pixels>, Instance)>>>;
 

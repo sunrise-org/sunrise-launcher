@@ -20,6 +20,11 @@ pub use effects::{unproved_mod_effects, SuspectMods};
 
 pub(crate) mod switch;
 
+mod import;
+mod rename;
+pub use import::import;
+pub use rename::rename;
+
 /// The lock a running game holds on a world; vanilla's backups leave it out.
 pub(crate) const LOCK: &str = "session.lock";
 /// The latest `LastPlayed` kept: the end of year 9999, in milliseconds. A later time does not fit a

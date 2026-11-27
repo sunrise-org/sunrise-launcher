@@ -47,7 +47,7 @@ pub(crate) struct HomeState {
     pub(crate) art: Option<Art>,
     /// What the selected profile has installed.
     pub(crate) mods: crate::home_mods::Inventory,
-    tabs: tabs::Tabs,
+    pub(crate) tabs: tabs::Tabs,
 }
 
 /// A row in any profile tab.

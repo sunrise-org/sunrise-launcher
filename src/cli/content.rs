@@ -22,6 +22,21 @@ pub(super) enum WorldsCmd {
         #[arg(long)]
         instance: Option<String>,
     },
+    /// Add a world to the profile: a world folder, or a .zip of one (a taken name gets " (2)")
+    Import {
+        /// A folder with a level.dat, or a zip holding one
+        path: PathBuf,
+        #[arg(long)]
+        instance: Option<String>,
+    },
+    /// Change a world's name in the game's list (its folder keeps its name)
+    Rename {
+        world: String,
+        /// The new name
+        name: String,
+        #[arg(long)]
+        instance: Option<String>,
+    },
     /// Move a world to the system's trash
     Delete {
         world: String,
@@ -102,6 +117,24 @@ pub(super) fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), Error> {
             match as_json {
                 true => json(value(&copy)),
                 false => println!("Copied to {} ({})", copy.name, copy.folder),
+            }
+        }
+        WorldsCmd::Import { path, instance } => {
+            let added = worlds::import(&profile(instance)?, &path)?;
+            match as_json {
+                true => json(value(&added)),
+                false => println!("Added {} ({})", added.name, added.folder),
+            }
+        }
+        WorldsCmd::Rename {
+            world,
+            name,
+            instance,
+        } => {
+            let renamed = worlds::rename(&profile(instance)?, &world, &name)?;
+            match as_json {
+                true => json(value(&renamed)),
+                false => println!("Renamed to {} ({})", renamed.name, renamed.folder),
             }
         }
         WorldsCmd::Delete { world, instance } => {

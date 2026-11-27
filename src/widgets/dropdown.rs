@@ -645,10 +645,21 @@ pub(crate) struct Dropdown {
     toggle: Close,
     close: Close,
     pick: Pick,
+    create: Option<Create>,
 }
 
 /// What a pick does: the option's index.
 type Pick = Rc<dyn Fn(usize, &mut Window, &mut App)>;
+
+/// A dropdown whose list can grow: the words of its row for what was typed, and what choosing it
+/// does with that text.
+type Create = (
+    fn(&str) -> String,
+    Rc<dyn Fn(String, &mut Window, &mut App)>,
+);
+
+/// The index a pick of the "create" row comes through as.
+const CREATE_ROW: usize = usize::MAX;
 
 impl Dropdown {
     pub(crate) fn new(id: impl Into<SharedString>, items: Vec<Item>, open: bool) -> Dropdown {
@@ -664,6 +675,7 @@ impl Dropdown {
             toggle: Rc::new(|_: &mut Window, _: &mut App| {}),
             close: Rc::new(|_: &mut Window, _: &mut App| {}),
             pick: Rc::new(|_: usize, _: &mut Window, _: &mut App| {}),
+            create: None,
         }
     }
 
@@ -719,6 +731,18 @@ impl Dropdown {
     }
 
     /// The field and, while open, its menu, in a parent that sizes to the field.
+    /// Lets the player add an option by typing it: the menu always filters, and a row worded
+    /// `label(text)` heads it while the text matches no option exactly. Choosing it (or Enter
+    /// with no other match) calls `f` with the text.
+    pub(crate) fn on_create(
+        mut self,
+        label: fn(&str) -> String,
+        f: impl Fn(String, &mut Window, &mut App) + 'static,
+    ) -> Dropdown {
+        self.create = Some((label, Rc::new(f)));
+        self
+    }
+
     pub(crate) fn build(self) -> Div {
         let Dropdown {
             id,
@@ -732,6 +756,7 @@ impl Dropdown {
             toggle,
             close,
             pick,
+            create,
         } = self;
         let text = items
             .iter()
@@ -764,7 +789,7 @@ impl Dropdown {
             return wrap;
         }
         let key = SharedString::from(format!("{id}-row"));
-        let filterable = items.len() > FILTER_OVER;
+        let filterable = items.len() > FILTER_OVER || create.is_some();
         let text = if filterable {
             typed(&id)
         } else {
@@ -779,10 +804,52 @@ impl Dropdown {
         } else {
             (0..items.len()).collect()
         };
-        let first = order.iter().copied().find(|&n| items[n].enabled);
         let filtering = !text.trim().is_empty();
+        // A typed name that is no option yet can be made one: its row heads the list.
+        let typed_name = text.trim().to_string();
+        let offer = create.as_ref().filter(|_| {
+            filtering
+                && !items
+                    .iter()
+                    .any(|i| i.label.to_lowercase() == typed_name.to_lowercase())
+        });
+        let first = order
+            .iter()
+            .copied()
+            .find(|&n| items[n].enabled)
+            .or(offer.map(|_| CREATE_ROW));
+        let pick: Pick = match &create {
+            Some((_, made)) => {
+                let (made, pick, name) = (made.clone(), pick.clone(), typed_name.clone());
+                Rc::new(move |n, window, cx| {
+                    if n == CREATE_ROW {
+                        made(name.clone(), window, cx);
+                    } else {
+                        pick(n, window, cx);
+                    }
+                })
+            }
+            None => pick,
+        };
         let mut at: Option<usize> = None;
         let mut rows: Vec<AnyElement> = Vec::new();
+        if let Some((label, _)) = offer {
+            let (pick, close) = (pick.clone(), close.clone());
+            rows.push(
+                row_when(
+                    ElementId::from((key.clone(), CREATE_ROW)),
+                    label(&typed_name),
+                    None,
+                    false,
+                    true,
+                )
+                .on_click(move |_, window, cx| {
+                    pick(CREATE_ROW, window, cx);
+                    close(window, cx);
+                })
+                .into_any_element(),
+            );
+        }
         let mut items: Vec<Option<Item>> = items.into_iter().map(Some).collect();
         for n in order {
             let item = items[n].take().expect("each index is listed once");

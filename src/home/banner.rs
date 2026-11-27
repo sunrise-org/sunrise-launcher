@@ -89,12 +89,15 @@ impl Launcher {
             .items_start()
             .gap(px(8.))
             .child(controls)
-            // The build picker is centred under Play while it fits there. Auto margins rather than
-            // centring, so a longer label starts at Play's left edge instead of overhanging it.
+            // The build picker is centred under Play and the gear together while it fits there.
+            // Auto margins rather than centring, so a longer label starts at Play's left edge
+            // instead of overhanging it.
             .child(
                 div()
                     .flex()
-                    .w(px(if compact { 132. } else { PLAY_WIDTH }))
+                    .w(px(if compact { 132. } else { PLAY_WIDTH }
+                        + 8.
+                        + tokens::PLAY))
                     .child(
                         div()
                             .flex_none()

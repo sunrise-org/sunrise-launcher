@@ -38,6 +38,7 @@ pub(super) struct InstanceDialog {
 pub(super) enum DialogMenu {
     Build,
     Start,
+    Group,
 }
 
 /// The instances and their icons as images, kept between frames.
@@ -199,6 +200,10 @@ impl Launcher {
     /// Creates or changes the instance as the dialog says. A copy can be gigabytes of worlds, so
     /// the work runs in the background.
     pub(super) fn save_instance(&mut self, cx: &mut Context<Self>) {
+        // The rename-a-group box shares the group field; its Enter lands here.
+        if self.commit_group_name(cx) {
+            return;
+        }
         let edited_id = self
             .instances
             .dialog

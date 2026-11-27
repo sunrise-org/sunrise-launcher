@@ -10,7 +10,7 @@ use crate::backend;
 use crate::browser::sunrise::pack as registry_pack;
 use crate::launch::Launch;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -21,6 +21,7 @@ mod create;
 mod delete;
 mod deletion_recovery;
 mod edit;
+mod groups;
 pub(crate) mod lifecycle;
 mod list;
 mod order;
@@ -32,6 +33,10 @@ pub use create::*;
 pub use delete::*;
 pub use deletion_recovery::{interrupted_deletions, InterruptedDeletion};
 pub use edit::*;
+pub use groups::{
+    collapse_group, group_choices, group_names, move_group, move_group_options, rename_group,
+    ungroup_group, GroupChoices,
+};
 use lifecycle::{initial_choices, GATES, INITIAL, RETIRED};
 pub use list::*;
 pub use order::{move_options, move_profile};
@@ -211,6 +216,21 @@ impl Instance {
 struct Store {
     #[serde(default)]
     instances: BTreeMap<String, Meta>,
+    /// The groups in the order the player put them in the sidebar. A group not listed (never
+    /// moved) comes after the listed ones, by name. Unreadable: no order.
+    #[serde(
+        default,
+        deserialize_with = "groups::tolerant",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    group_order: Vec<String>,
+    /// The groups folded in the sidebar, their profiles hidden under the heading.
+    #[serde(
+        default,
+        deserialize_with = "groups::tolerant",
+        skip_serializing_if = "BTreeSet::is_empty"
+    )]
+    collapsed_groups: BTreeSet<String>,
     #[serde(flatten)]
     other: BTreeMap<String, serde_json::Value>,
 }

@@ -209,11 +209,14 @@ fn list_snapshot(
         })
         .collect();
     // By group, then the player's own order (the ones never moved come after, by name). The
-    // default profile is placed like the rest, but until it is first moved it stays first, as it
-    // always was.
+    // groups sit in the order the player gave them, ungrouped profiles first and a group never
+    // moved after those, by name. The default profile is placed like the rest, but until it is
+    // first moved it stays first, as it always was.
+    let group_order = store.group_order.clone();
     out.sort_by_key(|(order, i)| {
         (
             !(i.kind == Kind::Default && order.is_none()),
+            groups::group_rank(&group_order, i.group.as_deref()),
             i.group.clone(),
             order.is_none(),
             order.unwrap_or(0),

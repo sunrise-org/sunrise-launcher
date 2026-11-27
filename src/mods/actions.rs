@@ -431,7 +431,7 @@ impl Launcher {
         }
     }
 
-    fn turn_off(&mut self, ids: Vec<String>) {
+    pub(super) fn turn_off(&mut self, ids: Vec<String>) {
         if !self.guard() {
             return;
         }

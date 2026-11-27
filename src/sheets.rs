@@ -171,6 +171,7 @@ impl Launcher {
             || self.sign_in_screen.open
             || self.instances.dialog.is_some()
             || self.ui.sheets.profile_action.is_some()
+            || self.worlds.action.is_some()
             || (self.ui.page == crate::frame::Page::Hosting && self.servers.create.is_some())
     }
 
@@ -189,6 +190,7 @@ impl Launcher {
     /// action that opens a menu calls this first, so a new menu replaces the old one and two are
     /// never up together.
     pub(crate) fn close_menus(&mut self) {
+        crate::glass_ui::menus_changed();
         if matches!(
             self.ui.sheet,
             Some(Sheet::Build | Sheet::ProfileMenu | Sheet::AccountMenu | Sheet::LauncherUpdate)
@@ -204,6 +206,7 @@ impl Launcher {
             self.close_profile_action();
         }
         self.ui.settings.close_menus();
+        self.worlds.close_menu();
         self.mods_state.close_menu();
         self.multiplayer.menu = None;
         if let Some(dialog) = self.instances.dialog.as_mut() {
@@ -265,6 +268,10 @@ impl Launcher {
             || self.mods.installs.world.is_some();
         if !prompt_open && self.ui.sheets.profile_action.is_some() {
             self.close_profile_action();
+            return true;
+        }
+        if !prompt_open && self.worlds.action.is_some() {
+            self.worlds.action = None;
             return true;
         }
         let open = prompt_open || self.ui.sheet.is_some();
@@ -428,6 +435,9 @@ impl Launcher {
         }
         if let Some(profile_action) = self.profile_action_sheet(cx) {
             return Some(profile_action);
+        }
+        if let Some(world_action) = self.world_action_sheet(window, cx) {
+            return Some(world_action);
         }
         match self.ui.sheet {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),

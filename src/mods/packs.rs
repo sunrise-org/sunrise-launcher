@@ -1,10 +1,11 @@
 //! The selected setup’s local collections. Reading a list never creates its folder. Choosing a
 //! file targets the collection that opened the dialog, even if another setup exists.
+use super::selection::{bar, Gesture, PackOp};
 use super::ui::{c, card, dim, muted};
 use super::*;
 use crate::paint::palette;
 use crate::widgets::button::{primary, secondary};
-use crate::widgets::check::switch;
+use crate::widgets::check::{checkbox, switch, Tick};
 use crate::widgets::feedback::empty_state_icon;
 use gpui::ExternalPaths;
 use gpui::SharedString;
@@ -18,6 +19,7 @@ impl Launcher {
         m.row_filter.text.clear();
         m.selection.clear();
         m.anchor = None;
+        m.pack_selection.clear();
         self.dismiss_notice();
         self.game_packs.confirm_remove = None;
         self.game_packs.stale();
@@ -246,6 +248,11 @@ impl Launcher {
                 .collect(),
             Kind::Shader => self.game_packs.shader.iter().map(|p| (p, None)).collect(),
         };
+        // Rows already gone drop out of the ticks; the rest keep them as the search narrows.
+        let everything: Vec<String> = items.iter().map(|(pack, _)| pack.file.clone()).collect();
+        self.mods_state.pack_selection.retain(&everything);
+        let order = std::rc::Rc::new(self.shown_pack_files(kind));
+        let ticked = self.mods_state.pack_selection.clone();
         let mut list = card()
             .id("alt-collection-list")
             .min_h_0()
@@ -282,13 +289,43 @@ impl Launcher {
             };
             // Fixed columns, as the installed mods list has them: the switch, the picture,
             // the name, then the row's actions.
+            let is_ticked = ticked.contains(&pack.file);
+            // Its box shows under the pointer, and on every row once one is ticked.
+            let check = {
+                let (order, file) = (order.clone(), pack.file.clone());
+                div()
+                    .flex_none()
+                    .opacity(if ticked.is_empty() { 0. } else { 1. })
+                    .group_hover("alt-pack-row", |s| s.opacity(1.))
+                    .child(
+                        checkbox(
+                            ElementId::named_usize("alt-pack-check", index),
+                            if is_ticked { Tick::On } else { Tick::Off },
+                        )
+                        .on_click(cx.listener(
+                            move |this, ev: &ClickEvent, _, cx| {
+                                cx.stop_propagation();
+                                this.mods_state.pack_selection.click(
+                                    &order,
+                                    &file,
+                                    ev.modifiers().shift,
+                                );
+                                cx.notify();
+                            },
+                        )),
+                    )
+            };
             let mut row = div()
+                .id(ElementId::named_usize("alt-pack-row", index))
+                .group("alt-pack-row")
                 .flex_none()
                 .min_h(px(52.))
                 .flex()
                 .items_center()
                 .gap(px(12.))
                 .px(px(14.))
+                .when(is_ticked, |d| d.bg(c(palette().selected)))
+                .child(check)
                 .child(toggle)
                 .when(shown > 0, |d| d.border_t_1().border_color(palette().rule()))
                 // The pack another page opened the shelf at.
@@ -402,7 +439,19 @@ impl Launcher {
             } else {
                 dim(remove)
             };
-            list = list.child(row.child(remove));
+            let (order, file) = (order.clone(), pack.file.clone());
+            list = list.child(row.child(remove).on_click(cx.listener(
+                move |this, ev: &ClickEvent, _, cx| {
+                    // Ctrl (Cmd) or Shift ticks the row; a plain press on it does nothing.
+                    let gesture = Gesture::of(&ev.modifiers());
+                    if gesture.selects() {
+                        this.mods_state
+                            .pack_selection
+                            .click(&order, &file, gesture.range);
+                        cx.notify();
+                    }
+                },
+            )));
         }
         // None at all: the empty state stands in the list's place, centred in the page.
         let none = items.is_empty().then(|| {
@@ -427,6 +476,20 @@ impl Launcher {
         if none.is_none() && shown == 0 {
             list = list.child(muted(tr("No packs match your search.")).p(px(20.)));
         }
+        let count = |on: bool| {
+            items
+                .iter()
+                .filter(|(pack, _)| pack.enabled == on && ticked.contains(&pack.file))
+                .count()
+        };
+        let pick_bar = self.pack_bar(
+            kind,
+            &home,
+            (count(true), count(false)),
+            &ticked,
+            &order,
+            cx,
+        );
         div()
             .flex_1()
             .min_h_0()
@@ -439,5 +502,87 @@ impl Launcher {
                 Some(none) => d.child(none),
                 None => d.child(crate::scrollbar::Scrollbar::page("packs").wrap(list, &self.theme)),
             })
+            .children(pick_bar)
+    }
+
+    /// The bar under the shelf while packs are ticked: enable, disable and remove, each one
+    /// change for all of them. Only what applies is offered.
+    fn pack_bar(
+        &self,
+        kind: Kind,
+        home: &Path,
+        (on, off): (usize, usize),
+        ticked: &super::selection::Selection,
+        order: &std::rc::Rc<Vec<String>>,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if ticked.is_empty() {
+            return None;
+        }
+        let toggle = {
+            let order = order.clone();
+            bar::link(
+                "alt-pack-pick-all",
+                if ticked.all_of(order.as_slice()) {
+                    tr("Clear")
+                } else {
+                    tr("Select all")
+                },
+            )
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.mods_state.pack_selection.toggle_all(&order);
+                cx.notify();
+            }))
+        };
+        let mut actions: Vec<AnyElement> = Vec::new();
+        let mut push = |id: &'static str, label: String, op: PackOp| {
+            let home = home.to_owned();
+            actions.push(
+                bar::action(id, label, true, op == PackOp::Remove)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.pack_bar_run(home.clone(), kind, op, cx);
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            );
+        };
+        // One shader pack is on at a time: turning several on has no meaning.
+        if off > 0 && (kind == Kind::Resource || ticked.len() == 1) {
+            push("alt-pack-pick-on", tr("Enable").into(), PackOp::Enable);
+        }
+        if on > 0 {
+            push("alt-pack-pick-off", tr("Disable").into(), PackOp::Disable);
+        }
+        let n = ticked.len().to_string();
+        push(
+            "alt-pack-pick-remove",
+            if ticked.removal_armed() {
+                trf("Confirm: remove {count}", &[("count", &n)])
+            } else {
+                trf("Remove {count}…", &[("count", &n)])
+            },
+            PackOp::Remove,
+        );
+        Some(bar::bar(ticked.len(), toggle, actions))
+    }
+
+    /// Does `op` to the ticked packs. Remove asks once first: the same press on the same ticks
+    /// confirms it.
+    fn pack_bar_run(&mut self, home: PathBuf, kind: Kind, op: PackOp, cx: &mut Context<Self>) {
+        if op == PackOp::Remove && !self.mods_state.pack_selection.confirm_removal() {
+            return;
+        }
+        let files: Vec<String> = self
+            .mods_state
+            .pack_selection
+            .keys()
+            .iter()
+            .cloned()
+            .collect();
+        if files.is_empty() {
+            return;
+        }
+        self.run_pack_op(home, kind, files, op, cx);
+        self.mods_state.pack_selection.clear();
     }
 }

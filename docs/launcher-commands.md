@@ -498,6 +498,66 @@ Move a profile up or down in the sidebar, among the profiles of its group. Sunri
 
 MCP: `instance_move`.
 
+## `sunrise-launcher instance groups list`
+
+The groups from top to bottom, with their profiles and whether each is folded.
+
+    sunrise-launcher instance groups list
+
+MCP: `instance_groups_list`.
+
+## `sunrise-launcher instance groups rename`
+
+Rename a group: every profile in it moves to the new name. A name another group has joins the two.
+
+    sunrise-launcher instance groups rename <GROUP> <NAME>
+
+- `GROUP`
+- `NAME`
+
+MCP: `instance_groups_rename`.
+
+## `sunrise-launcher instance groups move`
+
+Move a group up or down among the groups. Groups never moved sit after the moved ones, by name.
+
+    sunrise-launcher instance groups move <GROUP> <DIRECTION>
+
+- `GROUP`
+- `DIRECTION` (up, down)
+
+MCP: `instance_groups_move`.
+
+## `sunrise-launcher instance groups collapse`
+
+Fold a group in the sidebar, its profiles hidden under the heading.
+
+    sunrise-launcher instance groups collapse <GROUP>
+
+- `GROUP`
+
+MCP: `instance_groups_collapse`.
+
+## `sunrise-launcher instance groups expand`
+
+Unfold a group.
+
+    sunrise-launcher instance groups expand <GROUP>
+
+- `GROUP`
+
+MCP: `instance_groups_expand`.
+
+## `sunrise-launcher instance groups ungroup`
+
+Take every profile out of a group. The profiles stay, with no group.
+
+    sunrise-launcher instance groups ungroup <GROUP>
+
+- `GROUP`
+
+MCP: `instance_groups_ungroup`.
+
 ## `sunrise-launcher instance select`
 
 Make Play start this profile.
@@ -590,6 +650,29 @@ Copy a world beside it, as "<name> (1)".
 - `--instance`
 
 MCP: `worlds_copy`.
+
+## `sunrise-launcher worlds import`
+
+Add a world to the profile: a world folder, or a .zip of one (a taken name gets " (2)").
+
+    sunrise-launcher worlds import <PATH>
+
+- `PATH`: A folder with a level.dat, or a zip holding one
+- `--instance`
+
+MCP: `worlds_import`.
+
+## `sunrise-launcher worlds rename`
+
+Change a world's name in the game's list (its folder keeps its name).
+
+    sunrise-launcher worlds rename <WORLD> <NAME>
+
+- `WORLD`
+- `NAME`: The new name
+- `--instance`
+
+MCP: `worlds_rename`.
 
 ## `sunrise-launcher worlds delete`
 

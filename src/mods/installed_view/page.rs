@@ -212,7 +212,15 @@ impl Launcher {
             .count();
         let all_on = selected_here > 0 && selected_here == shown.len();
         let n_sel = selected.len();
-        let registry_selected = selected.iter().filter(|row| row.local.is_none()).count();
+        // Turning on applies to what is off, turning off to what is on: a mixed selection has both.
+        let selected_off = selected
+            .iter()
+            .filter(|row| row.local.is_none() && !row.on)
+            .count();
+        let selected_on = selected
+            .iter()
+            .filter(|row| row.local.is_none() && row.on)
+            .count();
         let busy = !refresh_ready || self.mods_busy();
         let with_update = selected.iter().filter(|r| model::bulk_updatable(r)).count();
         let registry_updates = rows.iter().filter(|r| model::bulk_updatable(r)).count();
@@ -330,20 +338,14 @@ impl Launcher {
             } else {
                 let on = bulk(
                     "alt-bulk-on",
-                    trf(
-                        "Turn on {count}",
-                        &[("count", &registry_selected.to_string())],
-                    ),
-                    registry_selected > 0,
+                    trf("Turn on {count}", &[("count", &selected_off.to_string())]),
+                    selected_off > 0,
                     false,
                 );
                 let off = bulk(
                     "alt-bulk-off",
-                    trf(
-                        "Turn off {count}",
-                        &[("count", &registry_selected.to_string())],
-                    ),
-                    registry_selected > 0,
+                    trf("Turn off {count}", &[("count", &selected_on.to_string())]),
+                    selected_on > 0,
                     false,
                 );
                 let upd = bulk(
@@ -352,9 +354,16 @@ impl Launcher {
                     with_update > 0,
                     false,
                 );
+                // One question before anything leaves: the same press again confirms it.
+                let armed =
+                    self.mods_state.remove_armed.as_ref() == Some(&self.mods_state.selection);
                 let rm = bulk(
                     "alt-bulk-remove",
-                    trf("Remove {count}…", &[("count", &n_sel.to_string())]),
+                    if armed {
+                        trf("Confirm: remove {count}", &[("count", &n_sel.to_string())])
+                    } else {
+                        trf("Remove {count}…", &[("count", &n_sel.to_string())])
+                    },
                     true,
                     true,
                 )
@@ -366,7 +375,13 @@ impl Launcher {
                     let chosen: Vec<_> = selected.iter().map(|row| row.id.clone()).collect();
                     let home = self.mods_home();
                     rm.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.ask_remove(&home, chosen.clone(), names.clone());
+                        if this.mods_state.remove_armed.as_ref() == Some(&this.mods_state.selection)
+                        {
+                            this.mods_state.remove_armed = None;
+                            this.ask_remove(&home, chosen.clone(), names.clone());
+                        } else {
+                            this.mods_state.remove_armed = Some(this.mods_state.selection.clone());
+                        }
                         cx.notify();
                     }))
                 };
@@ -380,30 +395,36 @@ impl Launcher {
                             ],
                         )),
                     ))
-                    .child(if !busy && registry_selected > 0 {
-                        on.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.bulk_on();
-                            cx.notify();
-                        }))
-                    } else {
-                        on
-                    })
-                    .child(if !busy && registry_selected > 0 {
-                        off.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.bulk_off();
-                            cx.notify();
-                        }))
-                    } else {
-                        off
-                    })
-                    .child(if !busy && with_update > 0 {
-                        upd.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.ask_update(true);
-                            cx.notify();
-                        }))
-                    } else {
-                        upd
-                    })
+                    .children((selected_off > 0).then(|| {
+                        if busy {
+                            on
+                        } else {
+                            on.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.bulk_on();
+                                cx.notify();
+                            }))
+                        }
+                    }))
+                    .children((selected_on > 0).then(|| {
+                        if busy {
+                            off
+                        } else {
+                            off.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.bulk_off();
+                                cx.notify();
+                            }))
+                        }
+                    }))
+                    .children((with_update > 0).then(|| {
+                        if busy {
+                            upd
+                        } else {
+                            upd.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.ask_update(true);
+                                cx.notify();
+                            }))
+                        }
+                    }))
                     .child(remove)
                     .child(div().flex_1())
                     .child(

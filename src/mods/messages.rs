@@ -146,6 +146,8 @@ impl Launcher {
                 }
             }
         }
+        // A change the bar started from Home has nowhere on the page to say its result.
+        changed |= self.say_bulk_result();
         if local_fit_due {
             // A catalog read while a check runs drew its cards without it: draw them again.
             if self.mods_state.local_fit.running {

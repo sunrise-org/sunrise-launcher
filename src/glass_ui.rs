@@ -159,15 +159,27 @@ pub fn tip(label: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> 
     tip_with(move |_| label.clone())
 }
 
-/// [`tip`] for a control that opens a menu, popover or dialog: while that is `open` the tooltip
-/// shows nothing, so it never sits on top of what the control opened.
+thread_local! {
+    /// Counts menus opened and closed: a tooltip built before one changed is stale.
+    static MENUS: Cell<u64> = const { Cell::new(0) };
+}
+
+/// A menu opened or closed (every one goes through `close_menus` first).
+pub fn menus_changed() {
+    MENUS.set(MENUS.get().wrapping_add(1));
+}
+
+/// [`tip`] that shows nothing while the menu its control opens is open: `open` as the control
+/// was drawn, and checked again when the tip would show, so a tip already on its way when the
+/// menu opened never shows over it.
 pub fn tip_unless(
     open: bool,
     label: impl Into<SharedString>,
 ) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
     let shown = tip(label);
+    let drawn = MENUS.get();
     move |window, cx| {
-        if open {
+        if open || MENUS.get() != drawn {
             cx.new(|_| NoTip).into()
         } else {
             shown(window, cx)

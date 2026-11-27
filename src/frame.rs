@@ -337,6 +337,8 @@ impl Launcher {
                         this.instance_escape();
                     }
                     "escape" if this.ui.page == Page::Hosting && this.hosting_escape() => {}
+                    // Ticked mods or packs: Escape clears them, Ctrl/Cmd+A ticks every row shown.
+                    "escape" | "a" if this.selection_key(ev, window) => {}
                     _ => return,
                 }
                 cx.stop_propagation();
