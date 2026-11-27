@@ -92,10 +92,10 @@ mod widgets;
 mod window_root;
 
 use gpui::{
-    actions, div, ease_out_quint, prelude::*, px, relative, size, Animation, AnimationExt,
-    AnyElement, App, Bounds, ClickEvent, Context, Div, ElementId, FocusHandle, FontWeight, Hsla,
-    KeyBinding, KeyDownEvent, Menu, MenuItem, PathPromptOptions, SharedString, Stateful,
-    Subscription, Window, WindowBounds, WindowOptions,
+    actions, div, prelude::*, px, relative, size, AnimationExt, AnyElement, App, Bounds,
+    ClickEvent, Context, Div, ElementId, FocusHandle, FontWeight, Hsla, KeyBinding, KeyDownEvent,
+    Menu, MenuItem, PathPromptOptions, SharedString, Stateful, Subscription, Window, WindowBounds,
+    WindowOptions,
 };
 use scrollbar::Scrollbar;
 use std::borrow::Cow;

@@ -1,5 +1,7 @@
 //! Settings › Account: who plays, and the Microsoft accounts signed in here.
 use super::*;
+use crate::widgets::button::secondary;
+use crate::widgets::feedback::{banner, Tone};
 
 impl Launcher {
     fn remove_account(&mut self, uuid: &str) {
@@ -55,10 +57,7 @@ impl Launcher {
             let mut actions = div();
             if needs_sign_in {
                 let uuid = a.uuid.clone();
-                let again = button(
-                    ElementId::named_usize("alt-account-again", i),
-                    tr("Sign in again"),
-                );
+                let again = secondary(format!("alt-account-again-{}", i), tr("Sign in again"));
                 actions = actions.child(if busy {
                     off(again)
                 } else {
@@ -71,15 +70,16 @@ impl Launcher {
                 if !plays {
                     let uuid = a.uuid.clone();
                     actions = actions.child(
-                        button(ElementId::named_usize("alt-account-play", i), tr("Play as"))
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        secondary(format!("alt-account-play-{}", i), tr("Play as")).on_click(
+                            cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 this.play_as(&uuid);
                                 cx.notify();
-                            })),
+                            }),
+                        ),
                     );
                 }
                 let uuid = a.uuid.clone();
-                let out = button(ElementId::named_usize("alt-account-out", i), tr("Sign out"));
+                let out = secondary(format!("alt-account-out-{}", i), tr("Sign out"));
                 actions = actions.child(if busy {
                     off(out)
                 } else {
@@ -258,7 +258,7 @@ impl Launcher {
                                 .child(a.name.clone()),
                         )
                         .child(if needs_sign_in {
-                            warning(said)
+                            banner(Tone::Danger, said, None)
                         } else {
                             hint(said)
                         }),
@@ -283,7 +283,7 @@ impl Launcher {
             }),
             tr("Sign in with the Microsoft account that owns Minecraft: Java Edition."),
             div().child(
-                button("alt-add-account", tr("Sign in with Microsoft")).on_click(cx.listener(
+                secondary("alt-add-account", tr("Sign in with Microsoft")).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
                         this.sign_in_to_play();
                         cx.notify();

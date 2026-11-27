@@ -1,6 +1,7 @@
 //! A server's live status: its address, console and players.
 use super::widgets::*;
 use super::*;
+use crate::widgets::feedback::{banner, Tone};
 
 impl Launcher {
     pub(super) fn host_address_card(
@@ -140,9 +141,9 @@ impl Launcher {
                     |this, _| this.find_server_public_address(),
                 ));
             if lookup == PublicLookup::Failed {
-                panel = panel.child(warning(tr(
+                panel = panel.child(banner(Tone::Danger, tr(
                     "Could not find your public IP. Check your internet connection and try again.",
-                )));
+                ), None));
             }
             if let Some(port) = public_port {
                 panel = panel.child(hint(trf(
@@ -394,7 +395,7 @@ impl Launcher {
                 })
                 .h(px(tokens::FIELD)),
             )
-            .children(refused.map(|e| warning(tr(e))));
+            .children(refused.map(|e| banner(Tone::Danger, tr(e), None)));
         allowed.push(add);
         let mut people: Vec<(String, String)> = whitelist.clone();
         for op in &ops {

@@ -11,10 +11,12 @@
 //! `datapack-browser.json` beside `mod-browser.json` ([`Origin`]). It is only read for a file
 //! that is still in the world, and is how a world is known to have a project already.
 use super::pack_discover::check_world;
-use super::ui::{added_mark, c, card, checkbox, dim, empty_state, muted, primary, tile};
+use super::ui::{added_mark, c, card, dim, muted, tile};
 use super::*;
-use crate::frame::button;
 use crate::paint::palette;
+use crate::widgets::button::{primary, secondary};
+use crate::widgets::check::{checkbox, Tick};
+use crate::widgets::feedback::empty_state;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use sunrise_launcher::browser::{self, Project};
@@ -413,24 +415,20 @@ impl Launcher {
                         .child(muted(format!("{} · {count}", world_facts(world))).truncate()),
                 )
                 .child(
-                    button(
-                        ElementId::named_usize("alt-data-find", n),
-                        tr("Find data packs"),
-                    )
-                    .on_click(cx.listener(
-                        move |this, _: &ClickEvent, _, cx| {
+                    secondary(format!("alt-data-find-{}", n), tr("Find data packs")).on_click(
+                        cx.listener(move |this, _: &ClickEvent, _, cx| {
                             this.find_data_packs(Some(path.clone()));
                             cx.notify();
-                        },
-                    )),
+                        }),
+                    ),
                 );
             let mut group = card().flex_none().flex().flex_col().child(head);
             for (i, listed) in rows.into_iter().enumerate() {
                 let id = n * 1000 + i;
                 let key = (world.path.clone(), listed.pack.file.clone());
                 let asked = confirm.as_ref() == Some(&key);
-                let remove = button(
-                    ElementId::named_usize("alt-data-remove", id),
+                let remove = secondary(
+                    format!("alt-data-remove-{}", id),
                     if asked {
                         tr("Move to trash?")
                     } else {
@@ -447,10 +445,7 @@ impl Launcher {
                 };
                 // A folder pack is the player's own work in progress: only a zip is copied.
                 let copy = (several && listed.pack.path.is_file()).then(|| {
-                    let b = button(
-                        ElementId::named_usize("alt-data-copy", id),
-                        tr("Add to another world…"),
-                    );
+                    let b = secondary(format!("alt-data-copy-{}", id), tr("Add to another world…"));
                     if !editable {
                         return dim(b);
                     }
@@ -507,7 +502,6 @@ impl Launcher {
         }
         if worlds.is_empty() {
             groups = groups.child(empty_state(
-                "earth",
                 tr("No worlds yet"),
                 tr("A data pack goes into a world. Make one in the game first."),
                 None,
@@ -539,10 +533,12 @@ impl Launcher {
         let pick = d.pick.as_ref()?;
         let worlds: &[(World, Vec<Listed>)] = d.list.as_ref().map_or(&[], |l| &l.worlds);
         let close = |label: &'static str| {
-            button("alt-pick-cancel", label).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.close_sheet();
-                cx.notify();
-            }))
+            secondary("alt-pick-cancel", label).on_click(cx.listener(
+                |this, _: &ClickEvent, _, cx| {
+                    this.close_sheet();
+                    cx.notify();
+                },
+            ))
         };
         let heading = crate::sheets::title(trf(
             "Add {pack} to your worlds",
@@ -584,9 +580,12 @@ impl Launcher {
                     true => div().flex_none().size(px(18.)).into_any_element(),
                     false => {
                         // The row is the Tab stop, not the box in it.
-                        checkbox(ElementId::named_usize("alt-pick-box", n), on)
-                            .tab_stop(false)
-                            .into_any_element()
+                        checkbox(
+                            ElementId::named_usize("alt-pick-box", n),
+                            if on { Tick::On } else { Tick::Off },
+                        )
+                        .tab_stop(false)
+                        .into_any_element()
                     }
                 })
                 .child(world_icon(world, 36.))

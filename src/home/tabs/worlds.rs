@@ -1,4 +1,5 @@
 use super::*;
+use crate::widgets::button::secondary;
 
 impl Launcher {
     pub(super) fn home_worlds(
@@ -33,14 +34,14 @@ impl Launcher {
         let items = if count == Some(0) {
             // A world copied into the folder shows up here.
             let saves = instance.home.join("saves");
-            let open = button("home-worlds-folder", tr("Open folder")).on_click(move |_, _, cx| {
-                match std::fs::create_dir_all(&saves) {
-                    Ok(()) => crate::toast::open(cx, &saves),
-                    Err(e) => crate::toast::say(format!("{}: {e}", saves.display())),
-                }
-            });
+            let open =
+                secondary("home-worlds-folder", tr("Open folder")).on_click(move |_, _, cx| {
+                    match std::fs::create_dir_all(&saves) {
+                        Ok(()) => crate::toast::open(cx, &saves),
+                        Err(e) => crate::toast::say(format!("{}: {e}", saves.display())),
+                    }
+                });
             empty(
-                "earth",
                 tr("No worlds here yet"),
                 tr("Worlds you make or copy in show up here."),
                 Some(open),

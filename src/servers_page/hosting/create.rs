@@ -1,6 +1,9 @@
 //! The dialog a server is created in.
 use super::widgets::*;
 use super::*;
+use crate::widgets::button::secondary;
+use crate::widgets::check::{checkbox, Tick};
+use crate::widgets::feedback::{banner, Tone};
 
 impl Launcher {
     /// The one dialog a server is created in, over the page.
@@ -92,14 +95,15 @@ impl Launcher {
             )))
         };
         let step = |id: &'static str, sign: &'static str, delta: i32, cx: &mut Context<Self>| {
-            button(id, sign).w(px(32.)).px(px(0.)).on_click(cx.listener(
-                move |this, _: &ClickEvent, _, cx| {
+            secondary(id, sign)
+                .w(px(32.))
+                .px(px(0.))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     if let Some(c) = &mut this.servers.create {
                         c.max_players = (c.max_players as i32 + delta).clamp(1, 100) as u32;
                     }
                     cx.notify();
-                },
-            ))
+                }))
         };
         let players = div()
             .flex()
@@ -170,15 +174,15 @@ impl Launcher {
             .items_center()
             .gap(px(10.))
             .child(
-                crate::mods::checkbox("host-create-eula", eula).on_click(cx.listener(
-                    |this, _: &ClickEvent, _, cx| {
+                checkbox("host-create-eula", if eula { Tick::On } else { Tick::Off }).on_click(
+                    cx.listener(|this, _: &ClickEvent, _, cx| {
                         if let Some(c) = &mut this.servers.create {
                             c.eula = !c.eula;
                             c.eula_missing = false;
                         }
                         cx.notify();
-                    },
-                )),
+                    }),
+                ),
             )
             .child(
                 div()
@@ -257,9 +261,13 @@ impl Launcher {
             let last = self.servers.job_log.back().cloned().unwrap_or_default();
             hint(format!("{} {last}", tr("Creating…")))
         } else if let Some(p) = &self.servers.problem {
-            warning(p.message.clone())
+            banner(Tone::Danger, p.message.clone(), None)
         } else if eula_missing {
-            warning(tr("Tick the EULA box to create the server."))
+            banner(
+                Tone::Danger,
+                tr("Tick the EULA box to create the server."),
+                None,
+            )
         } else {
             div()
         };
@@ -299,13 +307,11 @@ impl Launcher {
                     this.servers.problem = None;
                 },
             ))
-            .child(primary(self.host_button(
-                "host-create-go",
-                tr("Create"),
-                !creating,
-                cx,
-                |this, _| this.create_server(),
-            )));
+            .child(
+                self.host_primary("host-create-go", tr("Create"), !creating, cx, |this, _| {
+                    this.create_server()
+                }),
+            );
         Some(
             div()
                 .id("host-create")

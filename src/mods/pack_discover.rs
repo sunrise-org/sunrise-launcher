@@ -14,10 +14,12 @@
 //! through the shared busy flag (`mutating`).
 use super::discover::MenuOption;
 use super::state::Menu;
-use super::ui::{added_mark, browse_card, c, card, columns, dim, muted, tag};
+use super::ui::{added_mark, browse_card, c, card, columns, dim, muted};
 use super::*;
-use crate::frame::button;
 use crate::paint::palette;
+use crate::widgets::button::secondary;
+use crate::widgets::chip::{self, choices, tag};
+use gpui::SharedString;
 use std::path::Path;
 use sunrise_launcher::browser::details::{category_label, Sort};
 use sunrise_launcher::browser::{self, images, installed, Kind, Project, Query, Source as _};
@@ -454,14 +456,18 @@ impl Launcher {
             self.pack_search();
         }
         let scope = self.mods_state.packs.scope;
-        let kinds = Scope::ALL
+        let options: Vec<(Scope, SharedString)> = Scope::ALL
             .into_iter()
-            .map(|kind| {
-                let pick: Choose = Rc::new(move |this, _| this.pack_scope(kind));
-                (kind.label().into(), scope == kind, pick)
-            })
+            .map(|kind| (kind, kind.label().into()))
             .collect();
-        let kinds = choices("alt-discover-scope", kinds, cx).gap(px(8.));
+        let this = cx.entity();
+        let kinds = choices("alt-discover-scope", &options, scope, move |kind, _, cx| {
+            this.update(cx, |this, cx| {
+                this.pack_scope(kind);
+                cx.notify();
+            })
+        })
+        .gap(px(8.));
         let from: AnyElement = match scope {
             Scope::Data => self.data_pack_line(cx),
             Scope::Shader => muted(tr(
@@ -509,7 +515,7 @@ impl Launcher {
                 )
                 .child(muted(e.clone()))
                 .child(
-                    button("alt-pack-retry", tr("Try again")).on_click(cx.listener(
+                    secondary("alt-pack-retry", tr("Try again")).on_click(cx.listener(
                         |this, _: &ClickEvent, _, cx| {
                             this.pack_search();
                             cx.notify();
@@ -560,7 +566,7 @@ impl Launcher {
                             } else {
                                 // A data pack asks which worlds first.
                                 let label = if data { tr("Add…") } else { tr("Add") };
-                                let b = button(ElementId::named_usize("alt-pack-add", n), label);
+                                let b = secondary(format!("alt-pack-add-{}", n), label);
                                 Some(if working {
                                     dim(b).into_any_element()
                                 } else {
@@ -579,9 +585,9 @@ impl Launcher {
                             let common =
                                 data && support.reason() == Some(browser::datapack_support());
                             let note = support.reason().filter(|_| !common).map(str::to_owned);
-                            let mut facts = vec![tag(source_label(p.source))];
+                            let mut facts = vec![tag(source_label(p.source), chip::Kind::Neutral)];
                             if !matches!(support, browser::Support::Works) && !common {
-                                facts.push(tag(support.label()));
+                                facts.push(tag(support.label(), chip::Kind::Neutral));
                             }
                             facts.push(muted(model::downloads(p.downloads)));
                             if data {

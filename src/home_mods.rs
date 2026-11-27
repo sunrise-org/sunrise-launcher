@@ -4,9 +4,10 @@
 //! Home opens no file of a mod or a pack. It is read again when the files it was read from
 //! change ([`stamp`]).
 use super::*;
-use crate::frame::{button, Page};
+use crate::frame::Page;
 use crate::home::tabs::{self, Content};
 use crate::mod_icons::tile;
+use crate::widgets::button::secondary;
 use gpui::RenderImage;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -507,17 +508,19 @@ impl Launcher {
     pub(crate) fn home_installed_tab(&mut self, packs: bool, cx: &mut Context<Self>) -> Content {
         use crate::mods::Installed;
         let manage = if packs {
-            button("home-manage-resource", tr("Manage resource packs")).on_click(cx.listener(
+            secondary("home-manage-resource", tr("Manage resource packs")).on_click(cx.listener(
                 |this, _, _, cx| {
                     this.open_installed(Installed::Shelf(PackKind::Resource));
                     cx.notify();
                 },
             ))
         } else {
-            button("home-manage-mods", tr("Manage mods")).on_click(cx.listener(|this, _, _, cx| {
-                this.open_installed(Installed::Mods);
-                cx.notify();
-            }))
+            secondary("home-manage-mods", tr("Manage mods")).on_click(cx.listener(
+                |this, _, _, cx| {
+                    this.open_installed(Installed::Mods);
+                    cx.notify();
+                },
+            ))
         };
         let Some(snapshot) = self.ui.home.mods.snapshot.clone() else {
             return Content {
@@ -536,25 +539,23 @@ impl Launcher {
         if list.is_empty() {
             let items = if packs {
                 tabs::empty(
-                    "package-01",
                     tr("No resource packs yet"),
                     tr("Resource packs you add to this profile show up here."),
                     Some(
-                        button("home-find-packs", tr("Find resource packs")).on_click(cx.listener(
-                            |this, _, _, cx| {
+                        secondary("home-find-packs", tr("Find resource packs")).on_click(
+                            cx.listener(|this, _, _, cx| {
                                 this.show_resource_pack_discover();
                                 cx.notify();
-                            },
-                        )),
+                            }),
+                        ),
                     ),
                 )
             } else if turned_off == 0 {
                 tabs::empty(
-                    "puzzle",
                     tr("No mods yet"),
                     tr("Mods you add to this profile show up here."),
                     Some(
-                        button("home-browse-mods", tr("Find mods")).on_click(cx.listener(
+                        secondary("home-browse-mods", tr("Find mods")).on_click(cx.listener(
                             |this, _, _, cx| {
                                 this.show_discover();
                                 cx.notify();

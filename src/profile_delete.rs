@@ -1,7 +1,8 @@
 //! One confirmation for profile removal, whether opened in Settings or in the sidebar.
 use super::*;
+use crate::widgets::button::secondary;
 use crate::{
-    frame::{button, Reach as _},
+    frame::Reach as _,
     mods::refused::{details_box, details_label},
     paint::palette,
     settings::danger,
@@ -153,7 +154,7 @@ impl Launcher {
         let body = div().flex().flex_col();
         let footer = || div().flex().justify_end().gap(px(8.));
         let close = |id, label, cx: &mut Context<Self>| {
-            button(id, label).on_click(cx.listener(|this, _, _, cx| {
+            secondary(id, label).on_click(cx.listener(|this, _, _, cx| {
                 this.close_profile_action();
                 cx.notify();
             }))
@@ -173,7 +174,7 @@ impl Launcher {
                     footer()
                         .child(close("profile-delete-cancel", tr("Cancel"), cx))
                         .child(
-                            danger(button("profile-delete-confirm", tr("Delete profile")))
+                            danger(secondary("profile-delete-confirm", tr("Delete profile")))
                                 .on_click(cx.listener(|this, _, _, cx| this.delete_profile(cx))),
                         ),
                 ),
@@ -202,7 +203,7 @@ impl Launcher {
                 .child(
                     footer()
                         .child(
-                            button("profile-delete-details", details_label(*details)).on_click(
+                            secondary("profile-delete-details", details_label(*details)).on_click(
                                 cx.listener(|this, _, _, cx| {
                                     if let Some(Action::Problem { details, .. }) =
                                         &mut this.ui.sheets.profile_action

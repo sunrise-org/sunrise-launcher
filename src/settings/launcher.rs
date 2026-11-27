@@ -1,5 +1,7 @@
 //! Settings › Launcher: language, network and this version.
 use super::*;
+use crate::widgets::button::secondary;
+use crate::widgets::feedback::{banner, Tone};
 
 impl Launcher {
     pub(super) fn settings_launcher(&mut self, cx: &mut Context<Self>) -> Div {
@@ -12,9 +14,9 @@ impl Launcher {
         };
         // One button with the language on it; a press opens the list under it, as Discover's
         // menus do. 87 languages don't fit on a page as buttons.
-        let opener = button("alt-language", now)
+        let opener = secondary("alt-language", now)
             .gap(px(8.))
-            .child(crate::glass_ui::fold_chevron(
+            .child(crate::widgets::motion_bits::chevron(
                 "settings-language",
                 picking,
                 13.,
@@ -135,7 +137,7 @@ impl Launcher {
             field,
         );
         if let Some(why) = refused {
-            proxy = proxy.child(warning(why));
+            proxy = proxy.child(banner(Tone::Danger, why, None));
         }
         let version = self.launcher_update_row(cx);
         div()
@@ -158,7 +160,7 @@ impl Launcher {
         let recovery = || {
             self.launcher_download_available().then(|| {
                 let url = backend::download_page(&self.links.website);
-                button("alt-launcher-download", tr("Download again"))
+                secondary("alt-launcher-download", tr("Download again"))
                     .on_click(move |_, _, cx| cx.open_url(&url))
             })
         };
@@ -172,12 +174,18 @@ impl Launcher {
             self.updates.launcher_error,
             Some(backend::LauncherCheckError::Rejected { .. })
         );
-        let verification_error = || warning(tr("The launcher update could not be verified."));
+        let verification_error = || {
+            banner(
+                Tone::Danger,
+                tr("The launcher update could not be verified."),
+                None,
+            )
+        };
         let (about, action, bad) = if let Some(offer) = &offer {
             let armed = self.restart_for_launcher_update;
             let action = if armed {
                 Some(
-                    button("alt-launcher-cancel", tr("Cancel restart")).on_click(cx.listener(
+                    secondary("alt-launcher-cancel", tr("Cancel restart")).on_click(cx.listener(
                         |this, _, _, cx| {
                             this.cancel_launcher_restart();
                             cx.notify();
@@ -185,12 +193,14 @@ impl Launcher {
                     )),
                 )
             } else if let Some(label) = offer.action(self.launcher_update_wait(), armed) {
-                Some(button("alt-launcher-update", label).on_click(cx.listener(
-                    |this, _, _, cx| {
-                        this.request_launcher_update();
-                        cx.notify();
-                    },
-                )))
+                Some(
+                    secondary("alt-launcher-update", label).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.request_launcher_update();
+                            cx.notify();
+                        },
+                    )),
+                )
             } else if matches!(offer.status, Status::Stuck(_)) {
                 recovery()
             } else {
@@ -218,7 +228,7 @@ impl Launcher {
         } else if self.checking_updates {
             (
                 String::new(),
-                Some(off(button("alt-launcher-check", tr("Checking…")))),
+                Some(off(secondary("alt-launcher-check", tr("Checking…")))),
                 false,
             )
         } else {
@@ -234,7 +244,7 @@ impl Launcher {
                     self.checked.is_some(),
                 )
             };
-            let check = button("alt-launcher-check", tr("Check now")).on_click(cx.listener(
+            let check = secondary("alt-launcher-check", tr("Check now")).on_click(cx.listener(
                 |this, _, _, cx| {
                     this.check_updates(UpdateCheck::ManualLauncher);
                     cx.notify();
@@ -245,7 +255,11 @@ impl Launcher {
         let mut words = div().flex().flex_col().gap(px(2.));
         words = words.child(div().font_weight(FontWeight::SEMIBOLD).child(title));
         if !about.is_empty() {
-            words = words.child(if bad { warning(about) } else { hint(about) });
+            words = words.child(if bad {
+                banner(Tone::Danger, about, None)
+            } else {
+                hint(about)
+            });
         }
         div()
             .flex()

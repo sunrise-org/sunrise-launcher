@@ -1,8 +1,8 @@
 //! Buttons: Primary, Secondary, Ghost and Accent outline, in Medium and Small, with an optional
 //! leading icon, and the square icon button. Every page draws its buttons from here.
+#![allow(dead_code)] // Used by the shell and pages that the next redesign steps move over; removed in the final sweep.
 use super::*;
 use crate::frame::{c, focus_ring, mix};
-use crate::i18n::tr;
 use crate::paint::palette;
 use crate::tokens;
 
@@ -98,9 +98,6 @@ impl Size {
     }
 }
 
-/// Opacity of a disabled button (the Figma look: 45 %).
-const DISABLED_OPACITY: f32 = 0.45;
-
 /// The label and icon colour: white on the accent, the text colour everywhere else.
 fn ink(style: Style) -> u32 {
     match style {
@@ -127,29 +124,36 @@ fn hover_colour(style: Style) -> gpui::Hsla {
     }
 }
 
-/// A button with `label` (translated here, as [`tr`] does) in `look`. The caller attaches the
+/// A button with `label` (already translated by the caller) in `look`. The caller attaches the
 /// click handler; a disabled button takes no hover, press or keyboard focus, so the caller
 /// should not attach one either.
 pub(crate) fn button(
-    id: impl Into<SharedString>,
+    id: impl Into<ElementId>,
     label: impl Into<SharedString>,
     look: Look,
 ) -> Stateful<Div> {
-    let label: SharedString = label.into();
-    let text = SharedString::from(tr(&label).to_string());
-    make(id.into(), look, false, Some(text))
+    make(id.into(), look, false, Some(label.into()))
 }
 
-/// A square icon button (as tall as a Medium button) showing `icon` centred, with `tooltip` (also
-/// translated here) on hover. Its look is a Medium `style` button with the icon alone.
+/// The everyday button: [`Style::Secondary`] at [`Size::Medium`].
+pub(crate) fn secondary(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
+    button(id, label, Look::new(Style::Secondary, Size::Medium))
+}
+
+/// A view's main action: [`Style::Primary`] at [`Size::Medium`].
+pub(crate) fn primary(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
+    button(id, label, Look::new(Style::Primary, Size::Medium))
+}
+
+/// A square icon button (as tall as a Medium button) showing `icon` centred, with `tooltip`
+/// (translated by the caller) on hover. Its look is a Medium `style` button with the icon alone.
 pub(crate) fn icon_button(
-    id: impl Into<SharedString>,
+    id: impl Into<ElementId>,
     icon: &'static str,
     tooltip: impl Into<SharedString>,
     style: Style,
 ) -> Stateful<Div> {
-    let tooltip: SharedString = tooltip.into();
-    let tip = SharedString::from(tr(&tooltip).to_string());
+    let tip: SharedString = tooltip.into();
     let look = Look::new(style, Size::Medium).icon(icon);
     make(id.into(), look, true, None).tooltip(crate::glass_ui::tip(tip))
 }
@@ -157,12 +161,14 @@ pub(crate) fn icon_button(
 /// The shared body of [`button`] and [`icon_button`]: the box, its fill and edge, its hover and
 /// press, its icon and label, and the keyboard ring. `square` makes it as wide as it is tall, with
 /// no side padding.
-fn make(id: SharedString, look: Look, square: bool, text: Option<SharedString>) -> Stateful<Div> {
+fn make(id: ElementId, look: Look, square: bool, text: Option<SharedString>) -> Stateful<Div> {
+    // The hover and press state is keyed by the id's text, as the other shared controls key it.
+    let key = SharedString::from(id.to_string());
     let (style, size) = (look.style, look.size);
     let text_ink = c(ink(style));
     let edge_colour = edge(style).map_or(gpui::transparent_black(), c);
     let el = div()
-        .id(id.clone())
+        .id(id)
         .relative()
         .tab_index(0)
         .flex()
@@ -183,7 +189,7 @@ fn make(id: SharedString, look: Look, square: bool, text: Option<SharedString>) 
         .focus_visible(|s| s.shadow(focus_ring(palette().focus)));
     if look.disabled {
         return el
-            .opacity(DISABLED_OPACITY)
+            .opacity(crate::theme::DISABLED)
             .cursor_default()
             .tab_stop(false)
             .children(
@@ -194,7 +200,7 @@ fn make(id: SharedString, look: Look, square: bool, text: Option<SharedString>) 
     }
     let hover = hover_colour(style);
     let layer = hover_fade(
-        &id,
+        &key,
         || {
             div()
                 .absolute()
@@ -208,14 +214,14 @@ fn make(id: SharedString, look: Look, square: bool, text: Option<SharedString>) 
             })
         },
     );
-    let el = track_hover(el.cursor_pointer(), id.clone())
+    let el = track_hover(el.cursor_pointer(), key.clone())
         .child(layer)
         .children(
             look.icon
                 .map(|name| crate::glass_ui::icon(name, size.icon(), text_ink)),
         )
         .children(text);
-    press(el, &id, |d| d.top(px(1.)))
+    press(el, &key, |d| d.top(px(1.)))
 }
 
 #[cfg(test)]

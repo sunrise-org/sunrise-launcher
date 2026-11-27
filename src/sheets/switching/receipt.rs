@@ -1,5 +1,6 @@
 //! The Build changes report: reading a profile's receipt, its sheet and acknowledging it.
 use super::*;
+use crate::widgets::button::secondary;
 
 impl Launcher {
     pub(crate) fn check_build_changes(&mut self, home: &Path, cx: &mut Context<Self>) -> bool {
@@ -170,14 +171,14 @@ impl Launcher {
                     .justify_end()
                     .gap(px(8.))
                     .children(show.then(|| {
-                        crate::frame::copy_button(
+                        crate::widgets::motion_bits::copy_button(
                             "receipt-copy",
                             tr("Copy report"),
                             copy.as_ref().clone(),
                         )
                     }))
                     .children(show.then(|| {
-                        button("receipt-save", tr("Save report")).on_click(cx.listener(
+                        secondary("receipt-save", tr("Save report")).on_click(cx.listener(
                             move |this, _, _, cx| {
                                 use std::io::Write;
                                 let saved = (|| {
@@ -208,7 +209,7 @@ impl Launcher {
                         ))
                     }))
                     .child(
-                        button(
+                        secondary(
                             "receipt-why",
                             if show {
                                 tr("Hide details")
@@ -221,7 +222,7 @@ impl Launcher {
                             cx.notify();
                         })),
                     )
-                    .child(button("receipt-done", tr("Done")).on_click(cx.listener(
+                    .child(secondary("receipt-done", tr("Done")).on_click(cx.listener(
                         move |this, _, _, cx| {
                             if this.ui.sheets.switching.ack {
                                 return;

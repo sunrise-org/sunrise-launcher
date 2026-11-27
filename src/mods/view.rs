@@ -163,7 +163,7 @@ impl Launcher {
         } else {
             &self.mods_state.find
         };
-        let field = crate::frame::input(focused)
+        let field = crate::widgets::field::field_box(focused, false)
             .id(if installed {
                 "alt-mods-have"
             } else {
@@ -225,6 +225,13 @@ impl Launcher {
         } else {
             line_edit::mouse(field, cx, |this: &mut Launcher| &mut this.mods_state.find)
         };
+        let this = cx.entity();
+        let installed_page = if packs { Page::Packs } else { Page::Installed };
+        let discover_page = if packs {
+            Page::PackFind
+        } else {
+            Page::Discover
+        };
         let sub_tabs = div()
             .flex()
             .flex_wrap()
@@ -235,28 +242,23 @@ impl Launcher {
             .border_b_1()
             .border_color(palette().rule())
             .child(
-                segmented(
+                crate::widgets::nav::tabs(
                     "alt-mods-tabs",
-                    [
-                        (
-                            "alt-mods-tab-installed",
-                            tr("Installed").into(),
-                            installed,
-                            if packs { Page::Packs } else { Page::Installed },
-                        ),
-                        (
-                            "alt-mods-tab-discover",
-                            tr("Discover").into(),
-                            !installed,
-                            if packs {
-                                Page::PackFind
-                            } else {
-                                Page::Discover
-                            },
-                        ),
+                    &[
+                        (installed_page, tr("Installed").into()),
+                        (discover_page, tr("Discover").into()),
                     ],
-                    Launcher::choose_view,
-                    cx,
+                    if installed {
+                        installed_page
+                    } else {
+                        discover_page
+                    },
+                    move |page, _, cx| {
+                        this.update(cx, |view, cx| {
+                            Launcher::choose_view(view, page);
+                            cx.notify();
+                        });
+                    },
                 )
                 .seen(),
             );

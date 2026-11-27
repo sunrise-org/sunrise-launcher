@@ -1,7 +1,8 @@
 //! The installed builds and import cards in Settings → Storage.
-use crate::frame::button;
-use crate::mods::switch;
-use crate::settings::{danger, group, hint, off, row, warning};
+use crate::settings::{danger, group, hint, off, row};
+use crate::widgets::button::secondary;
+use crate::widgets::check::switch;
+use crate::widgets::feedback::{banner, Tone};
 use std::sync::Arc;
 use sunrise_launcher::backend::{
     version_storage::{self, Build, InUse},
@@ -182,7 +183,7 @@ impl Launcher {
     fn nightly_receipt_notice(&self, tag: &str, cx: &mut Context<Self>) -> Option<Div> {
         let notice = self.storage_builds.receipts.get(tag)?;
         let warning = Arc::clone(&notice.warning);
-        let retry = button(
+        let retry = secondary(
             SharedString::from(format!("retry-nightly-receipt-{tag}")),
             if notice.retrying {
                 tr("Trying again…")
@@ -289,13 +290,13 @@ impl Launcher {
         action: &str,
         cx: &mut Context<Self>,
     ) -> Div {
-        let remove = danger(button("storage-build-confirm", action.to_owned()));
+        let remove = danger(secondary("storage-build-confirm", action.to_owned()));
         row(
             title,
             about,
             div()
                 .child(
-                    button("storage-build-cancel", tr("Cancel")).on_click(cx.listener(
+                    secondary("storage-build-cancel", tr("Cancel")).on_click(cx.listener(
                         |this, _: &ClickEvent, _, cx| {
                             this.storage_builds.confirm = None;
                             cx.notify();
@@ -338,7 +339,7 @@ impl Launcher {
             )
         };
         let cleanup = (!bulk && !old.is_empty()).then(|| {
-            let clean = button("storage-build-clean", tr("Clean up old builds…"));
+            let clean = secondary("storage-build-clean", tr("Clean up old builds…"));
             if available {
                 clean.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.storage_builds.confirm = Some(Confirm::Old(old.clone()));
@@ -418,7 +419,7 @@ impl Launcher {
                 (build.in_use.is_none() && !confirming && !self.removing.contains(&build.tag))
                     .then(|| {
                         let tag = build.tag.clone();
-                        let remove = button(
+                        let remove = secondary(
                             gpui::SharedString::from(format!("storage-remove-{tag}")),
                             tr("Remove…"),
                         );
@@ -454,13 +455,18 @@ impl Launcher {
                 ));
             }
         }
-        card.extend(self.storage_builds.remove_error.clone().map(warning));
+        card.extend(
+            self.storage_builds
+                .remove_error
+                .clone()
+                .map(|t| banner(Tone::Danger, t, None)),
+        );
         group(card)
     }
 
     pub(super) fn storage_build_options(&self, cx: &mut Context<Self>) -> Div {
         let base = build_import::can_import(&self.installed, self.settings.selected.as_deref());
-        let choose = button("storage-build-import", tr("Choose file…"));
+        let choose = secondary("storage-build-import", tr("Choose file…"));
         let mut rows = vec![row(
             tr("Import a game build"),
             tr(if base {
@@ -469,7 +475,7 @@ impl Launcher {
                 "Install a game build first. An import reuses its game files."
             }),
             div().child(if self.importing_build {
-                off(button("storage-build-importing", tr("Importing…")))
+                off(secondary("storage-build-importing", tr("Importing…")))
             } else if base && self.can_change_builds() {
                 choose.on_click(
                     cx.listener(|this, _: &ClickEvent, _, cx| this.choose_storage_import(cx)),
@@ -481,7 +487,7 @@ impl Launcher {
         if let Some(note) = &self.storage_builds.import_notice {
             rows.push(match note {
                 Ok(note) => hint(note.clone()),
-                Err(error) => warning(error.clone()),
+                Err(error) => banner(Tone::Danger, error.clone(), None),
             });
         }
         rows.push(row(

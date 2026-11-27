@@ -1,5 +1,6 @@
 //! Settings › Privacy: what Sunrise sends, and what it never does.
 use super::*;
+use crate::widgets::button::secondary;
 
 impl Launcher {
     pub(super) fn settings_privacy(&mut self, cx: &mut Context<Self>) -> Div {
@@ -191,7 +192,7 @@ impl Launcher {
             format!("{id} · {waiting}"),
             div()
                 .child(
-                    button(
+                    secondary(
                         "alt-data-view",
                         tr(if viewing {
                             "Hide"
@@ -205,7 +206,7 @@ impl Launcher {
                     })),
                 )
                 .child(
-                    danger(button(
+                    danger(secondary(
                         "alt-data-delete",
                         tr(if confirm {
                             "Delete everything?"

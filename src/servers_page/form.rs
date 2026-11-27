@@ -2,6 +2,7 @@
 //! edits, and the player heads.
 
 use super::*;
+use crate::widgets::field::field_box;
 
 impl Launcher {
     pub(crate) fn focus_handle(&mut self, f: Field, cx: &mut Context<Self>) -> FocusHandle {
@@ -21,21 +22,15 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let t = self.theme;
-        let handle = self.focus_handle(f, cx);
         let focused = self.servers.focused == Some(f);
-        let selected = focused && self.servers.selected == Some(f);
         let invalid = self.servers.invalid.is_some_and(|(g, _)| g == f);
-        self.servers.text(f).show(((width - 24.) / 7.5) as usize);
         // Home's Add server line is in the glass look already; the other fields follow with
         // their pages.
         // The dark appearance draws every field in the glass look.
         let profile_field = matches!(f, Field::InstanceName | Field::InstanceGroup);
         let glass = t.glass;
         let base = if profile_field {
-            crate::frame::input(focused)
-                .when(invalid, |d| {
-                    d.border_color(gpui::rgb(crate::paint::palette().danger))
-                })
+            crate::widgets::field::field_box(focused, invalid)
                 .h(px(crate::tokens::FIELD))
                 .px(px(12.))
                 .text_size(px(crate::tokens::BODY))
@@ -43,7 +38,7 @@ impl Launcher {
         } else if glass {
             // The mods filter and the log search sit by buttons: the mockup's small `FIELD`, as
             // tall as they are.
-            crate::glass_ui::field(focused, invalid)
+            crate::widgets::field::field_box(focused, invalid)
                 .when(
                     matches!(
                         f,
@@ -88,24 +83,26 @@ impl Launcher {
                         .text_size(px(13.))
                 })
         } else {
-            div()
-                .flex()
-                .items_center()
-                .h(px(theme::FIELD))
-                .px(px(12.))
-                .overflow_hidden()
-                .rounded(px(theme::RADIUS))
-                .border_1()
-                .border_color(if invalid {
-                    t.danger
-                } else if focused {
-                    t.accent
-                } else {
-                    t.rule
-                })
-                .bg(t.surface)
-                .text_size(px(theme::UI.px))
+            field_box(focused, invalid)
         };
+        self.field_on(f, placeholder, width, base, cx)
+    }
+
+    /// `f`'s text field drawn in `base` (its frame): focus, typing, clicks and keys.
+    pub(super) fn field_on(
+        &mut self,
+        f: Field,
+        placeholder: &'static str,
+        width: f32,
+        base: Div,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let t = self.theme;
+        let handle = self.focus_handle(f, cx);
+        let focused = self.servers.focused == Some(f);
+        let selected = focused && self.servers.selected == Some(f);
+        self.servers.text(f).show(((width - 24.) / 7.5) as usize);
+        let profile_field = matches!(f, Field::InstanceName | Field::InstanceGroup);
         let line_theme = if profile_field {
             crate::mods::field_theme(t)
         } else {

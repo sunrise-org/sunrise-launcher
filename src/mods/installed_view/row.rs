@@ -1,5 +1,8 @@
 //! One installed row: its switch, labels and actions.
 use super::*;
+use crate::widgets::button::secondary;
+use crate::widgets::check::{checkbox, switch, Tick};
+use crate::widgets::chip::{self, tag};
 
 impl Launcher {
     pub(super) fn row(
@@ -35,16 +38,18 @@ impl Launcher {
 
         let check = {
             let file = r.archive_file().map(str::to_owned);
-            checkbox(("alt-row-check", n), selected).on_click(cx.listener(
-                move |this, ev: &ClickEvent, _, cx| {
-                    cx.stop_propagation();
-                    if let Some(file) = &file {
-                        this.mods_state
-                            .select_installed_row(file, &shown, ev.modifiers().shift);
-                    }
-                    cx.notify();
-                },
-            ))
+            checkbox(
+                ("alt-row-check", n),
+                if selected { Tick::On } else { Tick::Off },
+            )
+            .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                if let Some(file) = &file {
+                    this.mods_state
+                        .select_installed_row(file, &shown, ev.modifiers().shift);
+                }
+                cx.notify();
+            }))
         };
 
         // The list's shared columns (`model::cells`) keep their places across every group.
@@ -127,7 +132,7 @@ impl Launcher {
             let (id, label) = match action {
                 model::RowAction::Update => ("alt-row-update", tr("Update")),
             };
-            let b = crate::frame::button((id, n), label);
+            let b = secondary(format!("{id}-{n}"), label);
             let stale_source = action == model::RowAction::Update
                 && nightly::installed_source(&r).is_some()
                 && !self.nightly_catalogue_current();
@@ -147,7 +152,7 @@ impl Launcher {
             }))
         });
         let sw = {
-            let s = ui::switch(("alt-row-switch", n), r.on).when(cells.unavailable, |s| {
+            let s = switch(("alt-row-switch", n), r.on).when(cells.unavailable, |s| {
                 s.opacity(0.52).tooltip(crate::glass_ui::tip(tr(
                     "Enabled for this profile, but not included in the build.",
                 )))
@@ -193,7 +198,7 @@ impl Launcher {
                             .truncate()
                             .child(label.unwrap_or_else(|| r.title.clone())),
                     )
-                    .children(manual_badge.map(ui::manual_badge_pill)),
+                    .children(manual_badge.map(|badge| tag(badge.label(), chip::Kind::Neutral))),
             )
             .child(
                 div()

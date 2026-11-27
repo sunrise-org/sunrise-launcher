@@ -1,12 +1,8 @@
 //! Xmilon's preview and creation form, scoped to Sunrise profiles. Saving uses the same
 //! instance creation/copy transaction as the launcher; the dialog doesn't write game files.
 use super::*;
-use crate::{
-    frame::{button, primary, Reach},
-    instances_page::InstanceDialog,
-    paint::palette,
-    servers_page::Field,
-};
+use crate::widgets::button::{primary, secondary};
+use crate::{frame::Reach, instances_page::InstanceDialog, paint::palette, servers_page::Field};
 use gpui::rgb;
 use instances::{Channel, Icon, Instance};
 
@@ -245,7 +241,7 @@ impl Launcher {
                     Channel::Dev => self.profile_build_choices(Channel::Dev).is_empty(),
                     Channel::Nightly => false,
                 };
-                let b = button(id, label).when(c == channel, |d| {
+                let b = secondary(id, label).when(c == channel, |d| {
                     d.bg(rgb(p.selected)).border_color(rgb(p.accent_ink))
                 });
                 channels = channels.child(if none {
@@ -300,7 +296,7 @@ impl Launcher {
                     })
                     .unwrap_or_else(|| tr("Follow latest").into());
                 versions = versions.child(
-                    button(ElementId::named_usize("new-version", idx), label)
+                    secondary(format!("new-version-{}", idx), label)
                         .justify_start()
                         .when(pin == tag, |d| {
                             d.bg(rgb(p.selected)).border_color(rgb(p.accent_ink))
@@ -329,7 +325,7 @@ impl Launcher {
             ("new-empty", false, tr("Start empty")),
             ("new-copy", true, tr("Copy selected profile")),
         ] {
-            let option = button(id, label).when(copy == duplicate, |d| {
+            let option = secondary(id, label).when(copy == duplicate, |d| {
                 d.bg(rgb(p.selected)).border_color(rgb(p.accent_ink))
             });
             start = start.child(match copy_lock.filter(|_| duplicate) {
@@ -361,7 +357,7 @@ impl Launcher {
             });
         }
         let mut icons = row().flex_wrap().child(
-            button("new-mark", tr("Sunrise"))
+            secondary("new-mark", tr("Sunrise"))
                 .when(icon.is_none(), |d| d.border_color(rgb(p.accent_ink)))
                 .on_click(cx.listener(|this, _, _, cx| {
                     if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
@@ -455,16 +451,18 @@ impl Launcher {
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(tr("Discard your changes?")),
                 )
-                .child(button("new-keep", tr("Keep editing")).on_click(cx.listener(
-                    |this, _, _, cx| {
-                        if let Some(d) = &mut this.instances.dialog {
-                            d.discarding = false;
-                        }
-                        cx.notify();
-                    },
-                )))
                 .child(
-                    crate::settings::danger(button("new-discard", tr("Discard"))).on_click(
+                    secondary("new-keep", tr("Keep editing")).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            if let Some(d) = &mut this.instances.dialog {
+                                d.discarding = false;
+                            }
+                            cx.notify();
+                        },
+                    )),
+                )
+                .child(
+                    crate::settings::danger(secondary("new-discard", tr("Discard"))).on_click(
                         cx.listener(|this, _, _, cx| {
                             this.instances.dialog = None;
                             cx.notify();
@@ -473,7 +471,7 @@ impl Launcher {
                 );
         }
         row.child(
-            button("new-cancel", tr("Cancel")).on_click(cx.listener(|this, _, _, cx| {
+            secondary("new-cancel", tr("Cancel")).on_click(cx.listener(|this, _, _, cx| {
                 this.close_instance_dialog();
                 cx.notify();
             })),

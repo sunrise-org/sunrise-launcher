@@ -1,6 +1,7 @@
 //! Asked when a mod needs a dependency that several reviewed v2 projects provide. The launcher
 //! never picks one: the player chooses, or cancels and nothing is installed.
 use super::*;
+use crate::widgets::button::secondary;
 use sunrise_launcher::browser::sunrise::ProviderChoiceNeeded;
 
 pub(super) struct PendingProviderChoice {
@@ -73,12 +74,14 @@ impl Launcher {
                                 ],
                             ))),
                     )
-                    .child(button(("provider-choice-use", i), tr("Use this")).on_click(
-                        cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.answer_provider_choice(Some(project_id.clone()));
-                            cx.notify();
-                        }),
-                    )),
+                    .child(
+                        secondary(format!("provider-choice-use-{}", i), tr("Use this")).on_click(
+                            cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.answer_provider_choice(Some(project_id.clone()));
+                                cx.notify();
+                            }),
+                        ),
+                    ),
             );
         }
         let body = div()
@@ -96,7 +99,7 @@ impl Launcher {
             .child(list)
             .child(
                 div().flex().justify_end().child(
-                    button("provider-choice-cancel", tr("Cancel")).on_click(cx.listener(
+                    secondary("provider-choice-cancel", tr("Cancel")).on_click(cx.listener(
                         |this, _: &ClickEvent, _, cx| {
                             this.answer_provider_choice(None);
                             cx.notify();

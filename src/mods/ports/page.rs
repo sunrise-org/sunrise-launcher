@@ -1,6 +1,7 @@
 //! The Installed and project pages' competing-ports views.
 
 use super::*;
+use crate::widgets::button::secondary;
 
 impl Launcher {
     pub(crate) fn refresh_mods_after_port_switch(
@@ -154,13 +155,15 @@ impl Launcher {
                 });
 
                 let view_id = port.project_id.clone();
-                let view_btn =
-                    crate::frame::button(("alt-port-view", group_idx * 100 + port_idx), tr("View"))
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            cx.stop_propagation();
-                            this.mods_show_project(view_id.clone());
-                            cx.notify();
-                        }));
+                let view_btn = secondary(
+                    format!("alt-port-view-{}", group_idx * 100 + port_idx),
+                    tr("View"),
+                )
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.mods_show_project(view_id.clone());
+                    cx.notify();
+                }));
 
                 let action_el: AnyElement = match port.action {
                     PortAction::Installed => div()
@@ -180,8 +183,8 @@ impl Launcher {
                         .child(tr("Installed"))
                         .into_any_element(),
                     PortAction::SwitchToPort => {
-                        let btn = crate::frame::button(
-                            ("alt-port-switch", group_idx * 100 + port_idx),
+                        let btn = secondary(
+                            format!("alt-port-switch-{}", group_idx * 100 + port_idx),
                             tr("Switch to this port"),
                         );
                         if let Some(req) = port.switch_request.clone().filter(|_| !busy) {
@@ -196,8 +199,8 @@ impl Launcher {
                         }
                     }
                     PortAction::Install => {
-                        let btn = crate::frame::button(
-                            ("alt-port-install", group_idx * 100 + port_idx),
+                        let btn = secondary(
+                            format!("alt-port-install-{}", group_idx * 100 + port_idx),
                             tr("Install"),
                         );
                         if busy {
@@ -212,8 +215,8 @@ impl Launcher {
                             .into_any_element()
                         }
                     }
-                    PortAction::Unavailable => dim(crate::frame::button(
-                        ("alt-port-install", group_idx * 100 + port_idx),
+                    PortAction::Unavailable => dim(secondary(
+                        format!("alt-port-install-{}", group_idx * 100 + port_idx),
                         tr("Install"),
                     ))
                     .into_any_element(),
@@ -387,7 +390,7 @@ impl Launcher {
 
         for (i, alt) in other.alternatives.iter().enumerate() {
             let label = trf("Switch to {repo}", &[("repo", &alt.publisher_repo)]);
-            let btn = crate::frame::button(("alt-project-switch-port", i), label).w_full();
+            let btn = secondary(format!("alt-project-switch-port-{}", i), label).w_full();
             let control = if let Some(req) = alt.switch_request.clone().filter(|_| !busy) {
                 btn.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.begin_provider_switch(req.clone());

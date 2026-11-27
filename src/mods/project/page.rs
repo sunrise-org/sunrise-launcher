@@ -1,4 +1,6 @@
 use super::*;
+use crate::widgets::button::{primary, secondary};
+use crate::widgets::chip::{self, tag};
 
 impl Launcher {
     pub(super) fn v2_project_page(
@@ -150,7 +152,7 @@ impl Launcher {
                                                 .child(crate::selectable::selectable(credit)),
                                         )
                                     })
-                                    .child(tag(vp.make.label()))
+                                    .child(tag(vp.make.label(), chip::Kind::Neutral))
                                     .children(categories),
                             ),
                     ),
@@ -344,7 +346,7 @@ impl Launcher {
             })
             .unwrap_or(&vp.id);
         let working = self.registry_card_control(working_id, |label| {
-            dim(crate::frame::button("alt-project-add", label).w_full()).into_any_element()
+            dim(secondary("alt-project-add", label).w_full()).into_any_element()
         });
         let update = installed_row
             .zip(cells.as_ref())
@@ -383,7 +385,7 @@ impl Launcher {
                 }))
                 .into_any_element()
         } else {
-            dim(crate::frame::button("alt-project-add", tr("Install")))
+            dim(secondary("alt-project-add", tr("Install")))
                 .w_full()
                 .into_any_element()
         };
@@ -646,8 +648,8 @@ impl Launcher {
                     .children(detail.map(|text| div().truncate().child(muted(text)))),
             )
             .child(match dep.required {
-                true => tag(tr("Required")),
-                false => tag(tr("Optional")),
+                true => tag(tr("Required"), chip::Kind::Neutral),
+                false => tag(tr("Optional"), chip::Kind::Neutral),
             })
     }
 

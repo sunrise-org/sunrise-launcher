@@ -3,7 +3,6 @@
 //! Sunrise's violet) in Bricolage Grotesque, with Geist Mono for paths and codes (all bundled, SIL
 //! Open Font License). Screens not rebuilt yet draw the Blocks parts in the night's colours.
 use gpui::{rgb, Hsla, WindowAppearance};
-use std::time::Duration;
 use sunrise_launcher::backend::{Appearance, Settings};
 use sunrise_launcher::themes::{self, Accent};
 use sunrise_launcher_theme as tokens;
@@ -15,23 +14,13 @@ pub use tokens::{Step, UI};
 pub const FONT: &str = night::FONT;
 pub const DISPLAY_FONT: &str = night::DISPLAY_FONT;
 pub const MONO: &str = tokens::MONO;
-/// What the Blocks parts set in their pixel face (headings, navigation, buttons) until their
-/// screens are rebuilt: the night's UI family.
-pub const PIXEL: &str = night::FONT;
 
-pub use tokens::{BLOCK_BEVEL as BEVEL, BLOCK_LIP as LIP};
 /// Shapes and controls, shared with the game's menus and the website.
-pub use tokens::{DISABLED, FIELD, PRESSED};
+pub use tokens::{DISABLED, PRESSED};
 
-/// Blocks have square corners: these stay for the places that ask for a radius.
-pub const RADIUS: f32 = 0.;
+/// Blocks have square corners: this stays for the places that ask for a radius.
 pub const RADIUS_PLATE: f32 = 0.;
-/// Buttons are a little taller than the quiet look's, for their lip.
-pub const CONTROL: f32 = 34.;
 pub const PAGE_GUTTER: f32 = 32.;
-
-/// Motion: short and eased out, never bouncy.
-pub const MOVE: Duration = tokens::MOVE.duration();
 
 #[derive(Clone, Copy)]
 pub struct Theme {
@@ -43,26 +32,14 @@ pub struct Theme {
     pub plate_soft: Hsla,
     /// Pressed plates, a switch that is off: the button colour.
     pub plate: Hsla,
-    /// Dialogs and menus above the page: the panel colour.
-    pub surface: Hsla,
     pub rule: Hsla,
     pub ink: Hsla,
     pub ink_soft: Hsla,
     pub muted: Hsla,
-    pub accent: Hsla,
     pub danger: Hsla,
     /// The blocky parts (`sunrise_launcher_theme::Blocks`).
     pub raised: Hsla,
-    pub button: Hsla,
-    pub button_bevel: Hsla,
     pub well: Hsla,
-    pub bevel: Hsla,
-    pub lip: Hsla,
-    pub outline: Hsla,
-    pub face: Hsla,
-    pub face_bevel: Hsla,
-    pub face_lip: Hsla,
-    pub on_face: Hsla,
     /// The night look's own tokens (the sky, plates with their opacity), for rebuilt screens.
     pub night: Night,
     /// The built-in scene's tint source. Local themes instead supply their own plate colours.
@@ -224,7 +201,6 @@ impl Theme {
                 c(sunrise_launcher_theme::glass::ON_LIGHT).opacity(a)
             }
         };
-        let none = gpui::transparent_black();
         let look = Glass::new(accent.rgb(), TINT, BLUR);
         let look = if dark { look } else { light_look(look) };
         Self {
@@ -234,20 +210,10 @@ impl Theme {
             ink: white(ink::FULL),
             ink_soft: white(ink::SOFT),
             muted: white(ink::QUIET),
-            accent: c(look.accent_soft),
             // Light: `glass_ui::danger`, `live` and `warn`'s darker shades.
             danger: c(if dark { DANGER } else { 0xdc2626 }),
             raised: white(fill::ROW_HOVER),
-            button: white(fill::BUTTON),
-            button_bevel: none,
             well: white(fill::FIELD),
-            bevel: none,
-            lip: none,
-            outline: none,
-            face: c(look.accent),
-            face_bevel: none,
-            face_lip: none,
-            on_face: c(look.on_accent),
             look,
             accent_choice: accent,
             glass: true,
@@ -261,24 +227,13 @@ impl Theme {
             page: c(p.page),
             plate_soft: c(p.raised),
             plate: c(p.button),
-            surface: c(p.panel),
             rule: c(p.rule),
             ink: c(p.ink),
             ink_soft: c(p.ink_soft),
             muted: c(p.muted),
-            accent: c(p.accent),
             danger: c(p.danger),
             raised: c(p.raised),
-            button: c(p.button),
-            button_bevel: c(p.button_bevel),
             well: c(p.well),
-            bevel: c(p.bevel),
-            lip: c(p.lip),
-            outline: c(p.outline),
-            face: c(p.face),
-            face_bevel: c(p.face_bevel),
-            face_lip: c(p.face_lip),
-            on_face: c(p.on_face),
             night,
             scene_tone: None,
             play_seed: None,

@@ -1,5 +1,7 @@
 //! Settings › Game: how the game starts.
 use super::*;
+use crate::widgets::button::secondary;
+use gpui::SharedString;
 
 impl Launcher {
     pub(super) fn settings_game(&mut self, cx: &mut Context<Self>) -> Div {
@@ -12,17 +14,21 @@ impl Launcher {
         if cfg!(target_os = "macos") {
             ways.push((WhilePlaying::Hide, crate::i18n::tr_key("Hide")));
         }
-        let ways = ways
+        let ways: Vec<(WhilePlaying, SharedString)> = ways
             .into_iter()
-            .map(|(way, label)| {
-                let pick: Choose = Rc::new(move |this, _| {
+            .map(|(way, label)| (way, tr(label).into()))
+            .collect();
+        let this = cx.entity();
+        let picker = div().child(
+            choices("alt-while-playing", &ways, current, move |way, _, cx| {
+                this.update(cx, |this, cx| {
                     this.settings.while_playing = way;
                     this.save_settings();
-                });
-                (tr(label).into(), way == current, pick)
+                    cx.notify();
+                })
             })
-            .collect();
-        let picker = div().child(choices("alt-while-playing", ways, cx).gap(px(6.)));
+            .gap(px(6.)),
+        );
         let while_playing = row(
             tr("While you play"),
             tr(match current {
@@ -47,7 +53,7 @@ impl Launcher {
             tr("Minecraft folder"),
             minecraft,
             div().child(
-                button("alt-minecraft-folder", tr("Choose…"))
+                secondary("alt-minecraft-folder", tr("Choose…"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.choose_folder(cx))),
             ),
         );
@@ -74,7 +80,7 @@ impl Launcher {
             tr("Profiles"),
             tr("A profile keeps its own mods, worlds and servers. Switch between profiles in the sidebar."),
             div().child(
-                button("alt-create", tr(if asking { "Cancel" } else { "New profile…" })).on_click(
+                secondary("alt-create", tr(if asking { "Cancel" } else { "New profile…" })).on_click(
                     cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.ui.settings.setup = !this.ui.settings.setup;
                         this.ui.settings.note = None;
@@ -92,7 +98,7 @@ impl Launcher {
             );
             setup = div().flex().flex_col().gap(px(12.)).child(setup).child(
                 div().flex().items_center().gap(px(8.)).child(input).child(
-                    button("alt-create-empty", tr("Create profile")).on_click(cx.listener(
+                    secondary("alt-create-empty", tr("Create profile")).on_click(cx.listener(
                         |this, _: &ClickEvent, _, cx| {
                             let name = this.servers.value(servers_page::Field::InstanceName).trim();
                             match instances::create(name, None) {
@@ -132,7 +138,7 @@ impl Launcher {
                 trf("Selected profile: {name}", &[("name", &target.name)]),
                 "",
                 div().child(
-                    danger(button("settings-delete-profile", tr("Delete profile…"))).on_click(
+                    danger(secondary("settings-delete-profile", tr("Delete profile…"))).on_click(
                         cx.listener(move |this, _, _, cx| {
                             this.confirm_profile_delete(&target);
                             cx.notify();

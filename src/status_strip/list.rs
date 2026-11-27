@@ -2,6 +2,7 @@
 //! first job is always shown; the others fold behind "2 more" and open under it.
 use super::jobs::{Job, JobAct};
 use super::*;
+use crate::widgets::button::secondary;
 
 impl Launcher {
     pub(super) fn jobs_strip(&self, jobs: &[Job], cx: &mut Context<Self>) -> Div {
@@ -12,7 +13,7 @@ impl Launcher {
             } else {
                 trf("{count} more", &[("count", &(jobs.len() - 1).to_string())])
             };
-            button("jobs-more", label).on_click(cx.listener(|this, _, _, cx| {
+            secondary("jobs-more", label).on_click(cx.listener(|this, _, _, cx| {
                 this.jobs.open ^= true;
                 cx.notify();
             }))
@@ -38,7 +39,7 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let show = job.show.map(|act| {
-            button(gpui::ElementId::named_usize("job-open", n), tr("Open")).on_click(cx.listener(
+            secondary(format!("job-open-{}", n), tr("Open")).on_click(cx.listener(
                 move |this, _, _, cx| {
                     this.job_act(act);
                     cx.notify();
@@ -50,7 +51,7 @@ impl Launcher {
                 JobAct::CancelSwitch(_) => tr("Cancel"),
                 _ => tr("Stop"),
             };
-            let stop = button(gpui::ElementId::named_usize("job-stop", n), label);
+            let stop = secondary(format!("job-stop-{}", n), label);
             if job.stopping {
                 crate::widgets::disabled(stop)
             } else {
@@ -115,9 +116,6 @@ impl Launcher {
                             .child(meta)
                     })),
             )
-            .child(crate::widgets::progress_bar(
-                job.fraction.map(|f| (f, f)),
-                &self.theme,
-            ))
+            .child(crate::widgets::feedback::progress_bar(job.fraction))
     }
 }

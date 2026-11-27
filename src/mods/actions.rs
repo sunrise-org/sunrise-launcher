@@ -4,6 +4,7 @@
 use super::model::{self, Row};
 use super::*;
 use crate::mods_page::install::Kind;
+use crate::widgets::button::secondary;
 use std::collections::BTreeMap;
 
 use sunrise_launcher::{
@@ -347,8 +348,8 @@ impl Launcher {
         busy: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let button = crate::frame::button("alt-project-remove", tr("Remove"))
-            .text_color(ui::c(palette().danger));
+        let button =
+            secondary("alt-project-remove", tr("Remove")).text_color(ui::c(palette().danger));
         if busy {
             ui::dim(button)
         } else {

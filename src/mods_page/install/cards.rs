@@ -1,6 +1,7 @@
 //! What a registry card shows: its control, label, note, outcome, stage and ETA.
 use super::*;
 use crate::eta::{stage_fraction, stage_label};
+use crate::widgets::button::secondary;
 
 impl Launcher {
     pub(crate) fn registry_card(&self, id: &str) -> Option<Card<'_>> {
@@ -19,9 +20,10 @@ impl Launcher {
                     .flex_col()
                     .gap(px(4.))
                     .child(button(stage_label(stage)))
-                    .children(stage_fraction(stage).map(|fraction| {
-                        crate::widgets::progress_bar(Some((fraction, fraction)), &self.theme)
-                    }))
+                    .children(
+                        stage_fraction(stage)
+                            .map(|fraction| crate::widgets::feedback::progress_bar(Some(fraction))),
+                    )
                     .into_any_element(),
             ),
             Card::Waiting => Some(button(tr("Waiting to install…").into())),
@@ -97,12 +99,12 @@ impl Launcher {
                 .gap(px(8.))
                 .child(label)
                 .child(
-                    crate::frame::button("install-outcome-detail", tr("Show why")).on_click(
-                        cx.listener(move |this, _, _, cx| {
+                    secondary("install-outcome-detail", tr("Show why")).on_click(cx.listener(
+                        move |this, _, _, cx| {
                             this.open_notice(detail.clone(), None);
                             cx.notify();
-                        }),
-                    ),
+                        },
+                    )),
                 )
         });
         Some(

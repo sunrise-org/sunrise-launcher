@@ -1,6 +1,7 @@
 //! The unreviewed-code warning, for an added source and for a build's native mods nobody reviewed.
 
 use super::*;
+use crate::widgets::button::{primary, secondary};
 
 impl Launcher {
     pub(super) fn unreviewed_warning_sheet(
@@ -275,7 +276,7 @@ fn unreviewed_warning(
                 .child(prov.detail),
         );
 
-    let confirm = button(confirm_id, confirm_label)
+    let confirm = secondary(confirm_id, confirm_label)
         .border_color(warn.opacity(0.65))
         .bg(warn.opacity(0.12))
         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {

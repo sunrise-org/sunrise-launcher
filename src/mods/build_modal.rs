@@ -4,8 +4,8 @@
 use super::build_run::{End, Line, Recovery, Run, State};
 use super::ui::*;
 use super::*;
-use crate::frame::button;
 use crate::paint::palette;
+use crate::widgets::button::{primary, secondary};
 use gpui::{Animation, AnimationExt as _};
 use sunrise_launcher::browser::images;
 use sunrise_launcher::browser::sunrise;
@@ -222,7 +222,7 @@ impl Launcher {
                 .text_size(px(tokens::LABEL))
                 .text_color(c(palette().muted))
                 .cursor_pointer()
-                .child(crate::glass_ui::disclosure_chevron(
+                .child(crate::widgets::motion_bits::disclosure(
                     "build-details",
                     run.details,
                     12.,
@@ -253,7 +253,7 @@ impl Launcher {
             } else {
                 tr("Open the build log")
             };
-            button("build-log", label).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            secondary("build-log", label).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 if let Some(run) = &mut this.mods_state.build {
                     if run.for_play {
                         run.log_open = !run.log_open;
@@ -297,7 +297,7 @@ impl Launcher {
                 "copy-build-error"
             }
             .into();
-            button(
+            secondary(
                 copy_id.clone(),
                 if crate::code_box::copied(&copy_id).is_some() {
                     tr("Copied")
@@ -322,7 +322,7 @@ impl Launcher {
                 .gap(px(10.))
                 .children(output)
                 .child(
-                    button("build-cancel", tr("Cancel build")).on_click(cx.listener(
+                    secondary("build-cancel", tr("Cancel build")).on_click(cx.listener(
                         |this, _: &ClickEvent, _, cx| {
                             this.stop_build();
                             cx.notify();
@@ -346,7 +346,7 @@ impl Launcher {
                 .justify_end()
                 .gap(px(10.))
                 .children(recovery.map(|(label, recovery)| {
-                    button("play-build-retry", label).on_click(cx.listener(
+                    secondary("play-build-retry", label).on_click(cx.listener(
                         move |this, _, _, cx| {
                             this.retry_managed_play(recovery.clone());
                             cx.notify();
@@ -422,7 +422,7 @@ impl Launcher {
         } else {
             tr("Show output")
         };
-        button("build-output", label).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+        secondary("build-output", label).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
             let Some(run) = &mut this.mods_state.build else {
                 return;
             };

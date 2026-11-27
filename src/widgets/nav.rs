@@ -1,11 +1,15 @@
 //! Navigation parts: underlined tabs with a sliding bar (a profile page's sub-pages, Installed |
 //! Discover, Join | Host), the sidebar's nav row, and the pixel sun its selected row ends with.
+#![allow(dead_code)] // Used by the shell and pages that the next redesign steps move over; removed in the final sweep.
 use super::*;
 use crate::frame::{c, mix, Reach};
 use crate::{glass_ui, motion, paint::palette, tokens};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+
+/// What a control calls when it is picked: its value, with the window and app.
+type Pick<P> = Rc<dyn Fn(P, &mut Window, &mut App)>;
 
 // The sun is the Sunrise mark's own: these colours are the logo's, the same in every theme, so
 // they are not palette roles.
@@ -88,7 +92,7 @@ pub(crate) fn tabs<P: Copy + PartialEq + 'static>(
     current: P,
     on_pick: impl Fn(P, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
-    let pick: Rc<dyn Fn(P, &mut Window, &mut App)> = Rc::new(on_pick);
+    let pick: Pick<P> = Rc::new(on_pick);
     let picks: Vec<P> = tabs.iter().map(|(p, _)| *p).collect();
     let now = picks.iter().position(|p| *p == current);
     let from = moved_from(id, now.unwrap_or(usize::MAX));
@@ -145,7 +149,7 @@ fn tab_item<P: Copy + 'static>(
     on: bool,
     slide: Option<usize>,
     rightward: bool,
-    pick: Rc<dyn Fn(P, &mut Window, &mut App)>,
+    pick: Pick<P>,
 ) -> Stateful<Div> {
     let p = palette();
     let (active, muted) = (c(p.text), c(p.muted));

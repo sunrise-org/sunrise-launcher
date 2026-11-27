@@ -1,6 +1,9 @@
 //! A source collection's page: pick mods to add, with one native consent for the selection.
 use super::*;
 use crate::mods_page::install::{stage_label, SourcePicks};
+use crate::widgets::button::primary;
+use crate::widgets::check::{checkbox, tick_of, Tick};
+use crate::widgets::chip::{self, tag};
 use std::collections::BTreeSet;
 
 /// The open collection and the mods ticked on its page.
@@ -134,7 +137,7 @@ impl Launcher {
                             .gap_x(px(8.))
                             .gap_y(px(4.))
                             .child(note(trf("by {authors}", &[("authors", &owners)])))
-                            .child(badge(tr("Collection"))),
+                            .child(tag(tr("Collection"), chip::Kind::Neutral)),
                     ),
             );
 
@@ -147,7 +150,7 @@ impl Launcher {
             .iter()
             .filter(|source| ticked.contains(source.id()))
             .count();
-        let all_state = super::super::ui::ticks(picked, pickable.len());
+        let all_state = tick_of(picked, pickable.len());
         let all_ids: Vec<String> = pickable.iter().map(|s| s.id().to_owned()).collect();
         let list_head = div()
             .id("nightly-collection-all")
@@ -160,7 +163,7 @@ impl Launcher {
             .cursor_pointer()
             .text_size(px(tokens::LABEL))
             .text_color(c(palette().muted))
-            .child(checkbox_of_set("nightly-collection-all-box", all_state).tab_stop(false))
+            .child(checkbox("nightly-collection-all-box", all_state).tab_stop(false))
             .child(trf(
                 "{picked} of {all} selected",
                 &[
@@ -233,7 +236,11 @@ impl Launcher {
                     cx,
                 )))
             });
-            let tick = checkbox(("nightly-collection-box", i), on).tab_stop(false);
+            let tick = checkbox(
+                ("nightly-collection-box", i),
+                if on { Tick::On } else { Tick::Off },
+            )
+            .tab_stop(false);
             let member = source.id().to_owned();
             rows = rows.child(
                 div()
@@ -289,7 +296,7 @@ impl Launcher {
             1 => tr("Add 1 mod").into(),
             count => trf("Add {count} mods", &[("count", &count.to_string())]),
         };
-        let action = crate::frame::primary("nightly-collection-build", label)
+        let action = primary("nightly-collection-build", label)
             .w_full()
             .h(px(tokens::ACTION));
         let action = if can_start && picked > 0 {

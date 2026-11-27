@@ -1,8 +1,7 @@
 //! The blocky look's parts (`docs/design-system.md`, "Blocks"): pixel type, pixel icons, panels
 //! with a dark outline, a light bevel on top and a darker lip below, sunk wells, badges, the
 //! inventory tabs, and the slots that hold icons downloaded at run time.
-use crate::theme;
-use gpui::{div, prelude::*, px, svg, AnyElement, Hsla, SharedString, Svg};
+use gpui::{prelude::*, px, svg, Hsla, SharedString, Svg};
 use std::borrow::Cow;
 
 /// The icons, served to `svg()` as `icons/<name>.svg`.
@@ -78,27 +77,4 @@ pub fn icon(name: &'static str, size: f32, color: Hsla) -> Svg {
         .flex_none()
         .size(px(size))
         .text_color(color)
-}
-
-/// The light edge along the top of a raised block and the darker lip along its bottom; the
-/// block must be `relative`.
-pub fn edges(top: Hsla, bottom: Hsla, lip: f32) -> [AnyElement; 2] {
-    [
-        div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
-            .h(px(theme::BEVEL))
-            .bg(top)
-            .into_any_element(),
-        div()
-            .absolute()
-            .bottom_0()
-            .left_0()
-            .right_0()
-            .h(px(lip))
-            .bg(bottom)
-            .into_any_element(),
-    ]
 }

@@ -130,7 +130,7 @@ impl Launcher {
             let p = palette();
             let label = tr("Sign in with Microsoft");
             let icon_only = compact && self.bar_width() < 750.;
-            return crate::frame::input(false)
+            return crate::widgets::field::field_box(false, false)
                 .id("account-sign-in")
                 .min_w_0()
                 .h(px(tokens::FIELD))
@@ -207,7 +207,7 @@ impl Launcher {
                     ),
                 )
             })
-            .child(crate::glass_ui::fold_chevron(
+            .child(crate::widgets::motion_bits::chevron(
                 "account-chip",
                 open,
                 14.,

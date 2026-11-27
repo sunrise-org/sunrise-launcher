@@ -4,9 +4,9 @@
 //! * **Resolve** handles the same-base native build’s world stop; Stay writes nothing.
 //! * **Build** picks a channel or an exact build. Both use the staged switch.
 use super::*;
-use crate::frame::button;
 use crate::frame::Reach as _;
 use crate::paint::palette;
+use crate::widgets::button::{primary, secondary};
 use gpui::{rgb, MouseButton, MouseDownEvent};
 use std::sync::mpsc::Sender;
 
@@ -354,13 +354,13 @@ impl Launcher {
             };
             let (cancel, approve) = if impact.cancel_default {
                 (
-                    crate::frame::primary("cancel-registry-change", tr("Cancel")),
-                    button("approve-registry-change", action),
+                    primary("cancel-registry-change", tr("Cancel")),
+                    secondary("approve-registry-change", action),
                 )
             } else {
                 (
-                    button("cancel-registry-change", tr("Cancel")),
-                    crate::frame::primary("approve-registry-change", action),
+                    secondary("cancel-registry-change", tr("Cancel")),
+                    primary("approve-registry-change", action),
                 )
             };
             let body = div()
@@ -439,10 +439,10 @@ impl Launcher {
                         )))
                         .children(
                             stage_fraction(stage)
-                                .map(|f| crate::widgets::progress_bar(Some((f, f)), &self.theme)),
+                                .map(|f| crate::widgets::feedback::progress_bar(Some(f))),
                         )
                         .child(div().flex().justify_end().child(
-                            button("hide-registry-play", tr("Keep browsing")).on_click(
+                            secondary("hide-registry-play", tr("Keep browsing")).on_click(
                                 cx.listener(|this, _, _, cx| {
                                     this.close_sheet();
                                     cx.notify();
@@ -538,7 +538,7 @@ mod tests {
             let mut opened = None;
             let _ = build_menu_error(error.clone(), |whole| {
                 opened = Some(whole);
-                button("alt-build-error-details", tr("Details"))
+                secondary("alt-build-error-details", tr("Details"))
             });
             assert_eq!(opened.as_deref(), Some(error.as_str()));
         }

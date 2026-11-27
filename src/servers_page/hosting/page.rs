@@ -1,6 +1,8 @@
 //! The hosting page's layout: the list of servers, one server's page and its tabs.
 use super::widgets::*;
 use super::*;
+use crate::widgets::button::secondary;
+use gpui::SharedString;
 
 impl Launcher {
     /// Escape closes the Create dialog, or takes back a delete that was being confirmed.
@@ -132,13 +134,13 @@ impl Launcher {
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .child(primary(self.host_button(
+                    .child(self.host_primary(
                         "host-create",
                         tr("Create a server"),
                         true,
                         cx,
                         |this, cx| this.open_create(cx),
-                    )))
+                    ))
                     .child(self.host_button(
                         "host-add",
                         tr("Add a server folder…"),
@@ -234,11 +236,9 @@ impl Launcher {
             // failed poll) may be a server started elsewhere, which Start would claim as this
             // launcher's and stop when it quits.
             let stopped = status.phase == "stopped";
-            primary(
-                self.host_button("host-start", tr("Start"), idle && stopped, cx, |this, _| {
-                    this.start_server()
-                }),
-            )
+            self.host_primary("host-start", tr("Start"), idle && stopped, cx, |this, _| {
+                this.start_server()
+            })
         };
         let restart = self.host_button(
             "host-restart",
@@ -288,7 +288,7 @@ impl Launcher {
                     .gap(px(6.))
                     // One height along the row: Start is the field's height, so are the rest.
                     .child(
-                        button("host-folder", tr("Open folder"))
+                        secondary("host-folder", tr("Open folder"))
                             .h(px(tokens::FIELD))
                             .on_click(move |_, _, cx| crate::toast::open(cx, &folder)),
                     )
@@ -381,22 +381,24 @@ impl Launcher {
             ));
         }
         let chosen = self.servers.tab;
-        let tabs = TABS
+        let tabs: Vec<(Tab, SharedString)> = TABS
             .into_iter()
-            .map(|(tab, name)| {
-                let pick: Choose = Rc::new(move |this, _| {
+            .map(|(tab, name)| (tab, tr(name).into()))
+            .collect();
+        let this = cx.entity();
+        let tabs = div().flex().child(
+            choices("host-tab", &tabs, chosen, move |tab, _, cx| {
+                this.update(cx, |this, cx| {
                     if this.servers.tab == Tab::Overview && tab != Tab::Overview {
                         this.servers.reset_public_lookup();
                     }
                     this.servers.tab = tab;
                     this.servers.confirm_restore = None;
-                });
-                (tr(name).into(), tab == chosen, pick)
+                    cx.notify();
+                })
             })
-            .collect();
-        let tabs = div()
-            .flex()
-            .child(choices("host-tab", tabs, cx).gap(px(6.)));
+            .gap(px(6.)),
+        );
         let body = match self.servers.tab {
             Tab::Overview => self.host_overview(&status, cx),
             Tab::Players => self.host_players(dir, &status, cx),
@@ -521,7 +523,7 @@ impl Launcher {
             } else {
                 "Zips the world and the server's settings into its backups folder."
             }),
-            div().child(primary(self.host_button(
+            div().child(self.host_primary(
                 "host-backup-now",
                 tr("Back up now"),
                 idle,
@@ -529,7 +531,7 @@ impl Launcher {
                 |this, _| {
                     this.server_command(crate::i18n::tr_key("Backing up"), vec!["backup".into()])
                 },
-            ))),
+            )),
         );
         if self.older_sunrise() {
             return div()
@@ -662,7 +664,7 @@ impl Launcher {
             (None, None, None) => trf("Sunrise {release}.", &[("release", &release)]),
         };
         let control = match available {
-            Some(tag) => primary(self.host_button(
+            Some(tag) => self.host_primary(
                 "host-update-now",
                 tr("Update now"),
                 idle,
@@ -680,7 +682,7 @@ impl Launcher {
                             });
                     }
                 },
-            )),
+            ),
             None => {
                 let checking = self.servers.checking;
                 self.host_button(

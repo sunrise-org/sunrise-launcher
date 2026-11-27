@@ -6,6 +6,8 @@ use super::project::{about_link, about_row, back, prose};
 use super::ui::*;
 use super::*;
 use crate::paint::palette;
+use crate::widgets::button::primary;
+use crate::widgets::chip::{self, tag};
 use sunrise_launcher::browser::details::Details;
 use sunrise_launcher::browser::{self, images, Kind, Project, Source as _, Version};
 
@@ -173,8 +175,11 @@ impl Launcher {
                                 (!authors.is_empty())
                                     .then(|| note(trf("by {authors}", &[("authors", &authors)]))),
                             )
-                            .child(tag(super::pack_discover::source_label(p.source)))
-                            .child(tag(support.label())),
+                            .child(tag(
+                                super::pack_discover::source_label(p.source),
+                                chip::Kind::Neutral,
+                            ))
+                            .child(tag(support.label(), chip::Kind::Neutral)),
                     ),
             );
 

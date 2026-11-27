@@ -1,7 +1,8 @@
 //! Settings' two-step data move. Only the separate worker copies data, after this process exits.
 use super::*;
-use crate::frame::button;
-use crate::settings::{hint, off, row, warning};
+use crate::settings::{hint, off, row};
+use crate::widgets::button::secondary;
+use crate::widgets::feedback::{banner, Tone};
 
 fn env_value(key: &str) -> Option<String> {
     std::env::var_os(key)
@@ -226,7 +227,7 @@ impl Launcher {
     /// opened (Retry, Use the default folder), and the move's confirmation.
     pub(super) fn location_row(&self, cx: &mut Context<Self>) -> Div {
         let blocked = self.location_blocked();
-        let move_button = button("alt-move-data", tr("Move…"));
+        let move_button = secondary("alt-move-data", tr("Move…"));
         let move_button = if blocked.is_some() {
             off(move_button)
         } else {
@@ -239,7 +240,7 @@ impl Launcher {
             short(&backend::data_dir()),
             div()
                 .child(
-                    button("alt-open-data", tr("Open folder"))
+                    secondary("alt-open-data", tr("Open folder"))
                         .on_click(|_, _, cx| crate::toast::open(cx, &backend::data_dir())),
                 )
                 .child(move_button),
@@ -251,20 +252,20 @@ impl Launcher {
             .child(hint(tr(
                 "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.",
             )))
-            .children(blocked.map(warning))
+            .children(blocked.map(|t| banner(Tone::Danger, t, None)))
             .children(self.location_note.clone().map(hint))
-            .children(self.location_error.clone().map(warning));
+            .children(self.location_error.clone().map(|t| banner(Tone::Danger, t, None)));
         if sunrise_launcher::data_location::startup_error().is_some() {
             body = body.child(
                 div()
                     .flex()
                     .flex_wrap()
                     .gap(px(8.))
-                    .child(button("alt-retry-data-location", tr("Retry")).on_click(
+                    .child(secondary("alt-retry-data-location", tr("Retry")).on_click(
                         cx.listener(|this, _: &ClickEvent, _, cx| this.retry_location(cx)),
                     ))
                     .child(
-                        button(
+                        secondary(
                             "alt-use-default-data-location",
                             tr("Use the default folder"),
                         )
@@ -277,7 +278,7 @@ impl Launcher {
             );
         }
         if let Some(target) = &self.location_target {
-            let confirm = button("alt-confirm-move-data", tr("Move and restart"));
+            let confirm = secondary("alt-confirm-move-data", tr("Move and restart"));
             let confirm = if self.location_blocked().is_some() {
                 off(confirm)
             } else {
@@ -295,7 +296,7 @@ impl Launcher {
                         &[("path", &target.display().to_string())],
                     ))))
                     .child(div().flex().gap(px(8.)).child(confirm).child(
-                        button("alt-cancel-move-data", tr("Cancel")).on_click(cx.listener(
+                        secondary("alt-cancel-move-data", tr("Cancel")).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
                                 this.location_target = None;
                                 this.location_error = None;

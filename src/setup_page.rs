@@ -5,7 +5,7 @@ use crate::glass_ui;
 use crate::shell::{c, text};
 use crate::theme::{self, night, Theme};
 use crate::titlebar;
-use crate::Kind;
+use crate::widgets::button::{primary, secondary, Look};
 use gpui::{
     div, prelude::*, px, size, App, Bounds, ClickEvent, Context, Div, PathPromptOptions, Render,
     Task, Window, WindowBounds, WindowOptions,
@@ -221,12 +221,12 @@ impl Setup {
         flip: fn(&mut Options),
         cx: &mut Context<Self>,
     ) -> Div {
-        let (t, n) = (self.theme, self.theme.night);
+        let n = self.theme.night;
         div()
             .flex()
             .items_center()
             .gap(px(14.))
-            .child(crate::switch(id, on, &t).on_click(cx.listener(
+            .child(crate::widgets::check::switch(id, on).on_click(cx.listener(
                 move |this, _: &ClickEvent, _, cx| {
                     flip(&mut this.options);
                     cx.notify();
@@ -243,7 +243,7 @@ impl Setup {
     }
 
     fn folder_row(&self, cx: &mut Context<Self>) -> Div {
-        let (t, n) = (self.theme, self.theme.night);
+        let n = self.theme.night;
         div()
             .flex()
             .items_center()
@@ -263,13 +263,13 @@ impl Setup {
                     ),
             )
             .child(
-                crate::button("change", tr("Change…"), Kind::Secondary, &t)
+                secondary("change", tr("Change…"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.choose_folder(cx))),
             )
     }
 
     fn card(&self, cx: &mut Context<Self>) -> Div {
-        let (t, n) = (self.theme, self.theme.night);
+        let n = self.theme.night;
         let mut body = div().flex().flex_col().gap(px(16.));
         match &self.stage {
             Stage::Welcome if self.mode == Mode::Install => {
@@ -288,16 +288,12 @@ impl Setup {
                         cx,
                     ))
                     .child(div().flex().justify_end().child(
-                        crate::button(
-                            "go",
+                        primary("go",
                             if self.update {
                                 tr("Update").to_string()
                             } else {
                                 tr("Install").to_string()
-                            },
-                            Kind::Primary,
-                            &t,
-                        )
+                            })
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.start(cx))),
                     ));
             }
@@ -325,11 +321,13 @@ impl Setup {
                             .justify_end()
                             .gap(px(12.))
                             .child(
-                                crate::button("cancel", tr("Cancel"), Kind::Secondary, &t)
+                                secondary("cancel",
+                                    tr("Cancel"))
                                     .on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.quit())),
                             )
                             .child(
-                                crate::button("go", tr("Uninstall"), Kind::Primary, &t)
+                                primary("go",
+                                    tr("Uninstall"))
                                     .on_click(
                                         cx.listener(|this, _: &ClickEvent, _, cx| this.start(cx)),
                                     ),
@@ -339,7 +337,7 @@ impl Setup {
             Stage::Working { step, fraction } => {
                 body = body
                     .child(text(night::UI, c(n.ink)).child(step_text(*step)))
-                    .child(crate::progress_bar(Some((0., *fraction)), &t));
+                    .child(crate::widgets::feedback::progress_bar(Some(*fraction)));
             }
             Stage::Done { left } => {
                 let said = match self.mode {
@@ -363,17 +361,12 @@ impl Setup {
                 // The window's own close control is in the title bar, so the last screen has only
                 // the action worth taking; an uninstall just says so and is closed there.
                 if self.mode == Mode::Install {
-                    body = body.child(
-                        div().flex().items_center().justify_end().child(
-                            crate::button(
-                                "launch",
-                                tr("Launch Sunrise Launcher"),
-                                Kind::Primary,
-                                &t,
-                            )
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.launch(cx))),
-                        ),
-                    );
+                    body =
+                        body.child(div().flex().items_center().justify_end().child(
+                            primary("launch", tr("Launch Sunrise Launcher")).on_click(
+                                cx.listener(|this, _: &ClickEvent, _, cx| this.launch(cx)),
+                            ),
+                        ));
                 }
             }
             Stage::Failed(error) => {
@@ -384,7 +377,7 @@ impl Setup {
                     .child(text(night::CAPTION, c(n.danger)).child(error.clone()))
                     .child(
                         div().flex().justify_end().child(
-                            crate::button("close", tr("Close"), Kind::Secondary, &t)
+                            secondary("close", tr("Close"))
                                 .on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.quit())),
                         ),
                     );
@@ -425,7 +418,7 @@ impl Render for Setup {
         let t = self.theme;
         let viewport = window.viewport_size();
         // The card's controls use the launcher's glass look and the player's accent, as the
-        // launcher draws them (`crate::button` and `crate::switch` pick it from these).
+        // launcher draws them.
         glass_ui::set_on(t.glass);
         glass_ui::set_light(!t.dark);
         glass_ui::set_look(t.look);

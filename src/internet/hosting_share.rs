@@ -2,13 +2,14 @@
 //! friends type, inviting one of them to this computer, and keeping shared friends to the
 //! server's port. Every action is `internet.rs`'s own; only the drawing is new.
 use super::*;
-use crate::frame::button;
 use crate::paint::palette;
-use crate::settings::{danger, hint, off, warning};
+use crate::settings::{danger, hint, off};
+use crate::widgets::button::secondary;
+use crate::widgets::feedback::{banner, Tone};
 use gpui::rgb;
 
 fn link(id: &'static str, name: &'static str, url: &'static str) -> Stateful<Div> {
-    button(id, tr(name)).on_click(move |_, _, cx| cx.open_url(url))
+    secondary(id, tr(name)).on_click(move |_, _, cx| cx.open_url(url))
 }
 
 impl Launcher {
@@ -20,7 +21,7 @@ impl Launcher {
         cx: &mut Context<Self>,
         action: impl Fn(&mut Self, &mut Context<Self>) + 'static,
     ) -> Stateful<Div> {
-        let b = button(id, text);
+        let b = secondary(id, text);
         if enabled {
             b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 action(this, cx);
@@ -227,7 +228,7 @@ impl Launcher {
     fn share_message(&self, panel: Div) -> Div {
         match &self.internet.message {
             Some(Ok(m)) => panel.child(hint(m.clone())),
-            Some(Err(e)) => panel.child(warning(e.clone())),
+            Some(Err(e)) => panel.child(banner(Tone::Danger, e.clone(), None)),
             None => panel,
         }
     }
@@ -289,9 +290,9 @@ impl Launcher {
         let idle = !self.internet.busy;
         match &self.internet.policy {
             Some(Ok((policy, _))) if tailscale::shares_entire_computer(policy) => {
-                d = d.child(warning(tr(
+                d = d.child(banner(Tone::Danger, tr(
                     "Friends you share this computer with can reach all of it, not only Minecraft.",
-                )));
+                ), None));
             }
             Some(Err(e)) => {
                 d = d.child(hint(trf(
@@ -402,7 +403,7 @@ impl Launcher {
                     );
                 }
             }
-            Some(Err(e)) => d = d.child(warning(e)),
+            Some(Err(e)) => d = d.child(banner(Tone::Danger, e, None)),
             None => {}
         }
 

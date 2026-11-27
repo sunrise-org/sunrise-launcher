@@ -12,6 +12,7 @@ mod wheel_bench;
 use super::*;
 use crate::line_edit::{self, LineEdit};
 use crate::paint::palette;
+use crate::widgets::button::{primary, secondary};
 use std::{
     path::PathBuf,
     rc::Rc,
@@ -142,7 +143,7 @@ impl Launcher {
             .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
             .clone();
         let focused = self.ui.sheets.versions.focused;
-        let field = crate::frame::input(focused)
+        let field = crate::widgets::field::field_box(focused, false)
             .id("alt-versions-find")
             .track_focus(&focus)
             .seen()
@@ -280,7 +281,7 @@ impl Launcher {
             .py(px(12.))
         });
 
-        let cancel = button("alt-versions-cancel", tr("Cancel")).on_click(cx.listener(
+        let cancel = secondary("alt-versions-cancel", tr("Cancel")).on_click(cx.listener(
             |this, _: &ClickEvent, _, cx| {
                 this.close_sheet();
                 cx.notify();
@@ -296,7 +297,7 @@ impl Launcher {
                 ),
                 _ => tr("Reinstall for this architecture").to_owned(),
             };
-            let button = button("alt-versions-reinstall", label);
+            let button = secondary("alt-versions-reinstall", label);
             Some(if self.can_repair_now(&tag) {
                 button.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     // Recheck the exact offer and the active jobs at click.
@@ -368,7 +369,7 @@ impl Launcher {
                 Some(VersionAction::Prepare) => {
                     plan = Some(tr("Prepare this build before switching. Your profile stays on its current build."));
                     let target = tag.clone();
-                    let b = button("alt-versions-prepare", tr("Prepare"));
+                    let b = secondary("alt-versions-prepare", tr("Prepare"));
                     cache_action = Some(if idle {
                         b.on_click(cx.listener(move |this, _, _, cx| {
                             this.prepare_version(target.clone(), backend::MinecraftFrom::Install);
@@ -383,7 +384,7 @@ impl Launcher {
                         plan = Some(tr(
                             "Download this build first. Your profile stays on its current build.",
                         ));
-                        let b = button("alt-versions-download", tr("Download"));
+                        let b = secondary("alt-versions-download", tr("Download"));
                         cache_action = Some(if idle {
                             b.on_click(cx.listener(move |this, _, _, cx| {
                                 this.download_for_switch(&release);
@@ -398,11 +399,7 @@ impl Launcher {
             }
         }
         let keep = pick.as_deref().map(|tag| {
-            let keep = crate::frame::button_base("alt-versions-keep", confirm_label(tag, current))
-                .bg(rgb(palette().text))
-                .border_color(rgb(palette().text))
-                .text_color(rgb(palette().background))
-                .hover(|s| s.bg(rgb(palette().accent_on)));
+            let keep = primary("alt-versions-keep", confirm_label(tag, current));
             match keep_tag {
                 Some(tag) => keep.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.begin_switch(tag.clone(), choice);

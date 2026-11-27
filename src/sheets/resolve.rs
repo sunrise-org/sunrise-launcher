@@ -1,6 +1,7 @@
 //! Resolve: an update is held because some mods don't work with it yet.
 
 use super::*;
+use crate::widgets::button::secondary;
 
 impl Launcher {
     /// An update is out and some mods don't work with it yet: which, and the two ways on.
@@ -70,8 +71,8 @@ impl Launcher {
             let update = newer.as_ref().map(|_| {
                 can_update = true;
                 let id = id.clone();
-                button(
-                    ElementId::named_usize("alt-resolve-mod", n),
+                secondary(
+                    format!("alt-resolve-mod-{}", n),
                     trf("Update {mod}", &[("mod", name)]),
                 )
                 .bg(rgb(palette().text))
@@ -131,7 +132,7 @@ impl Launcher {
             }
         });
 
-        let stay = button(
+        let stay = secondary(
             "alt-resolve-stay",
             trf("Stay on {build} for now", &[("build", &plays)]),
         )
@@ -147,7 +148,7 @@ impl Launcher {
             cx.notify();
         }));
         let go = (!blocked).then(|| {
-            button(
+            secondary(
                 "alt-resolve-update",
                 trf("Update without {them}", &[("them", &them)]),
             )
@@ -174,7 +175,7 @@ impl Launcher {
                     .text_size(px(tokens::SMALL))
                     .text_color(rgb(palette().muted))
                     .cursor_pointer()
-                    .child(crate::glass_ui::disclosure_chevron(
+                    .child(crate::widgets::motion_bits::disclosure(
                         "resolve-details",
                         open,
                         11.,

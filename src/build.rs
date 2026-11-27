@@ -5,8 +5,6 @@
 use super::*;
 use crate::frame::Reach as _;
 use crate::mods::build_run::Run;
-use crate::paint::palette;
-use gpui::rgb;
 
 impl Launcher {
     /// The build window's build, when it is the selected profile's.
@@ -34,7 +32,7 @@ impl Launcher {
                 .cursor_pointer()
                 .tooltip(crate::glass_ui::tip(tr("Show the build")))
                 .child(div().truncate().child(run.line()))
-                .child(progress_bar(fraction))
+                .child(crate::widgets::feedback::progress_bar(Some(fraction)))
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.build_all();
                     cx.notify();
@@ -46,20 +44,4 @@ impl Launcher {
     pub(crate) fn build_said(&self) -> Option<String> {
         self.mods_state.build.as_ref()?.said(Instant::now())
     }
-}
-
-/// A build's one bar: slim, in the accent.
-pub(crate) fn progress_bar(fraction: f32) -> Div {
-    div()
-        .h(px(4.))
-        .rounded(crate::tokens::r(crate::tokens::R_BAR))
-        .bg(rgb(palette().line))
-        .overflow_hidden()
-        .child(
-            div()
-                .h(px(4.))
-                .rounded(crate::tokens::r(crate::tokens::R_BAR))
-                .bg(rgb(palette().accent))
-                .w(relative(fraction.clamp(0.02, 1.))),
-        )
 }

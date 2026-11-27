@@ -11,13 +11,6 @@ pub(crate) mod motion_bits;
 pub(crate) mod nav;
 use sunrise_launcher::backend::lock::recover;
 
-#[derive(Clone, Copy, PartialEq)]
-pub(crate) enum Kind {
-    Primary,
-    Secondary,
-    Ghost,
-}
-
 /// The element under the pointer, and every element whose hover is easing in or out, each on
 /// its own [`motion::Fade`]: a pointer swept across a menu fades each row it leaves from where
 /// it had got to, several at once.
@@ -79,11 +72,6 @@ pub(crate) fn track_hover(el: Stateful<Div>, id: SharedString) -> Stateful<Div> 
     let owner = Owner::default();
     el.child(owner.noting())
         .on_hover(move |hovered, window, cx| note_hover(&id, *hovered, &owner, window, cx))
-}
-
-/// Whether `id` is the element [`hover_fade`] shows hovered now.
-pub(crate) fn hover_is(id: &SharedString) -> bool {
-    recover(&HOVER).lit.as_ref() == Some(id)
 }
 
 /// Records that `id` is now hovered or not, for [`hover_fade`], and redraws the view it is in:
@@ -241,98 +229,6 @@ pub(crate) fn mark(size: f32) -> Div {
     tile
 }
 
-/// The last thing the player did was press Tab: focused controls show a ring (a click focuses them
-/// too, without one).
-pub(crate) static KEYBOARD: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-/// Makes a control reachable with Tab, pressed with Enter or Space, with a ring when the keyboard
-/// put it in focus.
-pub(crate) fn keyboard(el: Stateful<Div>, t: &Theme) -> Stateful<Div> {
-    let (ring, gap) = (t.accent, t.page);
-    // A ring with a gap of page colour, so it shows around filled buttons too. GPUI draws nothing
-    // for a shadow without blur: half a pixel keeps it crisp.
-    let shadow = |color, spread: f32| gpui::BoxShadow {
-        color,
-        offset: gpui::point(px(0.), px(0.)),
-        blur_radius: px(0.5),
-        spread_radius: px(spread),
-        inset: false,
-    };
-    el.tab_index(0).focus(move |s| {
-        if KEYBOARD.load(Ordering::Relaxed) {
-            s.shadow(vec![shadow(ring, 4.), shadow(gap, 1.5)])
-        } else {
-            s
-        }
-    })
-}
-
-/// A button: a block with a light bevel on top and a darker lip below, its label in the pixel
-/// face. Primary (the one main action) is the violet face; Secondary a raised block; Ghost only
-/// its label until the pointer is over it.
-pub(crate) fn button(
-    id: impl Into<SharedString>,
-    label: impl Into<SharedString>,
-    kind: Kind,
-    t: &Theme,
-) -> Stateful<Div> {
-    let id: SharedString = id.into();
-    let label: SharedString = label.into();
-    let label = SharedString::from(tr(&label).to_string());
-    if t.glass {
-        return glass_ui::button(id, label, kind, t);
-    }
-    let t = *t;
-    let hover = match kind {
-        Kind::Primary => t.on_face.opacity(0.10),
-        Kind::Secondary => t.bevel.opacity(if t.glass { 0.10 } else { 0.35 }),
-        Kind::Ghost => t.raised,
-    };
-    let base = div()
-        .id(id.clone())
-        .relative()
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .h(px(theme::CONTROL))
-        .px(px(14.))
-        .font_family(theme::PIXEL)
-        .text_size(px(15.))
-        .font_weight(FontWeight::MEDIUM)
-        .cursor_pointer()
-        .child(hover_layer(&id, hover, 0., 0.));
-    let base = match kind {
-        Kind::Primary => base
-            .border_2()
-            .border_color(t.outline)
-            .children(blocks::edges(t.face_bevel, t.face_lip, theme::LIP))
-            .bg(t.face)
-            .text_color(t.on_face),
-        Kind::Secondary => base
-            .border_2()
-            .border_color(t.outline)
-            .children(blocks::edges(t.button_bevel, t.lip, theme::LIP))
-            .bg(t.button)
-            .text_color(t.ink),
-        Kind::Ghost => base.text_color(t.muted).hover(move |s| s.text_color(t.ink)),
-    };
-    // The label sits on the block's face, above its lip; pressing pushes it down.
-    let base = base.child(
-        div()
-            .relative()
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .pb(px(if kind == Kind::Ghost { 0. } else { 2. }))
-            .child(label),
-    );
-    press(keyboard(track_hover(base, id.clone()), &t), &id, |d| {
-        d.opacity(theme::PRESSED).top(px(1.))
-    })
-}
-
 /// Copies to the clipboard, or into `SUNRISE_LAUNCHER_CLIPBOARD` when a test run sets it
 /// (`sunrise_launcher::desktop_seams`).
 pub(crate) fn copy_to_clipboard(cx: &mut App, item: gpui::ClipboardItem) {
@@ -390,48 +286,6 @@ pub(crate) fn copy_quietly(cx: &mut App, item: gpui::ClipboardItem) {
     cx.write_to_clipboard(item);
 }
 
-/// An on/off switch: a square knob sliding in a sunk track that turns violet when on.
-#[cfg_attr(not(windows), allow(dead_code))] // the Windows setup window
-pub(crate) fn switch(id: impl Into<SharedString>, on: bool, t: &Theme) -> Stateful<Div> {
-    if t.glass {
-        let look = glass_ui::look();
-        return glass_ui::toggle(id, on, look.accent, look.on_accent, t);
-    }
-    let t = *t;
-    let id: SharedString = id.into();
-    let knob = if on { t.on_face } else { t.muted };
-    keyboard(div().id(id.clone()), &t)
-        .relative()
-        .flex_none()
-        .w(px(44.))
-        .h(px(24.))
-        .border_2()
-        .border_color(t.outline)
-        .cursor_pointer()
-        .bg(if on { t.face } else { t.well })
-        .child(
-            div()
-                .absolute()
-                .top(px(2.))
-                .size(px(16.))
-                .bg(knob)
-                .child(
-                    div()
-                        .absolute()
-                        .bottom_0()
-                        .left_0()
-                        .right_0()
-                        .h(px(2.))
-                        .bg(if on { t.face_lip } else { t.lip }),
-                )
-                .with_animation(
-                    ElementId::named_usize(id, on as usize),
-                    Animation::new(theme::MOVE).with_easing(ease_out_quint()),
-                    move |d, p| d.left(px(if on { 2. + 20. * p } else { 22. - 20. * p })),
-                ),
-        )
-}
-
 /// What the Play button does for the selected version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PlayPress {
@@ -485,61 +339,6 @@ pub(crate) fn short(path: &std::path::Path) -> String {
     }
 }
 
-/// A thin bar. A known fraction eases from its previous value; an unknown one shuttles slowly.
-/// Progress: a plate-coloured track filling with the accent; work of unknown length shuttles.
-pub(crate) fn progress_bar(fraction: Option<(f32, f32)>, t: &Theme) -> Div {
-    // Night: a thin accent line on a plate's colour, square like the art. Glass: the mockup's
-    // `Bar`, 4 px and round, in the accent's soft shade on white at 12 %.
-    let n = t.night;
-    let bar = div()
-        .absolute()
-        .top_0()
-        .bottom_0()
-        .bg(plate::alpha(n.accent, 1.))
-        .when(t.glass, |d| {
-            d.rounded_full()
-                .bg(glass_ui::color(glass_ui::look().accent_soft))
-        });
-    // Full width and never resized by its parent's flex: in a column, a growing track's basis of
-    // 0 left it no height, so the bar was never seen while its gap still took room.
-    let track = div()
-        .relative()
-        .flex_none()
-        .w_full()
-        .h(px(6.))
-        .bg(plate::alpha(n.card_hi, n.card_hi_alpha))
-        .overflow_hidden()
-        .when(t.glass, |d| {
-            d.h(px(4.))
-                .rounded_full()
-                .bg(glass_ui::white(sunrise_launcher_theme::glass::fill::ACTIVE))
-        });
-    match fraction {
-        Some((from, to)) => {
-            let (from, to) = (from.clamp(0.02, 1.), to.clamp(0.02, 1.));
-            track.child(bar.left_0().with_animation(
-                ElementId::named_usize("bar", (to * 1000.) as usize),
-                Animation::new(theme::MOVE).with_easing(ease_out_quint()),
-                move |d, p| d.w(relative(from + (to - from) * p)),
-            ))
-        }
-        // Reduced motion holds the shuttle still where it can be seen (GPUI freezes a repeating
-        // animation at its start, off the track).
-        None if motion::still() => track.child(bar.left(relative(0.35)).w(relative(0.3))),
-        None => track.child(
-            bar.w(relative(0.3)).with_animation(
-                "shuttle",
-                motion::endless(
-                    Animation::new(Duration::from_millis(1600))
-                        .repeat()
-                        .with_easing(gpui::ease_in_out),
-                ),
-                |d, p| d.left(relative(-0.3 + 1.3 * p)),
-            ),
-        ),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -568,6 +367,6 @@ mod tests {
             panic!("poison the hover lock on purpose");
         })
         .join();
-        assert!(!hover_is(&SharedString::from("poison-test")));
+        assert!(recover(&HOVER).lit.is_none());
     }
 }

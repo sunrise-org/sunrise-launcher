@@ -2,7 +2,6 @@
 use super::discover::install_fact;
 use super::ui::*;
 use super::*;
-use crate::frame::button;
 use std::time::{Duration, SystemTime};
 pub(super) use sunrise_launcher::browser::sunrise::sources::Source;
 use sunrise_launcher::browser::sunrise::sources::{self, Catalogue};

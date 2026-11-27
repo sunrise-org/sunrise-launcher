@@ -2,6 +2,8 @@
 use super::super::project::{about_row, back};
 use super::*;
 use crate::mods_page::install::{stage_label, SourceQuestion};
+use crate::widgets::button::{primary, secondary};
+use crate::widgets::chip::{self, tag};
 use sunrise_launcher::browser::sunrise::SourceError;
 
 impl Launcher {
@@ -40,7 +42,7 @@ impl Launcher {
             .filter(|a| a.ids.iter().any(|id| id == source.id()));
         let retry = |id, cx: &mut Context<Self>| {
             let source = source.clone();
-            button(id, tr("Try again")).on_click(cx.listener(move |this, _, _, cx| {
+            secondary(id, tr("Try again")).on_click(cx.listener(move |this, _, _, cx| {
                 this.inspect_nightly(source.clone(), true);
                 cx.notify();
             }))
@@ -128,7 +130,7 @@ impl Launcher {
                 })
                 .map(|_| {
                     let origin = origin.clone();
-                    button("nightly-recheck-source", tr("Check for update"))
+                    secondary("nightly-recheck-source", tr("Check for update"))
                         .w_full()
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.check_source_updates(Some(&origin));
@@ -186,7 +188,7 @@ impl Launcher {
                 .child(note(words))
                 .children(matches!(error, SourceError::Github(_) | SourceError::DependencyGithub { .. } | SourceError::Changed(_))
                     .then(|| if busy || matches!(error, SourceError::Github(sources::Failure::RateLimited { retry_at: Some(at) }) | SourceError::DependencyGithub { failure: sources::Failure::RateLimited { retry_at: Some(at) }, .. } if *at > SystemTime::now()) {
-                        dim(button("nightly-detail-retry", tr("Try again")))
+                        dim(secondary("nightly-detail-retry", tr("Try again")))
                     } else { retry("nightly-detail-retry", cx) })))
         });
         let tracking = match source.tracker() {
@@ -227,7 +229,11 @@ impl Launcher {
             installed.map(|origin| origin.commit.as_str()),
             details.and_then(|detail| detail.build_pin.as_deref()),
         )
-        .then(|| div().flex().child(badge(tr("Made for this build"))));
+        .then(|| {
+            div()
+                .flex()
+                .child(tag(tr("Made for this build"), chip::Kind::Neutral))
+        });
         let package = installed_row
             .as_ref()
             .and_then(|row| self.archive_display(row))
@@ -287,7 +293,7 @@ impl Launcher {
             .children(failure_panel)
             .child(
                 div().flex().justify_end().child(
-                    button("nightly-github", tr("Open on GitHub"))
+                    secondary("nightly-github", tr("Open on GitHub"))
                         .gap(px(5.))
                         .child("↗")
                         .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&repo_url))),
@@ -328,7 +334,7 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let name = name.to_owned();
-        button("nightly-build-log", tr("View build log")).on_click(cx.listener(
+        secondary("nightly-build-log", tr("View build log")).on_click(cx.listener(
             move |this, _, _, cx| {
                 this.mods_state.nightly.work.log = Some((name.clone(), log.clone()));
                 this.open_sheet(crate::sheets::Sheet::NightlySourceLog);
@@ -368,13 +374,13 @@ impl Launcher {
                         .flex()
                         .justify_end()
                         .gap(px(8.))
-                        .child(crate::frame::copy_button(
+                        .child(crate::widgets::motion_bits::copy_button(
                             "nightly-log-copy",
                             tr("Copy log"),
                             log,
                         ))
                         .child(
-                            button("nightly-log-close", tr("Close")).on_click(cx.listener(
+                            secondary("nightly-log-close", tr("Close")).on_click(cx.listener(
                                 |this, _, _, cx| {
                                     this.close_sheet();
                                     cx.notify();
@@ -447,7 +453,7 @@ impl Launcher {
                             ))),
                     )
                     .child(
-                        button(("nightly-consent-source", n), tr("View source"))
+                        secondary(format!("nightly-consent-source-{}", n), tr("View source"))
                             .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&url))),
                     ),
             );
@@ -494,7 +500,7 @@ impl Launcher {
             .child(div().id("nightly-consent-mods").max_h(px(185.)).overflow_y_scroll().child(list))
             .child(note(tr("Sunrise hasn't reviewed this code. Building and playing run the author's code on your computer.")))
             .child(div().flex().justify_end().gap(px(8.))
-                .child(button("nightly-consent-cancel", tr("Cancel")).on_click(cx.listener(|this, _, _, cx| {
+                .child(secondary("nightly-consent-cancel", tr("Cancel")).on_click(cx.listener(|this, _, _, cx| {
                     this.close_sheet();
                     cx.notify();
                 })))

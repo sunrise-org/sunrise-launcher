@@ -1,6 +1,7 @@
 //! The game-build chooser under Home's build button, and the profile menu beside it.
 
 use super::*;
+use crate::widgets::button::secondary;
 
 impl Launcher {
     /// The latest published build, or the latest installed one when the channel is offline.
@@ -196,7 +197,7 @@ impl Launcher {
             .child(choices)
             .children(self.ui.sheets.error.clone().map(|error| {
                 build_menu_error(error, |whole| {
-                    button("alt-build-error-details", tr("Details")).on_click(cx.listener(
+                    secondary("alt-build-error-details", tr("Details")).on_click(cx.listener(
                         move |this, _: &ClickEvent, _, cx| {
                             this.open_notice(whole.clone(), None);
                             cx.notify();

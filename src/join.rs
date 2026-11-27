@@ -9,10 +9,10 @@
 //! - featured servers: a bundled pair, Horizon Minecraft (joinable once its address is set)
 //!   and Sunrise's own (inert, coming soon); no backend service.
 use super::*;
-use crate::frame::button;
 use crate::frame::Reach as _;
 use crate::home::{card, muted};
 use crate::paint::palette;
+use crate::widgets::button::secondary;
 use gpui::{rgb, rgba};
 
 /// Horizon Minecraft's address, passed to the game as written. Empty: the row has no Join.
@@ -211,7 +211,7 @@ impl Launcher {
     fn servers(&mut self, cx: &mut Context<Self>) -> Div {
         let typed = entry(self.friend_code.text());
         let focused = self.friend_focused;
-        let field = crate::frame::input(focused)
+        let field = crate::widgets::field::field_box(focused, false)
             .id("alt-address")
             .track_focus(&self.friend_focus)
             .seen()
@@ -247,7 +247,7 @@ impl Launcher {
         let field = line_edit::mouse(field, cx, |this| &mut this.friend_code);
         let address = matches!(typed, Entry::Address(_));
         // As tall as the address field they stand beside.
-        let save = button("alt-server-save", tr("Save")).h(px(tokens::FIELD));
+        let save = secondary("alt-server-save", tr("Save")).h(px(tokens::FIELD));
         let save = if address {
             save.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.save_typed();
@@ -257,7 +257,7 @@ impl Launcher {
             save.opacity(0.4).cursor_default().tab_stop(false)
         };
         let joinable = matches!(typed, Entry::Address(_) | Entry::Invite);
-        let join = button("alt-server-join", tr("Join")).h(px(tokens::FIELD));
+        let join = secondary("alt-server-join", tr("Join")).h(px(tokens::FIELD));
         let join = if joinable {
             join.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.join_typed();
@@ -339,12 +339,12 @@ impl Launcher {
                     Some(Reach::Offline) => tr("No answer").to_string(),
                     _ => tr(server.note).to_string(),
                 };
-                let join = button(format!("alt-featured-{i}"), tr("Join")).on_click(cx.listener(
-                    move |this, _: &ClickEvent, _, cx| {
+                let join = secondary(format!("alt-featured-{i}"), tr("Join")).on_click(
+                    cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.play_to("--server", address.to_string());
                         cx.notify();
-                    },
-                ));
+                    }),
+                );
                 (join.into_any_element(), line)
             }
             None => (
@@ -436,7 +436,7 @@ impl Launcher {
         };
         let offline = reach == Reach::Offline;
         let ip = server.ip.clone();
-        let join = button(format!("alt-server-{i}-join"), tr("Join"));
+        let join = secondary(format!("alt-server-{i}-join"), tr("Join"));
         let join = if offline {
             join.opacity(0.4)
                 .cursor_default()
@@ -452,7 +452,7 @@ impl Launcher {
         };
         let open = self.multiplayer.menu.filter(|(row, _)| *row == i);
         let more = match open {
-            Some((_, asked)) => button(
+            Some((_, asked)) => secondary(
                 format!("alt-server-{i}-remove"),
                 if asked {
                     tr("Click again to remove")
@@ -469,7 +469,7 @@ impl Launcher {
                 }
                 cx.notify();
             })),
-            None => button(format!("alt-server-{i}-more"), "…").on_click(cx.listener(
+            None => secondary(format!("alt-server-{i}-more"), "…").on_click(cx.listener(
                 move |this, _: &ClickEvent, _, cx| {
                     this.multiplayer.menu = Some((i, false));
                     cx.notify();

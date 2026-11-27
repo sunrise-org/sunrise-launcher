@@ -1,4 +1,5 @@
 //! Feedback: the banner (warning, info, danger, success), the progress bar, the empty state and the toast card.
+#![allow(dead_code)] // Used by the shell and pages that the next redesign steps move over; removed in the final sweep.
 use super::*;
 
 use crate::frame::{c, mix};

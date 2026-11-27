@@ -1,6 +1,7 @@
 //! The notice sheet: a problem's whole text, with one way out.
 
 use super::*;
+use crate::widgets::button::{primary, secondary};
 
 impl Launcher {
     /// What went wrong, in full: each paragraph on its own, with one way out.
@@ -13,7 +14,7 @@ impl Launcher {
             .filter(|p| !p.trim().is_empty())
             .map(|p| div().text_size(px(tokens::LABEL)).child(p.to_owned()))
             .collect();
-        let main = |label: SharedString| crate::frame::primary("alt-notice-way-out", label);
+        let main = |label: SharedString| primary("alt-notice-way-out", label);
         let way_out = self.ui.sheets.way_out.clone().map(|way| match way {
             WayOut::MinecraftFolder => main(tr("Choose Minecraft folder").into()).on_click(
                 cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -53,7 +54,7 @@ impl Launcher {
                     .justify_end()
                     .gap(px(8.))
                     .child(
-                        button("alt-notice-close", tr("Close")).on_click(cx.listener(
+                        secondary("alt-notice-close", tr("Close")).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
                                 this.close_sheet();
                                 cx.notify();

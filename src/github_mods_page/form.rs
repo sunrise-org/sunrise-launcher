@@ -1,5 +1,7 @@
 use super::*;
 use super::{actions, rows};
+use crate::widgets::button::{primary, secondary};
+use crate::widgets::check::{checkbox, Tick};
 
 fn muted(text: &str) -> Div {
     div()
@@ -208,7 +210,7 @@ impl Launcher {
                         .justify_end()
                         .gap(px(8.))
                         .child(
-                            button("add-source-cancel", tr("Cancel")).on_click(cx.listener(
+                            secondary("add-source-cancel", tr("Cancel")).on_click(cx.listener(
                                 |this, _: &ClickEvent, _, cx| {
                                     actions::cancel(this);
                                     cx.notify();
@@ -234,9 +236,9 @@ impl Launcher {
             .flex_col()
             .child(sheets::title(tr("Add from source").into()))
             .child(muted(tr("Reading mod files…")))
-            .child(widgets::progress_bar(None, &self.theme))
+            .child(widgets::feedback::progress_bar(None))
             .child(div().flex().justify_end().child(
-                button("github-add-cancel", tr("Cancel")).on_click(cx.listener(
+                secondary("github-add-cancel", tr("Cancel")).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
                         actions::cancel(this);
                         cx.notify();
@@ -274,7 +276,7 @@ impl Launcher {
                                 .child(line),
                         )
                         .children((!detail.is_empty()).then(|| {
-                            button(
+                            secondary(
                                 "github-add-details",
                                 crate::mods::refused::details_label(expanded),
                             )
@@ -300,7 +302,7 @@ impl Launcher {
                     .justify_end()
                     .gap(px(8.))
                     .children(can_back.then(|| {
-                        button("add-source-back", tr("Back")).on_click(cx.listener(
+                        secondary("add-source-back", tr("Back")).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
                                 this.github.stage = Stage::Choose(SourceChoice::LocalFile);
                                 cx.notify();
@@ -352,9 +354,13 @@ impl Launcher {
                             .when(i > 0, |r| r.border_t_1().border_color(palette().rule()))
                             .hover(|s| s.bg(rgb(palette().hover)))
                             .child(
-                                crate::mods::checkbox(
+                                checkbox(
                                     ("github-add-check", i),
-                                    pick.selected.contains(&id),
+                                    if pick.selected.contains(&id) {
+                                        Tick::On
+                                    } else {
+                                        Tick::Off
+                                    },
                                 )
                                 .tab_stop(false),
                             )
@@ -415,7 +421,7 @@ impl Launcher {
                         )
                         .children((!error.detail.is_empty()).then(|| {
                             div().flex().child(
-                                crate::frame::button(
+                                secondary(
                                     "github-pick-details",
                                     crate::mods::refused::details_label(pick.details),
                                 )
@@ -451,7 +457,7 @@ impl Launcher {
         let focused = !resolving && focus.is_focused(window);
         let mut field_theme = crate::mods::field_theme(self.theme);
         field_theme.glass = true;
-        let field = input(focused)
+        let field = crate::widgets::field::field_box(focused, false)
             .id("github-add-field")
             .h(px(tokens::ACTION))
             .px(px(12.))
@@ -490,7 +496,7 @@ impl Launcher {
             line_edit::mouse(field, cx, |this| &mut this.github.text)
         };
         let choose_folder = {
-            let btn = button("add-source-pick-folder", tr("Choose local folder…"));
+            let btn = secondary("add-source-pick-folder", tr("Choose local folder…"));
             if resolving {
                 widgets::disabled(btn)
             } else {
@@ -553,7 +559,7 @@ impl Launcher {
                     .flex_col()
                     .gap(px(8.))
                     .child(muted(tr("Checking GitHub…")))
-                    .child(widgets::progress_bar(None, &self.theme)),
+                    .child(widgets::feedback::progress_bar(None)),
             );
         }
         let error = match &self.github.stage {
@@ -577,7 +583,7 @@ impl Launcher {
                             .child(error.line.clone()),
                     )
                     .children((!error.detail.is_empty()).then(|| {
-                        button(
+                        secondary(
                             "github-add-details",
                             crate::mods::refused::details_label(*expanded),
                         )
@@ -611,7 +617,7 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> (Div, Option<Stateful<Div>>, Stateful<Div>) {
         let back = (!checked && !resolving).then(|| {
-            button("add-source-back", tr("Back")).on_click(cx.listener(
+            secondary("add-source-back", tr("Back")).on_click(cx.listener(
                 |this, _: &ClickEvent, _, cx| {
                     actions::back_to_repository(this);
                     cx.notify();
@@ -662,7 +668,7 @@ impl Launcher {
                 .children(back_action)
                 .child(div().flex_1())
                 .child(
-                    button("github-add-cancel", tr("Cancel")).on_click(cx.listener(
+                    secondary("github-add-cancel", tr("Cancel")).on_click(cx.listener(
                         |this, _: &ClickEvent, _, cx| {
                             actions::cancel(this);
                             cx.notify();

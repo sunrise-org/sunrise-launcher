@@ -3,6 +3,9 @@ use super::model;
 use super::ui::*;
 use super::*;
 use crate::paint::palette;
+use crate::widgets::button::{primary, secondary};
+use crate::widgets::check::switch;
+use crate::widgets::chip::{self, tag};
 use sunrise_launcher::browser::images;
 
 mod data;
@@ -184,7 +187,6 @@ impl Launcher {
         busy: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        use crate::frame::button;
         let hold = self
             .mods_state
             .snapshot
@@ -203,7 +205,7 @@ impl Launcher {
         } else {
             cells.status.as_ref().map(|status| note(status.tip.clone()))
         };
-        let toggle = ui::switch("alt-project-switch", row.on);
+        let toggle = switch("alt-project-switch", row.on);
         let toggle = if busy || !cells.switch {
             dim(toggle)
         } else {
@@ -216,11 +218,11 @@ impl Launcher {
         let manual_badge = row.manual_badge();
         let manual_refresh = manual_badge.map(|_| {
             if let Some(progress) = self.registry_card_control(&row.id, |label| {
-                dim(button("alt-project-github-progress", label)).into_any_element()
+                dim(secondary("alt-project-github-progress", label)).into_any_element()
             }) {
                 return progress;
             }
-            let button = button("alt-project-manual-refresh", tr("Add from source"));
+            let button = secondary("alt-project-manual-refresh", tr("Add from source"));
             if busy {
                 dim(button).into_any_element()
             } else {
@@ -244,7 +246,7 @@ impl Launcher {
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .child(ui::manual_badge_pill(badge))
+                    .child(tag(badge.label(), chip::Kind::Neutral))
                     .child(muted(tr(
                         "No automatic updates. Refresh via Add from source.",
                     )))
@@ -364,38 +366,39 @@ impl Launcher {
                 .and_then(|url| self.mods_image(url, images::ICON)),
             package.clone(),
         );
-        let head =
-            div()
-                .flex()
-                .items_center()
-                .gap(px(16.))
-                .child(tile(picture, &row.id, title, 64.))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .gap(px(6.))
-                        .child(
-                            div()
-                                .text_size(px(tokens::DISPLAY))
-                                .font_weight(FontWeight::BOLD)
-                                .child(crate::selectable::selectable(title.clone())),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .items_center()
-                                .gap_x(px(8.))
-                                .gap_y(px(4.))
-                                .children((!row.authors.is_empty()).then(|| {
+        let head = div()
+            .flex()
+            .items_center()
+            .gap(px(16.))
+            .child(tile(picture, &row.id, title, 64.))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(
+                        div()
+                            .text_size(px(tokens::DISPLAY))
+                            .font_weight(FontWeight::BOLD)
+                            .child(crate::selectable::selectable(title.clone())),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap_x(px(8.))
+                            .gap_y(px(4.))
+                            .children(
+                                (!row.authors.is_empty()).then(|| {
                                     note(trf("by {authors}", &[("authors", &row.authors)]))
-                                }))
-                                .children(row.make.map(|make| tag(make.label()))),
-                        ),
-                );
+                                }),
+                            )
+                            .children(row.make.map(|make| tag(make.label(), chip::Kind::Neutral))),
+                    ),
+            );
 
         // The right column: the action, then the installed mod's controls.
         let busy = conflict
@@ -535,7 +538,7 @@ impl Launcher {
                 model::SourceLink::Other(_) => None,
             })
             .map(|url| {
-                crate::frame::button("alt-project-github", tr("Open on GitHub"))
+                secondary("alt-project-github", tr("Open on GitHub"))
                     .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
             });
         let right = div()

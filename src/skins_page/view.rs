@@ -1,5 +1,7 @@
 //! Drawing the page: the drag-to-turn preview, the tiles, and the skin and cape choices.
 use super::*;
+use crate::widgets::button::{primary, secondary};
+use crate::widgets::feedback::{banner, Tone};
 
 impl Launcher {
     pub(crate) fn skins_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -74,7 +76,7 @@ impl Launcher {
                     .child(crate::settings::hint(tr(
                         "Sign in with the Microsoft account that owns Minecraft: Java Edition to choose its skin and cape.",
                     )))
-                    .child(crate::frame::button("skins-sign-in", tr("Sign in with Microsoft")).on_click(
+                    .child(secondary("skins-sign-in", tr("Sign in with Microsoft")).on_click(
                         cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.sign_in_to_play();
                             cx.notify();
@@ -297,7 +299,7 @@ impl Launcher {
             .flex()
             .gap(px(8.))
             .child(
-                crate::frame::primary(
+                primary(
                     "skins-save",
                     if saving { tr("Saving…") } else { tr("Save") },
                 )
@@ -309,15 +311,13 @@ impl Launcher {
                 })),
             )
             .when(changed && !saving, |d| {
-                d.child(
-                    crate::frame::button("skins-undo", tr("Undo")).on_click(cx.listener(
-                        |this, _: &ClickEvent, _, cx| {
-                            this.skins.edit = Edit::default();
-                            this.skins.said.clear();
-                            cx.notify();
-                        },
-                    )),
-                )
+                d.child(secondary("skins-undo", tr("Undo")).on_click(cx.listener(
+                    |this, _: &ClickEvent, _, cx| {
+                        this.skins.edit = Edit::default();
+                        this.skins.said.clear();
+                        cx.notify();
+                    },
+                )))
             });
         card
             // The arms the skin is drawn for: wide (4 pixels, like Steve) or slim (3, like Alex),
@@ -348,7 +348,7 @@ impl Launcher {
             .child(actions)
             .children(self.skins.said.iter().map(|line| match line.clone() {
                 Ok(done) => crate::settings::hint(done),
-                Err(why) => crate::settings::warning(why),
+                Err(why) => banner(Tone::Danger, why, None),
             }))
     }
 
@@ -585,13 +585,13 @@ impl Launcher {
                 self.skins
                     .added
                     .iter()
-                    .map(|why| crate::settings::warning(why.clone())),
+                    .map(|why| banner(Tone::Danger, why.clone(), None)),
             )
             .when_some(self.skins.library_error.clone(), |d, why| {
-                d.child(crate::settings::warning(why))
+                d.child(banner(Tone::Danger, why, None))
             })
             .when_some(self.skins.keep_error.clone(), |d, why| {
-                d.child(crate::settings::warning(why))
+                d.child(banner(Tone::Danger, why, None))
             });
         if !defaults.is_empty() {
             let mut grid = div().flex().flex_wrap().gap(px(10.));
@@ -646,16 +646,16 @@ impl Launcher {
                         .is_some_and(|s| s.state == crate::account::session::State::SignInRequired)
                 });
                 let action = if needs_sign_in {
-                    crate::frame::button("capes-sign-in", tr("Sign in again")).on_click(
-                        cx.listener(|this, _: &ClickEvent, _, cx| {
+                    secondary("capes-sign-in", tr("Sign in again")).on_click(cx.listener(
+                        |this, _: &ClickEvent, _, cx| {
                             if let Some(account) = this.look_account() {
                                 this.re_sign_in(&account.uuid);
                             }
                             cx.notify();
-                        }),
-                    )
+                        },
+                    ))
                 } else {
-                    crate::frame::button("capes-retry", tr("Try again")).on_click(cx.listener(
+                    secondary("capes-retry", tr("Try again")).on_click(cx.listener(
                         |this, _: &ClickEvent, _, cx| {
                             if let Some(account) = this.look_account() {
                                 this.profile_read(&account);
@@ -672,7 +672,7 @@ impl Launcher {
                             .flex_wrap()
                             .items_center()
                             .gap(px(12.))
-                            .child(crate::settings::warning(why.clone()))
+                            .child(banner(Tone::Danger, why.clone(), None))
                             .child(action),
                     ),
                 )

@@ -1,12 +1,12 @@
 //! Settings for the whole launcher, one section at a time. The game build and its channel stay
 //! in the play bar, the one place that shows them.
 use super::*;
-use crate::frame::button;
 use crate::frame::Reach as _;
-use crate::mods::{choices, switch, Choose};
 use crate::paint::palette;
+use crate::widgets::check::switch;
+use crate::widgets::chip::choices;
+use crate::widgets::feedback::{banner, Tone};
 use gpui::rgb;
-use std::rc::Rc;
 use storage::Category;
 use sunrise_launcher::telemetry;
 use sunrise_launcher_telemetry::Choices;
@@ -252,13 +252,6 @@ pub(crate) fn danger(b: Stateful<Div>) -> Stateful<Div> {
     b.text_color(rgb(palette().danger))
 }
 
-pub(crate) fn warning(text: impl Into<SharedString>) -> Div {
-    div()
-        .text_size(px(tokens::SMALL))
-        .text_color(rgb(palette().danger))
-        .child(crate::selectable::selectable(text))
-}
-
 fn corner_px(value: f32) -> u8 {
     (value * f32::from(backend::MAX_CORNER_RADIUS)).round() as u8
 }
@@ -337,7 +330,11 @@ impl Launcher {
                     )
                     .child(hint(tr(section.about()))),
             )
-            .children(self.location_error.clone().map(warning))
+            .children(
+                self.location_error
+                    .clone()
+                    .map(|why| banner(Tone::Danger, why, None)),
+            )
             .child(body);
         // The title stays put above the scroll, and the categories stay in view as the section
         // scrolls (`Sticky`, which reads this row as the scroll's item 0).
@@ -515,7 +512,7 @@ impl Launcher {
     ) -> Div {
         let theme = crate::mods::field_theme(self.theme);
         let to_focus = focus.clone();
-        let field = crate::frame::input(focused)
+        let field = crate::widgets::field::field_box(focused, false)
             .id(id)
             .track_focus(&focus)
             .seen()

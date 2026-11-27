@@ -6,8 +6,10 @@ use super::model::discover_v2::{V2Card, V2Collection};
 use super::project::prose;
 use super::ui::*;
 use super::*;
-use crate::frame::primary;
 use crate::paint::palette;
+use crate::widgets::button::primary;
+use crate::widgets::check::{checkbox, Tick};
+use crate::widgets::chip::{self, tag};
 use sunrise_launcher::browser::images;
 
 /// The picks made on the open collection's page.
@@ -120,7 +122,7 @@ impl Launcher {
                             .gap_x(px(8.))
                             .gap_y(px(4.))
                             .child(note(publisher))
-                            .child(badge(tr("Collection"))),
+                            .child(tag(tr("Collection"), chip::Kind::Neutral)),
                     ),
             );
 
@@ -305,7 +307,11 @@ impl Launcher {
         };
         let tick = checkbox(
             ("alt-collection-box", n),
-            open && picked.contains(&member.id),
+            if open && picked.contains(&member.id) {
+                Tick::On
+            } else {
+                Tick::Off
+            },
         )
         .tab_stop(false);
         let project = member.id.clone();

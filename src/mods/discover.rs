@@ -3,8 +3,11 @@ use super::model::discover_v2::{self, V2Sort};
 use super::state::Menu;
 use super::ui::*;
 use super::*;
-use crate::frame::button;
 use crate::paint::palette;
+use crate::widgets::button::{primary, secondary};
+use crate::widgets::check::switch;
+use crate::widgets::chip::{self, tag};
+use crate::widgets::feedback::empty_state;
 use gpui::{deferred, MouseButton};
 use sunrise_launcher::browser::details::category_label;
 use sunrise_launcher::browser::images;
@@ -60,12 +63,12 @@ impl Launcher {
                                         .child(tr("The Sunrise registry can't be reached")),
                                 )
                                 .child(muted(error))
-                                .child(button("alt-retry", tr("Try again")).on_click(cx.listener(
-                                    |this, _: &ClickEvent, _, cx| {
+                                .child(secondary("alt-retry", tr("Try again")).on_click(
+                                    cx.listener(|this, _: &ClickEvent, _, cx| {
                                         this.ensure_v2_catalog(true);
                                         cx.notify();
-                                    },
-                                ))),
+                                    }),
+                                )),
                         )
                         .into_any_element();
                 }
@@ -166,7 +169,7 @@ impl Launcher {
                             .child(warning),
                     )
                     .child(
-                        button("alt-v2-refresh", tr("Refresh")).on_click(cx.listener(
+                        secondary("alt-v2-refresh", tr("Refresh")).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
                                 this.ensure_v2_catalog(true);
                                 cx.notify();
@@ -204,30 +207,29 @@ impl Launcher {
                     ("error", error),
                 ],
             );
-            page =
-                page.child(
-                    card()
-                        .px(px(12.))
-                        .py(px(8.))
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap(px(10.))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .text_size(px(tokens::SMALL))
-                                .text_color(c(palette().warning))
-                                .child(line),
-                        )
-                        .child(button("alt-local-fit-retry", tr("Try again")).on_click(
-                            cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.retry_local_fit();
-                                cx.notify();
-                            }),
-                        )),
-                );
+            page = page.child(
+                card()
+                    .px(px(12.))
+                    .py(px(8.))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(10.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(tokens::SMALL))
+                            .text_color(c(palette().warning))
+                            .child(line),
+                    )
+                    .child(secondary("alt-local-fit-retry", tr("Try again")).on_click(
+                        cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.retry_local_fit();
+                            cx.notify();
+                        }),
+                    )),
+            );
         }
         // A build the registry doesn't list yet: its mods are checked here, said once.
         if !build_listed {
@@ -313,9 +315,9 @@ impl Launcher {
                         .zip(entry)
                         .and_then(|(rows, entry)| rows.archives.get(&entry.file)?.icon.clone());
                     let fits = card_data.fit.fits();
-                    let working = self
-                        .card_working_label(&id)
-                        .map(|label| dim(button(("alt-add", n), label)).into_any_element());
+                    let working = self.card_working_label(&id).map(|label| {
+                        dim(secondary(format!("alt-add-{}", n), label)).into_any_element()
+                    });
                     let issue = self.registry_card_note(&id);
 
                     // An installed mod says so once, where Install would be: its version,
@@ -337,7 +339,10 @@ impl Launcher {
                     let control = if working.is_some() {
                         working
                     } else if rereading {
-                        Some(dim(button(("alt-add", n), tr("Finishing…"))).into_any_element())
+                        Some(
+                            dim(secondary(format!("alt-add-{}", n), tr("Finishing…")))
+                                .into_any_element(),
+                        )
                     } else if let (Some(rows), Some(version)) = (installed, installed_version) {
                         Some(if off {
                             status(
@@ -352,14 +357,14 @@ impl Launcher {
                     } else if !fits {
                         // Non-fitting cards in Show all display Install disabled.
                         Some(
-                            dim(button(("alt-add", n), tr("Install")))
+                            dim(secondary(format!("alt-add-{}", n), tr("Install")))
                                 .on_click(|_, _, cx| cx.stop_propagation())
                                 .into_any_element(),
                         )
                     } else {
                         let id_for_add = id.clone();
                         Some(
-                            button(("alt-add", n), tr("Install"))
+                            secondary(format!("alt-add-{}", n), tr("Install"))
                                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                     cx.stop_propagation();
                                     this.add_v2(id_for_add.clone());
@@ -372,7 +377,7 @@ impl Launcher {
                     let mut facts: Vec<Div> = Vec::new();
                     if let Some(pill) = card_data.fit.fit_pill() {
                         facts.push(fit_pill(pill));
-                        facts.push(tag(card_data.make.label()));
+                        facts.push(tag(card_data.make.label(), chip::Kind::Neutral));
                     } else if let Some(reason) = card_data.fit.reason() {
                         facts.push(match card_data.fit {
                             discover_v2::CardFit::Checking { .. } => muted(reason),
@@ -491,7 +496,8 @@ impl Launcher {
                 tr("Try a different search, or turn on Show all to see mods for other Sunrise builds.")
                     .to_owned()
             };
-            return empty_state("search-01", title, line, Some(show_all(cx))).into_any_element();
+            return empty_state(title, line, Some(show_all(cx).into_any_element()))
+                .into_any_element();
         }
         let has_filters = !f.text.trim().is_empty() || f.category.is_some();
         if !has_any_cards && !has_filters {
@@ -507,10 +513,10 @@ impl Launcher {
                     tr("Mods show up here once the registry lists releases for this build."),
                 )
             };
-            return empty_state("search-01", title, line, None).into_any_element();
+            return empty_state(title, line, None).into_any_element();
         }
         let action = has_filters.then(|| {
-            button("alt-discover-clear", tr("Clear filters")).on_click(cx.listener(
+            secondary("alt-discover-clear", tr("Clear filters")).on_click(cx.listener(
                 |this, _: &ClickEvent, _, cx| {
                     this.mods_state.filters.text.clear();
                     this.mods_state.filters.category = None;
@@ -521,10 +527,9 @@ impl Launcher {
             ))
         });
         empty_state(
-            "search-01",
             tr("No matching mods"),
             tr("Try a different search or clear your category filter."),
-            action,
+            action.map(|action| action.into_any_element()),
         )
         .into_any_element()
     }
@@ -658,7 +663,7 @@ impl Launcher {
             // Install takes the members on by default that fit, as the page opens picked.
             let to_install =
                 collection.to_install(cards, &collection.initial_picks(cards), &is_installed);
-            let mut facts = vec![fit, tag(tr("Collection"))];
+            let mut facts = vec![fit, tag(tr("Collection"), chip::Kind::Neutral)];
             if added > 0 {
                 facts.push(muted(trf(
                     "{added} of {total} added",
@@ -666,18 +671,21 @@ impl Launcher {
                 )));
             }
             let control = match self.card_working_label(&id) {
-                Some(label) => dim(button(("alt-collection-add", n), label)).into_any_element(),
-                None if to_install.is_empty() && added > 0 => added_mark(),
-                None if to_install.is_empty() => {
-                    dim(button(("alt-collection-add", n), tr("Install")))
-                        .on_click(|_, _, cx| cx.stop_propagation())
-                        .into_any_element()
+                Some(label) => {
+                    dim(secondary(format!("alt-collection-add-{}", n), label)).into_any_element()
                 }
+                None if to_install.is_empty() && added > 0 => added_mark(),
+                None if to_install.is_empty() => dim(secondary(
+                    format!("alt-collection-add-{}", n),
+                    tr("Install"),
+                ))
+                .on_click(|_, _, cx| cx.stop_propagation())
+                .into_any_element(),
                 None => {
                     let (label, why) =
                         collection.install_label(cards, to_install.len(), &is_installed);
                     let (card, ids) = (id.clone(), to_install);
-                    button(("alt-collection-add", n), label)
+                    secondary(format!("alt-collection-add-{}", n), label)
                         .when_some(why, |d, why| d.tooltip(crate::glass_ui::tip(why)))
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             cx.stop_propagation();
@@ -753,7 +761,7 @@ impl Launcher {
                     .when(limit < total, |d| {
                         d.child(
                             div().flex().justify_center().child(
-                                button(
+                                secondary(
                                     "mods-discover-more",
                                     trf(
                                         "Show more ({count} left)",
@@ -853,7 +861,7 @@ impl Launcher {
                     .cursor_pointer()
                     .hover(|s| s.border_color(c(p.muted)))
                     .child(label.to_owned())
-                    .child(crate::glass_ui::fold_chevron(
+                    .child(crate::widgets::motion_bits::chevron(
                         format!("discover-menu-{which:?}"),
                         open,
                         12.,

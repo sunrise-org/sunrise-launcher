@@ -18,6 +18,7 @@ use crate::line_edit::{self, Key, LineEdit};
 use crate::paint::palette;
 use crate::settings::Section;
 use crate::sheets::Sheet;
+use crate::widgets::field::{field_box, search_box};
 use gpui::{rgb, MouseButton, MouseDownEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -226,17 +227,27 @@ impl Launcher {
         let compact = bar < COMPACT_BELOW;
         let badge = bar >= BADGE_FROM;
         let keys = keys("K");
-        let glass = blocks::icon("search", 16., rgb(palette().chrome_muted).into());
-        let button = div()
+        let body = if compact {
+            field_box(false, false)
+                .w(px(tokens::FIELD))
+                .justify_center()
+                .child(blocks::icon(
+                    "search",
+                    16.,
+                    rgb(palette().chrome_muted).into(),
+                ))
+        } else {
+            let key = badge.then(|| SharedString::from(keys));
+            let word = div()
+                .text_size(px(tokens::LABEL))
+                .text_color(rgb(palette().chrome_muted))
+                .truncate()
+                .child(tr("Search…"));
+            search_box(false, key, word).w(px(if badge { 204. } else { 150. }))
+        };
+        let button = body
             .id("search-open")
             .flex_none()
-            .flex()
-            .items_center()
-            .h(px(tokens::FIELD))
-            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-            .border_1()
-            .border_color(palette().input_edge())
-            .bg(palette().input_fill())
             .hover(|s| s.bg(rgb(palette().chrome_raised)))
             .cursor_pointer()
             .reach_edge()
@@ -245,35 +256,9 @@ impl Launcher {
                 cx.notify();
             }));
         if compact {
-            return button
-                .w(px(tokens::FIELD))
-                .justify_center()
-                .child(glass)
-                .tooltip(crate::glass_ui::tip(tr("Search")));
+            return button.tooltip(crate::glass_ui::tip(tr("Search")));
         }
         button
-            .w(px(if badge { 204. } else { 150. }))
-            .gap(px(8.))
-            .pl(px(12.))
-            .pr(px(if badge { 6. } else { 12. }))
-            .text_size(px(tokens::LABEL))
-            .text_color(rgb(palette().chrome_muted))
-            .child(glass)
-            .child(div().flex_1().min_w_0().truncate().child(tr("Search…")))
-            .when(badge, |d| {
-                d.child(
-                    div()
-                        .flex_none()
-                        .whitespace_nowrap()
-                        .px(px(6.))
-                        .py(px(2.))
-                        .rounded(crate::tokens::r(crate::tokens::R_SMALL))
-                        .bg(rgb(palette().chrome_raised))
-                        .text_size(px(tokens::CAPTION))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(keys),
-                )
-            })
     }
 
     /// A row's picture, `ART` square.
@@ -338,43 +323,25 @@ impl Launcher {
         let index = self.search.index;
         let query = self.search.query.text().trim().to_string();
 
-        let field = div()
-            .id("search-field")
-            .flex_none()
-            .flex()
-            .items_center()
-            .gap(px(12.))
-            .h(px(52.))
-            .px(px(16.))
-            .cursor_text()
-            .text_size(px(tokens::LEAD))
-            .child(blocks::icon("search", 18., rgb(palette().muted).into()))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .child(line_edit::content(
-                        &self.search.query,
-                        &self.theme,
-                        true,
-                        false,
-                        false,
-                        "Search pages, profiles, worlds, mods, settings and shortcuts…",
-                    )),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .px(px(6.))
-                    .py(px(2.))
-                    .rounded(crate::tokens::r(crate::tokens::R_SMALL))
-                    .bg(rgb(palette().field))
-                    .text_size(px(tokens::CAPTION))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(palette().muted))
-                    .child(tr("Esc")),
-            );
+        let field = search_box(
+            true,
+            Some(SharedString::from(tr("Esc"))),
+            line_edit::content(
+                &self.search.query,
+                &self.theme,
+                true,
+                false,
+                false,
+                "Search pages, profiles, worlds, mods, settings and shortcuts…",
+            ),
+        )
+        .id("search-field")
+        .flex_none()
+        .gap(px(12.))
+        .h(px(52.))
+        .px(px(16.))
+        .cursor_text()
+        .text_size(px(tokens::LEAD));
         let field = line_edit::mouse(field, cx, |this: &mut Launcher| &mut this.search.query);
 
         let mut list = div()

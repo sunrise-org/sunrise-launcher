@@ -5,6 +5,7 @@ use super::ui::*;
 use super::*;
 use crate::paint::palette;
 use crate::sheets::{build_name_with_commit, Sheet};
+use crate::widgets::button::primary;
 use sunrise_launcher::native_mods::local_fit;
 
 impl Launcher {
@@ -94,7 +95,7 @@ impl Launcher {
                     .children(section(tr("Not checked yet"), &[BuildFit::NotChecked])),
             )
             .child(div().flex().justify_end().child(
-                crate::frame::primary("release-builds-close", tr("Close")).on_click(cx.listener(
+                primary("release-builds-close", tr("Close")).on_click(cx.listener(
                     |this, _, _, cx| {
                         this.close_sheet();
                         cx.notify();

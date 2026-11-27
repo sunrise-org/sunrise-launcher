@@ -1,5 +1,6 @@
 //! Settings › Storage: game builds, downloads and where files are kept.
 use super::*;
+use crate::widgets::button::secondary;
 
 impl Launcher {
     pub(super) fn settings_storage(&mut self, cx: &mut Context<Self>) -> Div {
@@ -9,7 +10,7 @@ impl Launcher {
             short(&game),
             div().child({
                 let dir = game.clone();
-                button("alt-open-game", tr("Open folder"))
+                secondary("alt-open-game", tr("Open folder"))
                     .on_click(move |_, _, cx| toast::open(cx, &dir))
             }),
         );
@@ -30,7 +31,7 @@ impl Launcher {
         } else {
             tr("Counting…")
         };
-        let clear_all = button("alt-storage-clear-all", tr("Clear all…"));
+        let clear_all = secondary("alt-storage-clear-all", tr("Clear all…"));
         let size = total.map_or_else(|| uncounted.to_string(), storage::format_bytes);
         let detail = trf(
             "{size}. Files Sunrise can fetch or make again; your worlds, mods and settings are never part of it.",
@@ -46,7 +47,7 @@ impl Launcher {
             detail,
             div()
                 .child(
-                    button("alt-storage-recount", tr("Recount")).on_click(cx.listener(
+                    secondary("alt-storage-recount", tr("Recount")).on_click(cx.listener(
                         |this, _: &ClickEvent, _, cx| {
                             this.refresh_storage(None, false);
                             cx.notify();
@@ -102,21 +103,23 @@ impl Launcher {
                     .items_center()
                     .gap(px(16.))
                     .child(div().flex_1().min_w_0().child(question))
-                    .child(button("alt-storage-keep", tr("Keep")).on_click(cx.listener(
-                        |this, _: &ClickEvent, _, cx| {
-                            this.storage_confirm = None;
-                            cx.notify();
-                        },
-                    )))
                     .child(
-                        danger(button("alt-storage-clear-yes", tr("Clear"))).on_click(cx.listener(
+                        secondary("alt-storage-keep", tr("Keep")).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
+                                this.storage_confirm = None;
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        danger(secondary("alt-storage-clear-yes", tr("Clear"))).on_click(
+                            cx.listener(|this, _: &ClickEvent, _, cx| {
                                 if let Some(clear) = this.storage_confirm.take() {
                                     this.refresh_storage(clear, clear.is_none());
                                 }
                                 cx.notify();
-                            },
-                        )),
+                            }),
+                        ),
                     ),
             );
         }
@@ -130,7 +133,7 @@ impl Launcher {
                 |r| storage::format_bytes(r.remaining_bytes),
             );
             let empty = busy || found.is_none_or(|r| r.clearable_bytes() == 0);
-            let clear = button(ElementId::named_usize("alt-storage-clear", n), tr("Clear…"));
+            let clear = secondary(format!("alt-storage-clear-{}", n), tr("Clear…"));
             let mut line = row(
                 trf(
                     "{category} · {size}",

@@ -12,7 +12,7 @@ impl Launcher {
         busy: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        use crate::frame::button;
+        use crate::widgets::button::secondary;
         let open = self.mods_state.unfit_open.as_deref() == Some(r.id.as_str());
         let id = r.id.clone();
         let help = status(
@@ -70,7 +70,7 @@ impl Launcher {
                             .text_size(px(tokens::SMALL))
                             .text_color(c(palette().muted))
                             .cursor_pointer()
-                            .child(crate::glass_ui::disclosure_chevron(
+                            .child(crate::widgets::motion_bits::disclosure(
                                 "installed-unfit-details",
                                 details,
                                 12.,
@@ -102,10 +102,8 @@ impl Launcher {
             let action = match (busy, &r.update, &unfit.made_for) {
                 (true, _, _) => None,
                 (false, Some(_), _) => {
-                    let b = button(
-                        "alt-unfit-update",
-                        trf("Update {mod}", &[("mod", &r.title)]),
-                    );
+                    let b = secondary("alt-unfit-update",
+                        trf("Update {mod}", &[("mod", &r.title)]));
                     if nightly::installed_source(r).is_some() && !self.nightly_catalogue_current() {
                         Some(dim(b).on_click(|_, _, cx| cx.stop_propagation()))
                     } else {
@@ -123,10 +121,8 @@ impl Launcher {
                     }
                 }
                 (false, None, Some((tag, made))) if self.installed.contains(tag) => {
-                    let b = button(
-                        "alt-unfit-stay",
-                        trf("Stay on {build}", &[("build", made)]),
-                    );
+                    let b = secondary("alt-unfit-stay",
+                        trf("Stay on {build}", &[("build", made)]));
                     let tag = tag.clone();
                     Some(b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.mods_state.unfit_open = None;
@@ -138,7 +134,7 @@ impl Launcher {
                 _ => {
                     let id = r.id.clone();
                     let origin = nightly::installed_source(r).cloned();
-                    Some(button("alt-unfit-check", tr("Check for update")).on_click(
+                    Some(secondary("alt-unfit-check", tr("Check for update")).on_click(
                         cx.listener(move |this, _: &ClickEvent, _, cx| {
                             if let Some(origin) = &origin {
                                 this.check_source_updates(Some(origin));

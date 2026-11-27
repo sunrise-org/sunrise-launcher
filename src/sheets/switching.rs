@@ -1,4 +1,5 @@
 use super::*;
+use crate::widgets::button::secondary;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -139,7 +140,7 @@ impl Launcher {
 
 /// Hide on a switch's sheet: the switch goes on in the status strip.
 fn hide_button(id: &'static str, cx: &mut Context<Launcher>) -> Stateful<Div> {
-    button(id, tr("Hide")).on_click(cx.listener(|this, _, _, cx| {
+    secondary(id, tr("Hide")).on_click(cx.listener(|this, _, _, cx| {
         this.close_sheet();
         cx.notify();
     }))

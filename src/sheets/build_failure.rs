@@ -1,6 +1,7 @@
 //! When a registry build fails: the notice that says why, and saving its log.
 
 use super::*;
+use crate::widgets::button::{primary, secondary};
 
 impl Launcher {
     pub(super) fn registry_build_failed(
@@ -58,22 +59,21 @@ impl Launcher {
             if let Some(log) = &failure.log {
                 let copy = log.clone();
                 let save = log.clone();
-                controls = controls
-                    .child(
-                        button("install-log-copy", tr("Copy")).on_click(move |_, _, cx| {
-                            crate::widgets::copy_to_clipboard(
-                                cx,
-                                gpui::ClipboardItem::new_string(copy.to_string()),
-                            );
-                        }),
-                    )
-                    .child(
-                        button("install-log-save", tr("Save log")).on_click(cx.listener(
-                            move |this, _, _, cx| {
-                                this.save_install_log(save.clone(), cx);
+                controls =
+                    controls
+                        .child(secondary("install-log-copy", tr("Copy")).on_click(
+                            move |_, _, cx| {
+                                crate::widgets::copy_to_clipboard(
+                                    cx,
+                                    gpui::ClipboardItem::new_string(copy.to_string()),
+                                );
                             },
-                        )),
-                    );
+                        ))
+                        .child(secondary("install-log-save", tr("Save log")).on_click(
+                            cx.listener(move |this, _, _, cx| {
+                                this.save_install_log(save.clone(), cx);
+                            }),
+                        ));
             } else {
                 controls = controls.child(muted(tr("No build log was saved for this attempt.")));
             }
@@ -86,11 +86,11 @@ impl Launcher {
             .children(actions)
             .children(self.ui.sheets.error.as_ref().map(|error| muted(error.clone())))
             .child(div().flex().justify_end().gap(px(8.))
-                .child(button("install-show-why", if show { tr("Hide why") } else { tr("Show why") })
+                .child(secondary("install-show-why", if show { tr("Hide why") } else { tr("Show why") })
                     .on_click(cx.listener(|this, _, _, cx| { this.ui.sheets.details ^= true; cx.notify(); })))
-                .child(crate::frame::primary("install-stay", tr("Stay"))
+                .child(primary("install-stay", tr("Stay"))
                     .on_click(cx.listener(|this, _, _, cx| { this.close_sheet(); cx.notify(); })))
-                .child(button("install-continue", tr("Continue"))
+                .child(secondary("install-continue", tr("Continue"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some((_, answer)) = this.mods.installs.question.take() { let _ = answer.send(true); }
                         this.ui.sheets.details = false;

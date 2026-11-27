@@ -1,5 +1,6 @@
 //! Switching a mod's provider: the worker, its question and its sheet.
 use super::*;
+use crate::widgets::button::{primary, secondary};
 
 impl Launcher {
     pub(crate) fn begin_provider_switch(&mut self, switch: PortSwitch) {
@@ -289,17 +290,17 @@ impl Launcher {
                         .justify_end()
                         .gap(px(8.))
                         .child(
-                            button("provider-switch-cancel", tr("Cancel"))
+                            secondary("provider-switch-cancel", tr("Cancel"))
                                 .on_click(answer(false)),
                         )
                         .child(
-                            crate::frame::primary("provider-switch-confirm", tr("Switch"))
+                            primary("provider-switch-confirm", tr("Switch"))
                                 .on_click(answer(true)),
                         ),
                 )
         } else {
             let publishing = running.progress == InstallProgress::Publishing;
-            let cancel = button("provider-switch-cancel", tr("Cancel"));
+            let cancel = secondary("provider-switch-cancel", tr("Cancel"));
             let cancel = if publishing {
                 cancel.opacity(0.45).cursor_default().tab_stop(false)
             } else {
@@ -324,10 +325,9 @@ impl Launcher {
                         running.eta.remaining(Instant::now()),
                     )
                 }))
-                .child(crate::widgets::progress_bar(
-                    stage_fraction(running.progress).map(|f| (f, f)),
-                    &self.theme,
-                ))
+                .child(crate::widgets::feedback::progress_bar(stage_fraction(
+                    running.progress,
+                )))
                 .child(muted(tr("Your current port stays intact if you cancel.")))
                 .child(
                     div()

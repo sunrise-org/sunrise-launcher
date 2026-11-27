@@ -1,10 +1,10 @@
 //! The selected profile, its launch controls, and four browsable collections.
 use super::*;
-use crate::frame::button;
 use crate::frame::Reach as _;
 use crate::launch_state::Main;
 use crate::paint::palette;
 use crate::sheets::Sheet;
+use crate::widgets::button::secondary;
 use crate::worlds_page;
 use gpui::rgb;
 use std::cell::Cell;
@@ -348,7 +348,7 @@ impl Launcher {
                     .mt(px(if compact { 12. } else { 18. })),
             )
             .children(receipt.then(|| {
-                crate::frame::button("home-build-changes", tr("Build changes"))
+                secondary("home-build-changes", tr("Build changes"))
                     .self_center()
                     .mt(px(10.))
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -391,7 +391,7 @@ impl Launcher {
                 },
             ]
         };
-        let play = crate::frame::input(false)
+        let play = crate::widgets::field::field_box(false, false)
             .id("alt-play")
             .flex_none()
             .justify_center()
@@ -427,7 +427,7 @@ impl Launcher {
             })
             .reach_edge();
         let icon_button = |id, icon, label| {
-            crate::frame::input(false)
+            crate::widgets::field::field_box(false, false)
                 .id(id)
                 .flex_none()
                 .justify_center()
@@ -476,7 +476,7 @@ impl Launcher {
                 crate::launch_state::Act::Update => "alt-update",
                 _ => "alt-fix",
             };
-            button(id, act.label()).on_click(cx.listener(move |this, _, _, cx| {
+            secondary(id, act.label()).on_click(cx.listener(move |this, _, _, cx| {
                 this.launch_act(&act);
                 cx.notify();
             }))
@@ -675,12 +675,16 @@ impl Launcher {
                     .text_color(rgb(palette().text))
                     .child(build),
             )
-            .child(div().flex_none().child(crate::glass_ui::fold_chevron(
-                "home-build",
-                self.ui.sheet == Some(Sheet::Build),
-                13.,
-                rgb(palette().muted).into(),
-            )))
+            .child(
+                div()
+                    .flex_none()
+                    .child(crate::widgets::motion_bits::chevron(
+                        "home-build",
+                        self.ui.sheet == Some(Sheet::Build),
+                        13.,
+                        rgb(palette().muted).into(),
+                    )),
+            )
             .child(
                 gpui::canvas(
                     move |bounds, window, cx| {
@@ -768,7 +772,7 @@ impl Launcher {
         let on_play = focus.is_focused(window);
         // The row's own id scopes these two: no world's button is another's.
         let small = |id: &'static str, glyph: &'static str, says: &'static str| {
-            button(id, "")
+            secondary(id, "")
                 .size(px(30.))
                 .px_0()
                 .child(blocks::icon(glyph, 14., rgb(palette().text).into()))
@@ -874,7 +878,7 @@ impl Launcher {
                 this.play_to("--world", folder.clone());
                 cx.notify();
             }));
-        let packs = crate::frame::button_base("alt-world-packs", "")
+        let packs = secondary("alt-world-packs", "")
             .absolute()
             .left(px(8.))
             .bottom(px(8.))

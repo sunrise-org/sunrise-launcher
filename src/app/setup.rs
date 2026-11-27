@@ -1,6 +1,7 @@
 //! The launcher's state set up (`Launcher::new`), its settings saved, page changes, the
 //! launcher's own updates and the release list.
 use super::*;
+use crate::widgets::button::secondary;
 
 impl Launcher {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -319,7 +320,8 @@ impl Launcher {
                                 ),
                         )
                         .child(
-                            button("settings-save-retry", "Retry", Kind::Secondary, &t)
+                            secondary("settings-save-retry",
+                                "Retry")
                                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                     this.save_settings();
                                     cx.notify();

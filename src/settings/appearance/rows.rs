@@ -2,6 +2,10 @@
 //! layout and the section's own picture and cat settings.
 use super::*;
 use crate::paint::Palette;
+use crate::widgets::button::secondary;
+use crate::widgets::check::switch;
+use crate::widgets::feedback::{banner, Tone};
+use gpui::SharedString;
 use sunrise_launcher::appearance::{self, Behind};
 use sunrise_launcher::backend::{PANEL_OPACITY_MAX, PANEL_OPACITY_MIN};
 use sunrise_launcher::theme_files::{self, Entry};
@@ -261,13 +265,13 @@ impl Launcher {
         let said = state
             .error
             .clone()
-            .map(warning)
+            .map(|t| banner(Tone::Danger, t, None))
             .or_else(|| state.note.clone().map(hint));
         let gone = missing.then(|| {
-            warning(trf(
+            banner(Tone::Danger, trf(
                 "The chosen theme, {id}, can't be read. Dawn is shown until it is repaired: fix its file, then press Reload.",
                 &[("id", self.settings.theme.as_deref().unwrap_or_default())],
-            ))
+            ), None)
         });
         let theme = stacked(
             tr("Theme"),
@@ -307,19 +311,14 @@ impl Launcher {
             ),
         ));
         let layout = self.settings.world_layout;
-        let layouts = [
+        let layouts: Vec<(backend::WorldLayout, SharedString)> = [
             (backend::WorldLayout::Rows, crate::i18n::tr_key("Rows")),
             (backend::WorldLayout::Tiles, crate::i18n::tr_key("Tiles")),
         ]
         .into_iter()
-        .map(|(way, label)| {
-            let pick: crate::mods::Choose = std::rc::Rc::new(move |this, _| {
-                this.settings.world_layout = way;
-                this.save_settings();
-            });
-            (tr(label).into(), way == layout, pick)
-        })
+        .map(|(way, label)| (way, tr(label).into()))
         .collect();
+        let this = cx.entity();
         rows.push(row(
             tr("Worlds on Home"),
             tr(match layout {
@@ -343,8 +342,14 @@ impl Launcher {
                     )
                 });
                 div().child(
-                    crate::mods::choices("alt-world-layout", layouts, cx)
-                        .track_focus(&focus)
+                    crate::widgets::chip::choices("alt-world-layout", &layouts, layout, move |way, _, cx| {
+                        this.update(cx, |this, cx| {
+                            this.settings.world_layout = way;
+                            this.save_settings();
+                            cx.notify();
+                        })
+                    })
+                    .track_focus(&focus)
                         .gap(px(6.))
                         .children(asked),
                 )
@@ -356,7 +361,7 @@ impl Launcher {
                 tr("A theme is a folder with a theme.toml: up to six colours and one picture. Reload reads the folder again."),
                 div()
                     .child(
-                        button("alt-themes-folder", tr("Open themes folder")).on_click(
+                        secondary("alt-themes-folder", tr("Open themes folder")).on_click(
                             cx.listener(|this, _: &ClickEvent, _, cx| {
                                 let dir = theme_files::dir();
                                 // A link there is not the launcher's folder: never opened
@@ -381,7 +386,7 @@ impl Launcher {
                             }),
                         ),
                     )
-                    .child(button("alt-themes-reload", tr("Reload")).on_click(cx.listener(
+                    .child(secondary("alt-themes-reload", tr("Reload")).on_click(cx.listener(
                         |this, _: &ClickEvent, window, cx| {
                             this.appearance_reload(window);
                             cx.notify();
@@ -429,7 +434,7 @@ impl Launcher {
             },
             cx,
         );
-        let reset = button("panel-opacity-reset", tr("Use default"));
+        let reset = secondary("panel-opacity-reset", tr("Use default"));
         let reset = if saved.is_none() {
             off(reset)
         } else {
@@ -488,7 +493,7 @@ impl Launcher {
             |this| &mut this.ui.settings.appearance.accent;
         let field_theme = crate::mods::field_theme(self.theme);
         let to_focus = focus.clone();
-        let field = crate::frame::input(focused)
+        let field = crate::widgets::field::field_box(focused, false)
             .id("alt-accent")
             .track_focus(&focus)
             .seen()
@@ -637,8 +642,8 @@ impl Launcher {
         } else {
             source.to_string()
         };
-        let choose = button("alt-background-choose", tr("Choose picture…")).on_click(cx.listener(
-            |_, _: &ClickEvent, window, cx| {
+        let choose = secondary("alt-background-choose", tr("Choose picture…")).on_click(
+            cx.listener(|_, _: &ClickEvent, window, cx| {
                 let paths = cx.prompt_for_paths(PathPromptOptions {
                     files: true,
                     directories: false,
@@ -673,9 +678,9 @@ impl Launcher {
                     });
                 })
                 .detach();
-            },
-        ));
-        let theirs = button("alt-background-theme", tr("Use theme background"));
+            }),
+        );
+        let theirs = secondary("alt-background-theme", tr("Use theme background"));
         let theirs = if self.settings.background.is_some() {
             theirs.on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                 this.appearance_change(

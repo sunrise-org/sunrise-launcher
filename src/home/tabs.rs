@@ -115,14 +115,9 @@ pub(crate) struct Content {
     pub(crate) items: Div,
 }
 
-/// An empty tab: the launcher's empty state (`mods::empty_state`), centred in the list's room.
-pub(crate) fn empty(
-    icon: &'static str,
-    title: &'static str,
-    line: &'static str,
-    action: Option<Stateful<Div>>,
-) -> Div {
-    crate::mods::empty_state(icon, title, line, action)
+/// An empty tab: the launcher's empty state, centred in the list's room.
+pub(crate) fn empty(title: &'static str, line: &'static str, action: Option<Stateful<Div>>) -> Div {
+    crate::widgets::feedback::empty_state(title, line, action.map(|a| a.into_any_element()))
 }
 
 pub(crate) fn row(id: impl Into<ElementId>) -> Stateful<Div> {
@@ -435,7 +430,9 @@ impl Launcher {
                         detail.map(|text| muted(text).flex_none().truncate().max_w(px(130.))),
                     ),
             )
-            .children(badge.map(crate::mods::manual_badge_pill))
+            .children(badge.map(|badge| {
+                crate::widgets::chip::tag(badge.label(), crate::widgets::chip::Kind::Neutral)
+            }))
             .children(tail.map(|text| muted(text).max_w(px(170.)).truncate()))
             .child(blocks::icon(
                 "chevron-right",

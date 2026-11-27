@@ -10,7 +10,7 @@ mod local_source;
 mod rows;
 mod unreviewed;
 use crate::blocks;
-use crate::frame::{button, input, primary, Page, Reach as _};
+use crate::frame::{Page, Reach as _};
 use crate::mods::ManualBadge;
 use crate::mods_page::install::GithubTarget;
 use crate::paint::palette;

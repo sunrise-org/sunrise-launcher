@@ -5,6 +5,7 @@
 //! version` is always the default action; closing, pressing Escape, or clicking outside keeps
 //! the current version without changing the computer's remembered pin.
 use super::*;
+use crate::widgets::button::{primary, secondary};
 use sunrise_launcher::browser::sunrise::PublisherChangeQuestion;
 
 pub(super) struct PendingPublisherChange {
@@ -322,7 +323,7 @@ impl Launcher {
                     ),
             );
 
-        let accept = button("publisher-change-accept", copy.accept_button)
+        let accept = secondary("publisher-change-accept", copy.accept_button)
             .border_color(warn_edge)
             .text_color(warn)
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -331,12 +332,12 @@ impl Launcher {
             }));
 
         // Default safe action: keep current version.
-        let keep = crate::frame::primary("publisher-change-keep", copy.keep_button).on_click(
-            cx.listener(|this, _: &ClickEvent, _, cx| {
+        let keep = primary("publisher-change-keep", copy.keep_button).on_click(cx.listener(
+            |this, _: &ClickEvent, _, cx| {
                 resolve_pending(&mut this.ui.sheets.publisher_change, false);
                 cx.notify();
-            }),
-        );
+            },
+        ));
 
         let body = div()
             .flex()

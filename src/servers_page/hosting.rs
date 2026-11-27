@@ -2,12 +2,11 @@
 //! address, players, settings, backups and log. Every action is the Servers page's own
 //! (`servers_page.rs`); only the drawing is new.
 use super::*;
-use crate::frame::button;
-use crate::mods::{choices, switch, Choose};
 use crate::paint::palette;
-use crate::settings::{danger, group, hint, off, row, warning};
+use crate::settings::{danger, group, hint, off, row};
+use crate::widgets::check::switch;
+use crate::widgets::chip::choices;
 use gpui::rgb;
-use std::rc::Rc;
 
 mod create;
 mod page;

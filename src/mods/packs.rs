@@ -1,10 +1,14 @@
 //! The selected setup’s local collections. Reading a list never creates its folder. Choosing a
 //! file targets the collection that opened the dialog, even if another setup exists.
-use super::ui::{c, card, dim, empty_state, muted, primary, switch};
+use super::ui::{c, card, dim, muted};
 use super::*;
-use crate::frame::button;
 use crate::paint::palette;
+use crate::widgets::button::{primary, secondary};
+use crate::widgets::check::switch;
+use crate::widgets::chip::choices;
+use crate::widgets::feedback::empty_state;
 use gpui::ExternalPaths;
+use gpui::SharedString;
 use std::path::Path;
 use sunrise_launcher::packs::{self, Kind};
 
@@ -63,27 +67,29 @@ impl Launcher {
 
     pub(super) fn collection_tabs(&self, cx: &mut Context<Self>) -> Div {
         let chosen = self.mods_state.shelf;
-        let tabs = [
+        let tabs: Vec<(Shelf, SharedString)> = [
             (Shelf::Resource, tr("Resource packs")),
             (Shelf::Shader, tr("Shader packs")),
             (Shelf::Data, tr("Data packs")),
         ]
         .into_iter()
-        .map(|(kind, label)| {
-            let pick: Choose = Rc::new(move |this, _| {
-                if this.mods_state.shelf != kind {
-                    this.mods_state.shelf = kind;
-                    this.reset_pack_view();
-                    this.worlds.stale();
-                    this.mods_state.data.reread();
-                }
-            });
-            (label.into(), kind == chosen, pick)
-        })
+        .map(|(kind, label)| (kind, label.into()))
         .collect();
-        div()
-            .flex()
-            .child(choices("alt-collection", tabs, cx).gap(px(8.)))
+        let this = cx.entity();
+        div().flex().child(
+            choices("alt-collection", &tabs, chosen, move |kind, _, cx| {
+                this.update(cx, |this, cx| {
+                    if this.mods_state.shelf != kind {
+                        this.mods_state.shelf = kind;
+                        this.reset_pack_view();
+                        this.worlds.stale();
+                        this.mods_state.data.reread();
+                    }
+                    cx.notify();
+                })
+            })
+            .gap(px(8.)),
+        )
     }
 
     fn can_edit_packs(&self, home: &Path, kind: Kind) -> bool {
@@ -202,7 +208,7 @@ impl Launcher {
                 tr("Or drop a .zip or .sshader on this page."),
             ),
         };
-        let add = button("alt-pack-import", tr("Import from file…"));
+        let add = secondary("alt-pack-import", tr("Import from file…"));
         let add = if editable {
             let dest = home.clone();
             add.on_click(
@@ -212,7 +218,7 @@ impl Launcher {
             dim(add)
         };
         let folder = home.join(kind.folder());
-        let open = button("alt-pack-folder", tr("Open folder"));
+        let open = secondary("alt-pack-folder", tr("Open folder"));
         let open = if folder.is_dir() || editable {
             open.on_click(cx.listener(move |this, _, _, cx| {
                 match std::fs::create_dir_all(&folder) {
@@ -312,7 +318,7 @@ impl Launcher {
                     else {
                         continue;
                     };
-                    let b = button(
+                    let b = secondary(
                         SharedString::from(format!("alt-order-{index}-{adjacent:?}")),
                         label,
                     );
@@ -332,8 +338,8 @@ impl Launcher {
             }
             let key = (kind, pack.file.clone());
             let confirm = self.game_packs.confirm_remove.as_ref() == Some(&key);
-            let remove = button(
-                ElementId::named_usize("alt-pack-remove", index),
+            let remove = secondary(
+                format!("alt-pack-remove-{}", index),
                 if confirm {
                     tr("Move to trash?")
                 } else {
@@ -402,15 +408,16 @@ impl Launcher {
                 Kind::Shader => (tr("No shader packs yet"), tr("Find shader packs")),
             };
             empty_state(
-                "package-01",
                 none,
                 empty,
-                Some(primary("alt-packs-browse", find).on_click(cx.listener(
-                    |this, _: &ClickEvent, _, cx| {
-                        this.choose_view(Page::PackFind);
-                        cx.notify();
-                    },
-                ))),
+                Some(
+                    primary("alt-packs-browse", find)
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.choose_view(Page::PackFind);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                ),
             )
         });
         if none.is_none() && shown == 0 {

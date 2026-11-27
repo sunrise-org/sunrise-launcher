@@ -3,9 +3,9 @@
 //! action; Home's Play bar says that part itself.
 //! It is not drawn at all while there is nothing to tell (`launch_state::View::strip`).
 use super::*;
-use crate::frame::button;
 use crate::launch_state::{Act, Main, StripAct};
 use crate::paint::palette;
+use crate::widgets::button::secondary;
 use gpui::rgb;
 
 mod jobs;
@@ -29,17 +29,15 @@ impl Launcher {
                 )
                 .child(div().flex_1().min_w_0().child(line))
                 .when(self.play_registry_notices.len() > 1, |d| {
-                    d.child(
-                        button("play-registry-details", tr("Details…")).on_click(cx.listener(
-                            |this, _, _, cx| {
-                                this.open_notice(this.play_registry_notices.join("\n"), None);
-                                cx.notify();
-                            },
-                        )),
-                    )
+                    d.child(secondary("play-registry-details", tr("Details…")).on_click(
+                        cx.listener(|this, _, _, cx| {
+                            this.open_notice(this.play_registry_notices.join("\n"), None);
+                            cx.notify();
+                        }),
+                    ))
                 })
                 .child(
-                    button("play-registry-dismiss", tr("Dismiss")).on_click(cx.listener(
+                    secondary("play-registry-dismiss", tr("Dismiss")).on_click(cx.listener(
                         |this, _, _, cx| {
                             this.play_registry_notices.clear();
                             cx.notify();
@@ -127,7 +125,7 @@ impl Launcher {
             div()
                 .flex_none()
                 .w(px(120.))
-                .child(crate::build::progress_bar(progress))
+                .child(crate::widgets::feedback::progress_bar(Some(progress)))
         });
         Some(
             strip()
@@ -135,12 +133,12 @@ impl Launcher {
                 .child(div().flex_1().min_w_0().child(line))
                 .children(bar)
                 .when(!stopping_install, |d| {
-                    d.child(
-                        button(id, act.label()).on_click(cx.listener(move |this, _, _, cx| {
+                    d.child(secondary(id, act.label()).on_click(cx.listener(
+                        move |this, _, _, cx| {
                             this.strip_act(&act);
                             cx.notify();
-                        })),
-                    )
+                        },
+                    )))
                 }),
         )
     }

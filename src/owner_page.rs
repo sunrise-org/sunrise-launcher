@@ -3,8 +3,9 @@
 //! without one (those who played offline before the gate), and again whenever Play is refused.
 //! The sign-in runs on it, code and all.
 use super::*;
-use crate::frame::{button, primary, Reach as _};
+use crate::frame::Reach as _;
 use crate::paint::palette;
+use crate::widgets::button::{primary, secondary, Look, Size, Style};
 use gpui::rgb;
 
 impl Launcher {
@@ -188,14 +189,14 @@ impl Launcher {
                                 .on_click(move |_, _, cx| cx.open_url(&open_uri)),
                         )
                         .child(if microsoft::has_private_window() {
-                            button("owner-private", tr("Open in private window"))
+                            secondary("owner-private", tr("Open in private window"))
                                 .on_click(move |_, _, cx| microsoft::open_private(&private_uri, cx))
                                 .into_any_element()
                         } else {
                             self.copy_button(CopyButton::Link, tr("Copy link"), link_uri, cx)
                         })
                         .child(
-                            button("owner-other", tr("Use a different Microsoft account"))
+                            secondary("owner-other", tr("Use a different Microsoft account"))
                                 .on_click(move |_, _, cx| {
                                     microsoft::use_different_account(&other_uri, cx)
                                 }),
@@ -240,12 +241,14 @@ impl Launcher {
                 .justify_end()
                 .gap(px(8.))
                 .children(again)
-                .child(button("owner-later", tr("Not now")).on_click(cx.listener(
-                    |this, _: &ClickEvent, _, cx| {
-                        this.close_owner_screen();
-                        cx.notify();
-                    },
-                ))),
+                .child(
+                    secondary("owner-later", tr("Not now")).on_click(cx.listener(
+                        |this, _: &ClickEvent, _, cx| {
+                            this.close_owner_screen();
+                            cx.notify();
+                        },
+                    )),
+                ),
         );
         // The launcher stays behind, dimmed: the sheet is over it, not instead of it. Unlike the
         // other sheets a press outside does not close it: only "Not now" and Escape do.
@@ -274,7 +277,6 @@ impl Launcher {
     ) -> Stateful<Div> {
         use crate::glass_ui::{self as ui, white};
         use sunrise_launcher_theme::glass::{ink, radius};
-        let t = self.theme;
         let panel = || {
             div()
                 .mt(px(20.))
@@ -349,11 +351,16 @@ impl Launcher {
                                         .child(user_code.to_string()),
                                 ),
                         )
-                        .child(ui::quiet("owner-copy", tr("Copy code"), 36., &t).on_click(
-                            move |_, _, cx| {
+                        .child(
+                            crate::widgets::button::button(
+                                "owner-copy",
+                                tr("Copy code"),
+                                Look::new(Style::Ghost, Size::Small),
+                            )
+                            .on_click(move |_, _, cx| {
                                 copy_to_clipboard(cx, gpui::ClipboardItem::new_string(copy.clone()))
-                            },
-                        )),
+                            }),
+                        ),
                 )
                 .child(
                     div()
@@ -374,17 +381,21 @@ impl Launcher {
                                 .flex()
                                 .gap(px(8.))
                                 .child(if microsoft::has_private_window() {
-                                    ui::quiet(
+                                    crate::widgets::button::button(
                                         "owner-private",
                                         tr("Open in private window"),
-                                        32.,
-                                        &t,
+                                        Look::new(Style::Ghost, Size::Small),
                                     )
                                     .on_click(
                                         move |_, _, cx| microsoft::open_private(&private_uri, cx),
                                     )
                                 } else {
-                                    ui::quiet("owner-copy-link", tr("Copy link"), 32., &t).on_click(
+                                    crate::widgets::button::button(
+                                        "owner-copy-link",
+                                        tr("Copy link"),
+                                        Look::new(Style::Ghost, Size::Small),
+                                    )
+                                    .on_click(
                                         move |_, _, cx| {
                                             copy_to_clipboard(
                                                 cx,
@@ -394,11 +405,10 @@ impl Launcher {
                                     )
                                 })
                                 .child(
-                                    ui::quiet(
+                                    crate::widgets::button::button(
                                         "owner-other",
                                         tr("Use a different Microsoft account"),
-                                        32.,
-                                        &t,
+                                        Look::new(Style::Ghost, Size::Small),
                                     )
                                     .on_click(
                                         move |_, _, cx| {
@@ -424,56 +434,55 @@ impl Launcher {
             Shown::Code(uri, _) => {
                 let uri = uri.to_string();
                 Some(
-                    ui::button(
-                        "owner-open".into(),
-                        tr("Open link").into(),
-                        Kind::Primary,
-                        &t,
-                    )
-                    .h(px(44.))
-                    .px(px(24.))
-                    .on_click(move |_, _, cx| cx.open_url(&uri))
-                    .into_any_element(),
+                    primary("owner-open", tr("Open link"))
+                        .h(px(44.))
+                        .px(px(24.))
+                        .on_click(move |_, _, cx| cx.open_url(&uri))
+                        .into_any_element(),
                 )
             }
             Shown::Starting(_) => None,
             Shown::Error(_) if !configured => None,
             _ => Some(
-                keyboard(
-                    div()
-                        .id("owner-sign-in")
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .gap(px(10.))
-                        .h(px(44.))
-                        .px(px(20.))
-                        .rounded(px(crate::glass_ui::rad(radius::ROW)))
-                        .bg(gpui::white())
-                        .cursor_pointer()
-                        .hover(|s| s.opacity(0.9))
-                        .font_family(sunrise_launcher_theme::glass::FONT)
-                        .text_size(px(15.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(gpui::rgb(sunrise_launcher_theme::glass::ON_LIGHT))
-                        .child(microsoft::logo(18.))
-                        .child(tr("Sign in with Microsoft")),
-                    &t,
-                )
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.sign_in_from_screen();
-                    cx.notify();
-                }))
-                .into_any_element(),
+                div()
+                    .id("owner-sign-in")
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(10.))
+                    .h(px(44.))
+                    .px(px(20.))
+                    .rounded(px(crate::glass_ui::rad(radius::ROW)))
+                    .bg(gpui::white())
+                    .cursor_pointer()
+                    .hover(|s| s.opacity(0.9))
+                    .font_family(sunrise_launcher_theme::glass::FONT)
+                    .text_size(px(15.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(gpui::rgb(sunrise_launcher_theme::glass::ON_LIGHT))
+                    // Reachable with Tab, with the focus ring once the keyboard is in use.
+                    .tab_index(0)
+                    .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
+                    .child(microsoft::logo(18.))
+                    .child(tr("Sign in with Microsoft"))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.sign_in_from_screen();
+                        cx.notify();
+                    }))
+                    .into_any_element(),
             ),
         };
-        let later = ui::button("owner-later".into(), tr("Not now").into(), Kind::Ghost, &t)
-            .h(px(44.))
-            .px(px(20.))
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.close_owner_screen();
-                cx.notify();
-            }));
+        let later = crate::widgets::button::button(
+            "owner-later",
+            tr("Not now"),
+            Look::new(Style::Ghost, Size::Medium),
+        )
+        .h(px(44.))
+        .px(px(20.))
+        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            this.close_owner_screen();
+            cx.notify();
+        }));
         card = card.child(
             div()
                 .flex()
@@ -575,7 +584,7 @@ impl Launcher {
         text: String,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        crate::frame::copy_face(kind.id(), label, self.sign_in_copies.shown(kind))
+        crate::widgets::motion_bits::copy_face(kind.id(), label, self.sign_in_copies.shown(kind))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 crate::widgets::copy_quietly(cx, gpui::ClipboardItem::new_string(text.clone()));
                 this.sign_in_copies.copy(kind);
@@ -618,17 +627,20 @@ mod tests {
         let mut copies = SignInCopies::default();
         for kind in [CopyButton::Code, CopyButton::Link] {
             let expected = Some(ElementId::from(kind.id()));
-            let mut initial = crate::frame::copy_face(kind.id(), "Copy", copies.shown(kind));
+            let mut initial =
+                crate::widgets::motion_bits::copy_face(kind.id(), "Copy", copies.shown(kind));
             assert_eq!(initial.interactivity().element_id, expected);
 
             copies.copy(kind);
             assert!(copies.shown(kind).is_some());
-            let mut copied = crate::frame::copy_face(kind.id(), "Copy", copies.shown(kind));
+            let mut copied =
+                crate::widgets::motion_bits::copy_face(kind.id(), "Copy", copies.shown(kind));
             assert_eq!(copied.interactivity().element_id, expected);
 
             copies.clear();
             assert!(copies.shown(kind).is_none());
-            let mut reset = crate::frame::copy_face(kind.id(), "Copy", copies.shown(kind));
+            let mut reset =
+                crate::widgets::motion_bits::copy_face(kind.id(), "Copy", copies.shown(kind));
             assert_eq!(reset.interactivity().element_id, expected);
         }
 

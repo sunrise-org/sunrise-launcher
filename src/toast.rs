@@ -1,6 +1,6 @@
-//! What the launcher just did, said for 4.2 s (the mockup's `say`): one square card in the
-//! window's top-right corner, over every page and dialog, ruled above and below, its path or
-//! command in mono. It slides in from the edge, lights up and holds its time while the pointer is
+//! What the launcher just did, said for 4.2 s (the mockup's `say`): one card in the window's
+//! top-right corner, over every page and dialog, drawn by `widgets::feedback::toast_card`, its
+//! path or command in mono. It slides in from the edge, lights up and holds its time while the pointer is
 //! on it, and slides back out when its time is up or it's clicked.
 //!
 //! Any handler can say something, even one with only `&mut App`: the line waits here, wakes the
@@ -8,6 +8,7 @@
 
 use super::*;
 
+use crate::widgets::feedback::Tone;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -150,8 +151,8 @@ impl Launcher {
     }
 }
 
-/// The card for the line still showing, none once it is gone: a square plate ruled above and
-/// below in the controls' edge colour, open at the sides.
+/// The card for the line still showing, none once it is gone: the shared toast card, with the
+/// line's pieces inside it, sliding in and out and taking the pointer's click and hold.
 fn toast_card(top: f32) -> Option<Div> {
     let (parts, n, leaving) = current_parts()?;
     let p = crate::paint::palette();
@@ -172,7 +173,7 @@ fn toast_card(top: f32) -> Option<Div> {
             div().child(part)
         });
     }
-    let card = div()
+    let card = crate::widgets::feedback::toast_card(Tone::Info, line.into_any_element())
         .id("toast")
         .relative()
         .occlude()
@@ -185,18 +186,7 @@ fn toast_card(top: f32) -> Option<Div> {
             dismiss();
             window.refresh();
         })
-        .max_w(px(420.))
-        .px(px(16.))
-        .py(px(12.))
-        .border_t_2()
-        .border_b_2()
-        .border_color(gpui::rgb(p.line))
-        .bg(gpui::rgb(p.raised))
-        .hover(move |s| s.bg(gpui::rgb(p.hover)))
-        .text_color(gpui::rgb(p.text))
-        .text_size(px(13.))
-        .shadow_lg()
-        .child(line);
+        .hover(move |s| s.bg(gpui::rgb(p.hover)));
     // In from the right edge as it arrives, back out the same way as it goes; under reduced
     // motion it is simply there, then not.
     let card = if leaving {

@@ -1,6 +1,7 @@
 //! On/off controls: the switch, the checkbox (with its dash for a partly ticked set) and the radio.
 //! Each takes its id and state and returns a Tab stop; the caller adds the click, and `disabled`
 //! (from `widgets`) applies to them like any other control.
+#![allow(dead_code)] // Used by the shell and pages that the next redesign steps move over; removed in the final sweep.
 use super::*;
 use crate::frame::{c, focus_ring, Reach};
 use crate::motion;

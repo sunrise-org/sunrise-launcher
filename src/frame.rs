@@ -10,13 +10,8 @@ mod header;
 mod page;
 mod play;
 mod scrolls;
-#[cfg(test)]
-use controls::copy_key;
 use controls::focus_mark;
-pub(crate) use controls::{
-    button, button_base, c, copy_button, copy_face, focus_ring, input, mix, primary, segmented,
-    Reach,
-};
+pub(crate) use controls::{c, focus_ring, mix, Reach};
 pub(crate) use page::{Page, State};
 use scrolls::scroll_to_show;
 use scrolls::scrolls_begin;
@@ -114,6 +109,7 @@ impl Launcher {
                     self.join(cx)
                 };
                 // Join and Host as underline sub-tabs, matching Mods and Packs.
+                let this = cx.entity();
                 let tabs = div().px(px(24.)).pt(px(20.)).child(
                     div()
                         .flex()
@@ -121,24 +117,23 @@ impl Launcher {
                         .border_b_1()
                         .border_color(palette().rule())
                         .child(
-                            segmented(
+                            crate::widgets::nav::tabs(
                                 "servers-tabs",
-                                [
-                                    (
-                                        "servers-join",
-                                        tr("Join").into(),
-                                        page == Page::Join,
-                                        Page::Join,
-                                    ),
-                                    (
-                                        "servers-host",
-                                        tr("Host").into(),
-                                        page == Page::Hosting,
-                                        Page::Hosting,
-                                    ),
+                                &[
+                                    (Page::Join, tr("Join").into()),
+                                    (Page::Hosting, tr("Host").into()),
                                 ],
-                                Launcher::navigate,
-                                cx,
+                                if page == Page::Join {
+                                    Page::Join
+                                } else {
+                                    Page::Hosting
+                                },
+                                move |page, _, cx| {
+                                    this.update(cx, |view, cx| {
+                                        view.navigate(page);
+                                        cx.notify();
+                                    });
+                                },
                             )
                             .seen(),
                         ),
@@ -356,18 +351,6 @@ impl Launcher {
 #[cfg(test)]
 mod tests {
     use super::Page;
-
-    #[test]
-    fn a_new_text_starts_its_copy_button_at_its_label() {
-        use super::copy_key;
-        let log = copy_key("nightly-log-copy", "first log");
-        assert_eq!(log, copy_key("nightly-log-copy", "first log"));
-        assert_ne!(log, copy_key("nightly-log-copy", "second log"));
-        assert_ne!(log, copy_key("receipt-copy", "first log"));
-        crate::code_box::remember_copy(&log);
-        assert!(crate::code_box::copied(&log).is_some());
-        assert!(crate::code_box::copied(&copy_key("nightly-log-copy", "second log")).is_none());
-    }
 
     #[test]
     fn pack_views_keep_the_packs_tab_selected() {

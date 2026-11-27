@@ -1,5 +1,7 @@
 //! The hosting page's small controls, labels and rows.
 use super::*;
+use crate::widgets::button::{button, Look, Size, Style};
+use crate::widgets::field::field_box;
 
 pub(super) fn title(text: impl Into<SharedString>) -> Div {
     div()
@@ -29,13 +31,6 @@ pub(super) fn card() -> Div {
         .border_1()
         .border_color(palette().rule())
         .bg(palette().card())
-}
-
-/// The main action of the page, in cream.
-pub(super) fn primary(b: Stateful<Div>) -> Stateful<Div> {
-    b.bg(rgb(palette().text))
-        .border_color(rgb(palette().text))
-        .text_color(rgb(palette().background))
 }
 
 pub(super) fn dot(color: u32) -> Div {
@@ -68,15 +63,28 @@ pub(super) fn chip_group(
     cx: &mut Context<Launcher>,
     set: impl Fn(&mut Launcher, &'static str) + Clone + 'static,
 ) -> Div {
-    let chips = options
+    let chips: Vec<(usize, SharedString)> = options
         .iter()
-        .map(|&(value, name)| {
-            let set = set.clone();
-            let pick: Choose = Rc::new(move |this, _| set(this, value));
-            (tr(name).into(), value == current, pick)
-        })
+        .enumerate()
+        .map(|(n, &(_, name))| (n, tr(name).into()))
         .collect();
-    div().flex().child(choices(id, chips, cx).gap(px(6.)))
+    let at = options
+        .iter()
+        .position(|&(value, _)| value == current)
+        .unwrap_or(0);
+    let values: Vec<&'static str> = options.iter().map(|&(value, _)| value).collect();
+    let this = cx.entity();
+    div().flex().child(
+        choices(id, &chips, at, move |n, _, cx| {
+            let set = set.clone();
+            let value = values[n];
+            this.update(cx, |this, cx| {
+                set(this, value);
+                cx.notify();
+            })
+        })
+        .gap(px(6.)),
+    )
 }
 
 pub(super) fn phase_color(status: &Status) -> u32 {
@@ -89,7 +97,7 @@ pub(super) fn phase_color(status: &Status) -> u32 {
 }
 
 impl Launcher {
-    /// A text field of the Servers page, drawn in this look.
+    /// A text field of the Servers page, drawn in the plain field frame.
     pub(super) fn host_field(
         &mut self,
         f: Field,
@@ -99,23 +107,11 @@ impl Launcher {
     ) -> Stateful<Div> {
         let focused = self.servers.has_focus(f);
         let invalid = self.servers.invalid.is_some_and(|(g, _)| g == f);
-        self.field(f, placeholder, width, cx)
-            .h(px(tokens::FIELD))
-            .px(px(12.))
-            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-            .border_1()
-            .border_color(if invalid {
-                rgb(palette().danger).into()
-            } else if focused {
-                rgb(palette().focus).into()
-            } else {
-                palette().input_edge()
-            })
-            .bg(rgb(palette().field))
-            .text_size(px(tokens::LABEL))
-            .text_color(rgb(palette().text))
+        let base = field_box(focused, invalid).text_size(px(tokens::LABEL));
+        self.field_on(f, placeholder, width, base, cx)
     }
 
+    /// A plain button of the Servers page.
     pub(super) fn host_button(
         &self,
         id: impl Into<ElementId>,
@@ -124,14 +120,42 @@ impl Launcher {
         cx: &mut Context<Self>,
         action: impl Fn(&mut Self, &mut Context<Self>) + 'static,
     ) -> Stateful<Div> {
-        let b = button(id, text);
+        self.host_action(Style::Secondary, id, text, enabled, cx, action)
+    }
+
+    /// The main action of a Servers page view: the accent fill.
+    pub(super) fn host_primary(
+        &self,
+        id: impl Into<ElementId>,
+        text: impl Into<SharedString>,
+        enabled: bool,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+    ) -> Stateful<Div> {
+        self.host_action(Style::Primary, id, text, enabled, cx, action)
+    }
+
+    /// A Medium button in `style`. Disabled, it is faded and takes no click; enabled, a click
+    /// runs `action` and redraws.
+    fn host_action(
+        &self,
+        style: Style,
+        id: impl Into<ElementId>,
+        text: impl Into<SharedString>,
+        enabled: bool,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+    ) -> Stateful<Div> {
+        let id: ElementId = id.into();
+        let look = Look::new(style, Size::Medium).disabled(!enabled);
+        let b = button(id.to_string(), text, look);
         if enabled {
             b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 action(this, cx);
                 cx.notify();
             }))
         } else {
-            off(b)
+            b
         }
     }
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::widgets::button::secondary;
 
 impl Launcher {
     pub(super) fn home_servers(
@@ -16,11 +17,10 @@ impl Launcher {
         let mut items = div().flex().flex_col();
         if count == 0 {
             items = empty(
-                "computer",
                 tr("No saved servers"),
                 tr("Servers you join or add show up here."),
                 Some(
-                    button("home-no-servers", tr("Open Servers")).on_click(cx.listener(
+                    secondary("home-no-servers", tr("Open Servers")).on_click(cx.listener(
                         |this, _, _, cx| {
                             this.navigate(Page::Join);
                             cx.notify();
@@ -66,7 +66,7 @@ impl Launcher {
             }
             items = place(items);
         }
-        let manage = button("home-open-servers", tr("Open Servers")).on_click(cx.listener(
+        let manage = secondary("home-open-servers", tr("Open Servers")).on_click(cx.listener(
             |this, _, _, cx| {
                 this.navigate(Page::Join);
                 cx.notify();

@@ -1,8 +1,8 @@
 //! Launcher update actions, shared by the top bar, its release-notes sheet and Settings.
 use super::*;
-use crate::frame::{button, primary};
 use crate::paint::palette;
 use crate::sheets::{self, Sheet};
+use crate::widgets::button::{primary, secondary};
 use gpui::rgb;
 use sunrise_launcher::update_handoff;
 
@@ -444,7 +444,7 @@ impl Launcher {
         if offer.dot {
             return Some(
                 div().flex_none().child(
-                    button("launcher-update-dot", "")
+                    secondary("launcher-update-dot", "")
                         .size(px(tokens::FIELD))
                         .px_0()
                         .tooltip(crate::glass_ui::tip(available))
@@ -471,7 +471,7 @@ impl Launcher {
                 label.clone()
             }
         });
-        let main = button("launcher-update", "")
+        let main = secondary("launcher-update", "")
             .max_w(px(172.))
             .overflow_hidden()
             .h(px(tokens::FIELD))
@@ -504,7 +504,7 @@ impl Launcher {
                 .child(main)
                 .when(action.is_some(), |row| {
                     row.child(
-                        button("launcher-update-notes", "")
+                        secondary("launcher-update-notes", "")
                             .size(px(tokens::FIELD))
                             .px_0()
                             .tooltip(crate::glass_ui::tip(tr("What's new")))
@@ -542,7 +542,7 @@ impl Launcher {
         );
         let dismiss = (!offer.dot).then(|| {
             let version = offer.version.to_owned();
-            button("launcher-update-hide", tr("Hide for this version")).on_click(cx.listener(
+            secondary("launcher-update-hide", tr("Hide for this version")).on_click(cx.listener(
                 move |this, _, _, cx| {
                     this.settings.dismissed_launcher_update = Some(version.clone());
                     this.save_settings();
@@ -552,7 +552,7 @@ impl Launcher {
             ))
         });
         let cancel = self.restart_for_launcher_update.then(|| {
-            button("launcher-update-cancel-restart", tr("Cancel restart")).on_click(cx.listener(
+            secondary("launcher-update-cancel-restart", tr("Cancel restart")).on_click(cx.listener(
                 |this, _, _, cx| {
                     this.cancel_launcher_restart();
                     cx.notify();
@@ -589,7 +589,7 @@ impl Launcher {
                     )
                     .children(notes.map(crate::selectable::selectable))
                     .child(
-                        button("launcher-release-notes", tr("Read the full release notes"))
+                        secondary("launcher-release-notes", tr("Read the full release notes"))
                             .on_click(move |_, _, cx| cx.open_url(&url)),
                     ),
             )
@@ -608,10 +608,9 @@ impl Launcher {
                             .child(crate::selectable::selectable(status)),
                     )
                     .children(match offer.status {
-                        Status::Downloading(progress) => Some(crate::widgets::progress_bar(
-                            Some((progress, progress)),
-                            &self.theme,
-                        )),
+                        Status::Downloading(progress) => {
+                            Some(crate::widgets::feedback::progress_bar(Some(progress)))
+                        }
                         _ => None,
                     }),
             )
@@ -623,7 +622,7 @@ impl Launcher {
                     .gap(px(8.))
                     .children(dismiss)
                     .child(
-                        button(
+                        secondary(
                             "launcher-update-later",
                             if self.restart_for_launcher_update {
                                 tr("Close")

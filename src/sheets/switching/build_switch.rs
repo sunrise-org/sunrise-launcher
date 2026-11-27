@@ -1,5 +1,6 @@
 //! Switching a profile's build: download, prepare, the worker, its questions and its sheet.
 use super::*;
+use crate::widgets::button::{primary, secondary};
 
 impl Launcher {
     pub(crate) fn download_for_switch(&mut self, release: &backend::Release) {
@@ -494,7 +495,7 @@ impl Launcher {
                         .justify_end()
                         .gap(px(8.))
                         .children((omissions || !question.removed.is_empty()).then(|| {
-                            button(
+                            secondary(
                                 "switch-why",
                                 if show {
                                     tr("Hide details")
@@ -508,11 +509,11 @@ impl Launcher {
                             }))
                         }))
                         .child(
-                            button("switch-stay", tr("Cancel"))
+                            secondary("switch-stay", tr("Cancel"))
                                 .on_click(answer(SwitchDecision::Cancel)),
                         )
                         .children(omissions.then(|| {
-                            button(
+                            secondary(
                                 "switch-remove",
                                 if one {
                                     tr("Switch and remove it")
@@ -524,7 +525,7 @@ impl Launcher {
                             .on_click(answer(SwitchDecision::Remove))
                         }))
                         .child(
-                            crate::frame::primary(
+                            primary(
                                 "switch-anyway",
                                 if omissions && one {
                                     tr("Switch and turn it off")
@@ -540,7 +541,7 @@ impl Launcher {
         } else {
             let stopping = running.stop.is_stopped();
             let publishing = running.progress == InstallProgress::Publishing;
-            let cancel = button("cancel-switch", tr("Cancel"));
+            let cancel = secondary("cancel-switch", tr("Cancel"));
             // The step's line, the bar and Cancel keep their places while the steps change, so
             // the dialog never jumps: one line of text, a bar that shuttles while a step has no
             // known length, and Cancel dimmed once it can no longer stop the switch.
@@ -576,11 +577,8 @@ impl Launcher {
                     })
                     .truncate(),
                 )
-                .child(crate::widgets::progress_bar(
-                    stage_fraction(running.progress)
-                        .filter(|_| !stopping)
-                        .map(|f| (f, f)),
-                    &self.theme,
+                .child(crate::widgets::feedback::progress_bar(
+                    stage_fraction(running.progress).filter(|_| !stopping),
                 ))
                 .child(
                     div()

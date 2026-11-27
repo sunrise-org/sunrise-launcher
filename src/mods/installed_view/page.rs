@@ -2,6 +2,11 @@
 
 use super::items::{installed_items_key, InstalledItem};
 use super::*;
+use crate::widgets::button::{primary, secondary};
+use crate::widgets::check::{checkbox, Tick};
+use crate::widgets::chip::{self, choices};
+use crate::widgets::feedback::empty_state;
+use gpui::SharedString;
 
 impl Launcher {
     pub(in crate::mods) fn archive_display(&self, row: &Row) -> Option<&ArchiveDisplay> {
@@ -42,15 +47,14 @@ impl Launcher {
                         let home = home.to_owned();
                         let summary = problem.summary().to_owned();
                         let text = problem.details();
-                        let action =
-                            crate::frame::button("installed-recovery-details", tr("Show details"))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.open_notice(
-                                        text.clone(),
-                                        Some(crate::sheets::WayOut::ProfileFolder(home.clone())),
-                                    );
-                                    cx.notify();
-                                }));
+                        let action = secondary("installed-recovery-details", tr("Show details"))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.open_notice(
+                                    text.clone(),
+                                    Some(crate::sheets::WayOut::ProfileFolder(home.clone())),
+                                );
+                                cx.notify();
+                            }));
                         (summary, Some(action))
                     }
                     InstalledReadError::Other(error) => (
@@ -76,17 +80,15 @@ impl Launcher {
                                 .items_center()
                                 .gap(px(8.))
                                 .children(action)
-                                .child(
-                                    crate::frame::button("retry-installed", tr("Retry")).on_click(
-                                        cx.listener(|this, _, _, cx| {
-                                            if let Some(snapshot) = &mut this.mods_state.snapshot {
-                                                snapshot.key.clear();
-                                            }
-                                            this.mods_refresh();
-                                            cx.notify();
-                                        }),
-                                    ),
-                                ),
+                                .child(secondary("retry-installed", tr("Retry")).on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        if let Some(snapshot) = &mut this.mods_state.snapshot {
+                                            snapshot.key.clear();
+                                        }
+                                        this.mods_refresh();
+                                        cx.notify();
+                                    }),
+                                )),
                         ),
                 )
             }
@@ -107,16 +109,15 @@ impl Launcher {
         if rows.is_empty() {
             return page
                 .child(empty_state(
-                    "puzzle",
                     tr("No mods yet"),
                     tr("Mods you add to this profile show up here."),
                     Some(
-                        primary("alt-installed-browse", tr("Find mods")).on_click(cx.listener(
-                            |this, _: &ClickEvent, _, cx| {
+                        primary("alt-installed-browse", tr("Find mods"))
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                 this.choose_view(Page::Discover);
                                 cx.notify();
-                            },
-                        )),
+                            }))
+                            .into_any_element(),
                     ),
                 ))
                 .into_any_element();
@@ -144,7 +145,7 @@ impl Launcher {
             trf("{label} · {n}", &[("label", label), ("n", &n.to_string())])
         };
         let mut chips = div().flex().flex_wrap().items_center().gap(px(8.));
-        let show_options = shows
+        let show_options: Vec<(Show, SharedString)> = shows
             .into_iter()
             .map(|(which, n)| {
                 let label = match which {
@@ -152,16 +153,25 @@ impl Launcher {
                     Show::On => tr("Turned on"),
                     Show::Off => tr("Turned off"),
                 };
-                let pick: Choose = Rc::new(move |this, _| {
+                (which, counted(label, n).into())
+            })
+            .collect();
+        let this = cx.entity();
+        let show_choice = choices(
+            "alt-show",
+            &show_options,
+            filter.show,
+            move |which, _, cx| {
+                this.update(cx, |this, cx| {
                     let m = &mut this.mods_state;
                     m.row_filter.show = which;
                     m.selection.clear();
                     m.anchor = None;
-                });
-                (counted(label, n).into(), filter.show == which, pick)
-            })
-            .collect();
-        chips = chips.child(choices("alt-show", show_options, cx).gap(px(8.)));
+                    cx.notify();
+                })
+            },
+        );
+        chips = chips.child(show_choice.gap(px(8.)));
         if !kinds.is_empty() {
             chips = chips.child(div().flex_none().w(px(1.)).h(px(20.)).bg(c(palette().line)));
         }
@@ -169,10 +179,14 @@ impl Launcher {
             let i = make as usize;
             chips = chips.child(
                 // Two switches, not one choice: each is its own Tab stop.
-                chip(
-                    ("alt-kind", i),
+                chip::chip(
+                    format!("alt-kind-{i}"),
                     counted(make.label(), n),
-                    filter.makes.contains(&make),
+                    if filter.makes.contains(&make) {
+                        chip::Kind::Selected
+                    } else {
+                        chip::Kind::Neutral
+                    },
                 )
                 .tab_index(0)
                 .seen()
@@ -217,7 +231,7 @@ impl Launcher {
                 })
             });
         let bulk = |id: &'static str, label: String, enabled: bool, danger: bool| {
-            let b = crate::frame::button(id, label);
+            let b = secondary(id, label);
             let b = if danger {
                 b.text_color(c(palette().danger))
             } else {
@@ -231,7 +245,7 @@ impl Launcher {
         };
         let toolbar = {
             let all_shown = shown.clone();
-            let select_all = checkbox("alt-select-all", all_on)
+            let select_all = checkbox("alt-select-all", if all_on { Tick::On } else { Tick::Off })
                 .when(selected_here > 0 && !all_on, |d| {
                     d.bg(c(palette().text))
                         .border_color(c(palette().text))

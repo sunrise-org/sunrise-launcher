@@ -67,9 +67,7 @@ pub(crate) use state::ModsState;
 use state::*;
 use std::{rc::Rc, sync::Arc};
 use sunrise_launcher::native_mods::local_fit;
-pub(crate) use ui::{checkbox, choices, empty_state, field_theme, reveal, switch, Choose};
-
-pub(crate) use crate::frame::segmented;
+pub(crate) use ui::{field_theme, reveal};
 
 use crate::paint::palette;
 use model::Row;
@@ -78,7 +76,6 @@ const ADDED_PENDING: &str = crate::i18n::tr_key("Added · builds when you play")
 
 /// The read-only Home view uses the same Installed classification as the full rows.
 pub(crate) use model::ManualBadge;
-pub(crate) use ui::manual_badge_pill;
 
 #[cfg(test)]
 mod enabled_tests {

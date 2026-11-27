@@ -1,7 +1,8 @@
 //! Text entry: the input box, the search field with its key hint, and the select (dropdown) button.
+#![allow(dead_code)] // Used by the shell and pages that the next redesign steps move over; removed in the final sweep.
 use super::*;
 use crate::frame::{c, mix};
-use crate::glass_ui::{fold_chevron, icon};
+use crate::glass_ui::icon;
 use crate::paint::palette;
 use crate::tokens;
 
@@ -87,7 +88,12 @@ pub(crate) fn select_button(
         .tab_index(0)
         .focus(move |s| s.border_color(c(p.focus)))
         .child(div().flex_1().min_w_0().truncate().child(value.into()))
-        .child(fold_chevron(format!("{id}-chevron"), open, 16., c(p.muted)));
+        .child(crate::widgets::motion_bits::chevron(
+            format!("{id}-chevron"),
+            open,
+            16.,
+            c(p.muted),
+        ));
     // A layer over the edge, a pixel out so it covers the border ring; it fades in on hover.
     let lighter = mix(c(p.line), c(p.text), 0.25);
     let layer = || {
