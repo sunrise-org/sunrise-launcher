@@ -2351,5 +2351,15 @@
   "{name} is a Java modpack: Sunrise doesn't import those.": "{name} حزمة إضافات Java: لا يستورد Sunrise هذه الحزم.",
   "{name} is neither a pack, a shared profile nor a game build: nothing in it that Sunrise reads.": "{name} ليس حزمة أو ملفًا شخصيًا مشتركًا أو إصدار لعبة: لا يحتوي على شيء يقرأه Sunrise.",
   "{name} is not a shared profile.": "{name} ليس ملفًا شخصيًا مشتركًا.",
-  "Could not make a profile called {name}.": "تعذّر إنشاء ملف شخصي باسم {name}."
+  "Could not make a profile called {name}.": "تعذّر إنشاء ملف شخصي باسم {name}.",
+  "Copying {name}": "جارٍ نسخ {name}",
+  "{path} is not a folder to install in.": "{path} ليس مجلدًا للتثبيت فيه.",
+  "The licence: {error}": "الترخيص: {error}",
+  "The licences: {error}": "التراخيص: {error}",
+  "The registry: {error}": "السجل: {error}",
+  "{path} (not the launcher's own folder)": "{path} (ليس مجلد المشغّل نفسه)",
+  "Not removed: {item}": "لم تتم إزالة: {item}",
+  "That file isn't a picture the launcher can read (PNG, JPEG, GIF, WebP).": "هذا الملف ليس صورة يمكن للمشغّل قراءتها (PNG أو JPEG أو GIF أو WebP).",
+  "{name} plays its pack's mods: import the pack again for a second copy.": "يستخدم {name} إضافات حزمتها: استورد الحزمة مجددًا لإنشاء نسخة ثانية.",
+  "{path} is not a directory inside the game folder": "{path} ليس دليلًا داخل مجلد اللعبة"
 }

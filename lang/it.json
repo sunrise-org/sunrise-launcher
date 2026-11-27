@@ -2450,5 +2450,15 @@
   "Writing the server's settings": "Scrittura delle impostazioni del server",
   "Sunrise {tag} isn't prepared yet: press Prepare on the Play page (it uses your own Minecraft {version})": "Sunrise {tag} non è ancora pronto: premi Prepara nella pagina Gioca (usa il tuo Minecraft {version})",
   "copying {tag}: {error}": "copia di {tag}: {error}",
-  "The server programs aren't set up yet: create a server, or press Prepare on its page.": "I programmi server non sono ancora configurati: crea un server o premi Prepara nella relativa pagina."
+  "The server programs aren't set up yet: create a server, or press Prepare on its page.": "I programmi server non sono ancora configurati: crea un server o premi Prepara nella relativa pagina.",
+  "Port {port} is already used by another program (maybe another server). Use a free port instead: friends then add it to the address.": "La porta {port} è già usata da un altro programma (forse un altro server). Usa una porta libera: gli amici potranno aggiungerla all’indirizzo.",
+  "The server needs the game files from your own Minecraft. Prepare them: it takes a few minutes, once.": "Il server richiede i file di gioco del tuo Minecraft. Preparali: bastano pochi minuti e va fatto una sola volta.",
+  "The game didn't start. Its log below says why.": "Il gioco non è partito. Il log qui sotto spiega il motivo.",
+  "sunrise-server failed without saying why": "sunrise-server non è riuscito, senza indicare il motivo",
+  "The server isn't running.": "Il server non è in esecuzione.",
+  "The server now uses port {port}. Press Start again.": "Il server usa ora la porta {port}. Premi di nuovo Avvia.",
+  "Copying the game files prepared for Sunrise {tag}": "Copia dei file di gioco preparati per Sunrise {tag}",
+  "The game files are ready. Press Start again.": "I file di gioco sono pronti. Premi di nuovo Avvia.",
+  "Install a Sunrise version first.": "Installa prima una versione di Sunrise.",
+  "Type the line players see under the name.": "Inserisci la frase che i giocatori vedranno sotto il nome."
 }
