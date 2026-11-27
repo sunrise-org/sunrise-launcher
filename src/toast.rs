@@ -165,12 +165,15 @@ fn toast_card(top: f32) -> Option<Div> {
     for (part, mono) in parts {
         let part = part.trim().to_string();
         line = line.child(if mono {
+            // `max_w_full` caps the path at the line's width, so it wraps inside the card.
             div()
+                .max_w_full()
+                .min_w_0()
                 .font_family(crate::theme::MONO)
                 .text_color(gpui::rgb(p.accent_ink))
                 .child(part)
         } else {
-            div().child(part)
+            div().min_w_0().child(part)
         });
     }
     let card = crate::widgets::feedback::toast_card(Tone::Info, line.into_any_element())

@@ -191,13 +191,15 @@ pub(crate) fn empty_state(
         .children(action.map(|a| div().mt(px(4.)).child(a)))
 }
 
-/// The card a toast draws its line on: 320 px, a tone icon, the content beside it. The toast
-/// owns its timing and slide; this is only the look.
+/// The card a toast draws its line on: 320 to 420 px wide, a tone icon, the content beside it.
+/// The content may wrap, and a path with no spaces breaks wherever the row runs out, so nothing
+/// leaves the card. The toast owns its timing and slide; this is only the look.
 pub(crate) fn toast_card(tone: Tone, content: AnyElement) -> Div {
     let p = palette();
     let ink: Hsla = c(tone.colour(&p));
     div()
-        .w(px(320.))
+        .min_w(px(320.))
+        .max_w(px(420.))
         .px(px(14.))
         .py(px(12.))
         .flex()
