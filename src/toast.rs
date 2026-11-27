@@ -35,6 +35,9 @@ struct Line {
     leaving: Option<Instant>,
     /// Counts each hold and release, so the countdown bar's animation restarts from where it was.
     segment: usize,
+    /// The share of the time left when the bar last started running: its animation goes from
+    /// here to empty, so a frame drawn part way through never moves its start.
+    segment_left: f32,
 }
 
 static LINE: Mutex<Option<Line>> = Mutex::new(None);
@@ -49,6 +52,7 @@ fn say_parts(parts: Parts) {
         held: None,
         leaving: None,
         segment: 0,
+        segment_left: 1.,
     });
     crate::wake::wake();
 }
@@ -66,6 +70,7 @@ fn hold(on: bool) {
                 l.since += from.elapsed();
                 l.held = None;
                 l.segment += 1;
+                l.segment_left = share_left(l.since, Instant::now());
             }
             _ => {}
         }
@@ -126,15 +131,17 @@ fn current_parts() -> Option<(Parts, u64, bool)> {
 /// The countdown bar's state while the line is held in place or running down: the share of its
 /// time left, whether the pointer holds it, and which hold or release this is. None once it
 /// slides out.
-fn countdown() -> Option<(f32, bool, usize)> {
+fn countdown() -> Option<(f32, bool, usize, f32)> {
     let line = LINE.lock().unwrap_or_else(|e| e.into_inner());
     let l = line.as_ref().filter(|l| l.leaving.is_none())?;
-    let spent = l
-        .held
-        .unwrap_or_else(Instant::now)
-        .saturating_duration_since(l.since);
-    let left = 1. - spent.as_secs_f32() / SHOWN.as_secs_f32();
-    Some((left.clamp(0., 1.), l.held.is_some(), l.segment))
+    let left = share_left(l.since, l.held.unwrap_or_else(Instant::now));
+    Some((left, l.held.is_some(), l.segment, l.segment_left))
+}
+
+/// The share of a toast's time left at `now`, for one that started at `since`.
+fn share_left(since: Instant, now: Instant) -> f32 {
+    let spent = now.saturating_duration_since(since);
+    (1. - spent.as_secs_f32() / SHOWN.as_secs_f32()).clamp(0., 1.)
 }
 
 /// `/Users/me/x` as `~/x`, as the mockup writes folders.
@@ -199,17 +206,24 @@ fn toast_card(top: f32) -> Option<Div> {
     }
     // The bar shrinks over the time left, and waits while the pointer holds the card. Under
     // reduced motion there is none: the card is simply there, then not.
-    let timer = countdown()
-        .filter(|_| !crate::motion::still())
-        .map(|(left, held, segment)| {
-            let running = (!held).then(|| {
-                (
-                    ElementId::named_usize(format!("toast-timer-{n}"), segment),
-                    SHOWN.mul_f32(left),
+    let timer =
+        countdown()
+            .filter(|_| !crate::motion::still())
+            .map(|(left, held, segment, from)| {
+                // Running, the bar animates from where this run started; held, it shows the time
+                // actually left, which is where that animation had got to.
+                let running = (!held).then(|| {
+                    (
+                        ElementId::named_usize(format!("toast-timer-{n}"), segment),
+                        SHOWN.mul_f32(from),
+                    )
+                });
+                crate::widgets::feedback::toast_timer(
+                    Tone::Info,
+                    if held { left } else { from },
+                    running,
                 )
             });
-            crate::widgets::feedback::toast_timer(Tone::Info, left, running)
-        });
     let card = crate::widgets::feedback::toast_card(Tone::Info, line.into_any_element())
         .children(timer)
         .id("toast")
