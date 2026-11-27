@@ -2401,5 +2401,15 @@
   "Planning the build": "جارٍ التخطيط للبناء",
   "Checking the prebuilt game": "جارٍ التحقق من اللعبة المبنية مسبقًا",
   "Checking the Rust toolchain": "جارٍ التحقق من سلسلة أدوات Rust",
-  "Keeping the mods' libraries for the next build": "جارٍ الاحتفاظ بمكتبات الإضافات للبناء التالي"
+  "Keeping the mods' libraries for the next build": "جارٍ الاحتفاظ بمكتبات الإضافات للبناء التالي",
+  "The built game: {error}": "اللعبة المبنية: {error}",
+  "{id}: could not resolve [native] mixins: {error}": "{id}: تعذّر حل mixins ‏[native]: ‏{error}",
+  "Can't tell which of the mods' horizon-mixins revisions is newest: {error}": "تعذّر تحديد أحدث مراجعة لـ horizon-mixins الخاصة بالإضافات: {error}",
+  "Sunrise shader pack": "حزمة تظليل Sunrise",
+  "{error}. Write it as http://host:port or socks5://host:port.": "{error}. اكتبه بصيغة http://host:port أو socks5://host:port.",
+  "Could not check running games and builds: {error}": "تعذّر التحقق من الألعاب والإصدارات قيد التشغيل: {error}",
+  "Could not check running games and builds; no files were moved.": "تعذّر التحقق من الألعاب والإصدارات قيد التشغيل؛ لم يتم نقل أي ملفات.",
+  "Could not read running processes: {error}": "تعذّرت قراءة العمليات قيد التشغيل: {error}",
+  "Close games, servers and native builds before moving data ({name} is running).": "أغلق الألعاب والخوادم والبناءات الأصلية قبل نقل البيانات ({name} قيد التشغيل).",
+  "--relocate-data needs an empty destination folder": "يتطلب --relocate-data مجلد وجهة فارغًا"
 }

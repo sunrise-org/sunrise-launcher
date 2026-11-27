@@ -2500,5 +2500,15 @@
   "{name}: one of performance, crashes, bugs, benchmarks, all": "{name}: scegli performance, crashes, bugs, benchmarks o all",
   "{name}: a colour name or a hue in degrees": "{name}: un nome di colore o una tonalità in gradi",
   "Could not start {path}: {error}": "Impossibile avviare {path}: {error}",
-  "The reviewed world directory changed": "La directory del mondo verificata è cambiata"
+  "The reviewed world directory changed": "La directory del mondo verificata è cambiata",
+  "World evidence exceeds the save size limit": "Le prove del mondo superano il limite di dimensione del salvataggio",
+  "{mod} isn't ready for your game version yet. Its author needs to update it for this build.": "{mod} non è ancora compatibile con la tua versione del gioco. L’autore deve aggiornarla per questa build.",
+  "{mod} can't be added together with the mods this profile has.": "Impossibile aggiungere {mod} insieme alle mod presenti nel profilo.",
+  "The profile or its game build changed while {mod} was being checked. Nothing was changed; try again.": "Il profilo o la build di gioco è cambiato durante la verifica di {mod}. Non è stata apportata alcuna modifica; riprova.",
+  "Sunrise couldn't download the tools it needs to build {mod}. Check your connection and try again.": "Sunrise non ha potuto scaricare gli strumenti necessari per compilare {mod}. Controlla la connessione e riprova.",
+  "{mod} couldn't be built on this computer.": "Impossibile compilare {mod} su questo computer.",
+  "{mod} couldn't be read from GitHub.": "Impossibile leggere {mod} da GitHub.",
+  "Sunrise couldn't add {mod}.": "Sunrise non ha potuto aggiungere {mod}.",
+  "Build directly from GitHub. Listed source code is not reviewed.": "Compila direttamente da GitHub. Il codice sorgente elencato non è verificato.",
+  "Build from source…": "Compila dal sorgente…"
 }
