@@ -373,8 +373,7 @@ fn failed_exec_leaves_no_tree_or_gate_owner() {
 fn a_piped_preparers_job_ends_what_its_leader_left_running() {
     use std::time::{Duration, Instant};
     let lock = tempfile::tempfile().unwrap();
-    let mut command = std::process::Command::new("cmd");
-    command.args(["/c", "start", "", "/b", "ping", "-n", "30", "127.0.0.1"]);
+    let command = super::job_fixture_leader(1, false);
     let mut child = super::spawn_preparer(command, Some(&lock), None, true).unwrap();
     let job = child
         .preparer_job()
@@ -385,7 +384,10 @@ fn a_piped_preparers_job_ends_what_its_leader_left_running() {
     while active() == 0 && waiting.elapsed() < Duration::from_secs(10) {
         std::thread::sleep(Duration::from_millis(50));
     }
-    assert!(active() >= 1, "the leader left ping running in its job");
+    assert!(
+        active() >= 1,
+        "setup: the leader ended and left its helper running in its job"
+    );
     child.kill().unwrap();
     let waiting = Instant::now();
     while active() != 0 && waiting.elapsed() < Duration::from_secs(10) {
@@ -406,22 +408,7 @@ fn a_quit_ends_a_preparers_whole_job() {
     use std::time::{Duration, Instant};
     static OWN: crate::process::owned::Registry = crate::process::owned::Registry::new();
     let lock = tempfile::tempfile().unwrap();
-    let mut command = std::process::Command::new("cmd");
-    command.args([
-        "/c",
-        "start",
-        "",
-        "/b",
-        "ping",
-        "-n",
-        "30",
-        "127.0.0.1",
-        "&",
-        "ping",
-        "-n",
-        "30",
-        "127.0.0.1",
-    ]);
+    let command = super::job_fixture_leader(2, true);
     let child = super::spawn_preparer(command, Some(&lock), None, true).unwrap();
     let job = child
         .preparer_job()
@@ -432,7 +419,11 @@ fn a_quit_ends_a_preparers_whole_job() {
     while active() < 3 && waiting.elapsed() < Duration::from_secs(10) {
         std::thread::sleep(Duration::from_millis(50));
     }
-    assert!(active() >= 3, "the leader and both pings run in its job");
+    assert!(
+        active() >= 3,
+        "setup: the leader and both its helpers run in its job ({} running)",
+        active()
+    );
     OWN.stop_all();
     let waiting = Instant::now();
     while active() != 0 && waiting.elapsed() < Duration::from_secs(10) {
@@ -440,4 +431,32 @@ fn a_quit_ends_a_preparers_whole_job() {
     }
     assert_eq!(active(), 0, "the quit ended the whole job");
     drop(owned);
+}
+
+/// The leader of the Windows job fixtures ([`super::job_fixture_leader`]): run with its
+/// environment, it starts its helpers in its own job, then ends or stays. Alone, it does nothing.
+#[cfg(windows)]
+#[test]
+fn job_fixture_leader() {
+    use std::process::Stdio;
+    let Ok(helpers) = std::env::var(super::JOB_FIXTURE_HELPERS) else {
+        return;
+    };
+    let started: Vec<_> = (0..helpers.parse::<usize>().unwrap())
+        .map(|_| {
+            std::process::Command::new("ping")
+                .args(["-n", "30", "127.0.0.1"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    // Never waited on: the helpers are what the leader leaves running in its job, which the test
+    // that started it ends.
+    std::mem::forget(started);
+    if std::env::var_os(super::JOB_FIXTURE_HOLD).is_some() {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+    }
 }

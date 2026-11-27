@@ -388,6 +388,28 @@ fn spawn_windows_command<'a>(
 #[cfg(test)]
 mod tests;
 
+/// The environment that makes [`job_fixture_leader`]'s run start its helpers.
+#[cfg(all(test, windows))]
+const JOB_FIXTURE_HELPERS: &str = "SUNRISE_JOB_FIXTURE_HELPERS";
+/// With it, the fixture's leader stays running after it started them.
+#[cfg(all(test, windows))]
+const JOB_FIXTURE_HOLD: &str = "SUNRISE_JOB_FIXTURE_HOLD";
+
+/// A Windows test's preparer leader: this test binary, which starts `helpers` processes that run
+/// for 30 s in its job, then ends, or with `hold` stays running. No shell parses its command
+/// line: `cmd /c` with the quoted arguments `spawn_exact` writes never started the pings.
+#[cfg(all(test, windows))]
+pub(crate) fn job_fixture_leader(helpers: usize, hold: bool) -> std::process::Command {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", "process::leases::tests::job_fixture_leader"])
+        .env(JOB_FIXTURE_HELPERS, helpers.to_string());
+    if hold {
+        command.env(JOB_FIXTURE_HOLD, "1");
+    }
+    command
+}
+
 fn error(error: Error) -> io::Error {
     match error {
         Error::Busy

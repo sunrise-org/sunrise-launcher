@@ -806,8 +806,7 @@ fn a_one_line_command_gets_its_name_and_a_contract_and_answers_one_line() {
 #[test]
 fn a_stop_before_a_preparers_registration_ends_its_job_without_taskkill() {
     let lock = tempfile::tempfile().unwrap();
-    let mut command = std::process::Command::new("cmd");
-    command.args(["/c", "start", "", "/b", "ping", "-n", "30", "127.0.0.1"]);
+    let command = crate::process::leases::job_fixture_leader(1, false);
     let mut child =
         crate::process::leases::spawn_preparer(command, Some(&lock), None, true).unwrap();
     let job = child
@@ -820,7 +819,10 @@ fn a_stop_before_a_preparers_registration_ends_its_job_without_taskkill() {
     while active() == 0 && waiting.elapsed() < Duration::from_secs(10) {
         std::thread::sleep(Duration::from_millis(50));
     }
-    assert!(active() >= 1, "the leader left ping running in its job");
+    assert!(
+        active() >= 1,
+        "setup: the leader ended and left its helper running in its job"
+    );
     let stop = Cancellation::default();
     stop.stop();
     let kills = KILLS.with(std::cell::Cell::get);
