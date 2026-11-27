@@ -2438,5 +2438,17 @@
   "The server was moved to the trash, but its list could not be saved: {error}": "ย้ายเซิร์ฟเวอร์ไปถังขยะแล้ว แต่บันทึกรายการไม่ได้: {error}",
   "This is not a server folder.": "นี่ไม่ใช่โฟลเดอร์เซิร์ฟเวอร์",
   "Could not move the server to the trash: {error}": "ย้ายเซิร์ฟเวอร์ไปถังขยะไม่ได้: {error}",
-  "Public IP lookup failed": "ค้นหา IP สาธารณะไม่สำเร็จ"
+  "Public IP lookup failed": "ค้นหา IP สาธารณะไม่สำเร็จ",
+  "Public IP lookup did not return HTTP 200": "การค้นหา IP สาธารณะไม่ได้รับ HTTP 200",
+  "Could not read the public IP address": "อ่านที่อยู่ IP สาธารณะไม่ได้",
+  "Invalid public IP response": "การตอบกลับ IP สาธารณะไม่ถูกต้อง",
+  "The lookup did not return a public IPv4 address": "การค้นหาไม่ได้ส่งคืนที่อยู่ IPv4 สาธารณะ",
+  "Running a server needs your agreement to the Minecraft EULA.": "การเปิดเซิร์ฟเวอร์ต้องยอมรับ EULA ของ Minecraft",
+  "Setting up the server programs from Sunrise {tag}": "กำลังตั้งค่าโปรแกรมเซิร์ฟเวอร์จาก Sunrise {tag}",
+  "Copying the world {folder}": "กำลังคัดลอกโลก {folder}",
+  "Couldn't copy the world: {error}": "คัดลอกโลกไม่ได้: {error}",
+  "Writing the server's settings": "กำลังเขียนการตั้งค่าเซิร์ฟเวอร์",
+  "Sunrise {tag} isn't prepared yet: press Prepare on the Play page (it uses your own Minecraft {version})": "ยังไม่ได้เตรียม Sunrise {tag}: กดเตรียมในหน้าเล่น (ใช้ Minecraft {version} ของคุณเอง)",
+  "copying {tag}: {error}": "กำลังคัดลอก {tag}: {error}",
+  "The server programs aren't set up yet: create a server, or press Prepare on its page.": "ยังไม่ได้ตั้งค่าโปรแกรมเซิร์ฟเวอร์: สร้างเซิร์ฟเวอร์หรือกดเตรียมในหน้าของเซิร์ฟเวอร์"
 }

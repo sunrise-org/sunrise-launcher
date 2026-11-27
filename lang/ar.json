@@ -1943,5 +1943,17 @@
   "The Downloads folder isn't available.": "مجلد التنزيلات غير متاح.",
   "The GitHub download has more than one package for {mod}.": "يحتوي تنزيل GitHub على أكثر من حزمة لـ {mod}.",
   "The GitHub mod download is too large.": "تنزيل إضافة GitHub كبير جدًا.",
-  "The GitHub mod package was not valid.": "حزمة إضافة GitHub غير صالحة."
+  "The GitHub mod package was not valid.": "حزمة إضافة GitHub غير صالحة.",
+  "The GitHub source archive contains an invalid or duplicate path.": "يحتوي أرشيف مصدر GitHub على مسار غير صالح أو مكرر.",
+  "The Nightly list did not return a catalog.": "لم تُرجع قائمة Nightly فهرسًا.",
+  "The Nightly list had no saved copy to refresh.": "لا توجد نسخة محفوظة من قائمة Nightly لتحديثها.",
+  "The account Play was pressed for was signed out before the game started. Press Play again.": "تم تسجيل الخروج من الحساب المحدد عند الضغط على «تشغيل» قبل بدء اللعبة. اضغط «تشغيل» مجددًا.",
+  "The affected worlds changed after review. Nothing was changed; try again.": "تغيّرت العوالم المتأثرة بعد المراجعة. لم يتغير شيء؛ حاول مجددًا.",
+  "The build could not be published.": "تعذّر نشر البناء.",
+  "The build did not include every enabled mod. Nothing was switched.": "لم يتضمن البناء جميع الإضافات المفعّلة. لم يتم التبديل.",
+  "The build is ready, but the profile choice could not be saved: {error}": "البناء جاهز، لكن تعذّر حفظ اختيار الملف الشخصي: {error}",
+  "The downloaded package for {mod} changed. Fetch it again.": "تغيّرت الحزمة المنزّلة لـ {mod}. نزّلها مجددًا.",
+  "The files prepared for removal changed. Nothing was removed; try again.": "تغيّرت الملفات المعدّة للإزالة. لم يُزل شيء؛ حاول مجددًا.",
+  "The game arguments change the folders or mods selected for this profile.": "تغيّر وسائط اللعبة المجلدات أو الإضافات المحددة لهذا الملف الشخصي.",
+  "The game couldn't be installed.": "تعذّر تثبيت اللعبة."
 }

@@ -2042,5 +2042,17 @@
   "Wait for the current operation to finish before changing profiles.": "Attendi il completamento dell’operazione corrente prima di cambiare profilo.",
   "Wait for the game to start before changing accounts.": "Attendi l’avvio del gioco prima di cambiare account.",
   "Waiting to install…": "In attesa dell’installazione…",
-  "Works on": "Compatibile con"
+  "Works on": "Compatibile con",
+  "World {world} changed while copying. Close the game and try again.": "Il mondo {world} è cambiato durante la copia. Chiudi il gioco e riprova.",
+  "Worlds on Home": "Mondi nella Home",
+  "You may lose blocks and items from the affected mods when you open 1 saved world without their definitions.": "Potresti perdere blocchi e oggetti delle mod interessate aprendo 1 mondo salvato senza le relative definizioni.",
+  "You may lose blocks and items from the affected mods when you open {count} saved worlds without their definitions.": "Potresti perdere blocchi e oggetti delle mod interessate aprendo {count} mondi salvati senza le relative definizioni.",
+  "You're offline. Connect and try again.": "Sei offline. Connettiti e riprova.",
+  "You're offline. Connect to check the source.": "Sei offline. Connettiti per verificare la fonte.",
+  "Your world {worlds} uses them. Opening it without them removes their blocks and what they hold, for good.": "Il tuo mondo {worlds} le usa. Aprirlo senza di esse rimuove definitivamente i relativi blocchi e contenuti.",
+  "Your worlds stay in place. Check what could change before you switch.": "I tuoi mondi restano invariati. Controlla cosa potrebbe cambiare prima di passare.",
+  "Your worlds {worlds} use them. Opening those without them removes their blocks and what they hold, for good.": "I tuoi mondi {worlds} le usano. Aprirli senza di esse rimuove definitivamente i relativi blocchi e contenuti.",
+  "its package was made with a newer tool than this game uses; update the game to read its list": "il pacchetto è stato creato con uno strumento più recente di quello usato dal gioco; aggiorna il gioco per leggerne l’elenco",
+  "its package was made with an older tool and doesn't record enough to show it fits; its author can pack it again with `cargo sunrise-mod build`": "il pacchetto è stato creato con uno strumento più vecchio e non contiene informazioni sufficienti per verificarne la compatibilità; l’autore può ricrearlo con `cargo sunrise-mod build`",
+  "px": "px"
 }
