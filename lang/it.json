@@ -2308,5 +2308,17 @@
   "{kinds} and 1 other kind": "{kinds} e un altro tipo",
   "{kinds} and {n} other kinds": "{kinds} e altri {n} tipi",
   "Nothing to move": "Niente da spostare",
-  "it panicked": "si è verificato un panic"
+  "it panicked": "si è verificato un panic",
+  "Server ignored or changed the requested byte range": "Il server ha ignorato o modificato l’intervallo di byte richiesto",
+  "Unexpected partial response": "Risposta parziale inattesa",
+  "Resource changed during transfer": "La risorsa è cambiata durante il trasferimento",
+  "Inconsistent Content-Length": "Content-Length incoerente",
+  "Response exceeds expected length": "La risposta supera la lunghezza prevista",
+  "Unsupported proxy scheme": "Schema proxy non supportato",
+  "URL has no host": "L’URL non contiene un host",
+  "Redirect has no Location": "Il reindirizzamento non contiene Location",
+  "{url} answered {status}": "{url} ha risposto {status}",
+  "Too many redirects": "Troppi reindirizzamenti",
+  "Artifact requires a 40-character SHA-1": "L’artefatto richiede uno SHA-1 di 40 caratteri",
+  "Downloaded size or SHA-1 does not match the manifest": "La dimensione o lo SHA-1 del download non corrisponde al manifest"
 }

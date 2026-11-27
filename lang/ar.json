@@ -2209,5 +2209,17 @@
   "the Minecraft services": "خدمات Minecraft",
   "Minecraft's services": "خدمات Minecraft",
   "No Sunrise release is tagged {tag}.": "لا يحمل أي إصدار Sunrise الوسم {tag}.",
-  "No release is published yet.": "لم يُنشر أي إصدار بعد."
+  "No release is published yet.": "لم يُنشر أي إصدار بعد.",
+  "No release has a build for this platform yet.": "لا يتضمن أي إصدار بناءً لهذه المنصة بعد.",
+  "{tag} has no build for this platform.": "لا يتضمن {tag} بناءً لهذه المنصة.",
+  "Could not save No AI: {error}": "تعذّر حفظ No AI: {error}",
+  "No crash report in {path}.": "لا يوجد تقرير تعطل في {path}.",
+  "Download interrupted: {error}": "انقطع التنزيل: {error}",
+  "Download worker stopped unexpectedly": "توقفت عملية التنزيل بشكل غير متوقع",
+  "{file}: not the signed file": "{file}: ليس الملف الموقّع",
+  "The download has no {client}": "لا يحتوي التنزيل على {client}",
+  "Could not save the rolling receipt for {tag}: {error}": "تعذّر حفظ إيصال التحديث المتتابع لـ {tag}: {error}",
+  "{file}: signed build facts are missing": "{file}: بيانات البناء الموقّعة مفقودة",
+  "Sunrise: the accounts are not saved: {error}": "Sunrise: لم يتم حفظ الحسابات: {error}",
+  "{name} owns Minecraft: downloading {version} from Mojang": "يمتلك {name} لعبة Minecraft: جارٍ تنزيل {version} من Mojang"
 }
