@@ -2332,5 +2332,17 @@
   "Log sharing is not configured for this build.": "La condivisione dei log non è configurata per questa build.",
   "mclo.gs didn't take the log: {error}": "mclo.gs non ha accettato il log: {error}",
   "mclo.gs answered something unexpected: {error}": "mclo.gs ha risposto in modo imprevisto: {error}",
-  "mclo.gs didn't take the log: {reason}": "mclo.gs non ha accettato il log: {reason}"
+  "mclo.gs didn't take the log: {reason}": "mclo.gs non ha accettato il log: {reason}",
+  "no reason given": "nessun motivo indicato",
+  "mclo.gs didn't delete it: {error}": "mclo.gs non l’ha eliminato: {error}",
+  "{url} answered 404": "{url} ha risposto 404",
+  "{url} didn't answer with a release list.": "{url} non ha restituito un elenco di release.",
+  "{repo}'s release list exceeds {pages} pages.": "L’elenco delle release di {repo} supera {pages} pagine.",
+  "GitHub answered 304 without a saved copy": "GitHub ha risposto 304 senza una copia salvata",
+  "too many requests from this network": "troppe richieste da questa rete",
+  "an unexpected 304": "un 304 imprevisto",
+  "{why}, and Sunrise's mirror of GitHub couldn't help either ({mirror}). Try again in a few minutes.": "{why}; anche il mirror GitHub di Sunrise non è stato d’aiuto ({mirror}). Riprova tra qualche minuto.",
+  "{url} answered {code}": "{url} ha risposto {code}",
+  "{link} is not a GitHub link: use https://github.com/<owner>/<repo>, or .../releases/tag/<tag>, .../tree/<ref> or .../commit/<sha>.": "{link} non è un link GitHub: usa https://github.com/<owner>/<repo>, oppure .../releases/tag/<tag>, .../tree/<ref> o .../commit/<sha>.",
+  "{name} does not match the checksum GitHub lists for it.": "{name} non corrisponde al checksum indicato da GitHub"
 }

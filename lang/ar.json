@@ -2233,5 +2233,17 @@
   "{tag} is not an AppImage, and this launcher runs from one. Install it from its release page instead.": "{tag} ليس ملف AppImage، وهذا المشغّل يعمل منه. ثبّته من صفحة إصداراته بدلًا من ذلك.",
   "Could not replace the AppImage at {path}: {error}": "تعذّر استبدال AppImage في {path}: {error}",
   "Could not replace the launcher at {path}: {error}": "تعذّر استبدال المشغّل في {path}: {error}",
-  "Could not start {path}: {error}. Close the launcher and open it again.": "تعذّر بدء {path}: {error}. أغلق المشغّل وافتحه مجددًا."
+  "Could not start {path}: {error}. Close the launcher and open it again.": "تعذّر بدء {path}: {error}. أغلق المشغّل وافتحه مجددًا.",
+  "{url} isn't on Modrinth's or Sunrise's file servers, or a GitHub release.": "{url} non si trova sui server di file di Modrinth o Sunrise, né in una release GitHub.",
+  "{name} isn't a plain file name.": "{name} non è un nome di file semplice.",
+  "Its source gives no checksum, so it can't be checked.": "Il suo sorgente non fornisce un checksum, quindi non è possibile verificarlo.",
+  "It is larger than any pack should be.": "È più grande di quanto dovrebbe essere un pacchetto.",
+  "The download is larger than its source says.": "Il download è più grande di quanto indicato dal sorgente.",
+  "Got {done} bytes of {size}.": "Ricevuti {done} byte su {size}.",
+  "The {algo} checksum doesn't match: the file isn't the one its source lists. Nothing was installed.": "Il checksum {algo} non corrisponde: il file non è quello elencato dal sorgente. Non è stato installato nulla.",
+  "not on Modrinth's or Sunrise's image servers over HTTPS": "non sui server HTTPS di immagini di Modrinth o Sunrise",
+  "not a plain URL": "non è un URL semplice",
+  "{url}: larger than {size} MB": "{url}: supera {size} MB",
+  "{path}: larger than {size} MB": "{path}: supera {size} MB",
+  "{index_location}: v2 images require an https:// index or local file path": "{index_location}: le immagini v2 richiedono un indice https:// o un percorso locale"
 }
