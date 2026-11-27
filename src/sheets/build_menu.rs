@@ -413,42 +413,61 @@ impl Launcher {
     /// The selected profile's options, under Home's menu button: Sunrise Extras (here only, no
     /// longer in the build chooser) and the profile's folder.
     pub(super) fn profile_menu(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let Some(instance) = self.selected_instance() else {
+        let Some(instance) = self.selected_instance().cloned() else {
             return div().id("alt-profile-menu");
         };
+        let p = palette();
         let home = instance.home.clone();
-        let folder = div()
-            .id("alt-profile-folder")
-            .reach()
-            .flex()
-            .items_center()
-            .gap(px(12.))
-            .p(px(10.))
-            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-            .cursor_pointer()
-            .hover(|d| d.bg(rgb(palette().hover)))
-            .child(crate::glass_ui::icon(
-                "folder-01",
-                16.,
-                rgb(palette().text).into(),
-            ))
-            .child(
-                div()
-                    .text_size(px(tokens::BODY))
-                    .child(tr("Open profile folder")),
-            )
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.close_sheet();
-                crate::toast::open(cx, &home);
-                cx.notify();
-            }));
+        // One row of the menu: an icon, its words, and what it does.
+        let row = |id: &'static str, icon: Div, label: SharedString| {
+            div()
+                .id(id)
+                .reach()
+                .h(px(32.))
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .px(px(10.))
+                .rounded(crate::tokens::r(crate::tokens::R_SMALL))
+                .cursor_pointer()
+                .hover(move |d| d.bg(rgb(p.hover)))
+                .text_size(px(tokens::LABEL))
+                .child(icon)
+                .child(label)
+        };
+        let glyph = |name: &'static str| {
+            div()
+                .flex_none()
+                .child(crate::glass_ui::icon(name, 15., rgb(p.muted).into()))
+        };
+        let folder = row(
+            "alt-profile-folder",
+            glyph("folder-01"),
+            tr("Open profile folder").into(),
+        )
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            this.close_sheet();
+            crate::toast::open(cx, &home);
+            cx.notify();
+        }));
+        let settings = row(
+            "alt-profile-settings",
+            glyph("settings-01"),
+            tr("Profile settings…").into(),
+        )
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            this.close_sheet();
+            this.edit_profile(&instance, cx);
+            cx.notify();
+        }));
         let body = div()
             .flex()
             .flex_col()
-            .gap(px(10.))
-            .child(extras().px(px(10.)))
-            .child(div().h(px(1.)).bg(rgb(palette().line)))
-            .child(folder);
+            .gap(px(1.))
+            .child(extras())
+            .child(div().h(px(1.)).mx(px(6.)).my(px(3.)).bg(rgb(p.divider)))
+            .child(folder)
+            .child(settings);
         let at = self.ui.home.menu_at();
         self.popover(("alt-profile-menu", "alt-profile-menu-body"), body, at, cx)
     }
@@ -463,7 +482,7 @@ impl Launcher {
         (left, top): (f32, f32),
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let width = 372_f32.min(self.window_width - 24.);
+        let width = 232_f32.min(self.window_width - 24.);
         div()
             .id(layer)
             .absolute()
@@ -494,8 +513,8 @@ impl Launcher {
                     .left(px(left.min(self.window_width - width - 12.).max(12.)))
                     .top(px(top))
                     .w(px(width))
-                    .p(px(14.))
-                    .rounded(crate::tokens::r(crate::tokens::R_CARD))
+                    .p(px(4.))
+                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                     .border_1()
                     .border_color(rgb(palette().line))
                     .bg(rgb(palette().raised))
@@ -523,37 +542,40 @@ impl Launcher {
 
 /// Sunrise Extras' switch, shown off and dim: it arrives with the build that supports it.
 fn extras() -> Div {
+    let p = palette();
     div()
+        .h(px(32.))
         .flex()
-        .items_start()
-        .justify_between()
-        .gap(px(12.))
-        .opacity(0.5)
+        .items_center()
+        .gap(px(10.))
+        .px(px(10.))
+        .opacity(0.55)
+        .text_size(px(tokens::LABEL))
+        .child(div().flex_none().child(crate::mark(15.)))
         .child(
             div()
                 .flex_1()
                 .min_w_0()
-                .flex()
-                .flex_col()
-                .child(div().text_size(px(tokens::BODY)).child(tr("Sunrise Extras")))
-                .child(
-                    div()
-                        .text_size(px(tokens::SMALL))
-                        .text_color(rgb(palette().muted))
-                        .child(tr(
-                            "Sunrise’s additions on top of vanilla. This switch arrives with the build that supports it.",
-                        )),
-                ),
+                .truncate()
+                .child(tr("Sunrise Extras")),
         )
         .child(
             div()
-                .mt(px(2.))
                 .flex_none()
-                .w(px(34.))
-                .h(px(20.))
+                .text_size(px(tokens::SMALL))
+                .text_color(rgb(p.muted))
+                .child(tr("soon")),
+        )
+        // The switch arrives with the build that supports it: drawn off, it takes no press.
+        .child(
+            div()
+                .flex_none()
+                .w(px(28.))
+                .h(px(16.))
+                .p(px(2.))
                 .rounded_full()
-                .border_1()
-                .border_color(rgb(palette().line)),
+                .bg(rgb(p.line))
+                .child(div().size(px(12.)).rounded_full().bg(rgb(p.muted))),
         )
 }
 
