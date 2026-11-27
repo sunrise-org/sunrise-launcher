@@ -299,7 +299,7 @@ impl Launcher {
             .into();
             secondary(
                 copy_id.clone(),
-                if crate::code_box::copied(&copy_id).is_some() {
+                if crate::widgets::copies::copied(&copy_id).is_some() {
                     tr("Copied")
                 } else if run.log_open {
                     tr("Copy")
@@ -308,11 +308,11 @@ impl Launcher {
                 },
             )
             .on_click(move |_, window, cx| {
-                crate::widgets::copy_quietly(
+                crate::selectable::clipboard::copy_quietly(
                     cx,
                     gpui::ClipboardItem::new_string(diagnostic.clone()),
                 );
-                crate::code_box::note_copy(copy_id.clone(), window, cx);
+                crate::widgets::copies::note_copy(copy_id.clone(), window, cx);
             })
         });
         let foot = if running {

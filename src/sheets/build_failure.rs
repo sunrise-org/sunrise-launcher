@@ -63,7 +63,7 @@ impl Launcher {
                     controls
                         .child(secondary("install-log-copy", tr("Copy")).on_click(
                             move |_, _, cx| {
-                                crate::widgets::copy_to_clipboard(
+                                crate::selectable::clipboard::copy_to_clipboard(
                                     cx,
                                     gpui::ClipboardItem::new_string(copy.to_string()),
                                 );

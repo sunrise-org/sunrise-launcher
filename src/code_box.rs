@@ -4,9 +4,7 @@
 //! stays put while the text scrolls under it. A copy turns it into a tick that pops in, then it
 //! eases back to the copy glyph.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -17,23 +15,7 @@ use gpui::{
 
 use crate::paint::palette;
 use crate::selectable::Selectable;
-
-/// How long the tick shows after a copy.
-const SHOWN: Duration = Duration::from_millis(1400);
-
-thread_local! {
-    /// Each box's last copy: when, and how many so far (a new copy restarts the pop).
-    static COPIED: RefCell<HashMap<SharedString, (Instant, usize)>> = RefCell::new(HashMap::new());
-}
-
-/// How many copies `id` has had, while its last one is still showing.
-pub(crate) fn copied(id: &SharedString) -> Option<usize> {
-    COPIED.with_borrow(|m| {
-        m.get(id)
-            .filter(|(at, _)| at.elapsed() < SHOWN)
-            .map(|&(_, n)| n)
-    })
-}
+use crate::widgets::copies::{copied, note_copy};
 
 /// A box of `blocks` (paragraphs, shown with a little space between; one block keeps its own
 /// line breaks). Copy takes them all, a blank line between blocks. `max_h` makes the text
@@ -130,7 +112,10 @@ pub(crate) fn copy_button(id: SharedString, whole: String) -> impl IntoElement {
         })))
         .child(glyph)
         .on_click(move |_: &ClickEvent, window: &mut Window, cx| {
-            crate::widgets::copy_to_clipboard(cx, gpui::ClipboardItem::new_string(whole.clone()));
+            crate::selectable::clipboard::copy_to_clipboard(
+                cx,
+                gpui::ClipboardItem::new_string(whole.clone()),
+            );
             note_copy(id.clone(), window, cx);
         })
 }
@@ -148,30 +133,4 @@ pub(crate) fn tick(id: &SharedString, n: usize, size: f32, color: Hsla) -> gpui:
             },
         )
         .into_any_element()
-}
-
-/// Records a copy from `id`'s button, so [`copied`] shows it, and redraws once it has shown.
-pub(crate) fn note_copy(id: SharedString, window: &mut Window, cx: &mut gpui::App) {
-    let n = remember_copy(&id);
-    // The view isn't known outside a draw, so redraw the window.
-    window.refresh();
-    // Back to the copy glyph once the tick has shown, unless another copy came since.
-    window
-        .spawn(cx, async move |cx| {
-            cx.background_executor().timer(SHOWN).await;
-            let last = COPIED.with_borrow(|m| m.get(&id).map(|&(_, n)| n));
-            if last == Some(n) {
-                let _ = cx.update(|window, _| window.refresh());
-            }
-        })
-        .detach();
-}
-
-/// Counts a copy from `id`'s button and returns its number, for [`copied`].
-pub(crate) fn remember_copy(id: &SharedString) -> usize {
-    COPIED.with_borrow_mut(|m| {
-        let e = m.entry(id.clone()).or_insert((Instant::now(), 0));
-        *e = (Instant::now(), e.1 + 1);
-        e.1
-    })
 }

@@ -1,6 +1,9 @@
-//! The shared controls every page draws with: the focus ring, reach, and the colour helpers they use.
+//! What every control shares: the keyboard's focus ring, [`Reach`] for things that are not
+//! buttons, and the colour helpers.
 
 use super::*;
+use crate::paint::palette;
+use gpui::rgb;
 
 /// The keyboard's ring, in `color`, around a filled control that has no edge of its own to turn
 /// gold. Behind a see-through control it would show as a fill: give that one an edge instead.
@@ -51,7 +54,7 @@ impl<T: InteractiveElement + ParentElement + Styled> Reach for T {
         // text style it hands its children (a background nothing can see), and a child that
         // covers it reads the mark while the frame is laid out, when it knows its place.
         self.focus(|s| s.text_bg(focus_mark())).child(
-            gpui::canvas(scroll_to_show, |_, _, _, _| {})
+            gpui::canvas(super::scrolls::scroll_to_show, |_, _, _, _| {})
                 .absolute()
                 .inset_0(),
         )
@@ -73,6 +76,6 @@ pub(crate) fn mix(a: gpui::Hsla, b: gpui::Hsla, v: f32) -> gpui::Hsla {
     })
 }
 
-pub(super) fn focus_mark() -> gpui::Hsla {
+pub(crate) fn focus_mark() -> gpui::Hsla {
     gpui::hsla(0.125, 0.5, 0.25, 0.)
 }

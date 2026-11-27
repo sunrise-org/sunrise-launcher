@@ -101,7 +101,7 @@ impl Launcher {
                         cx,
                         move |this, cx| {
                             if let Some(address) = &address {
-                                copy_to_clipboard(
+                                crate::selectable::clipboard::copy_to_clipboard(
                                     cx,
                                     gpui::ClipboardItem::new_string(address.clone()),
                                 );

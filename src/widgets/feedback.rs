@@ -2,7 +2,7 @@
 #![allow(dead_code)] // Used by the shell and pages that the next redesign steps move over; removed in the final sweep.
 use super::*;
 
-use crate::frame::{c, mix};
+use super::focus::{c, mix};
 use crate::glass_ui::icon;
 use crate::motion;
 use crate::paint::{palette, Palette};
@@ -76,12 +76,7 @@ pub(crate) fn banner(
                 .text_color(ink)
                 .child(title.into()),
         )
-        .children(body.map(|b| {
-            div()
-                .text_size(px(LABEL))
-                .text_color(c(p.text))
-                .child(crate::selectable::selectable(b))
-        }));
+        .children(body.map(|b| div().text_size(px(LABEL)).text_color(c(p.text)).child(b)));
     div()
         .w_full()
         .flex()

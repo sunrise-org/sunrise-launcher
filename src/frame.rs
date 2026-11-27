@@ -5,17 +5,13 @@ use crate::paint::palette;
 use crate::sheets::Sheet;
 use gpui::{rgb, AnimationExt};
 
-mod controls;
 mod header;
 mod page;
 mod play;
-mod scrolls;
-use controls::focus_mark;
-pub(crate) use controls::{c, focus_ring, mix, Reach};
+pub(crate) use crate::widgets::focus::{c, focus_ring, Reach};
+use crate::widgets::scrolls::scrolls_begin;
+pub(crate) use crate::widgets::scrolls::{drawn_scroll, focused_bounds, scrolls, scrolls_with};
 pub(crate) use page::{Page, State};
-use scrolls::scroll_to_show;
-use scrolls::scrolls_begin;
-pub(crate) use scrolls::{drawn_scroll, focused_bounds, scrolls, scrolls_with};
 
 impl Launcher {
     pub(super) fn navigate(&mut self, page: Page) {

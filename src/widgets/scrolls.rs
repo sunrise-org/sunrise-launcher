@@ -1,5 +1,6 @@
 //! The scroll registry: each frame's scrolling pages, and keeping the focused control in view.
 
+use super::focus::focus_mark;
 use super::*;
 
 /// The pages that scroll, for [`Reach::seen`].
@@ -21,7 +22,7 @@ thread_local! {
 }
 
 /// Starts a frame: the pages that scroll name themselves again as they are built.
-pub(super) fn scrolls_begin() {
+pub(crate) fn scrolls_begin() {
     SCROLLS.with_borrow_mut(|s| {
         let live = std::mem::take(&mut s.live);
         s.focused = None;
@@ -69,7 +70,7 @@ pub(crate) fn scrolls_with(handle: &gpui::ScrollHandle) {
 
 /// Scrolls the page a control is on so the control shows, with a little room around it, when
 /// the keyboard has just landed on it. `bounds` is where the control is.
-pub(super) fn scroll_to_show(bounds: Bounds<gpui::Pixels>, window: &mut Window, cx: &mut App) {
+pub(crate) fn scroll_to_show(bounds: Bounds<gpui::Pixels>, window: &mut Window, cx: &mut App) {
     const ROOM: f32 = 24.;
     if window.text_style().background_color != Some(focus_mark()) {
         return;

@@ -1,21 +1,12 @@
 //! Settings › Appearance: what stands behind Home — the player's own picture or their
 //! theme's — its tone, and its decode off the window's thread.
 use super::*;
+use crate::paint::HomePhoto;
 use gpui::RenderImage;
 use std::sync::Arc;
 use sunrise_launcher::appearance::{self, Behind};
 use sunrise_launcher::theme_files;
 use sunrise_launcher::themes;
-
-/// What stands behind Home, as the frame's backdrop draws it: the player's own picture or
-/// their theme's, decoded to one still picture off the window's thread. The window is never
-/// handed a file to decode itself.
-#[derive(Clone)]
-pub(crate) struct HomePhoto {
-    pub image: Arc<RenderImage>,
-    /// Representative colour of the visible pixels, computed once with the decode.
-    pub tone: Option<u32>,
-}
 
 /// Sample the centres of a grid bounded to 32 × 32, independent of image size. Weight sRGB
 /// channels by coverage, so transparent pixels (which may carry arbitrary RGB) do not tint us.

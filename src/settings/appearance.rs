@@ -13,5 +13,5 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use photo::HomePhoto;
+pub(crate) use crate::paint::HomePhoto;
 pub(crate) use state::State;

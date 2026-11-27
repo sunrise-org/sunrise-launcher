@@ -6,6 +6,8 @@
 //! The blocks name themselves in reading order as they paint, so a selection knows which blocks
 //! lie between its ends; a drag follows the column it started in.
 
+pub(crate) mod clipboard;
+
 use std::cell::RefCell;
 use std::ops::Range;
 
@@ -406,9 +408,9 @@ impl Element for Selectable {
                         if let Some(text) = selected_text() {
                             let item = gpui::ClipboardItem::new_string(text);
                             if copy_preview {
-                                crate::widgets::copy_to_clipboard(cx, item);
+                                clipboard::copy_to_clipboard(cx, item);
                             } else {
-                                crate::widgets::copy_quietly(cx, item);
+                                clipboard::copy_quietly(cx, item);
                                 crate::toast::say(crate::i18n::tr("Copied"));
                             }
                         }

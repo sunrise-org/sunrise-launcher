@@ -44,7 +44,10 @@ impl Launcher {
             true,
             cx,
             move |this, cx| {
-                copy_to_clipboard(cx, gpui::ClipboardItem::new_string(text.clone()));
+                crate::selectable::clipboard::copy_to_clipboard(
+                    cx,
+                    gpui::ClipboardItem::new_string(text.clone()),
+                );
                 this.internet.copied = Some((text.clone(), Instant::now()));
             },
         )

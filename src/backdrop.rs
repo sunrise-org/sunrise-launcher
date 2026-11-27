@@ -1,6 +1,6 @@
 //! The window's still backdrop. It never owns a timer. The cat and visible operations wake
 //! their own UI when they change; reduced motion does not need to stop a scenery animation.
-use crate::settings::HomePhoto;
+use crate::paint::HomePhoto;
 use crate::{backend, theme::Theme};
 use gpui::{div, img, prelude::*, Div, ObjectFit, RenderImage, Window};
 use std::sync::Arc;

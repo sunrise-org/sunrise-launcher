@@ -1,8 +1,8 @@
 //! Navigation parts: underlined tabs with a sliding bar (a profile page's sub-pages, Installed |
 //! Discover, Join | Host), the sidebar's nav row, and the pixel sun its selected row ends with.
 #![allow(dead_code)] // Used by the shell and pages that the next redesign steps move over; removed in the final sweep.
+use super::focus::{c, mix, Reach};
 use super::*;
-use crate::frame::{c, mix, Reach};
 use crate::{glass_ui, motion, paint::palette, tokens};
 use std::cell::RefCell;
 use std::collections::HashMap;

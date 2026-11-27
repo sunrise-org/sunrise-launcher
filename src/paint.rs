@@ -15,13 +15,25 @@
 //! it is drawn as chosen, and the ink is fitted against the worst possible backdrop as far as
 //! that plate allows, so a thin plate over a bright picture may not read. Without scenery the
 //! plates stay solid.
-use crate::{settings::HomePhoto, theme::Theme};
+use crate::theme::Theme;
+use gpui::RenderImage;
 use gpui::{rgb, Hsla};
 use std::cell::Cell;
+use std::sync::Arc;
 use sunrise_launcher::backend::Settings;
 use sunrise_launcher_theme::contrast;
 use sunrise_launcher_theme::glass::{fill, from_oklab, luminance, mix_oklab, oklab, SCRIM};
 use sunrise_launcher_theme::night::{over, Night};
+
+/// What stands behind Home, as the frame's backdrop draws it: the player's own picture or
+/// their theme's, decoded to one still picture off the window's thread. The window is never
+/// handed a file to decode itself.
+#[derive(Clone)]
+pub(crate) struct HomePhoto {
+    pub image: Arc<RenderImage>,
+    /// Representative colour of the visible pixels, computed once with the decode.
+    pub tone: Option<u32>,
+}
 
 /// What a dialog's scrim may dim a bright page by: the opacity is the one in this range that
 /// sets the dialog furthest apart from the dimmed page.

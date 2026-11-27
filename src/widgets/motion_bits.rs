@@ -9,7 +9,7 @@ use std::f32::consts::{FRAC_PI_2, PI};
 use gpui::{px, rgb, AnimationExt, AnyElement, ElementId, Hsla, InteractiveElement, IntoElement};
 use sunrise_launcher_theme::{Motion, MOVE};
 
-use crate::frame::{c, focus_ring, Reach};
+use super::focus::{c, focus_ring, Reach};
 use crate::paint::palette;
 
 /// The copy tick's pop: it grows from a little under its size and fades in.
@@ -99,9 +99,12 @@ pub(crate) fn copy_face(id: &'static str, label: &str, shown: Option<usize>) -> 
 /// `label` again. Copies without a toast: the button shows the copy itself.
 pub(crate) fn copy_button(id: &'static str, label: &str, text: String) -> Stateful<Div> {
     let key = copy_key(id, &text);
-    copy_face(id, label, crate::code_box::copied(&key)).on_click(move |_, window, cx| {
-        crate::widgets::copy_quietly(cx, gpui::ClipboardItem::new_string(text.clone()));
-        crate::code_box::note_copy(key.clone(), window, cx);
+    copy_face(id, label, super::copies::copied(&key)).on_click(move |_, window, cx| {
+        crate::selectable::clipboard::copy_quietly(
+            cx,
+            gpui::ClipboardItem::new_string(text.clone()),
+        );
+        super::copies::note_copy(key.clone(), window, cx);
     })
 }
 

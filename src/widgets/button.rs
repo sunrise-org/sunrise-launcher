@@ -1,8 +1,8 @@
 //! Buttons: Primary, Secondary, Ghost and Accent outline, in Medium and Small, with an optional
 //! leading icon, and the square icon button. Every page draws its buttons from here.
 #![allow(dead_code)] // Used by the shell and pages that the next redesign steps move over; removed in the final sweep.
+use super::focus::{c, focus_ring, mix};
 use super::*;
-use crate::frame::{c, focus_ring, mix};
 use crate::paint::palette;
 use crate::tokens;
 

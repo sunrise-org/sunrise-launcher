@@ -358,7 +358,10 @@ impl Launcher {
                                 Look::new(Style::Ghost, Size::Small),
                             )
                             .on_click(move |_, _, cx| {
-                                copy_to_clipboard(cx, gpui::ClipboardItem::new_string(copy.clone()))
+                                crate::selectable::clipboard::copy_to_clipboard(
+                                    cx,
+                                    gpui::ClipboardItem::new_string(copy.clone()),
+                                )
                             }),
                         ),
                 )
@@ -397,7 +400,7 @@ impl Launcher {
                                     )
                                     .on_click(
                                         move |_, _, cx| {
-                                            copy_to_clipboard(
+                                            crate::selectable::clipboard::copy_to_clipboard(
                                                 cx,
                                                 gpui::ClipboardItem::new_string(link_uri.clone()),
                                             )
@@ -586,7 +589,10 @@ impl Launcher {
     ) -> AnyElement {
         crate::widgets::motion_bits::copy_face(kind.id(), label, self.sign_in_copies.shown(kind))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                crate::widgets::copy_quietly(cx, gpui::ClipboardItem::new_string(text.clone()));
+                crate::selectable::clipboard::copy_quietly(
+                    cx,
+                    gpui::ClipboardItem::new_string(text.clone()),
+                );
                 this.sign_in_copies.copy(kind);
                 cx.notify();
                 cx.spawn(async move |this, cx| {

@@ -18,7 +18,6 @@ mod launcher;
 mod privacy;
 mod proxy;
 mod storage_section;
-pub(crate) use appearance::HomePhoto;
 
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 pub(super) enum Section {
