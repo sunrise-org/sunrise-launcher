@@ -2490,5 +2490,15 @@
   "Sending is turned off here (SUNRISE_TELEMETRY_URL=off), so the server was not asked.": "L’invio è disattivato qui (SUNRISE_TELEMETRY_URL=off), quindi non è stato contattato il server.",
   "The server could not be reached ({error}). Try again later.": "Impossibile raggiungere il server ({error}). Riprova più tardi.",
   "The server deleted everything sent from here.": "Il server ha eliminato tutto ciò che è stato inviato da qui.",
-  "{remote} Nothing is waiting, and this install has a new ID.": "{remote} Non c’è nulla in attesa e questa installazione ha un nuovo ID."
+  "{remote} Nothing is waiting, and this install has a new ID.": "{remote} Non c’è nulla in attesa e questa installazione ha un nuovo ID.",
+  "{name} are off: turn them on in Settings → Data collection first.": "{name} sono disattivate: attivale prima in Impostazioni → Raccolta dati.",
+  "Today's limit for these is reached; try again tomorrow.": "È stato raggiunto il limite giornaliero. Riprova domani.",
+  "Sent. Thank you.": "Inviato. Grazie.",
+  "Kept; sending is turned off here (SUNRISE_TELEMETRY_URL=off).": "Conservato; l’invio è disattivato qui (SUNRISE_TELEMETRY_URL=off).",
+  "Kept; it will be sent the next time the launcher starts.": "Conservato; verrà inviato al prossimo avvio del launcher.",
+  "{path}: not a JSON report ({error})": "{path}: non è un rapporto JSON ({error})",
+  "{name}: one of performance, crashes, bugs, benchmarks, all": "{name}: scegli performance, crashes, bugs, benchmarks o all",
+  "{name}: a colour name or a hue in degrees": "{name}: un nome di colore o una tonalità in gradi",
+  "Could not start {path}: {error}": "Impossibile avviare {path}: {error}",
+  "The reviewed world directory changed": "La directory del mondo verificata è cambiata"
 }

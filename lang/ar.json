@@ -2391,5 +2391,15 @@
   "Downloading Minecraft's Java {name} from Mojang ({count} files)": "جارٍ تنزيل Java ‏{name} الخاصة بـ Minecraft من Mojang ({count} ملفًا)",
   "is {actual} bytes, not the {expected} Mojang lists": "حجمه {actual} بايت، وليس {expected} كما يسرد Mojang",
   "is not the one Sunrise pins (sha1 {actual})": "ليس الملف الذي يثبته Sunrise (sha1 ‏{actual})",
-  "{done} of {total} files": "{done} من {total} ملفًا"
+  "{done} of {total} files": "{done} من {total} ملفًا",
+  "{failed} of {total} files failed, the first: {error}": "فشل {failed} من أصل {total} ملفًا، أول خطأ: {error}",
+  "PE machine 0x{machine}": "بنية PE ‏0x{machine}",
+  "Build completed.": "اكتمل البناء.",
+  "The build failed: {error}": "فشل البناء: {error}",
+  "GitHub doesn't know {repo} commit {revision}.": "لا يتعرف GitHub على الالتزام {revision} في {repo}.",
+  "Duplicate native mod id {id}.": "معرّف الإضافة الأصلية {id} مكرر.",
+  "Planning the build": "جارٍ التخطيط للبناء",
+  "Checking the prebuilt game": "جارٍ التحقق من اللعبة المبنية مسبقًا",
+  "Checking the Rust toolchain": "جارٍ التحقق من سلسلة أدوات Rust",
+  "Keeping the mods' libraries for the next build": "جارٍ الاحتفاظ بمكتبات الإضافات للبناء التالي"
 }
