@@ -2633,5 +2633,18 @@
   "the trait {name}": "السمة {name}",
   "the type {name}": "النوع {name}",
   "the variant {name}": "الحالة {name}",
-  "Building {mods}…": "جارٍ بناء {mods}…"
+  "Building {mods}…": "جارٍ بناء {mods}…",
+  "Skins and capes": "الأزياء والعباءات",
+  "Search source projects…": "ابحث في المشاريع المصدرية…",
+  "Couldn't install the mod.": "تعذّر تثبيت الإضافة.",
+  "Install stopped unexpectedly.": "توقف التثبيت على نحو غير متوقع.",
+  "No mods are listed for {target} yet": "لم تُدرج أي إضافات لـ {target} بعد",
+  "The registry lists mods for recent Sunrise builds. Turn on Show all to see mods for other builds.": "يعرض السجل الإضافات لإصدارات Sunrise الحديثة. فعّل «عرض الكل» لرؤية إضافات الإصدارات الأخرى.",
+  "{build} isn't in the Sunrise registry yet, so its mods can't be installed.": "الإصدار {build} غير موجود في سجل Sunrise بعد، لذلك لا يمكن تثبيت إضافاته.",
+  "{build} isn't in the Sunrise registry yet.": "الإصدار {build} غير موجود في سجل Sunrise بعد.",
+  "No world {query} in {path}": "لا يوجد عالم {query} في {path}",
+  "Could not back up {name}: {error}": "تعذّر إنشاء نسخة احتياطية من {name}: {error}",
+  "Profile game build: not played yet; it stays on {build}": "إصدار اللعبة للملف الشخصي: لم تلعب بعد؛ سيبقى على {build}",
+  "Profile game build: not played yet; it follows the newest {channel} build": "إصدار اللعبة للملف الشخصي: لم تلعب بعد؛ سيتبع أحدث إصدار من قناة {channel}",
+  "Every installed build named for these mods ({version}) holds other mods or was changed after it was installed. Remove them, then build again.": "يحتوي كل إصدار مثبّت باسم هذه الإضافات ({version}) على إضافات أخرى أو عُدّل بعد تثبيته. أزلها ثم أعد البناء."
 }
