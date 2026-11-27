@@ -2078,5 +2078,15 @@
   "{disposition} · {reason}": "{disposition} · {reason}",
   "{error}\n{stay}: nothing changed.": "{error}\n{stay}: non è stata apportata alcuna modifica.",
   "{first} and {count} more": "{first} e altre {count}",
-  "{first} and {second} both own the {namespace} namespace.": "Sia {first} sia {second} utilizzano lo spazio dei nomi {namespace}."
+  "{first} and {second} both own the {namespace} namespace.": "Sia {first} sia {second} utilizzano lo spazio dei nomi {namespace}.",
+  "{first} {version} doesn't work with {second} {other_version}.": "{first} {version} non funziona con {second} {other_version}.",
+  "{folder} has no level.dat": "{folder} non contiene level.dat",
+  "{mods} — content may be lost when you open the world {world}.": "{mods} — alcuni contenuti potrebbero andare persi aprendo il mondo {world}.",
+  "{mod} build log": "Log di compilazione di {mod}",
+  "{mod} couldn't be read from GitHub. {why}": "Impossibile leggere {mod} da GitHub. {why}",
+  "{mod} is already installed. Update it from Installed.": "{mod} è già installata. Aggiornala da Installate.",
+  "{mod} is on. The game reads this when it starts.": "{mod} è attiva. Il gioco la legge all’avvio.",
+  "{mod} needs {required} {version}. Install or turn on a version that fits before trying again.": "{mod} richiede {required} {version}. Installa o attiva una versione compatibile prima di riprovare.",
+  "{mod} needs {required}. Install a fitting version first.": "{mod} richiede {required}. Installa prima una versione compatibile.",
+  "{mod} pins build {made_for} and its package carries no list of what it uses for that build, so it can't be shown to fit another build. Its author can pack it with `cargo sunrise-mod build`, which writes the list, or repin it first with `cargo sunrise-mod update --sunrise <build>`.": "{mod} blocca la build {made_for} e il pacchetto non include l’elenco delle dipendenze per quella build, quindi non è possibile dimostrare la compatibilità con altre build. L’autore può ricrearlo con `cargo sunrise-mod build`, che registra l’elenco, oppure bloccare prima un’altra build con `cargo sunrise-mod update --sunrise <build>`."
 }

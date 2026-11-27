@@ -1979,5 +1979,15 @@
   "The pre-launch command didn't run: {reason}": "لم يُشغّل الأمر قبل البدء: {reason}",
   "The pre-launch command failed (exit {code}), so the game did not start.": "فشل الأمر قبل البدء (رمز الخروج {code})، لذا لم تبدأ اللعبة.",
   "The profile folder couldn't be verified.": "تعذّر التحقق من مجلد الملف الشخصي.",
-  "The profile's runtime copy was not prepared.": "لم يتم إعداد نسخة وقت التشغيل للملف الشخصي."
+  "The profile's runtime copy was not prepared.": "لم يتم إعداد نسخة وقت التشغيل للملف الشخصي.",
+  "The proposed mods don't work with {mod}. Nothing was installed.": "الإضافات المقترحة لا تعمل مع {mod}. لم يتم تثبيت شيء.",
+  "The saved game download proof is invalid.": "إثبات تنزيل اللعبة المحفوظ غير صالح.",
+  "The saved worlds changed while the changes were being prepared. The profile was left unchanged.": "تغيّرت العوالم المحفوظة أثناء تجهيز التغييرات. تُرك الملف الشخصي دون تغيير.",
+  "The selected game doesn't include exactly the enabled native mods.": "لا تتضمن اللعبة المحددة الإضافات الأصلية المفعّلة نفسها بالضبط.",
+  "The server command cannot change its server folder.": "لا يمكن لأمر الخادم تغيير مجلد الخادم.",
+  "The server is running on port {running}. Restart to use saved port {saved}.": "يعمل الخادم على المنفذ {running}. أعد التشغيل لاستخدام المنفذ المحفوظ {saved}.",
+  "The source could not be verified.": "تعذّر التحقق من المصدر.",
+  "The staged GitHub packages changed. Nothing was changed; try again.": "تغيّرت حزم GitHub المجهزة. لم يتغير شيء؛ حاول مجددًا.",
+  "There are no pending build changes for this profile.": "لا توجد تغييرات بناء معلّقة لهذا الملف الشخصي.",
+  "There is more than one installed package for {mod}. Move the duplicate before trying again.": "توجد أكثر من حزمة مثبّتة لـ {mod}. انقل النسخة المكررة قبل المحاولة مجددًا."
 }

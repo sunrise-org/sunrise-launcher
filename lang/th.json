@@ -2474,5 +2474,15 @@
   "{file} is here but not the game itself: play {version} once in that launcher to download it": "พบ {file} แต่ไม่ใช่ตัวเกม: เปิดเล่น {version} หนึ่งครั้งใน launcher นั้นเพื่อดาวน์โหลด",
   "no Minecraft {version} client jar": "ไม่มี client jar ของ Minecraft {version}",
   "Minecraft {version} was not found. Sunrise looked in:": "ไม่พบ Minecraft {version} Sunrise ค้นหาใน:",
-  "\nTo fix it:\n  • ": "\nวิธีแก้:\n  • "
+  "\nTo fix it:\n  • ": "\nวิธีแก้:\n  • ",
+  "Using Minecraft {version} from {name} ({folder})": "ใช้ Minecraft {version} จาก {name} ({folder})",
+  "Downloading the {version} version file from Mojang": "กำลังดาวน์โหลดไฟล์เวอร์ชัน {version} จาก Mojang",
+  "Mojang's {version} version file {error}": "ไฟล์เวอร์ชัน {version} ของ Mojang {error}",
+  "{path}: not a file path": "{path}: ไม่ใช่พาธไฟล์",
+  "Tailscale is switched off.": "ปิด Tailscale อยู่",
+  "Tailscale is {state}.": "Tailscale {state}",
+  "Run `{command}` in a terminal and open the link it prints.": "เรียก `{command}` ในเทอร์มินัลแล้วเปิดลิงก์ที่แสดง",
+  "Tailscale's app didn't open: start it from your applications.": "แอป Tailscale ไม่เปิด ให้เริ่มจากรายการแอปพลิเคชัน",
+  "1 item waiting to be sent, exactly as they will leave (compressed):": "มี 1 รายการรอส่ง ในรูปแบบที่จะส่งจริง (บีบอัดแล้ว):",
+  "{count} items waiting to be sent, exactly as they will leave (compressed):": "มี {count} รายการรอส่ง ในรูปแบบที่จะส่งจริง (บีบอัดแล้ว):"
 }
