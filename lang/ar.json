@@ -2507,5 +2507,13 @@
   "The profile or its game build changed while {mod} was being checked. Nothing was changed; try again.": "تغيّر الملف الشخصي أو إصدار لعبته أثناء التحقق من {mod}. لم يتغير شيء؛ حاول مجددًا.",
   "Sunrise couldn't download the tools it needs to build {mod}. Check your connection and try again.": "تعذّر على Sunrise تنزيل الأدوات اللازمة لبناء {mod}. تحقق من الاتصال وحاول مجددًا.",
   "{mod} couldn't be built on this computer.": "تعذّر بناء {mod} على هذا الكمبيوتر.",
-  "{mod} couldn't be read from GitHub.": "تعذّرت قراءة {mod} من GitHub."
+  "{mod} couldn't be read from GitHub.": "تعذّرت قراءة {mod} من GitHub.",
+  "Sunrise couldn't add {mod}.": "تعذّر على Sunrise إضافة {mod}.",
+  "Build directly from GitHub. Listed source code is not reviewed.": "ابنِ مباشرة من GitHub. الشيفرة المصدرية المدرجة غير مُراجعة.",
+  "Build from source…": "البناء من المصدر…",
+  "Build unreviewed source code?": "هل تريد بناء شيفرة مصدرية غير مُراجعة؟",
+  "Built from source · {repo} @ {sha}": "بُني من المصدر · {repo} @ {sha}",
+  "Doesn't fit this build. {detail}": "غير متوافق مع هذا البناء. {detail}",
+  "Find dependency": "البحث عن اعتماد",
+  "Loading the Nightly list…": "جارٍ تحميل قائمة Nightly…"
 }

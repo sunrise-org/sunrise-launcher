@@ -2610,5 +2610,15 @@
   "Setting it to run in the background": "Imposta l’esecuzione in background",
   "Tells Sunrise, anonymously, that you're playing, so the launcher can show how many people play right now.": "Comunica anonimamente a Sunrise che stai giocando, così il launcher può mostrare quanti utenti stanno giocando in questo momento.",
   "The compiler that builds native mods: downloaded again the next time one is built.": "Il compilatore per le mod native: viene scaricato di nuovo al prossimo avvio di una compilazione.",
-  "The game packages native mods are built against: downloaded again when needed.": "I pacchetti di gioco usati per compilare le mod native: scaricati di nuovo quando necessario."
+  "The game packages native mods are built against: downloaded again when needed.": "I pacchetti di gioco usati per compilare le mod native: scaricati di nuovo quando necessario.",
+  "This Dev build's title ({title}) doesn't name its date and commit as Sunrise signs them, so it can't be checked: it was not installed.": "Il titolo di questa build Dev ({title}) non riporta data e commit nel formato firmato da Sunrise, quindi non può essere verificata e non è stata installata.",
+  "Tiles": "Riquadri",
+  "Turning off running in the background": "Disattivazione dell’esecuzione in background",
+  "Type a command: say Hello, time set day…": "Inserisci un comando: say Hello, time set day…",
+  "Updating the list": "Aggiornamento dell’elenco",
+  "Vanilla-like": "Simile a Vanilla",
+  "What building native mods leaves behind: made again when needed.": "File residui della compilazione di mod native: ricreati quando necessario.",
+  "While you play, the game sends an anonymous \"I'm playing\" ping once a minute, so the launcher can show how many people play Sunrise right now. It holds: a random number made when the game starts and forgotten when it closes, the Sunrise version, your OS (Linux, macOS or Windows), and whether you have a world open to LAN or friends. It doesn't hold: your account, your install ID, world or server names, or anything you do in the game, and the server doesn't keep your IP address. It is on unless you turn it off.": "Durante il gioco, ogni minuto viene inviato a Sunrise un ping anonimo \"Sto giocando\", così il launcher può mostrare quanti utenti stanno giocando. Include: un numero casuale generato all’avvio e dimenticato alla chiusura, la versione di Sunrise, il sistema operativo (Linux, macOS o Windows) e se hai aperto un mondo in LAN o agli amici. Non include: account, ID d’installazione, nomi di mondi o server o attività di gioco; il server non conserva il tuo indirizzo IP. È attivo finché non lo disattivi.",
+  "World generation": "Generazione del mondo",
+  "Your benchmark results, for the community results page.": "I risultati del benchmark, per la pagina dei risultati della community."
 }
