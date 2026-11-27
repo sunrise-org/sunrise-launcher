@@ -2603,5 +2603,15 @@
   "Java": "Java",
   "Moving server to trash": "جارٍ نقل الخادم إلى المهملات",
   "Only the bug reports you write and send yourself.": "تقارير الأخطاء التي تكتبها وترسلها بنفسك فقط.",
-  "Other downloads kept to make the launcher faster.": "تنزيلات أخرى محفوظة لتسريع المشغّل."
+  "Other downloads kept to make the launcher faster.": "تنزيلات أخرى محفوظة لتسريع المشغّل.",
+  "Restoring": "جارٍ الاستعادة",
+  "Rows": "صفوف",
+  "Semi-realistic": "شبه واقعي",
+  "Setting it to run in the background": "جارٍ ضبطه للعمل في الخلفية",
+  "Tells Sunrise, anonymously, that you're playing, so the launcher can show how many people play right now.": "يُبلغ Sunrise دون الكشف عن هويتك بأنك تلعب، ليتمكن المشغّل من عرض عدد اللاعبين حاليًا.",
+  "The compiler that builds native mods: downloaded again the next time one is built.": "المترجم الذي يبني الإضافات الأصلية: يُنزّل مجددًا عند بناء إضافة في المرة القادمة.",
+  "The game packages native mods are built against: downloaded again when needed.": "حزم اللعبة التي تُبنى الإضافات الأصلية بالاعتماد عليها: تُنزّل مجددًا عند الحاجة.",
+  "This Dev build's title ({title}) doesn't name its date and commit as Sunrise signs them, so it can't be checked: it was not installed.": "لا يذكر عنوان إصدار Dev هذا ({title}) تاريخه ورقم التزامه بالطريقة التي توقّع بها Sunrise الإصدارات، لذا تعذّر التحقق منه ولم يتم تثبيته.",
+  "Tiles": "مربعات",
+  "Turning off running in the background": "جارٍ إيقاف العمل في الخلفية"
 }
