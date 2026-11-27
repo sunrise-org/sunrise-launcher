@@ -2341,5 +2341,15 @@
   "GitHub answered 304 without a saved copy": "أجاب GitHub بالرمز 304 دون نسخة محفوظة",
   "too many requests from this network": "طلبات كثيرة جدًا من هذه الشبكة",
   "an unexpected 304": "استجابة 304 غير متوقعة",
-  "{why}, and Sunrise's mirror of GitHub couldn't help either ({mirror}). Try again in a few minutes.": "{why}، ولم يتمكن مرآة GitHub لدى Sunrise من المساعدة أيضًا ({mirror}). حاول بعد بضع دقائق."
+  "{why}, and Sunrise's mirror of GitHub couldn't help either ({mirror}). Try again in a few minutes.": "{why}، ولم يتمكن مرآة GitHub لدى Sunrise من المساعدة أيضًا ({mirror}). حاول بعد بضع دقائق.",
+  "{url} answered {code}": "أجاب {url} بالرمز {code}",
+  "{link} is not a GitHub link: use https://github.com/<owner>/<repo>, or .../releases/tag/<tag>, .../tree/<ref> or .../commit/<sha>.": "{link} ليس رابط GitHub: استخدم https://github.com/<owner>/<repo> أو .../releases/tag/<tag> أو .../tree/<ref> أو .../commit/<sha>.",
+  "{name} does not match the checksum GitHub lists for it.": "لا تطابق {name} قيمة التحقق التي يدرجها GitHub.",
+  "GitHub's rate limit for anonymous requests was reached. Try again in a few minutes.": "تم بلوغ حد طلبات GitHub المجهولة. حاول بعد بضع دقائق.",
+  "{name} is a Modrinth modpack: Sunrise doesn't import those.": "{name} حزمة إضافات Modrinth: لا يستورد Sunrise هذه الحزم.",
+  "{name} can't be imported: drop {kinds}.": "تعذّر استيراد {name}: أسقط {kinds}.",
+  "{name} is a Java modpack: Sunrise doesn't import those.": "{name} حزمة إضافات Java: لا يستورد Sunrise هذه الحزم.",
+  "{name} is neither a pack, a shared profile nor a game build: nothing in it that Sunrise reads.": "{name} ليس حزمة أو ملفًا شخصيًا مشتركًا أو إصدار لعبة: لا يحتوي على شيء يقرأه Sunrise.",
+  "{name} is not a shared profile.": "{name} ليس ملفًا شخصيًا مشتركًا.",
+  "Could not make a profile called {name}.": "تعذّر إنشاء ملف شخصي باسم {name}."
 }

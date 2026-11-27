@@ -2440,5 +2440,15 @@
   "Could not move the server to the trash: {error}": "Impossibile spostare il server nel Cestino: {error}",
   "Public IP lookup failed": "Ricerca dell’IP pubblico non riuscita",
   "Public IP lookup did not return HTTP 200": "La ricerca dell’IP pubblico non ha restituito HTTP 200",
-  "Could not read the public IP address": "Impossibile leggere l’indirizzo IP pubblico"
+  "Could not read the public IP address": "Impossibile leggere l’indirizzo IP pubblico",
+  "Invalid public IP response": "Risposta dell’IP pubblico non valida",
+  "The lookup did not return a public IPv4 address": "La ricerca non ha restituito un indirizzo IPv4 pubblico",
+  "Running a server needs your agreement to the Minecraft EULA.": "Per avviare un server devi accettare l’EULA di Minecraft.",
+  "Setting up the server programs from Sunrise {tag}": "Configurazione dei programmi server di Sunrise {tag}",
+  "Copying the world {folder}": "Copia del mondo {folder}",
+  "Couldn't copy the world: {error}": "Impossibile copiare il mondo: {error}",
+  "Writing the server's settings": "Scrittura delle impostazioni del server",
+  "Sunrise {tag} isn't prepared yet: press Prepare on the Play page (it uses your own Minecraft {version})": "Sunrise {tag} non è ancora pronto: premi Prepara nella pagina Gioca (usa il tuo Minecraft {version})",
+  "copying {tag}: {error}": "copia di {tag}: {error}",
+  "The server programs aren't set up yet: create a server, or press Prepare on its page.": "I programmi server non sono ancora configurati: crea un server o premi Prepara nella relativa pagina."
 }
