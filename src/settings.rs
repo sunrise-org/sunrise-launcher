@@ -91,7 +91,7 @@ impl Section {
         crate::i18n::tr_key(match self {
             Section::Account => "Who plays, and the Microsoft accounts signed in here.",
             Section::Game => "How the game starts. Its build is chosen beside Play on Home.",
-            Section::Appearance => "The theme, its accent and what is behind the pages.",
+            Section::Appearance => "The theme, its accent and the Home banner.",
             Section::Storage => "Manage game builds, downloads and where your files are kept.",
             Section::Privacy => "What Sunrise sends, and what it never does.",
             Section::Launcher => "Language, network and this version.",
@@ -390,6 +390,14 @@ impl Launcher {
             );
         }
         nav
+    }
+
+    /// The width of the section pane at the current window and sidebar, before anything has been
+    /// measured: the page's content width less the scroll area's margins (32 px a side, where
+    /// the page's own are 24) and the section list beside it, up to the pane's widest.
+    pub(super) fn settings_pane_width(&self) -> f32 {
+        let room = (self.content_width() - 16.).min(COLUMNS);
+        (room - NAV_WIDTH - COLUMN_GAP).clamp(0., PANE_WIDTH)
     }
 
     /// Opens a section, leaving no question from another one standing.

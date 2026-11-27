@@ -119,3 +119,11 @@ fn complementary_colours_do_not_cancel_a_pictures_tint() {
     image.put_pixel(1, 0, Rgba([0, 255, 255, 255]));
     assert_eq!(photo_tone(&image), Some(0xff0000));
 }
+
+#[test]
+fn the_theme_grid_takes_its_columns_from_the_width_it_is_given() {
+    use super::rows::theme_columns;
+    assert_eq!(theme_columns(0.), 1);
+    assert_eq!(theme_columns(300.), 1);
+    assert_eq!(theme_columns(760.), 4);
+}

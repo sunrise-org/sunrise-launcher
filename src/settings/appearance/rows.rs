@@ -27,6 +27,11 @@ thread_local! {
     static THEME_GRID: gpui::ScrollHandle = gpui::ScrollHandle::new();
 }
 
+/// How many cards fit a row `width` wide at a card's least width.
+pub(super) fn theme_columns(width: f32) -> u16 {
+    (((width + GAP) / (CARD_MIN + GAP)).floor() as u16).max(1)
+}
+
 fn preview(p: &Palette) -> Div {
     let bar = |w: f32, color: u32| {
         div()
@@ -144,11 +149,17 @@ impl Launcher {
             _ => appearance::effective_id(&self.settings),
         };
         // As many columns as fit at a card's least width, and the cards share the row between
-        // them: no strip of empty space on the right at any width. The row's width is the one it
-        // was last drawn at.
+        // them: no strip of empty space on the right at any width. The row's width is worked out
+        // from the window (a measured width only exists after the first frame, which drew one
+        // column), and the measured one takes over once there is one.
         let grid = THEME_GRID.with(|g| g.clone());
-        let width = f32::from(grid.bounds().size.width);
-        let columns = (((width + GAP) / (CARD_MIN + GAP)).floor() as u16).max(1);
+        let measured = f32::from(grid.bounds().size.width);
+        let width = if measured > 0. {
+            measured
+        } else {
+            self.settings_pane_width()
+        };
+        let columns = theme_columns(width);
         let mut cards = div()
             .id("alt-theme-grid")
             .track_scroll(&grid)
