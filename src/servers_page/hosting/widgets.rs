@@ -87,15 +87,6 @@ pub(super) fn chip_group(
     )
 }
 
-pub(super) fn phase_color(status: &Status) -> u32 {
-    match status.phase.as_str() {
-        "running" if status.crashes > 0 => palette().warning,
-        "running" => palette().success,
-        "stopped" => palette().line,
-        _ => palette().warning,
-    }
-}
-
 impl Launcher {
     /// A text field of the Servers page, drawn in the plain field frame.
     pub(super) fn host_field(

@@ -9,13 +9,30 @@ use crate::widgets::chip::{self, tag};
 use sunrise_launcher::browser::images;
 
 mod data;
+pub(in crate::mods) mod look;
 mod page;
+
+use crate::widgets::feedback::{banner, Tone};
+use look::{action_column, head, muted, note};
 
 #[cfg(test)]
 mod tests;
 
 /// Show every registry screenshot. Pack feeds can list many more: the full-size viewer steps
 /// through those too, without fetching all of a large pack gallery on opening its page.
+/// The parts of a detail page around its body (see [`Launcher::project_layout`]).
+pub(in crate::mods) struct Layout {
+    /// The strip above everything (back link, notices).
+    pub header: Div,
+    /// The artwork, name, chips and facts.
+    pub head: Div,
+    /// The main action and what goes under it, right of the head.
+    pub action: Option<Div>,
+    pub gallery: Option<Div>,
+    /// The About card and the like, beside the body on a wide window.
+    pub side: Option<Div>,
+}
+
 impl Launcher {
     pub(super) fn gallery(
         &mut self,
@@ -169,7 +186,7 @@ pub(super) fn about_link(id: &'static str, key: &'static str) -> Stateful<Div> {
         )
 }
 
-fn project_frame() -> Div {
+pub(super) fn project_frame() -> Div {
     div()
         .size_full()
         .flex()
@@ -364,41 +381,21 @@ impl Launcher {
             row.icon
                 .as_ref()
                 .and_then(|url| self.mods_image(url, images::ICON)),
-            package.clone(),
+            package,
         );
-        let head = div()
-            .flex()
-            .items_center()
-            .gap(px(16.))
-            .child(tile(picture, &row.id, title, 64.))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .child(
-                        div()
-                            .text_size(px(tokens::DISPLAY))
-                            .font_weight(FontWeight::BOLD)
-                            .child(crate::selectable::selectable(title.clone())),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .items_center()
-                            .gap_x(px(8.))
-                            .gap_y(px(4.))
-                            .children(
-                                (!row.authors.is_empty()).then(|| {
-                                    note(trf("by {authors}", &[("authors", &row.authors)]))
-                                }),
-                            )
-                            .children(row.make.map(|make| tag(make.label(), chip::Kind::Neutral))),
-                    ),
-            );
+        let by =
+            (!row.authors.is_empty()).then(|| trf("by {authors}", &[("authors", &row.authors)]));
+        let kind = row
+            .make
+            .map(|make| tag(make.label(), chip::Kind::Neutral).into_any_element());
+        let header_block = head(
+            tile(picture, &row.id, title.as_str(), 64.).into_any_element(),
+            title.as_str(),
+            by,
+            kind.into_iter().collect(),
+            None,
+            vec![row.version.clone()],
+        );
 
         // The right column: the action, then the installed mod's controls.
         let busy = conflict
@@ -471,41 +468,6 @@ impl Launcher {
                 .child(super::discover::install_fact(&row.version, pending))
                 .into_any_element()
         };
-        let panel_head = div()
-            .flex()
-            .items_center()
-            .gap(px(12.))
-            .child(tile(
-                mod_artwork(
-                    row.icon
-                        .as_ref()
-                        .and_then(|url| self.mods_image(url, images::ROW)),
-                    package,
-                ),
-                &row.id,
-                &row.title,
-                40.,
-            ))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .truncate()
-                            .font_weight(FontWeight::BOLD)
-                            .child(row.title.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(tokens::SMALL))
-                            .font_family(crate::theme::MONO)
-                            .text_color(c(palette().muted))
-                            .child(row.version.clone()),
-                    ),
-            );
         let refusal = nightly::installed_source(row)
             .filter(|_| !conflict)
             .and_then(|origin| {
@@ -541,67 +503,96 @@ impl Launcher {
                 secondary("alt-project-github", tr("Open on GitHub"))
                     .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
             });
-        let right = div()
-            .flex()
-            .flex_col()
-            .gap(px(14.))
-            .child(
-                card()
-                    .p(px(16.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(12.))
-                    .child(panel_head)
-                    .child(action)
-                    .children(
-                        uses_registry
-                            .then(|| self.registry_card_outcome(&row.id, cx))
-                            .flatten(),
-                    )
-                    .child(installed_controls)
-                    .children(source_button),
+        // A source mod is built from code no one at Sunrise has read: said here, on its page.
+        let unreviewed = origin.map(|_| {
+            banner(
+                Tone::Warning,
+                tr("This mod has not been reviewed"),
+                Some(tr(sunrise_launcher::github_mods::WARNING).into()),
             )
-            .children(self.other_ports_card(&row.id, Some(row), busy, cx));
-        self.project_layout(header, head, None, std::iter::empty(), right)
+        });
+        let actions = action_column()
+            .child(action)
+            .children(
+                uses_registry
+                    .then(|| self.registry_card_outcome(&row.id, cx))
+                    .flatten(),
+            )
+            .child(installed_controls)
+            .children(source_button);
+        let side = self.other_ports_card(&row.id, Some(row), busy, cx);
+        self.project_layout(
+            "project",
+            Layout {
+                header,
+                head: header_block,
+                action: Some(actions),
+                gallery: None,
+                side,
+            },
+            unreviewed.into_iter().map(IntoElement::into_any_element),
+        )
     }
 
-    /// The one project layout for registry, source and local packages. On a narrow window the
-    /// action moves above the description; otherwise it stays beside it as the player scrolls.
+    /// The one detail layout for registry, source, local, pack and collection pages. The header
+    /// block sits left and the `action` column right of it. Beside the body, `side` (the About
+    /// card and the like) takes a column of its own; on a narrow window the action and the side
+    /// move above the body, one under the other. `key` is the page's scroll position.
     pub(super) fn project_layout(
         &self,
-        header: Div,
-        head: Div,
-        gallery: Option<Div>,
+        key: &'static str,
+        layout: Layout,
         body: impl IntoIterator<Item = AnyElement>,
-        side: Div,
     ) -> AnyElement {
-        let scroll = crate::frame::scrolls("project");
-        let (above, beside) = if self.content_width() < 860. {
-            (Some(side), None)
-        } else {
-            (
+        let Layout {
+            header,
+            head,
+            action,
+            gallery,
+            side,
+        } = layout;
+        let scroll = crate::frame::scrolls(key);
+        let wide = self.content_width() >= 860.;
+        let (top_action, above_action) = match (wide, action) {
+            (true, action) => (
+                action.map(|a| a.w(px(look::ACTION_WIDTH)).flex_none()),
                 None,
+            ),
+            (false, action) => (None, action),
+        };
+        let (beside, above_side) = match (wide, side) {
+            (true, Some(side)) => (
                 Some(
                     side.relative()
                         .top(px(self.mods_sticky.shift(&scroll, 1, 1)))
-                        .w(px(360.))
+                        .w(px(look::SIDE_WIDTH))
                         .flex_none(),
                 ),
-            )
+                None,
+            ),
+            (_, side) => (None, side),
         };
+        let top = div()
+            .flex()
+            .flex_wrap()
+            .items_start()
+            .justify_between()
+            .gap(px(24.))
+            .child(div().flex_1().min_w(px(280.)).min_w_0().child(head))
+            .children(top_action);
         let left = div()
             .flex_1()
             .min_w_0()
             .flex()
             .flex_col()
-            .gap(px(14.))
-            .child(head)
-            .children(above)
+            .gap(px(20.))
+            .children(above_action)
+            .children(above_side)
             .children(gallery)
             .children(body);
         project_frame()
             .child(crate::scrollbar::wrap_page_in_margin(
-                "project",
+                key,
                 div()
                     .id("alt-project-scroll")
                     .flex_1()
@@ -609,8 +600,9 @@ impl Launcher {
                     .overflow_y_scroll()
                     .flex()
                     .flex_col()
-                    .gap(px(14.))
+                    .gap(px(20.))
                     .child(header)
+                    .child(top)
                     .child(
                         div()
                             .id("alt-project-columns")

@@ -3,7 +3,49 @@ use super::widgets::*;
 use super::*;
 use crate::widgets::feedback::{banner, Tone};
 
+/// The LAN address a listener is reached at, when the address card shows a local one: the
+/// listener's own IP, or this machine's LAN IP when it listens on every interface.
+fn lan_ip(
+    listener: Option<std::net::SocketAddr>,
+    internet: bool,
+    local_only: bool,
+) -> Option<std::net::IpAddr> {
+    listener
+        .filter(|_| !internet && !local_only)
+        .and_then(|address| {
+            if address.ip().is_unspecified() {
+                servers::lan_address().filter(|ip| ip.is_ipv4() == address.is_ipv4())
+            } else {
+                Some(address.ip())
+            }
+        })
+}
+
 impl Launcher {
+    /// The address this server is shared at, as the address card shows it and its copy button
+    /// copies it: the public one in internet mode once detected, else the local one.
+    pub(super) fn share_text(&self, listener: Option<std::net::SocketAddr>) -> Option<String> {
+        let s = &self.servers;
+        let internet = s.internet_address;
+        let local_only = listener.is_some_and(|address| address.ip().is_loopback());
+        let public_port = listener
+            .filter(|address| address.is_ipv4() && !address.ip().is_loopback())
+            .map(|address| address.port());
+        if internet {
+            s.last_public_address
+                .filter(|_| s.public_lookup == PublicLookup::Detected)
+                .zip(public_port)
+                .map(|(ip, port)| servers::network::address(ip.into(), port))
+        } else {
+            listener.filter(|_| !local_only).map(|listener| {
+                lan_ip(Some(listener), internet, local_only).map_or_else(
+                    || format!("localhost:{}", listener.port()),
+                    |ip| servers::network::address(ip, listener.port()),
+                )
+            })
+        }
+    }
+
     pub(super) fn host_address_card(
         &mut self,
         listener: Option<std::net::SocketAddr>,
@@ -20,27 +62,8 @@ impl Launcher {
         let public_port = listener
             .filter(|address| address.is_ipv4() && !address.ip().is_loopback())
             .map(|address| address.port());
-        let lan = listener
-            .filter(|_| !internet && !local_only)
-            .and_then(|address| {
-                if address.ip().is_unspecified() {
-                    servers::lan_address().filter(|ip| ip.is_ipv4() == address.is_ipv4())
-                } else {
-                    Some(address.ip())
-                }
-            });
-        let address = if internet {
-            last.filter(|_| lookup == PublicLookup::Detected)
-                .zip(public_port)
-                .map(|(ip, port)| servers::network::address(ip.into(), port))
-        } else {
-            listener.filter(|_| !local_only).map(|listener| {
-                lan.map_or_else(
-                    || format!("localhost:{}", listener.port()),
-                    |ip| servers::network::address(ip, listener.port()),
-                )
-            })
-        };
+        let lan = lan_ip(listener, internet, local_only);
+        let address = self.share_text(listener);
 
         let modes = chip_group(
             "host-address-network",
@@ -55,9 +78,6 @@ impl Launcher {
                 }
             },
         );
-        let copied = s
-            .copied
-            .is_some_and(|at| at.elapsed() < Duration::from_secs(2));
         let shown = address.clone().unwrap_or_else(|| {
             tr(match (internet, lookup) {
                 _ if local_only => "Local connections only",
@@ -94,21 +114,17 @@ impl Launcher {
                             .text_size(px(tokens::HEADING))
                             .child(shown),
                     )
-                    .child(self.host_button(
-                        "host-address-copy",
-                        tr(if copied { "Copied" } else { "Copy" }),
-                        address.is_some(),
-                        cx,
-                        move |this, cx| {
-                            if let Some(address) = &address {
-                                crate::selectable::clipboard::copy_to_clipboard(
-                                    cx,
-                                    gpui::ClipboardItem::new_string(address.clone()),
-                                );
-                                this.servers.copied = Some(Instant::now());
-                            }
-                        },
-                    )),
+                    .child(match address {
+                        Some(address) => crate::widgets::motion_bits::copy_button(
+                            "host-address-copy",
+                            tr("Copy"),
+                            address,
+                        )
+                        .into_any_element(),
+                        None => self
+                            .host_button("host-address-copy", tr("Copy"), false, cx, |_, _| {})
+                            .into_any_element(),
+                    }),
             );
 
         if local_only {

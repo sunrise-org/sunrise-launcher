@@ -584,7 +584,7 @@ impl Launcher {
                     }))
             });
         }
-        stacked(
+        self.wide_row(
             tr("Accent"),
             tr("Pick a colour, or type a colour name, a hue in degrees or #rrggbb. Play darkens a pale accent just enough for its white label."),
             div()

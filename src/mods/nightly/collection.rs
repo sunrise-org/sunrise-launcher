@@ -1,4 +1,6 @@
 //! A source collection's page: pick mods to add, with one native consent for the selection.
+use super::super::project::look::{action_column, card, head, muted, section};
+use super::super::project::project_frame;
 use super::*;
 use crate::mods_page::install::{stage_label, SourcePicks};
 use crate::widgets::button::primary;
@@ -64,14 +66,11 @@ impl Launcher {
                 cx.notify();
             },
         ));
-        let page = div()
-            .size_full()
-            .min_h_0()
+        let header = div()
             .flex()
             .flex_col()
-            .p(px(24.))
-            .gap(px(12.))
-            .text_color(c(palette().text))
+            .gap(px(14.))
+            .child(back)
             .children(self.strip(cx));
         let found = state.collection.as_ref().and_then(|open| {
             let catalogue = state.catalogue.as_ref()?;
@@ -99,8 +98,8 @@ impl Launcher {
             ))
         });
         let Some((collection, members, ticked, allow_fetch)) = found else {
-            return page
-                .child(back)
+            return project_frame()
+                .child(header)
                 .child(muted(tr("This collection can't be shown.")))
                 .into_any_element();
         };
@@ -109,37 +108,18 @@ impl Launcher {
         let load = (!state.work.icons.contains_key(&icon))
             .then(|| when_visible(cx, move |this| this.request_nightly_icon(icon)));
         let owners = collection.owners.join(", ");
-        let head = div()
-            .relative()
-            .flex()
-            .items_center()
-            .gap(px(16.))
-            .child(tile(picture.clone(), &collection.id, &collection.name, 64.))
-            .children(load)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .child(
-                        div()
-                            .text_size(px(tokens::DISPLAY))
-                            .font_weight(FontWeight::BOLD)
-                            .child(crate::selectable::selectable(collection.name.clone())),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .items_center()
-                            .gap_x(px(8.))
-                            .gap_y(px(4.))
-                            .child(note(trf("by {authors}", &[("authors", &owners)])))
-                            .child(tag(tr("Collection"), chip::Kind::Neutral)),
-                    ),
-            );
+        let facts = vec![trf(
+            "Collection · {count} mods",
+            &[("count", &collection.members.len().to_string())],
+        )];
+        let header_block = head(
+            tile(picture, &collection.id, &collection.name, 64.).into_any_element(),
+            &collection.name,
+            Some(trf("by {authors}", &[("authors", &owners)])),
+            vec![tag(tr("Collection"), chip::Kind::Neutral).into_any_element()],
+            Some(collection.summary.clone()).filter(|s| !s.trim().is_empty()),
+            facts,
+        );
 
         // The list: a header that picks all, then one row per mod.
         let pickable: Vec<&Source> = members
@@ -251,6 +231,7 @@ impl Launcher {
                     .gap(px(12.))
                     .px(px(14.))
                     .py(px(10.))
+                    .min_h(px(52.))
                     .border_t_1()
                     .border_color(palette().rule())
                     .when(!installed, |d| d.cursor_pointer())
@@ -275,7 +256,14 @@ impl Launcher {
                             )
                             .children(why),
                     )
-                    .children(right)
+                    .child(
+                        div()
+                            .w(px(super::super::model::column::STATUS))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .children(right),
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if installed {
                             return;
@@ -290,7 +278,7 @@ impl Launcher {
             );
         }
 
-        // The side panel: one Add for the selected mods.
+        // The action column: one Add for the selected mods, and what it means.
         let label = match picked {
             _ if pickable.is_empty() => tr("Installed").into(),
             1 => tr("Add 1 mod").into(),
@@ -307,35 +295,7 @@ impl Launcher {
         } else {
             dim(action)
         };
-        let right = card()
-            .p(px(16.))
-            .flex()
-            .flex_col()
-            .gap(px(12.))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(12.))
-                    .child(tile(picture, &collection.id, &collection.name, 40.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .truncate()
-                                    .font_weight(FontWeight::BOLD)
-                                    .child(collection.name.clone()),
-                            )
-                            .child(muted(trf(
-                                "Collection · {count} mods",
-                                &[("count", &collection.members.len().to_string())],
-                            ))),
-                    ),
-            )
+        let action_col = action_column()
             .child(action)
             .child(muted(tr(
                 "Each mod builds from its own repository on this computer. You're asked once, for all of them.",
@@ -343,49 +303,25 @@ impl Launcher {
             .child(muted(tr(
                 "Adds source code from GitHub. Native mods build when you play.",
             )));
-        let (above, beside) = match self.content_width() < 860. {
-            true => (Some(right), None),
-            false => (None, Some(right.w(px(360.)).flex_none())),
-        };
-        let about_text = match collection.description.trim().is_empty() {
-            true => collection.summary.clone(),
-            false => collection.description.clone(),
-        };
-        let left = div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .gap(px(14.))
-            .child(head)
-            .children(above)
-            .child(super::super::project::prose(self.theme, &about_text))
-            .child(
-                div()
-                    .text_size(px(tokens::HEADING))
-                    .font_weight(FontWeight::BOLD)
-                    .child(tr("Mods")),
-            )
-            .child(rows);
-        page.child(crate::scrollbar::wrap_page_in_margin(
+        let mut body: Vec<AnyElement> = Vec::new();
+        if !collection.description.trim().is_empty() {
+            body.push(super::super::project::prose(
+                self.theme,
+                &collection.description,
+            ));
+        }
+        body.push(section(tr("Mods")).into_any_element());
+        body.push(rows.into_any_element());
+        self.project_layout(
             "nightly-collection",
-            div()
-                .id("nightly-collection-scroll")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .child(
-                    div().flex().flex_col().gap(px(14.)).child(back).child(
-                        div()
-                            .flex()
-                            .items_start()
-                            .gap(px(24.))
-                            .child(left)
-                            .children(beside),
-                    ),
-                ),
-            &self.theme,
-        ))
-        .into_any_element()
+            crate::mods::project::Layout {
+                header: header.relative().children(load),
+                head: header_block,
+                action: Some(action_col),
+                gallery: None,
+                side: None,
+            },
+            body,
+        )
     }
 }

@@ -1,7 +1,8 @@
 //! Settings › Launcher: language, network and this version.
 use super::*;
-use crate::widgets::button::secondary;
+use crate::widgets::button::{primary, secondary};
 use crate::widgets::feedback::{banner, Tone};
+use crate::widgets::field::select_button;
 
 impl Launcher {
     pub(super) fn settings_launcher(&mut self, cx: &mut Context<Self>) -> Div {
@@ -14,14 +15,8 @@ impl Launcher {
         };
         // One button with the language on it; a press opens the list under it, as Discover's
         // menus do. 87 languages don't fit on a page as buttons.
-        let opener = secondary("alt-language", now)
-            .gap(px(8.))
-            .child(crate::widgets::motion_bits::chevron(
-                "settings-language",
-                picking,
-                13.,
-                rgb(palette().muted).into(),
-            ))
+        let opener = select_button("alt-language", now, picking)
+            .w(px(220.))
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.ui.settings.languages = !this.ui.settings.languages;
@@ -101,7 +96,7 @@ impl Launcher {
             gpui::deferred(
                 div()
                     .absolute()
-                    .top(px(tokens::CONTROL + 6.))
+                    .top(px(tokens::FIELD + 6.))
                     .right_0()
                     .child(
                         gpui::anchored()
@@ -131,14 +126,20 @@ impl Launcher {
             |this| this.save_proxy(),
             cx,
         );
-        let mut proxy = stacked(
+        let proxy = self.wide_row(
             tr("Proxy"),
             tr("Downloads, sign-ins and updates go through it. Empty means none; HTTPS_PROXY then applies if the launcher was started with one."),
-            field,
+            field.w(px(260.)),
         );
-        if let Some(why) = refused {
-            proxy = proxy.child(banner(Tone::Danger, why, None));
-        }
+        let proxy = match refused {
+            Some(why) => div()
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .child(proxy)
+                .child(banner(Tone::Danger, why, None)),
+            None => proxy,
+        };
         let version = self.launcher_update_row(cx);
         div()
             .flex()
@@ -193,14 +194,12 @@ impl Launcher {
                     )),
                 )
             } else if let Some(label) = offer.action(self.launcher_update_wait(), armed) {
-                Some(
-                    secondary("alt-launcher-update", label).on_click(cx.listener(
-                        |this, _, _, cx| {
-                            this.request_launcher_update();
-                            cx.notify();
-                        },
-                    )),
-                )
+                Some(primary("alt-launcher-update", label).on_click(cx.listener(
+                    |this, _, _, cx| {
+                        this.request_launcher_update();
+                        cx.notify();
+                    },
+                )))
             } else if matches!(offer.status, Status::Stuck(_)) {
                 recovery()
             } else {

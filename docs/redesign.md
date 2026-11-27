@@ -58,7 +58,7 @@ Other themes keep working: they feed the same roles.
 - Corners ([`tokens.rs`](../src/tokens.rs)): bars 2, small 4, **controls and chips 6**, cards 8,
   panels and sheets 12. Chips are not pills. Switches and radios stay round.
 - Type: Geist (`FONT`), Geist Mono for logs and codes. Sizes as in `tokens.rs` (caption 11, small
-  12, label 13, body 14, lead 16, heading 18/20, title 24/28, hero 40).
+  12, label 13, body 14, lead 16, heading 18/20, title 24/28).
 
 ### Selection
 

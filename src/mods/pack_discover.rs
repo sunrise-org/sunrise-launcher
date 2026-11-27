@@ -12,14 +12,13 @@
 //! **Nothing else changes.** Installing never turns a pack on, starts the game or edits options;
 //! it stays blocked while the game or another change runs, and holds Play and setup changes
 //! through the shared busy flag (`mutating`).
-use super::discover::MenuOption;
+use super::discover::{KindTab, MenuOption};
 use super::state::Menu;
 use super::ui::{added_mark, browse_card, c, card, columns, dim, muted};
 use super::*;
 use crate::paint::palette;
 use crate::widgets::button::secondary;
-use crate::widgets::chip::{self, choices, tag};
-use gpui::SharedString;
+use crate::widgets::chip::{self, tag};
 use std::path::Path;
 use sunrise_launcher::browser::details::{category_label, Sort};
 use sunrise_launcher::browser::{self, images, installed, Kind, Project, Query, Source as _};
@@ -40,16 +39,6 @@ pub(super) enum Scope {
 }
 
 impl Scope {
-    pub(super) const ALL: [Scope; 3] = [Scope::Resource, Scope::Shader, Scope::Data];
-
-    pub(super) fn label(self) -> &'static str {
-        match self {
-            Scope::Resource => tr("Resource packs"),
-            Scope::Data => tr("Data packs"),
-            Scope::Shader => tr("Shader packs"),
-        }
-    }
-
     /// The kind searched for.
     fn kind(self) -> Kind {
         match self {
@@ -244,10 +233,6 @@ impl Launcher {
             Some((scope, found)) if *scope == p.scope => found.clone(),
             _ => Vec::new(),
         };
-        let category_now = f
-            .category
-            .as_deref()
-            .map_or_else(|| tr("All categories").to_owned(), category_label);
         let category_options = || -> Vec<MenuOption> {
             let pick = |category: Option<String>| -> Box<dyn Fn(&mut Launcher)> {
                 Box::new(move |this: &mut Launcher| {
@@ -289,10 +274,9 @@ impl Launcher {
                 })
                 .collect()
         };
-        let category_menu = self.discover_menu(&category_now, Menu::Category, category_options, cx);
         let sort_menu = self.discover_menu(tr(sort_now.label()), Menu::Sort, sort_options, cx);
         self.filter_bar(
-            category_menu,
+            category_options(),
             f.show_all,
             |this| {
                 let filters = &mut this.mods_state.packs.filters;
@@ -456,18 +440,6 @@ impl Launcher {
             self.pack_search();
         }
         let scope = self.mods_state.packs.scope;
-        let options: Vec<(Scope, SharedString)> = Scope::ALL
-            .into_iter()
-            .map(|kind| (kind, kind.label().into()))
-            .collect();
-        let this = cx.entity();
-        let kinds = choices("alt-discover-scope", &options, scope, move |kind, _, cx| {
-            this.update(cx, |this, cx| {
-                this.pack_scope(kind);
-                cx.notify();
-            })
-        })
-        .gap(px(8.));
         let from: AnyElement = match scope {
             Scope::Data => self.data_pack_line(cx),
             Scope::Shader => muted(tr(
@@ -483,8 +455,7 @@ impl Launcher {
         }
         let filters = self.pack_filter_bar(cx);
         let page = self
-            .discover_shell(window, focus, cx)
-            .child(kinds)
+            .discover_shell(KindTab::from_scope(scope), window, focus, cx)
             .child(from)
             .child(filters);
         let added: HashSet<(SourceId, String)> = self
@@ -585,11 +556,14 @@ impl Launcher {
                             let common =
                                 data && support.reason() == Some(browser::datapack_support());
                             let note = support.reason().filter(|_| !common).map(str::to_owned);
-                            let mut facts = vec![tag(source_label(p.source), chip::Kind::Neutral)];
+                            let source_kind = match p.source {
+                                SourceId::Sunrise => chip::Kind::Sunrise,
+                                SourceId::Modrinth => chip::Kind::Modrinth,
+                            };
+                            let mut facts = vec![tag(source_label(p.source), source_kind)];
                             if !matches!(support, browser::Support::Works) && !common {
                                 facts.push(tag(support.label(), chip::Kind::Neutral));
                             }
-                            facts.push(muted(model::downloads(p.downloads)));
                             if data {
                                 match self.mods_state.data.worlds_with(p.source, &p.id) {
                                     0 => {}
@@ -610,6 +584,7 @@ impl Launcher {
                                     &p.author,
                                     &p.summary,
                                     facts,
+                                    Some(muted(model::downloads(p.downloads))),
                                     control,
                                     note,
                                 )

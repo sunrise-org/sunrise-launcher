@@ -10,35 +10,26 @@ mod worlds;
 
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 pub(super) enum Tab {
+    Mods,
     #[default]
     Worlds,
-    Servers,
     Packs,
-    Mods,
+    Servers,
 }
 
 impl Tab {
-    const ALL: [Self; 4] = [Self::Worlds, Self::Servers, Self::Packs, Self::Mods];
+    /// In the order the profile's tabs stand under its banner.
+    const ALL: [Self; 4] = [Self::Mods, Self::Worlds, Self::Packs, Self::Servers];
 
     fn index(self) -> usize {
         self as usize
     }
 
-    /// Its icon: the top bar's, where the top bar has the same place.
-    fn icon(self) -> &'static str {
-        match self {
-            Self::Servers => "server",
-            Self::Worlds => "globe",
-            Self::Packs => "package",
-            Self::Mods => "puzzle",
-        }
-    }
-
     fn label(self) -> &'static str {
         match self {
-            Self::Servers => tr("Servers"),
+            Self::Servers => tr("Saved servers"),
             Self::Worlds => tr("Worlds"),
-            Self::Packs => tr("Resource Packs"),
+            Self::Packs => tr("Packs"),
             Self::Mods => tr("Mods"),
         }
     }
@@ -70,8 +61,6 @@ pub(super) struct Tabs {
     profile: Option<String>,
     selected: Tab,
     views: [View; 4],
-    strip_scroll: ScrollHandle,
-    strip_focus: Option<FocusHandle>,
     opener: Option<FocusHandle>,
     /// Stable even as a virtual row is recycled. Cleared when leaving the selected profile.
     rows: HashMap<SharedString, FocusHandle>,
@@ -146,98 +135,19 @@ pub(crate) fn row_name(name: impl Into<SharedString>) -> Div {
 }
 
 impl Launcher {
-    fn profile_tab_strip(
-        &mut self,
-        active: Tab,
-        focus: &FocusHandle,
-        compact: bool,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let scroll = self.ui.home.tabs.strip_scroll.clone();
-        let mut strip = div()
-            .id("home-profile-tabs")
-            .flex()
-            .flex_none()
-            .h(px(44.))
-            .min_w_0()
-            .overflow_x_scroll()
-            .track_scroll(&scroll)
-            .border_b_1()
-            .border_color(palette().rule());
-        for tab in Tab::ALL {
-            let selected = tab == active;
-            strip = strip.child(
-                div()
-                    .id(("home-profile-tab", tab.index()))
-                    .relative()
-                    .flex()
-                    .flex_none()
-                    .h_full()
-                    .items_center()
-                    .gap(px(7.))
-                    .px(px(if compact { 9. } else { 12. }))
-                    .text_size(px(14.))
-                    .cursor_pointer()
-                    .whitespace_nowrap()
-                    .text_color(rgb(if selected {
-                        palette().text
-                    } else {
-                        palette().muted
-                    }))
-                    .hover(|s| s.bg(rgb(palette().chrome_raised)))
-                    .when(selected, |d| {
-                        d.track_focus(focus)
-                            .reach()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(
-                                div()
-                                    .absolute()
-                                    .bottom_0()
-                                    .left_0()
-                                    .right_0()
-                                    .h(px(2.))
-                                    .bg(rgb(palette().accent)),
-                            )
-                    })
-                    // The top bar's tabs: their icon, at their size, before the name.
-                    .child(blocks::icon(
-                        tab.icon(),
-                        16.,
-                        rgb(if selected {
-                            palette().text
-                        } else {
-                            palette().muted
-                        })
-                        .into(),
-                    ))
-                    .child(tab.label())
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.ui.home.tabs.selected = tab;
-                        // Pointer and keyboard both land on the one roving tab stop.
-                        if let Some(focus) = &this.ui.home.tabs.strip_focus {
-                            window.focus(focus, cx);
-                        }
-                        cx.notify();
-                    }))
-                    .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
-                        if !selected || ev.keystroke.modifiers.modified() {
-                            return;
-                        }
-                        let next = match ev.keystroke.key.as_str() {
-                            "left" => (tab.index() + Tab::ALL.len() - 1) % Tab::ALL.len(),
-                            "right" => (tab.index() + 1) % Tab::ALL.len(),
-                            "home" => 0,
-                            "end" => Tab::ALL.len() - 1,
-                            _ => return,
-                        };
-                        this.ui.home.tabs.selected = Tab::ALL[next];
-                        this.ui.home.tabs.strip_scroll.scroll_to_item(next);
-                        cx.stop_propagation();
-                        cx.notify();
-                    })),
-            );
-        }
-        strip
+    /// The profile's tabs: the shared underline tabs, picked by a click or the arrow keys.
+    fn profile_tab_strip(&mut self, active: Tab, cx: &mut Context<Self>) -> Stateful<Div> {
+        let items: Vec<(Tab, SharedString)> = Tab::ALL
+            .iter()
+            .map(|tab| (*tab, SharedString::from(tab.label())))
+            .collect();
+        let this = cx.entity();
+        crate::widgets::nav::tabs("home-profile-tabs", &items, active, move |tab, _, cx| {
+            this.update(cx, |view, cx| {
+                view.ui.home.tabs.selected = tab;
+                cx.notify();
+            });
+        })
     }
 
     pub(super) fn profile_tabs(
@@ -249,14 +159,7 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Div {
         let active = self.ui.home.tabs.selected;
-        let focus = self
-            .ui
-            .home
-            .tabs
-            .strip_focus
-            .get_or_insert_with(|| cx.focus_handle().tab_stop(true))
-            .clone();
-        let strip = self.profile_tab_strip(active, &focus, compact, cx);
+        let strip = self.profile_tab_strip(active, cx);
         let Content {
             count,
             manage,
@@ -302,14 +205,9 @@ impl Launcher {
             let win = window.window_handle();
             cx.defer(move |cx| {
                 win.update(cx, |_, window, cx| {
-                    window.focus(
-                        if root.contains(&opener, window) {
-                            &opener
-                        } else {
-                            &focus
-                        },
-                        cx,
-                    );
+                    if root.contains(&opener, window) {
+                        window.focus(&opener, cx);
+                    }
                 })
                 .ok();
             });
@@ -326,14 +224,25 @@ impl Launcher {
             // The subtle outline the search field has.
             .border_color(palette().plate_edge())
             .px(px(inset - 1.))
-            .child(strip)
+            // The tabs, with the profile's one action for its collection on the right.
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(10.))
+                    .border_b_1()
+                    .border_color(palette().rule())
+                    .child(strip)
+                    .children(manage.map(|button| button.flex_none())),
+            )
             .child(
                 div()
                     .flex()
                     .flex_none()
                     .h(px(38.))
                     .items_center()
-                    .justify_between()
                     .gap(px(10.))
                     .child(
                         div()
@@ -347,8 +256,7 @@ impl Launcher {
                             .children(count.map(|label| div().min_w_0().truncate().child(label)))
                             .when(separator, |d| d.child(div().flex_none().child("·")))
                             .children(off_link),
-                    )
-                    .children(manage.map(|button| button.flex_none())),
+                    ),
             )
             .child(
                 div()

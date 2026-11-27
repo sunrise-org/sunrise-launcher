@@ -1,3 +1,4 @@
+use super::look::{action_column, card, head, muted, note, section};
 use super::*;
 use crate::widgets::button::{primary, secondary};
 use crate::widgets::chip::{self, tag};
@@ -115,56 +116,23 @@ impl Launcher {
                 .child(category_label(k))
         });
 
-        let head = div()
-            .flex()
-            .flex_col()
-            .gap(px(12.))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(16.))
-                    .child(tile(picture.clone(), &vp.id, &vp.name, 64.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(6.))
-                            .child(
-                                div()
-                                    .text_size(px(tokens::DISPLAY))
-                                    .font_weight(FontWeight::BOLD)
-                                    .child(crate::selectable::selectable(vp.name.clone())),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_wrap()
-                                    .items_center()
-                                    .gap(px(8.))
-                                    .when(!credit.is_empty(), |d| {
-                                        d.child(
-                                            div()
-                                                .text_size(px(tokens::LABEL))
-                                                .text_color(c(p.muted))
-                                                .child(crate::selectable::selectable(credit)),
-                                        )
-                                    })
-                                    .child(tag(vp.make.label(), chip::Kind::Neutral))
-                                    .children(categories),
-                            ),
-                    ),
-            )
-            .when(!vp.summary.trim().is_empty(), |d| {
-                d.child(
-                    div()
-                        .text_size(px(tokens::BODY))
-                        .text_color(c(p.text))
-                        .child(crate::selectable::selectable(vp.summary.clone())),
-                )
-            });
+        let mut chips: Vec<AnyElement> =
+            vec![tag(vp.make.label(), chip::Kind::Neutral).into_any_element()];
+        chips.extend(categories.map(IntoElement::into_any_element));
+        let facts: Vec<String> = (!vp.updated.is_empty())
+            .then(|| format!("{} {}", tr("Updated"), vp.updated))
+            .into_iter()
+            .collect();
+        let summary = Some(vp.summary.clone()).filter(|s| !s.trim().is_empty());
+        let by = (!credit.is_empty()).then(|| credit.clone());
+        let header_block = head(
+            tile(picture, &vp.id, &vp.name, 64.).into_any_element(),
+            &vp.name,
+            by,
+            chips,
+            summary,
+            facts,
+        );
 
         // Captioned screenshot gallery: fetched ONLY here when the mod page opens.
         let gallery = self.v2_gallery(&vp.id, &vp.screenshots, cx);
@@ -185,12 +153,7 @@ impl Launcher {
                     .flex_col()
                     .gap(px(8.))
                     .pt(px(8.))
-                    .child(
-                        div()
-                            .text_size(px(tokens::HEADING))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(tr("Dependencies")),
-                    )
+                    .child(section(tr("Dependencies")))
                     .child(list)
                     .into_any_element(),
             );
@@ -203,15 +166,10 @@ impl Launcher {
             .justify_between()
             .gap(px(8.))
             .pt(px(8.))
-            .child(
-                div()
-                    .text_size(px(tokens::HEADING))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(trf(
-                        "Versions that fit {target}",
-                        &[("target", &target_label)],
-                    )),
-            )
+            .child(section(trf(
+                "Versions that fit {target}",
+                &[("target", &target_label)],
+            )))
             .when(!vp.other_versions.is_empty(), |d| {
                 let count = vp.other_versions.len();
                 let label = if count == 1 {
@@ -425,68 +383,6 @@ impl Launcher {
             }
         };
 
-        let action_card = card()
-            .p(px(16.))
-            .flex()
-            .flex_col()
-            .gap(px(12.))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .child(tile(picture, &vp.id, &vp.name, 40.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_size(px(tokens::BODY))
-                                    .truncate()
-                                    .child(vp.name.clone()),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(tokens::SMALL))
-                                    .text_color(c(p.muted))
-                                    .truncate()
-                                    .child(meta_sub),
-                            )
-                            // Under the name, where a long label wraps instead of squeezing it.
-                            .children(vp.will_install.as_ref().map(|line| {
-                                div()
-                                    .text_size(px(tokens::CAPTION))
-                                    .text_color(c(p.success))
-                                    .child(line.verdict.fit_label())
-                            })),
-                    ),
-            )
-            .child(primary_control)
-            .children(self.registry_card_outcome(&vp.id, cx))
-            .children(installed_id.and_then(|id| self.registry_card_outcome(id, cx)))
-            .when(vp.will_install.is_none(), |d| {
-                d.children(vp.fit.reason().map(note))
-            })
-            .children(controls)
-            .child(div().h(px(1.)).bg(p.rule()))
-            .child(self.rating_block(&vp.id, cx))
-            .child(div().h(px(1.)).bg(p.rule()))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .text_size(px(tokens::SMALL))
-                    .text_color(c(p.muted))
-                    .child(crate::glass_ui::icon("tick-02", 14., c(p.muted)))
-                    .child(tr("Reviewed by Sunrise")),
-            )
-            .child(published_row);
-
         let link_url = |link: &Option<SourceLink>| -> Option<String> {
             link.as_ref().map(|l| match l {
                 SourceLink::GitHub(url) | SourceLink::Other(url) => url.clone(),
@@ -495,6 +391,39 @@ impl Launcher {
         let source_url = link_url(&vp.source).or_else(|| link_url(&vp.repository_url));
         let homepage_url = link_url(&vp.homepage);
         let issues_url = link_url(&vp.issues);
+
+        // The action column: the one action, what it will change, then the secondary link.
+        let action_col = action_column()
+            .child(muted(meta_sub))
+            .children(vp.will_install.as_ref().map(|line| {
+                div()
+                    .text_size(px(tokens::CAPTION))
+                    .text_color(c(p.success))
+                    .child(line.verdict.fit_label())
+            }))
+            .child(primary_control)
+            .children(self.registry_card_outcome(&vp.id, cx))
+            .children(installed_id.and_then(|id| self.registry_card_outcome(id, cx)))
+            .when(vp.will_install.is_none(), |d| {
+                d.children(vp.fit.reason().map(note))
+            })
+            .children(controls)
+            .children(source_url.clone().map(|url| {
+                secondary("alt-v2-source-open", tr("Open source")).on_click(cx.listener(
+                    move |_, _: &ClickEvent, _, cx| {
+                        Self::open_url(&url, cx);
+                    },
+                ))
+            }));
+
+        let reviewed = div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .text_size(px(tokens::SMALL))
+            .text_color(c(p.muted))
+            .child(crate::glass_ui::icon("tick-02", 14., c(p.muted)))
+            .child(tr("Reviewed by Sunrise"));
 
         let mut about = card()
             .p(px(16.))
@@ -515,17 +444,11 @@ impl Launcher {
             })
             .when(!vp.license.is_empty(), |d| {
                 d.child(about_row(tr("Licence"), vp.license.clone()))
-            });
+            })
+            .child(div().h(px(1.)).my(px(8.)).bg(p.rule()))
+            .child(reviewed)
+            .child(published_row);
 
-        if let Some(url) = source_url {
-            about = about.child(
-                about_link("alt-v2-source", tr("Source")).on_click(cx.listener(
-                    move |_, _: &ClickEvent, _, cx| {
-                        Self::open_url(&url, cx);
-                    },
-                )),
-            );
-        }
         if let Some(url) = homepage_url {
             about = about.child(about_link("alt-v2-homepage", tr("Homepage")).on_click(
                 cx.listener(move |_, _: &ClickEvent, _, cx| {
@@ -547,10 +470,20 @@ impl Launcher {
             .flex()
             .flex_col()
             .gap(px(12.))
-            .child(action_card)
-            .child(about);
+            .child(about)
+            .child(card().p(px(16.)).child(self.rating_block(&vp.id, cx)));
 
-        self.project_layout(header, head, gallery, body, side)
+        self.project_layout(
+            "project",
+            super::Layout {
+                header,
+                head: header_block,
+                action: Some(action_col),
+                gallery,
+                side: Some(side),
+            },
+            body,
+        )
     }
 
     /// One dependency, as Modrinth lists them: its picture and name, which open its page when the
@@ -679,7 +612,7 @@ impl Launcher {
         let avail = if content < 860. {
             (content - 62.).max(240.)
         } else {
-            (content - 442.).max(280.)
+            (content - 402.).max(280.)
         };
         let columns = if count == 1 {
             1

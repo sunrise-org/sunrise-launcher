@@ -1,15 +1,19 @@
 use super::*;
 use super::{actions, rows};
 use crate::widgets::button::{primary, secondary};
-use crate::widgets::check::{checkbox, Tick};
+use crate::widgets::check::{checkbox, radio, Tick};
+use crate::widgets::feedback::{banner, Tone};
+use crate::widgets::focus::c;
 
 fn muted(text: &str) -> Div {
     div()
         .text_size(px(tokens::LABEL))
-        .text_color(rgb(palette().muted))
+        .text_color(c(palette().muted))
         .child(text.to_owned())
 }
 
+/// One way to add a source: a card with its icon, a radio at its top end, and a line of what it
+/// does. Selected, it takes the selection fill and the accent edge.
 fn source_option_card(
     choice: SourceChoice,
     id: &'static str,
@@ -20,9 +24,13 @@ fn source_option_card(
     cx: &mut Context<Launcher>,
 ) -> Stateful<Div> {
     let selected = choice == kind;
-    let accent = Hsla::from(rgb(palette().accent_ink));
-    let rest_border = Hsla::from(rgb(palette().line));
-    let hover_border = Hsla::from(rgb(palette().muted));
+    let p = palette();
+    let (edge, hover_edge) = if selected {
+        (p.accent_ink, p.accent_ink)
+    } else {
+        (p.line, p.muted)
+    };
+    let face = if selected { p.selected } else { p.card_color };
     div()
         .id(id)
         .reach()
@@ -34,29 +42,28 @@ fn source_option_card(
         .p(px(16.))
         .rounded(crate::tokens::r(tokens::R_CARD))
         .border_1()
-        .border_color(if selected {
-            accent.opacity(0.85)
-        } else {
-            rest_border
-        })
-        .bg(if selected {
-            accent.opacity(0.14)
-        } else {
-            Hsla::from(rgb(palette().card_color)).opacity(0.6)
-        })
+        .border_color(c(edge))
+        .bg(c(face))
         .cursor_pointer()
-        .hover(move |s| s.border_color(if selected { accent } else { hover_border }))
+        .hover(move |s| s.border_color(c(hover_edge)))
         .child(
             div()
-                .size(px(36.))
                 .flex()
-                .items_center()
-                .justify_center()
-                .rounded(crate::tokens::r(tokens::R_CONTROL))
-                .border_1()
-                .border_color(rgb(palette().line))
-                .bg(rgb(palette().field))
-                .child(blocks::icon(icon, 18., Hsla::from(rgb(palette().text)))),
+                .items_start()
+                .justify_between()
+                .child(
+                    div()
+                        .size(px(36.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(crate::tokens::r(tokens::R_CONTROL))
+                        .border_1()
+                        .border_color(c(p.line))
+                        .bg(c(p.field))
+                        .child(crate::glass_ui::icon(icon, 18., c(p.text))),
+                )
+                .child(radio((id, 0usize), selected).tab_stop(false)),
         )
         .child(
             div()
@@ -66,13 +73,13 @@ fn source_option_card(
                 .child(
                     div()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(palette().text))
+                        .text_color(c(p.text))
                         .child(tr(heading)),
                 )
                 .child(
                     div()
                         .text_size(px(tokens::SMALL))
-                        .text_color(rgb(palette().muted))
+                        .text_color(c(p.muted))
                         .child(tr(desc)),
                 ),
         )
@@ -80,6 +87,138 @@ fn source_option_card(
             this.github.stage = Stage::Choose(kind);
             cx.notify();
         }))
+}
+
+/// The mods a source offers, each a row with its box, its tile, its name and its version. A row
+/// press toggles it.
+fn pick_list(pick: &Pick, cx: &mut Context<Launcher>) -> Stateful<Div> {
+    div()
+        .id("github-add-list")
+        .max_h(px(184.))
+        .overflow_y_scroll()
+        .rounded(crate::tokens::r(tokens::R_CARD))
+        .border_1()
+        .border_color(c(palette().divider))
+        .children(
+            pick.input
+                .rows()
+                .into_iter()
+                .enumerate()
+                .map(|(i, (id, name, version))| {
+                    let id = id.to_owned();
+                    div()
+                        .id(("github-add-choice", i))
+                        .reach()
+                        .flex()
+                        .items_center()
+                        .gap(px(10.))
+                        .px(px(12.))
+                        .h(px(48.))
+                        .cursor_pointer()
+                        .when(i > 0, |r| r.border_t_1().border_color(c(palette().divider)))
+                        .hover(|s| s.bg(c(palette().hover)))
+                        .child(
+                            checkbox(
+                                ("github-add-check", i),
+                                if pick.selected.contains(&id) {
+                                    Tick::On
+                                } else {
+                                    Tick::Off
+                                },
+                            )
+                            .tab_stop(false),
+                        )
+                        .child(crate::mod_icons::tile(
+                            None::<gpui::ImageSource>,
+                            &id,
+                            name,
+                            26.,
+                        ))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(name.to_owned()),
+                        )
+                        .child(muted(version).flex_none())
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            if let Stage::Pick(pick) = &mut this.github.stage {
+                                pick.toggle(&id);
+                            }
+                            cx.notify();
+                        }))
+                }),
+        )
+}
+
+/// A pick's failure: its line in danger, and the details behind a button that opens them.
+fn pick_error(pick: &Pick, error: &FormError, cx: &mut Context<Launcher>) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(8.))
+        .child(
+            div()
+                .text_size(px(tokens::LABEL))
+                .text_color(c(palette().danger))
+                .child(error.line.clone()),
+        )
+        .children((!error.detail.is_empty()).then(|| {
+            div().flex().child(
+                secondary(
+                    "github-pick-details",
+                    crate::mods::refused::details_label(pick.details),
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    if let Stage::Pick(pick) = &mut this.github.stage {
+                        pick.details ^= true;
+                    }
+                    cx.notify();
+                })),
+            )
+        }))
+        .children((pick.details && !error.detail.is_empty()).then(|| {
+            crate::mods::refused::details_box("github-pick-error-detail", error.detail.clone())
+        }))
+}
+
+/// A failed step's line in danger, and the details behind a button that opens them.
+fn form_error(error: &FormError, expanded: bool, cx: &mut Context<Launcher>) -> Div {
+    let mut line = div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(8.))
+        .child(
+            div()
+                .text_size(px(tokens::LABEL))
+                .text_color(c(palette().danger))
+                .child(error.line.clone()),
+        )
+        .children((!error.detail.is_empty()).then(|| {
+            secondary(
+                "github-add-details",
+                crate::mods::refused::details_label(expanded),
+            )
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                match &mut this.github.stage {
+                    Stage::Failed { expanded, .. } | Stage::InstallFailed(_, expanded) => {
+                        *expanded ^= true
+                    }
+                    _ => (),
+                }
+                cx.notify();
+            }))
+        }));
+    if expanded {
+        line = line.child(crate::mods::refused::details_box(
+            "github-add-error-detail",
+            error.detail.clone(),
+        ));
+    }
+    line
 }
 
 impl Launcher {
@@ -173,26 +312,11 @@ impl Launcher {
                 "Install a .smod package file already saved on this computer. Marked Local.",
                 cx,
             ));
-        let warn_color = Hsla::from(rgb(palette().warning));
-        let notice = div()
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .px(px(12.))
-            .py(px(10.))
-            .rounded(crate::tokens::r(tokens::R_CONTROL))
-            .border_1()
-            .border_color(warn_color.opacity(0.35))
-            .bg(warn_color.opacity(0.08))
-            .child(blocks::icon("warning", 15., warn_color))
-            .child(
-                div()
-                    .text_size(px(tokens::SMALL))
-                    .text_color(rgb(palette().muted))
-                    .child(tr(
-                        "Neither option is reviewed by Sunrise, and neither updates automatically.",
-                    )),
-            );
+        let notice = banner(
+            Tone::Warning,
+            tr("Neither option is reviewed by Sunrise, and neither updates automatically."),
+            None,
+        );
         let body =
             div()
                 .flex()
@@ -249,54 +373,21 @@ impl Launcher {
     }
 
     fn failed_body(&mut self, cx: &mut Context<Self>) -> Div {
-        if let Stage::Failed {
+        let Stage::Failed {
             error,
             expanded,
             from_choose: true,
         } = &self.github.stage
-        {
-            let can_back = self.github.target.is_some();
-            let expanded = *expanded;
-            let line = error.line.clone();
-            let detail = error.detail.clone();
-            let mut body = div()
-                .flex()
-                .flex_col()
-                .child(sheets::title(tr("Add from source").into()))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap(px(8.))
-                        .child(
-                            div()
-                                .text_size(px(tokens::LABEL))
-                                .text_color(rgb(palette().danger))
-                                .child(line),
-                        )
-                        .children((!detail.is_empty()).then(|| {
-                            secondary(
-                                "github-add-details",
-                                crate::mods::refused::details_label(expanded),
-                            )
-                            .on_click(cx.listener(
-                                |this, _: &ClickEvent, _, cx| {
-                                    if let Stage::Failed { expanded, .. } = &mut this.github.stage {
-                                        *expanded ^= true;
-                                    }
-                                    cx.notify();
-                                },
-                            ))
-                        })),
-                );
-            if expanded && !detail.is_empty() {
-                body = body.child(crate::mods::refused::details_box(
-                    "github-add-error-detail",
-                    detail,
-                ));
-            }
-            let body = body.child(
+        else {
+            unreachable!("failed_body is only called from a failed choose step")
+        };
+        let can_back = self.github.target.is_some();
+        div()
+            .flex()
+            .flex_col()
+            .child(sheets::title(tr("Add from source").into()))
+            .child(form_error(error, *expanded, cx))
+            .child(
                 div()
                     .flex()
                     .justify_end()
@@ -317,11 +408,7 @@ impl Launcher {
                             },
                         )),
                     ),
-            );
-            body
-        } else {
-            unreachable!("failed_body is only called from a failed choose step")
-        }
+            )
     }
 
     fn pick_body(
@@ -330,63 +417,6 @@ impl Launcher {
         checking: bool,
         cx: &mut Context<Self>,
     ) -> (Div, Option<Stateful<Div>>, Stateful<Div>) {
-        let body = div().flex().flex_col();
-        let rows =
-            div()
-                .id("github-add-list")
-                .max_h(px(184.))
-                .overflow_y_scroll()
-                .rounded(crate::tokens::r(tokens::R_CARD))
-                .border_1()
-                .border_color(palette().rule())
-                .children(pick.input.rows().into_iter().enumerate().map(
-                    |(i, (id, name, version))| {
-                        let id = id.to_owned();
-                        div()
-                            .id(("github-add-choice", i))
-                            .reach()
-                            .flex()
-                            .items_center()
-                            .gap(px(10.))
-                            .px(px(12.))
-                            .h(px(48.))
-                            .cursor_pointer()
-                            .when(i > 0, |r| r.border_t_1().border_color(palette().rule()))
-                            .hover(|s| s.bg(rgb(palette().hover)))
-                            .child(
-                                checkbox(
-                                    ("github-add-check", i),
-                                    if pick.selected.contains(&id) {
-                                        Tick::On
-                                    } else {
-                                        Tick::Off
-                                    },
-                                )
-                                .tab_stop(false),
-                            )
-                            .child(crate::mod_icons::tile(
-                                None::<gpui::ImageSource>,
-                                &id,
-                                name,
-                                26.,
-                            ))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(name.to_owned()),
-                            )
-                            .child(muted(version).flex_none())
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                if let Stage::Pick(pick) = &mut this.github.stage {
-                                    pick.toggle(&id);
-                                }
-                                cx.notify();
-                            }))
-                    },
-                ));
         let next = primary(
             "github-add-install",
             if checking {
@@ -403,48 +433,15 @@ impl Launcher {
                 cx.notify();
             }))
         };
-        (
-            body.child(sheets::title(tr("Choose mods to install").into()))
-                .child(muted(&pick.input.subtitle()).truncate())
-                .child(muted(tr(github_mods::WARNING)))
-                .child(rows)
-                .children(pick.error.as_ref().map(|error| {
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .child(
-                            div()
-                                .text_size(px(tokens::LABEL))
-                                .text_color(rgb(palette().danger))
-                                .child(error.line.clone()),
-                        )
-                        .children((!error.detail.is_empty()).then(|| {
-                            div().flex().child(
-                                secondary(
-                                    "github-pick-details",
-                                    crate::mods::refused::details_label(pick.details),
-                                )
-                                .on_click(cx.listener(
-                                    |this, _: &ClickEvent, _, cx| {
-                                        if let Stage::Pick(pick) = &mut this.github.stage {
-                                            pick.details ^= true;
-                                        }
-                                        cx.notify();
-                                    },
-                                )),
-                            )
-                        }))
-                        .children((pick.details && !error.detail.is_empty()).then(|| {
-                            crate::mods::refused::details_box(
-                                "github-pick-error-detail",
-                                error.detail.clone(),
-                            )
-                        }))
-                })),
-            None,
-            next,
-        )
+        let body = div()
+            .flex()
+            .flex_col()
+            .child(sheets::title(tr("Choose mods to install").into()))
+            .child(muted(&pick.input.subtitle()).truncate())
+            .child(banner(Tone::Warning, tr(github_mods::WARNING), None).mt(px(4.)))
+            .child(pick_list(pick, cx))
+            .children(pick.error.as_ref().map(|error| pick_error(pick, error, cx)));
+        (body, None, next)
     }
 
     fn source_field(
@@ -570,41 +567,7 @@ impl Launcher {
             _ => None,
         };
         if let Some((error, expanded)) = error {
-            body = body.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(8.))
-                    .child(
-                        div()
-                            .text_size(px(tokens::LABEL))
-                            .text_color(rgb(palette().danger))
-                            .child(error.line.clone()),
-                    )
-                    .children((!error.detail.is_empty()).then(|| {
-                        secondary(
-                            "github-add-details",
-                            crate::mods::refused::details_label(*expanded),
-                        )
-                        .on_click(cx.listener(
-                            |this, _: &ClickEvent, _, cx| {
-                                match &mut this.github.stage {
-                                    Stage::Failed { expanded, .. }
-                                    | Stage::InstallFailed(_, expanded) => *expanded ^= true,
-                                    _ => (),
-                                }
-                                cx.notify();
-                            },
-                        ))
-                    })),
-            );
-            if *expanded {
-                body = body.child(crate::mods::refused::details_box(
-                    "github-add-error-detail",
-                    error.detail.clone(),
-                ));
-            }
+            body = body.child(form_error(error, *expanded, cx));
         }
         (body, resolving, checked_failure.is_some())
     }

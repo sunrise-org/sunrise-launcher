@@ -7,6 +7,8 @@ use super::*;
 pub(super) enum Menu {
     Category,
     Sort,
+    /// The "Adding to" profile picker.
+    Profile,
 }
 
 #[derive(PartialEq, Eq)]

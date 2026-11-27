@@ -1,7 +1,9 @@
 //! The unreviewed-code warning, for an added source and for a build's native mods nobody reviewed.
 
 use super::*;
-use crate::widgets::button::{primary, secondary};
+use crate::widgets::button::{button, primary, Look, Size, Style};
+use crate::widgets::feedback::{banner, Tone};
+use crate::widgets::focus::c;
 
 impl Launcher {
     pub(super) fn unreviewed_warning_sheet(
@@ -19,11 +21,15 @@ impl Launcher {
         };
         let badge = pending.badge();
         let multiple = pending.count() > 1;
-        let warn = Hsla::from(rgb(if pending.unsigned_local_file() {
-            palette().danger
+        let tone = if pending.unsigned_local_file() {
+            Tone::Danger
         } else {
-            palette().warning
-        }));
+            Tone::Warning
+        };
+        let warn = c(match tone {
+            Tone::Danger => palette().danger,
+            _ => palette().warning,
+        });
         let text = UnreviewedText {
             multiple,
             provenance: pending.provenance(),
@@ -45,7 +51,7 @@ impl Launcher {
         };
         let body = unreviewed_warning(
             text,
-            warn,
+            (tone, warn),
             ["add-source-confirm", "add-source-cancel"],
             &cancel_focus,
             Self::handle_warning_action,
@@ -76,7 +82,6 @@ impl Launcher {
         let text = UnreviewedText {
             multiple,
             provenance: WarningProvenance {
-                icon: "warning",
                 headline: if multiple {
                     tr("Local files, not reviewed")
                 } else {
@@ -97,10 +102,10 @@ impl Launcher {
             }
             .into(),
         };
-        let warn = Hsla::from(rgb(palette().danger));
+        let warn = c(palette().danger);
         let body = unreviewed_warning(
             text,
-            warn,
+            (Tone::Danger, warn),
             ["unreviewed-build-confirm", "unreviewed-build-cancel"],
             &cancel_focus,
             Self::answer_unreviewed_build,
@@ -176,11 +181,12 @@ struct UnreviewedText {
     confirm_label: String,
 }
 
-/// The unreviewed-code warning: Cancel has the keyboard and is the default, and confirming
-/// takes the explicit button. `answer` gets the player's choice.
+/// The unreviewed-code warning: its heading, the provenance as a warning banner, what can go
+/// wrong, and the two buttons. Cancel has the keyboard and is the default; confirming takes the
+/// explicit button. `answer` gets the player's choice.
 fn unreviewed_warning(
     text: UnreviewedText,
-    warn: Hsla,
+    (tone, warn): (Tone, Hsla),
     [confirm_id, cancel_id]: [&'static str; 2],
     cancel_focus: &FocusHandle,
     answer: fn(&mut Launcher, WarningAction),
@@ -203,147 +209,32 @@ fn unreviewed_warning(
     } else {
         tr("Nobody has checked this mod for safety.")
     };
-    let header = div()
-        .flex()
-        .items_center()
-        .gap(px(14.))
-        .px(px(24.))
-        .py(px(18.))
-        .bg(warn.opacity(0.22))
-        .border_b_1()
-        .border_color(warn.opacity(0.45))
-        .child(
-            div()
-                .size(px(44.))
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(crate::tokens::r(tokens::R_CARD))
-                .bg(warn.opacity(0.2))
-                .border_1()
-                .border_color(warn.opacity(0.55))
-                .child(blocks::icon("warning", 22., warn)),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(2.))
-                .min_w_0()
-                .child(
-                    div()
-                        .text_size(px(tokens::CAPTION))
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(warn)
-                        .child(tr("UNREVIEWED CODE WARNING")),
-                )
-                .child(
-                    div()
-                        .text_size(px(tokens::TITLE))
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(rgb(palette().text))
-                        .child(heading),
-                ),
-        );
-
-    let provenance_card = div()
-        .flex()
-        .flex_col()
-        .gap(px(6.))
-        .p(px(14.))
-        .rounded(crate::tokens::r(tokens::R_CARD))
-        .bg(warn.opacity(0.10))
-        .border_1()
-        .border_color(warn.opacity(0.45))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .child(blocks::icon(prov.icon, 16., warn))
-                .child(
-                    div()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(palette().text))
-                        .child(prov.headline),
-                ),
-        )
-        .child(
-            div()
-                .text_size(px(tokens::SMALL))
-                .text_color(rgb(palette().muted))
-                .child(prov.detail),
-        );
-
-    let confirm = secondary(confirm_id, confirm_label)
-        .border_color(warn.opacity(0.65))
-        .bg(warn.opacity(0.12))
-        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-            answer(this, WarningAction::Confirm);
-            cx.notify();
-        }))
-        .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _, cx| {
-            if matches!(e.keystroke.key.as_str(), "enter" | "space") {
-                answer(this, WarningAction::Confirm);
-                cx.stop_propagation();
-                cx.notify();
-            }
-        }));
-
-    let cancel = primary(cancel_id, tr("Cancel"))
-        .track_focus(cancel_focus)
-        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-            answer(this, WarningAction::Cancel);
-            cx.notify();
-        }))
-        .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _, cx| {
-            if matches!(e.keystroke.key.as_str(), "enter" | "space") {
-                answer(this, WarningAction::Cancel);
-                cx.stop_propagation();
-                cx.notify();
-            }
-        }));
-
+    let header = warning_heading(warn, heading);
     let content = div()
         .flex()
         .flex_col()
         .gap(px(16.))
         .p(px(24.))
-        .child(provenance_card)
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(4.))
-                .child(
-                    div()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(palette().text))
-                        .child(safety_lead),
-                )
-                .child(
-                    div()
-                        .text_size(px(tokens::LABEL))
-                        .text_color(rgb(palette().muted))
-                        .child(safety_body),
-                ),
-        )
+        .child(banner(
+            tone,
+            prov.headline,
+            Some(SharedString::from(prov.detail)),
+        ))
+        .child(warning_safety(safety_lead, safety_body))
         .child(
             div()
                 .text_size(px(tokens::LABEL))
-                .text_color(rgb(palette().muted))
+                .text_color(c(palette().muted))
                 .child(trust_line),
         )
-        .child(
-            div()
-                .flex()
-                .justify_end()
-                .gap(px(10.))
-                .child(confirm)
-                .child(cancel),
-        );
-
+        .child(warning_actions(
+            confirm_id,
+            cancel_id,
+            confirm_label,
+            cancel_focus,
+            answer,
+            cx,
+        ));
     div()
         .flex()
         .flex_col()
@@ -357,4 +248,95 @@ fn unreviewed_warning(
                 cx.notify();
             }
         }))
+}
+
+/// What the player is taking on: the lead line in text, the danger in muted words beneath it.
+fn warning_safety(lead: &'static str, body: String) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        .child(
+            div()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(c(palette().text))
+                .child(lead),
+        )
+        .child(
+            div()
+                .text_size(px(tokens::LABEL))
+                .text_color(c(palette().muted))
+                .child(body),
+        )
+}
+
+/// The warning's heading: its caption in the tone's colour, then the title.
+fn warning_heading(warn: Hsla, heading: &'static str) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        .px(px(24.))
+        .pt(px(20.))
+        .child(
+            div()
+                .text_size(px(tokens::CAPTION))
+                .font_weight(FontWeight::BOLD)
+                .text_color(warn)
+                .child(tr("UNREVIEWED CODE WARNING")),
+        )
+        .child(
+            div()
+                .text_size(px(tokens::TITLE))
+                .font_weight(FontWeight::BOLD)
+                .text_color(c(palette().text))
+                .child(heading),
+        )
+}
+
+/// The warning's two buttons, end to end: confirm (Accent, so it reads as the risky one) and the
+/// default Cancel, which takes the keyboard focus.
+fn warning_actions(
+    confirm_id: &'static str,
+    cancel_id: &'static str,
+    confirm_label: String,
+    cancel_focus: &FocusHandle,
+    answer: fn(&mut Launcher, WarningAction),
+    cx: &mut Context<Launcher>,
+) -> Div {
+    let confirm = button(
+        confirm_id,
+        confirm_label,
+        Look::new(Style::Accent, Size::Medium),
+    )
+    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+        answer(this, WarningAction::Confirm);
+        cx.notify();
+    }))
+    .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _, cx| {
+        if matches!(e.keystroke.key.as_str(), "enter" | "space") {
+            answer(this, WarningAction::Confirm);
+            cx.stop_propagation();
+            cx.notify();
+        }
+    }));
+    let cancel = primary(cancel_id, tr("Cancel"))
+        .track_focus(cancel_focus)
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            answer(this, WarningAction::Cancel);
+            cx.notify();
+        }))
+        .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _, cx| {
+            if matches!(e.keystroke.key.as_str(), "enter" | "space") {
+                answer(this, WarningAction::Cancel);
+                cx.stop_propagation();
+                cx.notify();
+            }
+        }));
+    div()
+        .flex()
+        .justify_end()
+        .gap(px(10.))
+        .child(confirm)
+        .child(cancel)
 }

@@ -9,13 +9,12 @@ mod form;
 mod local_source;
 mod rows;
 mod unreviewed;
-use crate::blocks;
 use crate::frame::{Page, Reach as _};
 use crate::mods::ManualBadge;
 use crate::mods_page::install::GithubTarget;
 use crate::paint::palette;
 use crate::sheets::{self, Sheet};
-use gpui::rgb;
+use crate::widgets::button::{button, Look, Size, Style};
 use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 use sunrise_launcher::{
     browser::sunrise::{self, sources::Failure, PastedSource, PreparedSource, SourceError},
@@ -70,7 +69,6 @@ impl WarningAction {
 }
 
 struct WarningProvenance {
-    icon: &'static str,
     headline: String,
     detail: String,
 }
@@ -140,7 +138,6 @@ impl PendingConfirm {
                         repository,
                         workflow,
                     } => WarningProvenance {
-                        icon: "github",
                         headline: tr("Signed local file, not reviewed").into(),
                         detail: trf(
                             "File: {file} · Built by {repo} ({workflow}) · Sunrise has not checked this code.",
@@ -148,7 +145,6 @@ impl PendingConfirm {
                         ),
                     },
                     github_mods::LocalAttestation::Failed(reason) => WarningProvenance {
-                        icon: "warning",
                         headline: tr("Attestation check failed, not reviewed").into(),
                         detail: trf(
                             "File: {file} · The bundled attestation could not be verified ({reason}).",
@@ -156,7 +152,6 @@ impl PendingConfirm {
                         ),
                     },
                     github_mods::LocalAttestation::Unsigned => WarningProvenance {
-                        icon: "warning",
                         headline: tr("Unsigned local file, not reviewed").into(),
                         detail: trf(
                             "File: {file} · Sunrise cannot verify who built this file or where it came from.",
@@ -177,7 +172,6 @@ impl PendingConfirm {
                     .join(", ");
                 let folder_name = folder.display().to_string();
                 WarningProvenance {
-                    icon: "folder",
                     headline: tr("Local repository folder, not reviewed").into(),
                     detail: trf(
                         "Folder: {folder} · Mods: {mods} · Sunrise has not checked this code.",
@@ -236,7 +230,6 @@ impl PendingConfirm {
                     }
                 };
                 WarningProvenance {
-                    icon: "github",
                     headline: trf("From github.com/{repo}, not reviewed", &[("repo", &repo)]),
                     detail,
                 }
@@ -566,32 +559,16 @@ fn pasted_source_error(name: &str, error: SourceError) -> FormError {
 
 impl Launcher {
     pub(crate) fn add_from_source_button(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .id("add-from-source")
-            .tab_index(0)
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
-            .gap(px(6.))
-            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-            .border_1()
-            .border_color(rgb(palette().line))
-            .px(px(12.))
-            .h(px(tokens::CONTROL))
-            .text_color(rgb(palette().text))
-            .text_size(px(tokens::LABEL))
-            .font_weight(FontWeight::SEMIBOLD)
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(palette().hover)))
-            .focus_visible(|s| s.border_color(rgb(palette().focus)))
-            .seen()
-            .child(blocks::icon("plus", 14., rgb(palette().text).into()))
-            .child(tr("Add from source"))
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.open_add_from_source();
-                cx.notify();
-            }))
+        button(
+            "add-from-source",
+            tr("Add from source"),
+            Look::new(Style::Secondary, Size::Medium).icon("plus"),
+        )
+        .seen()
+        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            this.open_add_from_source();
+            cx.notify();
+        }))
     }
 
     pub(crate) fn open_add_from_source(&mut self) {

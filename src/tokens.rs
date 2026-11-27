@@ -43,8 +43,6 @@ pub(crate) const HEADING: f32 = 18.;
 pub(crate) const TITLE: f32 = 24.;
 /// A page's title.
 pub(crate) const DISPLAY: f32 = 28.;
-/// The selected profile's name on Home.
-pub(crate) const HERO: f32 = 40.;
 
 // ---- corner radii
 

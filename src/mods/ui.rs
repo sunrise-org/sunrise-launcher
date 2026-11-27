@@ -44,10 +44,10 @@ pub(super) fn mod_artwork(
         .or_else(|| package.map(Into::into))
 }
 
-/// One thing to add in a Discover list, for mods and packs alike: picture, name and author, one
-/// line of what it is, then its tags and numbers with the control beside them, and under them
-/// a sentence when there is something to say (why it can't be added, how well it runs). Every
-/// text shortens or wraps inside the card, whatever its width.
+/// One thing to add in a Discover list, for mods and packs alike: artwork, name and author, one
+/// line of what it is, then its tags, with the numbers (`stats`) and the control in a column on
+/// the right, and under the tags a sentence when there is something to say (why it can't be
+/// added, how well it runs). Every text shortens or wraps inside the card, whatever its width.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn browse_card(
     id: impl Into<ElementId>,
@@ -57,13 +57,15 @@ pub(super) fn browse_card(
     author: &str,
     summary: &str,
     facts: Vec<Div>,
+    stats: Option<Div>,
     control: Option<AnyElement>,
     note: Option<String>,
 ) -> Stateful<Div> {
     div()
         .id(id)
         .flex()
-        .gap(px(12.))
+        .items_start()
+        .gap(px(14.))
         .p(px(12.))
         .min_w_0()
         .overflow_hidden()
@@ -76,14 +78,14 @@ pub(super) fn browse_card(
         .tab_index(0)
         .seen()
         .focus_visible(|s| s.border_color(c(palette().focus)))
-        .child(tile(picture, project, name, 48.))
+        .child(tile(picture, project, name, 64.))
         .child(
             div()
                 .flex_1()
                 .min_w_0()
                 .flex()
                 .flex_col()
-                .gap(px(4.))
+                .gap(px(6.))
                 .child(
                     div()
                         .flex()
@@ -115,26 +117,14 @@ pub(super) fn browse_card(
                         .text_ellipsis()
                         .child(summary.to_owned()),
                 )
-                // Cards in a row are as tall as the tallest: the last line sits at the bottom.
-                .child(div().flex_1())
                 .child(
                     div()
                         .flex()
-                        .items_end()
-                        .gap(px(8.))
-                        .min_w_0()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_wrap()
-                                .items_center()
-                                .gap_x(px(8.))
-                                .gap_y(px(4.))
-                                .children(facts),
-                        )
-                        .children(control.map(|c| div().flex_none().child(c))),
+                        .flex_wrap()
+                        .items_center()
+                        .gap_x(px(8.))
+                        .gap_y(px(4.))
+                        .children(facts),
                 )
                 // Two lines at most: the whole sentence is the tooltip.
                 .children(note.map(|note| {
@@ -144,6 +134,21 @@ pub(super) fn browse_card(
                         .text_ellipsis()
                         .tooltip(crate::glass_ui::tip(note))
                 })),
+        )
+        .child(
+            div()
+                .flex_none()
+                .w(px(136.))
+                .flex()
+                .flex_col()
+                .items_end()
+                .gap(px(8.))
+                .children(stats.map(|stats| {
+                    stats
+                        .text_size(px(tokens::SMALL))
+                        .text_color(c(palette().muted))
+                }))
+                .children(control.map(|c| div().flex_none().child(c))),
         )
 }
 

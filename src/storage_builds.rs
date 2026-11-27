@@ -350,11 +350,8 @@ impl Launcher {
                 off(clean)
             }
         });
-        let mut card = vec![row(
-            tr("Installed game builds"),
-            on_disk,
-            div().children(cleanup),
-        )];
+        let heading = builds_heading(on_disk, cleanup);
+        let mut card = Vec::new();
         if self.storage_builds.rows.as_ref().is_some_and(Vec::is_empty) {
             card.push(hint(tr(
                 "Choose a version beside Play on Home to install a build.",
@@ -461,7 +458,12 @@ impl Launcher {
                 .clone()
                 .map(|t| banner(Tone::Danger, t, None)),
         );
-        group(card)
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(heading)
+            .children((!card.is_empty()).then(|| group(card)))
     }
 
     pub(super) fn storage_build_options(&self, cx: &mut Context<Self>) -> Div {
@@ -505,4 +507,29 @@ impl Launcher {
         ));
         group(rows)
     }
+}
+
+/// The builds' heading, above their card: the title, the size on disk under it and the
+/// clean-up on the right.
+fn builds_heading(on_disk: String, cleanup: Option<gpui::Stateful<Div>>) -> Div {
+    div()
+        .flex()
+        .items_end()
+        .justify_between()
+        .gap(px(16.))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .child(
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(tr("Installed game builds")),
+                )
+                .child(hint(on_disk)),
+        )
+        .children(cleanup)
 }

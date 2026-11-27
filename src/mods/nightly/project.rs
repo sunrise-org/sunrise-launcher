@@ -1,4 +1,5 @@
 //! The pinned source detail. GitHub content is data; it never selects the profile or executes code.
+use super::super::project::look::{action_column, card, head, note};
 use super::super::project::{about_row, back};
 use super::*;
 use crate::mods_page::install::{stage_label, SourceQuestion};
@@ -238,42 +239,34 @@ impl Launcher {
             .as_ref()
             .and_then(|row| self.archive_display(row))
             .and_then(|archive| archive.icon.clone());
-        let title = div()
-            .flex()
-            .items_center()
-            .min_w_0()
-            .gap(px(16.))
-            .child(self.source_tile(source, commit, allow_icon_fetch, package, 64., cx))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(
-                        div()
-                            .text_size(px(tokens::DISPLAY))
-                            .font_weight(FontWeight::BOLD)
-                            .child(crate::selectable::selectable(source.name().to_owned())),
-                    )
-                    .child(note(trf("by {authors}", &[("authors", source.owner())])))
-                    .children(badge),
-            );
-        let panel = card()
-            .p(px(14.))
-            .flex()
-            .flex_col()
-            .gap(px(10.))
-            .child(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(source.name().to_owned()),
-            )
+        let summary = source.summary().to_owned();
+        let title_block = head(
+            self.source_tile(source, commit, allow_icon_fetch, package, 64., cx)
+                .into_any_element(),
+            source.name(),
+            Some(trf("by {authors}", &[("authors", source.owner())])),
+            badge
+                .map(IntoElement::into_any_element)
+                .into_iter()
+                .collect(),
+            Some(summary).filter(|s| !s.trim().is_empty()),
+            Vec::new(),
+        );
+        let github = secondary("nightly-github", tr("Open on GitHub"))
+            .gap(px(5.))
+            .child("↗")
+            .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&repo_url)));
+        let actions = action_column()
             .children(missing.then_some(build))
             .children(refused_line)
             .children(conflict.then(|| note(tr(SOURCE_ID_CONFLICT))))
             .children(installed_actions)
+            .child(github);
+        let side = card()
+            .p(px(16.))
+            .flex()
+            .flex_col()
+            .gap(px(2.))
             .child(about_row(tr("Source code"), source.repo().to_owned()))
             .child(about_row(tr("Commit"), pin))
             .child(about_row(tr("Game build"), self.discover_target_name()))
@@ -290,24 +283,7 @@ impl Launcher {
                 (!busy && missing && offline && !self.mods_state.nightly.reading)
                     .then(|| retry("nightly-refresh-catalogue", cx)),
             )
-            .children(failure_panel)
-            .child(
-                div().flex().justify_end().child(
-                    secondary("nightly-github", tr("Open on GitHub"))
-                        .gap(px(5.))
-                        .child("↗")
-                        .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&repo_url))),
-                ),
-            );
-        let summary = source.summary();
-        let body = (!summary.trim().is_empty()).then(|| {
-            div()
-                .text_size(px(tokens::BODY))
-                .line_height(px(22.))
-                .text_color(c(palette().text))
-                .child(crate::selectable::selectable(summary.to_owned()))
-                .into_any_element()
-        });
+            .children(failure_panel);
         let header = div()
             .flex()
             .flex_col()
@@ -324,7 +300,17 @@ impl Launcher {
                 })),
             )
             .children(self.strip(cx));
-        self.project_layout(header, title, None, body, panel)
+        self.project_layout(
+            "project",
+            crate::mods::project::Layout {
+                header,
+                head: title_block,
+                action: Some(actions),
+                gallery: None,
+                side: Some(side),
+            },
+            std::iter::empty(),
+        )
     }
 
     pub(in crate::mods) fn nightly_log_button(

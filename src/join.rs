@@ -12,7 +12,7 @@ use super::*;
 use crate::frame::Reach as _;
 use crate::home::{card, muted};
 use crate::paint::palette;
-use crate::widgets::button::secondary;
+use crate::widgets::button::{primary, secondary};
 use gpui::{rgb, rgba};
 
 /// Horizon Minecraft's address, passed to the game as written. Empty: the row has no Join.
@@ -159,6 +159,25 @@ fn server_picture(
     }
 }
 
+/// A saved server's status at the row's end: a dot and its words, both in `color`.
+fn status_line(color: u32, words: String) -> Div {
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .text_size(px(tokens::SMALL))
+        .text_color(rgb(color))
+        .child(
+            div()
+                .flex_none()
+                .size(px(8.))
+                .rounded(tokens::r(tokens::R_SMALL))
+                .bg(rgb(color)),
+        )
+        .child(words)
+}
+
 fn tile(label: &str, side: f32) -> Div {
     // A colour of its own from its name, the same every time, kept quiet enough to sit on the
     // card: the letter reads as the server's badge rather than a missing picture.
@@ -257,7 +276,7 @@ impl Launcher {
             save.opacity(0.4).cursor_default().tab_stop(false)
         };
         let joinable = matches!(typed, Entry::Address(_) | Entry::Invite);
-        let join = secondary("alt-server-join", tr("Join")).h(px(tokens::FIELD));
+        let join = primary("alt-server-join", tr("Join")).h(px(tokens::FIELD));
         let join = if joinable {
             join.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.join_typed();
@@ -426,14 +445,19 @@ impl Launcher {
             .get(&server.ip)
             .copied()
             .unwrap_or(Reach::Asking);
-        let line = match reach {
-            Reach::Online { players, max } => trf(
-                "{online} of {max}",
-                &[("online", &players.to_string()), ("max", &max.to_string())],
-            ),
-            Reach::Offline => tr("No answer").to_string(),
-            Reach::Asking => server.ip.clone(),
+        // The status the ping gave; nothing while it is still asking.
+        let status = match reach {
+            Reach::Online { players, max } => Some(status_line(
+                palette().success,
+                trf(
+                    "{online} of {max}",
+                    &[("online", &players.to_string()), ("max", &max.to_string())],
+                ),
+            )),
+            Reach::Offline => Some(status_line(palette().muted, tr("No answer").to_string())),
+            Reach::Asking => None,
         };
+        let address = server.ip.clone();
         let offline = reach == Reach::Offline;
         let ip = server.ip.clone();
         let join = secondary(format!("alt-server-{i}-join"), tr("Join"));
@@ -517,8 +541,18 @@ impl Launcher {
                             .text_ellipsis()
                             .child(server.name),
                     )
-                    .child(muted(line)),
+                    .child(
+                        div()
+                            .font_family(theme::MONO)
+                            .text_size(px(tokens::SMALL))
+                            .text_color(rgb(palette().muted))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(address),
+                    ),
             )
+            .children(status)
             .child(join)
             .child(more)
     }

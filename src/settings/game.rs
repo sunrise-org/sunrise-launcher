@@ -1,6 +1,8 @@
 //! Settings › Game: how the game starts.
 use super::*;
+use crate::paint::palette;
 use crate::widgets::button::secondary;
+use crate::widgets::focus::{c, mix};
 use gpui::SharedString;
 
 impl Launcher {
@@ -70,10 +72,10 @@ impl Launcher {
             },
             cx,
         );
-        let args = stacked(
+        let args = self.wide_row(
             tr("Game arguments"),
             tr("Extra arguments for the game, passed through as they are. They apply the next time it starts."),
-            args,
+            args.w(px(260.)),
         );
         let asking = self.ui.settings.setup;
         let mut setup = row(
@@ -128,31 +130,39 @@ impl Launcher {
                 .child(setup)
                 .child(hint(note));
         }
-        let mut profiles = vec![setup];
-        if let Some(profile) = self
+        // Deleting the profile is the one danger on the page: its own card, tinted red.
+        let delete = self
             .selected_instance()
             .filter(|p| p.kind == instances::Kind::Own && !self.location_unavailable)
-        {
-            let target = profile.clone();
-            profiles.push(row(
-                trf("Selected profile: {name}", &[("name", &target.name)]),
-                "",
-                div().child(
-                    danger(secondary("settings-delete-profile", tr("Delete profile…"))).on_click(
-                        cx.listener(move |this, _, _, cx| {
-                            this.confirm_profile_delete(&target);
-                            cx.notify();
-                        }),
-                    ),
-                ),
-            ));
-        }
+            .map(|profile| {
+                let target = profile.clone();
+                let ink = c(palette().danger);
+                div()
+                    .px(px(16.))
+                    .py(px(14.))
+                    .rounded(crate::tokens::r(crate::tokens::R_CARD))
+                    .border_1()
+                    .border_color(ink.opacity(0.5))
+                    .bg(mix(palette().card(), ink, 0.15))
+                    .child(row(
+                        trf("Selected profile: {name}", &[("name", &target.name)]),
+                        tr("This profile and its worlds and mods will move to the Trash."),
+                        div().child(
+                            danger(secondary("settings-delete-profile", tr("Delete profile…")))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.confirm_profile_delete(&target);
+                                    cx.notify();
+                                })),
+                        ),
+                    ))
+            });
         div()
             .flex()
             .flex_col()
             .gap(px(14.))
             .child(group(vec![while_playing, args]))
             .child(group(vec![source]))
-            .child(group(profiles))
+            .child(group(vec![setup]))
+            .children(delete)
     }
 }

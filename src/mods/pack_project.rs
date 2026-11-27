@@ -2,11 +2,12 @@
 //! resource, shader or data pack. What it says comes from the pack's source (`Source::details`
 //! and `Source::versions`), read in a worker; the action is the card's own (Add, or the world
 //! picker for a data pack). Back returns to the grid as it was left.
-use super::project::{about_link, about_row, back, prose};
+use super::project::look::{action_column, card, head, muted, note, section};
+use super::project::{about_row, back, project_frame, prose};
 use super::ui::*;
 use super::*;
 use crate::paint::palette;
-use crate::widgets::button::primary;
+use crate::widgets::button::{primary, secondary};
 use crate::widgets::chip::{self, tag};
 use sunrise_launcher::browser::details::Details;
 use sunrise_launcher::browser::{self, images, Kind, Project, Source as _, Version};
@@ -104,13 +105,10 @@ impl Launcher {
     }
 
     pub(super) fn pack_project(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let mut page = div()
-            .size_full()
+        let header = div()
             .flex()
             .flex_col()
             .gap(px(14.))
-            .p(px(24.))
-            .text_color(c(palette().text))
             .child(
                 back(tr("Discover")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.ui.page = Page::PackFind;
@@ -119,7 +117,10 @@ impl Launcher {
             )
             .children(self.strip(cx));
         let Some(open) = &self.mods_state.packs.open else {
-            return page.child(muted(tr("No pack is open."))).into_any_element();
+            return project_frame()
+                .child(header)
+                .child(muted(tr("No pack is open.")))
+                .into_any_element();
         };
         let p = open.project.clone();
         let loaded = open.page.clone();
@@ -146,42 +147,33 @@ impl Launcher {
             Some(list) if !list.is_empty() => list.join(", "),
             _ => p.author.clone(),
         };
-        let head = div()
-            .flex()
-            .items_center()
-            .gap(px(16.))
-            .child(tile(picture, &p.id, &p.title, 64.))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .child(
-                        div()
-                            .text_size(px(tokens::DISPLAY))
-                            .font_weight(FontWeight::BOLD)
-                            .child(crate::selectable::selectable(p.title.clone())),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .items_center()
-                            .gap_x(px(8.))
-                            .gap_y(px(4.))
-                            .children(
-                                (!authors.is_empty())
-                                    .then(|| note(trf("by {authors}", &[("authors", &authors)]))),
-                            )
-                            .child(tag(
-                                super::pack_discover::source_label(p.source),
-                                chip::Kind::Neutral,
-                            ))
-                            .child(tag(support.label(), chip::Kind::Neutral)),
-                    ),
-            );
+        let by = (!authors.is_empty()).then(|| trf("by {authors}", &[("authors", &authors)]));
+        let source_kind = match p.source {
+            SourceId::Modrinth => chip::Kind::Modrinth,
+            SourceId::Sunrise => chip::Kind::Sunrise,
+        };
+        let chips: Vec<AnyElement> = vec![
+            tag(super::pack_discover::source_label(p.source), source_kind).into_any_element(),
+            tag(support.label(), chip::Kind::Neutral).into_any_element(),
+        ];
+        let mut facts = vec![trf(
+            "Downloads: {count}",
+            &[("count", &p.downloads.to_string())],
+        )];
+        if let Some(d) = details.filter(|d| !d.updated.is_empty()) {
+            facts.push(trf("Updated: {day}", &[("day", &day(&d.updated))]));
+        }
+        if let Some(newest) = versions.first() {
+            facts.push(trf("Version {number}", &[("number", &newest.number)]));
+        }
+        let header_block = head(
+            tile(picture, &p.id, &p.title, 64.).into_any_element(),
+            &p.title,
+            by,
+            chips,
+            Some(p.summary.clone()).filter(|s| !s.trim().is_empty()),
+            facts,
+        );
 
         // The action, as on the card.
         let added = !data
@@ -228,52 +220,38 @@ impl Launcher {
             )),
         };
         let link = p.page.clone();
-        let side = div()
+        let mut action_col = action_column()
+            .child(action)
+            .children(within.map(muted))
+            .children(support.reason().map(|why| note(why.to_owned())));
+        if link.starts_with("https://") {
+            let label = match p.source {
+                SourceId::Sunrise => tr("Registry page"),
+                SourceId::Modrinth => tr("Modrinth page"),
+            };
+            action_col = action_col.child(secondary("alt-pack-page-link", label).on_click(
+                cx.listener(move |_, _: &ClickEvent, _, cx| Launcher::open_url(&link, cx)),
+            ));
+        }
+
+        let side = card()
+            .p(px(16.))
             .flex()
             .flex_col()
-            .gap(px(14.))
             .child(
-                card()
-                    .p(px(16.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(10.))
-                    .child(action)
-                    .children(within.map(muted))
-                    .children(support.reason().map(|why| note(why.to_owned()))),
+                div()
+                    .text_size(px(tokens::CAPTION))
+                    .text_color(c(palette().muted))
+                    .pb(px(6.))
+                    .child(tr("ABOUT")),
             )
-            .child(
-                card()
-                    .p(px(16.))
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .text_size(px(tokens::CAPTION))
-                            .text_color(c(palette().muted))
-                            .pb(px(6.))
-                            .child(tr("ABOUT")),
-                    )
-                    .child(about_row(tr("Downloads"), p.downloads.to_string()))
-                    .children(
-                        details
-                            .filter(|d| !d.updated.is_empty())
-                            .map(|d| about_row(tr("Updated"), day(&d.updated))),
-                    )
-                    .children(
-                        (!p.license.is_empty())
-                            .then(|| about_row(tr("Licence"), p.license.clone())),
-                    )
-                    .children(link.starts_with("https://").then(|| {
-                        let label = match p.source {
-                            SourceId::Sunrise => tr("Registry page"),
-                            _ => tr("Modrinth page"),
-                        };
-                        about_link("alt-pack-page-link", label).on_click(cx.listener(
-                            move |_, _: &ClickEvent, _, cx| Launcher::open_url(&link, cx),
-                        ))
-                    })),
-            );
+            .child(about_row(tr("Downloads"), p.downloads.to_string()))
+            .children(
+                details
+                    .filter(|d| !d.updated.is_empty())
+                    .map(|d| about_row(tr("Updated"), day(&d.updated))),
+            )
+            .children((!p.license.is_empty()).then(|| about_row(tr("Licence"), p.license.clone())));
 
         let shots = details
             .map(|d| {
@@ -283,113 +261,95 @@ impl Launcher {
                     .collect()
             })
             .unwrap_or_default();
-        let about: AnyElement = match &loaded {
-            None => muted(tr("Loading…")).into_any_element(),
-            Some(Err(why)) => div()
-                .flex()
-                .flex_col()
-                .gap(px(6.))
-                .child(
-                    div()
-                        .text_size(px(tokens::LABEL))
-                        .child(crate::selectable::selectable(p.summary.clone())),
-                )
-                .child(note(trf(
-                    "The rest of this page couldn't be read: {why}",
-                    &[("why", why)],
-                )))
-                .into_any_element(),
-            Some(Ok(page)) if page.0.body.trim().is_empty() => div()
-                .text_size(px(tokens::LABEL))
-                .child(crate::selectable::selectable(p.summary.clone()))
-                .into_any_element(),
-            Some(Ok(page)) => prose(self.theme, &without_pictures(&page.0.body)),
-        };
-        let list = (!versions.is_empty()).then(|| {
-            card().children(versions.iter().take(VERSIONS).enumerate().map(|(i, v)| {
+        let mut body: Vec<AnyElement> = Vec::new();
+        match &loaded {
+            None => body.push(muted(tr("Loading…")).into_any_element()),
+            Some(Err(why)) => body.push(
                 div()
                     .flex()
-                    .items_center()
-                    .gap(px(16.))
-                    .px(px(14.))
-                    .py(px(10.))
-                    .when(i > 0, |d| d.border_t_1().border_color(palette().rule()))
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(
+                        div()
+                            .text_size(px(tokens::LABEL))
+                            .child(crate::selectable::selectable(p.summary.clone())),
+                    )
+                    .child(note(trf(
+                        "The rest of this page couldn't be read: {why}",
+                        &[("why", why)],
+                    )))
+                    .into_any_element(),
+            ),
+            Some(Ok(page)) if page.0.body.trim().is_empty() => body.push(
+                div()
                     .text_size(px(tokens::LABEL))
-                    .child(
-                        div()
-                            .w(px(110.))
-                            .flex_none()
-                            .truncate()
-                            .font_family(crate::theme::MONO)
-                            .child(v.number.clone()),
-                    )
-                    .child(
-                        div()
-                            .w(px(90.))
-                            .flex_none()
-                            .text_color(c(palette().muted))
-                            .child(day(&v.published)),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(c(palette().muted))
-                            .child(games(&v.game_versions)),
-                    )
-            }))
-        });
+                    .child(crate::selectable::selectable(p.summary.clone()))
+                    .into_any_element(),
+            ),
+            Some(Ok(page)) => body.push(prose(self.theme, &without_pictures(&page.0.body))),
+        }
         let more = versions.len().saturating_sub(VERSIONS);
-        let mut main = div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .gap(px(14.))
-            .child(head);
-        // A narrow window has one column: the action stays near the top.
-        let (above, beside) = match self.content_width() < 860. {
-            true => (Some(side), None),
-            false => (None, Some(side.w(px(360.)).flex_none())),
-        };
-        main = main
-            .children(above)
-            .children(self.gallery(shots, cx))
-            .child(about);
-        if let Some(list) = list {
-            main = main
-                .child(
-                    div()
-                        .text_size(px(tokens::HEADING))
-                        .font_weight(FontWeight::BOLD)
-                        .child(tr("Versions")),
-                )
-                .child(list)
-                .children((more > 0).then(|| {
+        if !versions.is_empty() {
+            body.push(section(tr("Versions")).into_any_element());
+            body.push(
+                card()
+                    .children(versions.iter().take(VERSIONS).enumerate().map(|(i, v)| {
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(16.))
+                            .px(px(14.))
+                            .py(px(10.))
+                            .when(i > 0, |d| d.border_t_1().border_color(palette().rule()))
+                            .text_size(px(tokens::LABEL))
+                            .child(
+                                div()
+                                    .w(px(110.))
+                                    .flex_none()
+                                    .truncate()
+                                    .font_family(crate::theme::MONO)
+                                    .child(v.number.clone()),
+                            )
+                            .child(
+                                div()
+                                    .w(px(90.))
+                                    .flex_none()
+                                    .text_color(c(palette().muted))
+                                    .child(day(&v.published)),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(c(palette().muted))
+                                    .child(games(&v.game_versions)),
+                            )
+                    }))
+                    .into_any_element(),
+            );
+            if more > 0 {
+                body.push(
                     muted(trf(
                         "And {count} older versions, on its page.",
                         &[("count", &more.to_string())],
                     ))
-                }));
+                    .into_any_element(),
+                );
+            }
         }
-        let columns = div()
-            .flex()
-            .gap(px(24.))
-            .items_start()
-            .child(main)
-            .children(beside);
-        page = page.child(crate::scrollbar::wrap_page_in_margin(
+        let gallery = self.gallery(shots, cx);
+        self.project_layout(
             "pack-project",
-            div()
-                .id("alt-pack-page-scroll")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .child(columns),
-            &self.theme,
-        ));
-        page.into_any_element()
+            super::project::Layout {
+                header,
+                head: header_block,
+                action: Some(action_col),
+                gallery,
+                side: Some(side),
+            },
+            body,
+        )
     }
 }
 

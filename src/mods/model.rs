@@ -276,7 +276,6 @@ pub(super) struct Cells {
 
 /// The widths of the list's fixed columns on a roomy window.
 pub(super) mod column {
-    pub(in super::super) const KIND: f32 = 64.;
     pub(in super::super) const VERSION: f32 = 72.;
     pub(in super::super) const STATUS: f32 = 176.;
     pub(in super::super) const ACTION: f32 = 96.;

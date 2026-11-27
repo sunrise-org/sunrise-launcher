@@ -74,7 +74,6 @@ pub(crate) struct Servers {
     pub(super) selected: Option<Field>,
     /// A field whose value was refused, and why: shown under it until it's edited.
     pub(super) invalid: Option<(Field, &'static str)>,
-    pub(super) copied: Option<Instant>,
     pub(super) internet_address: bool,
     pub(super) last_public_address: Option<std::net::Ipv4Addr>,
     pub(super) public_lookup: PublicLookup,
@@ -175,7 +174,6 @@ impl Servers {
             focus_soon: None,
             selected: None,
             invalid: None,
-            copied: None,
             internet_address: false,
             last_public_address: None,
             public_lookup: PublicLookup::Idle,
@@ -265,7 +263,6 @@ impl Servers {
 
     pub(crate) fn reset_public_lookup(&mut self) {
         self.public_lookup = PublicLookup::Idle;
-        self.copied = None;
     }
 
     pub(super) fn begin_public_lookup(&mut self) -> Option<u64> {
@@ -276,7 +273,6 @@ impl Servers {
         let request = self.public_lookup_request;
         self.public_lookup_in_flight = Some(request);
         self.public_lookup = PublicLookup::Loading(request);
-        self.copied = None;
         Some(request)
     }
 

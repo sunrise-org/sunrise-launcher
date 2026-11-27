@@ -2,6 +2,8 @@
 use super::widgets::*;
 use super::*;
 use crate::widgets::button::secondary;
+use crate::widgets::feedback::empty_state;
+use crate::widgets::{chip, nav};
 use gpui::SharedString;
 
 impl Launcher {
@@ -118,95 +120,160 @@ impl Launcher {
     }
 
     fn host_list(&mut self, cx: &mut Context<Self>) -> Div {
-        let creating = self.servers.creating;
-        let mut page = div()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(hint(tr(
-                        "Host a world for your friends on this computer. Create a server, press Start, and give them the address.",
-                    ))),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(self.host_primary(
-                        "host-create",
-                        tr("Create a server"),
-                        true,
-                        cx,
-                        |this, cx| this.open_create(cx),
-                    ))
-                    .child(self.host_button(
-                        "host-add",
-                        tr("Add a server folder…"),
-                        !creating,
-                        cx,
-                        |this, cx| this.add_server_folder(cx),
-                    )),
-            )
-            .children(
-                self.host_problem(cx)
-                    .filter(|_| self.servers.create.is_none()),
-            );
+        let problem = self
+            .host_problem(cx)
+            .filter(|_| self.servers.create.is_none());
         if self.servers.list.is_empty() {
-            return page.child(card().p(px(20.)).child(hint(tr("No server yet."))));
+            return self.host_empty(problem, cx);
         }
         let mut rows = Vec::new();
         for (i, e) in self.servers.list.clone().into_iter().enumerate() {
-            let status = self
-                .servers
-                .statuses
-                .get(&e.dir)
-                .cloned()
-                .unwrap_or_else(Status::stopped);
-            let detail = if status.running() {
-                format!(
-                    "{} · {}",
-                    phase_label(&status),
-                    trf(
-                        "{online} of {max} players",
-                        &[
-                            ("online", &status.players.len().to_string()),
-                            ("max", &status.max_players.unwrap_or(0).to_string()),
-                        ]
-                    )
-                )
-            } else {
-                format!("{} · {}", self.servers.stopped_line(&e.dir), short(&e.dir))
-            };
-            let dir = e.dir.clone();
-            rows.push(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(12.))
-                    .child(dot(phase_color(&status)))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.))
-                            .child(div().font_weight(FontWeight::SEMIBOLD).child(e.name))
-                            .child(hint(detail)),
-                    )
-                    .child(self.host_button(
-                        ElementId::named_usize("host-open", i),
-                        tr("Open"),
-                        true,
-                        cx,
-                        move |this, _| this.open_server(dir.clone()),
-                    )),
-            );
+            rows.push(self.host_row(i, e.dir, e.name, cx));
         }
-        page = page.child(group(rows));
-        page
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .child(self.host_list_head(cx))
+            .children(problem)
+            .child(group(rows))
+    }
+
+    /// The two ways to add a server: a folder that holds servers, and a new one.
+    fn host_add_create(&mut self, cx: &mut Context<Self>) -> (Stateful<Div>, Stateful<Div>) {
+        let creating = self.servers.creating;
+        let add = self.host_button(
+            "host-add",
+            tr("Add a server folder…"),
+            !creating,
+            cx,
+            |this, cx| this.add_server_folder(cx),
+        );
+        let create = self.host_primary(
+            "host-create",
+            tr("Create a server"),
+            true,
+            cx,
+            |this, cx| this.open_create(cx),
+        );
+        (add, create)
+    }
+
+    /// The page's first line: what hosting is, and the two ways to add a server.
+    fn host_list_head(&mut self, cx: &mut Context<Self>) -> Div {
+        let (add, create) = self.host_add_create(cx);
+        div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .justify_between()
+            .gap(px(12.))
+            .child(hint(tr(
+                "Host a world for your friends on this computer. Create a server, press Start, and give them the address.",
+            )))
+            .child(div().flex().items_center().gap(px(8.)).child(add).child(create))
+    }
+
+    /// No server yet: the empty state carries the two actions, so the page has no separate row
+    /// of them.
+    fn host_empty(&mut self, problem: Option<Div>, cx: &mut Context<Self>) -> Div {
+        let (add, create) = self.host_add_create(cx);
+        let actions = div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(12.))
+            .child(add)
+            .child(create)
+            .into_any_element();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .children(problem)
+            .child(empty_state(
+                tr("No server yet.").trim_end_matches('.'),
+                tr("Host a world for your friends on this computer. Create a server, press Start, and give them the address."),
+                Some(actions),
+            ))
+    }
+
+    /// One server of the list: its name and players, its status tag, Start or Stop, and Open.
+    /// Start and Stop act on the server they sit beside: it opens first, so the job's progress
+    /// shows on its page.
+    fn host_row(&mut self, i: usize, dir: PathBuf, name: String, cx: &mut Context<Self>) -> Div {
+        let idle = self.servers.busy.is_none();
+        let status = self
+            .servers
+            .statuses
+            .get(&dir)
+            .cloned()
+            .unwrap_or_else(Status::stopped);
+        let running = status.running();
+        let detail = if running {
+            trf(
+                "{online} of {max} players",
+                &[
+                    ("online", &status.players.len().to_string()),
+                    ("max", &status.max_players.unwrap_or(0).to_string()),
+                ],
+            )
+        } else {
+            format!("{} · {}", self.servers.stopped_line(&dir), short(&dir))
+        };
+        let kind = if running {
+            chip::Kind::Selected
+        } else {
+            chip::Kind::Neutral
+        };
+        let tag = chip::tag(phase_label(&status), kind);
+        let (start_dir, stop_dir, open_dir) = (dir.clone(), dir.clone(), dir);
+        let power = if running {
+            self.host_button(
+                ElementId::named_usize("host-row-stop", i),
+                tr("Stop"),
+                idle,
+                cx,
+                move |this, _| {
+                    this.open_server(stop_dir.clone());
+                    this.stop_server();
+                },
+            )
+        } else {
+            self.host_button(
+                ElementId::named_usize("host-row-start", i),
+                tr("Start"),
+                idle && status.phase == "stopped",
+                cx,
+                move |this, _| {
+                    this.open_server(start_dir.clone());
+                    this.start_server();
+                },
+            )
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(name))
+                    .child(hint(detail)),
+            )
+            .child(tag)
+            .child(power)
+            .child(self.host_button(
+                ElementId::named_usize("host-open", i),
+                tr("Open"),
+                true,
+                cx,
+                move |this, _| this.open_server(open_dir.clone()),
+            ))
     }
 
     fn host_server(&mut self, dir: &Path, cx: &mut Context<Self>) -> Div {
@@ -260,6 +327,8 @@ impl Launcher {
             },
         );
         let folder = dir.to_path_buf();
+        let (listener, _) = self.servers.share_address(&status);
+        let address = self.share_text(listener);
         let head = div()
             .flex()
             .items_center()
@@ -270,15 +339,40 @@ impl Launcher {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .gap(px(4.))
+                    .gap(px(6.))
                     .child(title(name))
                     .child(
                         div()
                             .flex()
+                            .flex_wrap()
                             .items_center()
-                            .gap(px(8.))
-                            .child(dot(phase_color(&status)))
-                            .child(hint(said)),
+                            .gap(px(10.))
+                            .child(chip::tag(
+                                said,
+                                if running {
+                                    chip::Kind::Selected
+                                } else {
+                                    chip::Kind::Neutral
+                                },
+                            ))
+                            .children(address.map(|address| {
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.))
+                                    .child(
+                                        div()
+                                            .font_family(theme::MONO)
+                                            .text_size(px(tokens::LABEL))
+                                            .text_color(rgb(palette().muted))
+                                            .child(address.clone()),
+                                    )
+                                    .child(crate::widgets::motion_bits::copy_button(
+                                        "host-header-copy",
+                                        tr("Copy"),
+                                        address,
+                                    ))
+                            })),
                     ),
             )
             .child(
@@ -386,8 +480,9 @@ impl Launcher {
             .map(|(tab, name)| (tab, tr(name).into()))
             .collect();
         let this = cx.entity();
-        let tabs = div().flex().child(
-            choices("host-tab", &tabs, chosen, move |tab, _, cx| {
+        let tabs = div()
+            .flex()
+            .child(nav::tabs("host-tab", &tabs, chosen, move |tab, _, cx| {
                 this.update(cx, |this, cx| {
                     if this.servers.tab == Tab::Overview && tab != Tab::Overview {
                         this.servers.reset_public_lookup();
@@ -396,9 +491,7 @@ impl Launcher {
                     this.servers.confirm_restore = None;
                     cx.notify();
                 })
-            })
-            .gap(px(6.)),
-        );
+            }));
         let body = match self.servers.tab {
             Tab::Overview => self.host_overview(&status, cx),
             Tab::Players => self.host_players(dir, &status, cx),
@@ -465,13 +558,7 @@ impl Launcher {
                 }),
                 tr("Memory"),
             ));
-        let mut right = div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .gap(px(14.))
-            .child(stats);
+        let mut right = div().flex_1().min_w_0().flex().flex_col().gap(px(14.));
         if !status.players.is_empty() {
             let mut who = div().flex().flex_wrap().gap(px(14.));
             for p in status.players.clone() {
@@ -494,21 +581,23 @@ impl Launcher {
         }
         right = right.child(self.host_console(on, cx));
         let sharing = self.hosting_share(listener, cx);
-        div()
-            .flex()
-            .items_start()
-            .gap(px(14.))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(14.))
-                    .child(here)
-                    .child(sharing),
-            )
-            .child(right)
+        div().flex().flex_col().gap(px(14.)).child(stats).child(
+            div()
+                .flex()
+                .items_start()
+                .gap(px(14.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(14.))
+                        .child(here)
+                        .child(sharing),
+                )
+                .child(right),
+        )
     }
 
     fn host_backups(&mut self, status: &Status, cx: &mut Context<Self>) -> Div {

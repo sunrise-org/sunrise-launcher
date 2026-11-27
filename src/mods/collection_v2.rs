@@ -3,6 +3,7 @@
 //! installs through the ordinary registry install and is its own afterwards; the collection owns
 //! nothing.
 use super::model::discover_v2::{V2Card, V2Collection};
+use super::project::look::{action_column, card, head, muted, section};
 use super::project::prose;
 use super::ui::*;
 use super::*;
@@ -96,35 +97,18 @@ impl Launcher {
             .as_deref()
             .and_then(|rel| self.v2_mod_image(&id, rel, images::ICON));
         let publisher = trf("by {authors}", &[("authors", &collection.publisher)]);
-        let head = div()
-            .flex()
-            .items_center()
-            .gap(px(16.))
-            .child(tile(icon, &collection.id, &collection.name, 64.))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .child(
-                        div()
-                            .text_size(px(tokens::DISPLAY))
-                            .font_weight(FontWeight::BOLD)
-                            .child(crate::selectable::selectable(collection.name.clone())),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .items_center()
-                            .gap_x(px(8.))
-                            .gap_y(px(4.))
-                            .child(note(publisher))
-                            .child(tag(tr("Collection"), chip::Kind::Neutral)),
-                    ),
-            );
+        let facts = vec![trf(
+            "Collection · {count} mods",
+            &[("count", &collection.members.len().to_string())],
+        )];
+        let header_block = head(
+            tile(icon, &collection.id, &collection.name, 64.).into_any_element(),
+            &collection.name,
+            Some(publisher),
+            vec![tag(tr("Collection"), chip::Kind::Neutral).into_any_element()],
+            Some(collection.summary.clone()).filter(|s| !s.trim().is_empty()),
+            facts,
+        );
 
         let to_install =
             collection.to_install(&cards, &picked, &|project| self.v2_installed(project));
@@ -133,20 +117,7 @@ impl Launcher {
             .iter()
             .filter(|&&(i, _)| picked.contains(&cards[i].id))
             .count();
-        let mut rows = card().child(
-            div()
-                .px(px(14.))
-                .py(px(10.))
-                .text_size(px(tokens::LABEL))
-                .text_color(c(palette().muted))
-                .child(trf(
-                    "{picked} of {all} selected",
-                    &[
-                        ("picked", &picked_count.to_string()),
-                        ("all", &collection.members.len().to_string()),
-                    ],
-                )),
-        );
+        let mut rows = card();
         for (n, &(i, _)) in collection.members.iter().enumerate() {
             rows = rows.child(self.v2_collection_line(&id, n, &cards[i], &picked, cx));
         }
@@ -180,67 +151,48 @@ impl Launcher {
                 }
             }
         };
-        let right = card()
+        let action_col = action_column()
+            .child(action)
+            .child(muted(trf(
+                "{picked} of {all} selected",
+                &[
+                    ("picked", &picked_count.to_string()),
+                    ("all", &collection.members.len().to_string()),
+                ],
+            )))
+            .children(self.registry_card_outcome(&id, cx));
+
+        let side = card()
             .p(px(16.))
             .flex()
             .flex_col()
-            .gap(px(12.))
-            .child(action)
-            .children(self.registry_card_outcome(&id, cx))
+            .gap(px(8.))
             .child(muted(tr(
                 "The picked mods and what they need install together. Each one then updates and is removed on its own, from Installed.",
             )));
 
-        let (above, beside) = match self.content_width() < 860. {
-            true => (Some(right), None),
-            false => (None, Some(right.w(px(320.)).flex_none())),
-        };
-        let about_text = match collection.description.trim().is_empty() {
-            true => collection.summary.clone(),
-            false => collection.description.clone(),
-        };
-        let left = div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .gap(px(14.))
-            .child(head)
-            .children(above)
-            .child(prose(self.theme, &about_text))
-            .child(
-                div()
-                    .text_size(px(tokens::HEADING))
-                    .font_weight(FontWeight::BOLD)
-                    .child(tr("Mods")),
-            )
-            .child(rows);
-        page.child(crate::scrollbar::wrap_page(
+        let mut body: Vec<AnyElement> = Vec::new();
+        if !collection.description.trim().is_empty() {
+            body.push(prose(self.theme, &collection.description));
+        }
+        body.push(section(tr("Mods")).into_any_element());
+        body.push(rows.into_any_element());
+        self.project_layout(
             "project",
-            div()
-                .id("alt-project-scroll")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .flex()
-                .flex_col()
-                .gap(px(14.))
-                .child(header)
-                .child(
-                    div()
-                        .flex()
-                        .gap(px(24.))
-                        .items_start()
-                        .child(left)
-                        .children(beside),
-                ),
-            &self.theme,
-        ))
-        .into_any_element()
+            super::project::Layout {
+                header,
+                head: header_block,
+                action: Some(action_col),
+                gallery: None,
+                side: Some(side),
+            },
+            body,
+        )
     }
 
     /// One member: its box picks it, its name opens its own page. A member that doesn't fit the
-    /// build, or is already installed, can't be picked.
+    /// build, or is already installed, can't be picked. The status and version sit in the same
+    /// fixed columns as the profile's Mods tab.
     fn v2_collection_line(
         &mut self,
         collection: &str,
@@ -293,18 +245,16 @@ impl Launcher {
         if let Some(why) = member.fit.reason() {
             text = text.child(div().truncate().child(muted(why)));
         }
-        let right = if installed && self.registry_pending(&member.id) {
-            status("clock", tr(ADDED_PENDING), palette().warning)
+        let state = if installed && self.registry_pending(&member.id) {
+            Some(status("clock", tr(ADDED_PENDING), palette().warning))
         } else if installed {
-            status("check", tr("Installed"), palette().success)
+            Some(status("check", tr("Installed"), palette().success))
         } else {
-            div()
-                .flex_none()
-                .font_family(crate::theme::MONO)
-                .text_size(px(tokens::SMALL))
-                .text_color(c(palette().muted))
-                .children(member.fit.fitting_version().map(str::to_owned))
+            None
         };
+        let version = (!installed)
+            .then(|| member.fit.fitting_version().map(str::to_owned))
+            .flatten();
         let tick = checkbox(
             ("alt-collection-box", n),
             if open && picked.contains(&member.id) {
@@ -323,6 +273,7 @@ impl Launcher {
             .gap(px(12.))
             .px(px(14.))
             .py(px(10.))
+            .min_h(px(52.))
             .border_t_1()
             .border_color(palette().rule())
             .when(open, |d| d.cursor_pointer())
@@ -332,7 +283,24 @@ impl Launcher {
             })
             .child(tile(picture, &member.id, &member.name, 36.))
             .child(text)
-            .child(right)
+            .child(
+                div()
+                    .w(px(model::column::STATUS))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .children(state),
+            )
+            .child(
+                div()
+                    .w(px(model::column::VERSION))
+                    .flex_none()
+                    .truncate()
+                    .font_family(crate::theme::MONO)
+                    .text_size(px(tokens::LABEL))
+                    .text_color(c(palette().muted))
+                    .children(version),
+            )
             .when(open, |d| {
                 d.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.v2_collection_flip(&project);

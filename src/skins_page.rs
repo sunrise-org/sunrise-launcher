@@ -63,7 +63,7 @@ const PREVIEW_H: f32 = 420.;
 /// A tile's picture: a skin's model or a cape's face (10 by 16 texels at 6 points).
 const PICTURE_W: f32 = 60.;
 const PICTURE_H: f32 = 96.;
-const TILE_W: f32 = 104.;
+const TILE_W: f32 = 88.;
 /// The game's default skins, each with wide and slim arms.
 const DEFAULT_SKINS: [&str; 9] = [
     "steve", "alex", "ari", "efe", "kai", "makena", "noor", "sunny", "zuri",

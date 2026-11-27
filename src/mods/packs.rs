@@ -261,13 +261,35 @@ impl Launcher {
             {
                 continue;
             }
+            let toggle = switch(
+                ElementId::named_usize("alt-pack-switch", index),
+                pack.enabled,
+            );
+            let toggle = if editable {
+                let (dest, file, was_on) = (home.clone(), pack.file.clone(), pack.enabled);
+                toggle.on_click(cx.listener(move |this, _, _, cx| {
+                    this.change_pack(&dest, kind, || {
+                        let p = packs::find(&dest, kind, &file)?;
+                        if p.file != file || p.enabled != was_on {
+                            return Err(tr("This pack changed. Check the refreshed list.").into());
+                        }
+                        packs::set_enabled(&dest, &p, !was_on)
+                    });
+                    cx.notify();
+                }))
+            } else {
+                dim(toggle)
+            };
+            // Fixed columns, as the installed mods list has them: the switch, the picture,
+            // the name, then the row's actions.
             let mut row = div()
                 .flex_none()
-                .h(px(64.))
+                .min_h(px(52.))
                 .flex()
                 .items_center()
                 .gap(px(12.))
-                .px(px(16.))
+                .px(px(14.))
+                .child(toggle)
                 .when(shown > 0, |d| d.border_t_1().border_color(palette().rule()))
                 // The pack another page opened the shelf at.
                 .when(
@@ -289,7 +311,7 @@ impl Launcher {
                     icon.clone(),
                     &pack.file,
                     &pack.title,
-                    36.,
+                    32.,
                 ))
                 .child(
                     div()
@@ -380,26 +402,7 @@ impl Launcher {
             } else {
                 dim(remove)
             };
-            let toggle = switch(
-                ElementId::named_usize("alt-pack-switch", index),
-                pack.enabled,
-            );
-            let toggle = if editable {
-                let (dest, file, was_on) = (home.clone(), pack.file.clone(), pack.enabled);
-                toggle.on_click(cx.listener(move |this, _, _, cx| {
-                    this.change_pack(&dest, kind, || {
-                        let p = packs::find(&dest, kind, &file)?;
-                        if p.file != file || p.enabled != was_on {
-                            return Err(tr("This pack changed. Check the refreshed list.").into());
-                        }
-                        packs::set_enabled(&dest, &p, !was_on)
-                    });
-                    cx.notify();
-                }))
-            } else {
-                dim(toggle)
-            };
-            list = list.child(row.child(remove).child(toggle));
+            list = list.child(row.child(remove));
         }
         // None at all: the empty state stands in the list's place, centred in the page.
         let none = items.is_empty().then(|| {

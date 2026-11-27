@@ -72,7 +72,7 @@ impl Launcher {
                 palette().input_edge()
             })
             .bg(rgb(palette().field))
-            .text_size(px(13.))
+            .text_size(px(tokens::LABEL))
             .text_color(rgb(palette().text))
     }
 
@@ -92,7 +92,7 @@ impl Launcher {
             .bg(palette().card())
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(px(tokens::CAPTION))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(rgb(palette().muted))
                     .child(tr("Friends over the internet · Tailscale").to_uppercase()),
@@ -190,7 +190,7 @@ impl Launcher {
                                 .flex_1()
                                 .min_w_0()
                                 .font_family(theme::MONO)
-                                .text_size(px(18.))
+                                .text_size(px(tokens::HEADING))
                                 // A long name breaks after a dot, never inside a word: a zero-width
                                 // space after each dot is a place it may wrap. Copy takes the plain one.
                                 .child(address.replace('.', ".\u{200B}")),

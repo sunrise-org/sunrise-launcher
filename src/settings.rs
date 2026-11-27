@@ -6,6 +6,7 @@ use crate::paint::palette;
 use crate::widgets::check::switch;
 use crate::widgets::chip::choices;
 use crate::widgets::feedback::{banner, Tone};
+use crate::widgets::nav::{nav_row, sun_fits};
 use gpui::rgb;
 use storage::Category;
 use sunrise_launcher::telemetry;
@@ -36,6 +37,15 @@ const NAV_WIDTH: f32 = 180.;
 const COLUMN_GAP: f32 = 28.;
 const PANE_WIDTH: f32 = 760.;
 const COLUMNS: f32 = NAV_WIDTH + COLUMN_GAP + PANE_WIDTH;
+/// What a section row has for its label and the sun: the row's width less its padding (12 px a
+/// side), its icon (20 px) and the gap after the icon (10 px).
+const NAV_LABEL_ROOM: f32 = NAV_WIDTH - 24. - 20. - 10.;
+
+/// A section label's width at full length, roughly: Geist at the label size is about 0.6 em a
+/// character, which errs wide, so the sun is not drawn over a label that is close to the edge.
+fn nav_label_width(label: &str) -> f32 {
+    label.chars().count() as f32 * tokens::LABEL * 0.6
+}
 
 /// The Settings section the window opens on, when what the last start left needs one: a data
 /// folder that did not open or a move that failed or finished (Storage has its recoveries).
@@ -64,7 +74,7 @@ impl Section {
         })
     }
 
-    /// Its icon in the list, from the glass set the top tabs draw theirs from.
+    /// Its icon in the section list (a name in the glass icon set).
     fn icon(self) -> &'static str {
         match self {
             Section::Account => "user",
@@ -262,45 +272,24 @@ impl Launcher {
         self.corners_focused = self.corners_focus.is_focused(window);
         let section = self.ui.settings.section;
         let scroll = crate::frame::scrolls("settings");
-        let mut nav = div()
+        // The title and the section list stay in view as the section scrolls (`Sticky`, which
+        // reads the columns row as the scroll's item 0).
+        let column = div()
             .relative()
             .top(px(self.settings_sticky.shift(&scroll, 0, 0)))
             .flex()
             .flex_col()
-            .gap(px(2.))
+            .gap(px(16.))
             .w(px(NAV_WIDTH))
-            .flex_none();
-        for (n, s) in Section::ALL.into_iter().enumerate() {
-            let on = s == section;
-            let colour = if on { palette().text } else { palette().muted };
-            nav = nav.child(
+            .flex_none()
+            .child(
                 div()
-                    .id(ElementId::named_usize("alt-settings-nav", n))
-                    .group("alt-settings-nav")
-                    .reach()
-                    .h(px(tokens::FIELD))
                     .px(px(12.))
-                    .flex()
-                    .items_center()
-                    .gap(px(7.))
-                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-                    .cursor_pointer()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(colour))
-                    .when(on, |d| d.bg(rgb(palette().selected)))
-                    .hover(|d| d.text_color(rgb(palette().text)))
-                    // The top tabs' icon size and gap; it lights up with its label.
-                    .child(
-                        crate::glass_ui::icon(s.icon(), 16., rgb(colour).into())
-                            .group_hover("alt-settings-nav", |d| d.text_color(rgb(palette().text))),
-                    )
-                    .child(tr(s.label()))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.settings_open(s);
-                        cx.notify();
-                    })),
-            );
-        }
+                    .text_size(px(tokens::DISPLAY))
+                    .font_weight(FontWeight::BOLD)
+                    .child(tr("Settings")),
+            )
+            .child(self.settings_nav(section, cx));
         let body = match section {
             Section::Account => self.settings_account(cx),
             Section::Game => self.settings_game(cx),
@@ -309,7 +298,57 @@ impl Launcher {
             Section::Privacy => self.settings_privacy(cx),
             Section::Launcher => self.settings_launcher(cx),
         };
-        let pane = div()
+        let pane = self.settings_pane(section, body);
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .text_color(rgb(palette().text))
+            .child(crate::scrollbar::wrap_page(
+                "settings",
+                div()
+                    .id("alt-settings-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px(px(32.))
+                    .pt(px(24.))
+                    .pb(px(24.))
+                    .child(
+                        div()
+                            .id("alt-settings-columns")
+                            .track_scroll(self.settings_sticky.row())
+                            // On a wide window the block keeps its width, in the middle.
+                            .w_full()
+                            .max_w(px(COLUMNS))
+                            .mx_auto()
+                            .flex()
+                            .items_start()
+                            .gap(px(COLUMN_GAP))
+                            .child(column)
+                            .child(pane),
+                    ),
+                &self.theme,
+            ))
+            // A press anywhere else closes open dropdown menus; the menus and their buttons keep
+            // their own presses.
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    let closed_lang = std::mem::take(&mut this.ui.settings.languages);
+                    let closed_account = this.ui.settings.account_menu.take().is_some();
+                    if closed_lang || closed_account {
+                        cx.notify();
+                    }
+                }),
+            )
+            .into_any_element()
+    }
+
+    /// The open section on the right: its title and what it is for, the warning about a data
+    /// folder that did not open, then its groups.
+    fn settings_pane(&self, section: Section, body: Div) -> Div {
+        div()
             .flex_1()
             .min_w_0()
             .max_w(px(PANE_WIDTH))
@@ -334,65 +373,27 @@ impl Launcher {
                     .clone()
                     .map(|why| banner(Tone::Danger, why, None)),
             )
-            .child(body);
-        // The title stays put above the scroll, and the categories stay in view as the section
-        // scrolls (`Sticky`, which reads this row as the scroll's item 0).
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .text_color(rgb(palette().text))
-            .child(
-                // Over the section list, wherever the block sits.
-                div()
-                    .w_full()
-                    .max_w(px(COLUMNS + 2. * 32.))
-                    .mx_auto()
-                    .px(px(32.))
-                    .pt(px(24.))
-                    .pb(px(20.))
-                    .text_size(px(tokens::DISPLAY))
-                    .font_weight(FontWeight::BOLD)
-                    .child(tr("Settings")),
-            )
-            .child(crate::scrollbar::wrap_page(
-                "settings",
-                div()
-                    .id("alt-settings-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .px(px(32.))
-                    .pb(px(24.))
-                    .child(
-                        div()
-                            .id("alt-settings-columns")
-                            .track_scroll(self.settings_sticky.row())
-                            // On a wide window the block keeps its width, in the middle.
-                            .w_full()
-                            .max_w(px(COLUMNS))
-                            .mx_auto()
-                            .flex()
-                            .items_start()
-                            .gap(px(COLUMN_GAP))
-                            .child(nav)
-                            .child(pane),
-                    ),
-                &self.theme,
-            ))
-            // A press anywhere else closes open dropdown menus; the menus and their buttons keep
-            // their own presses.
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    let closed_lang = std::mem::take(&mut this.ui.settings.languages);
-                    let closed_account = this.ui.settings.account_menu.take().is_some();
-                    if closed_lang || closed_account {
+            .child(body)
+    }
+
+    /// The section list: one row per section, the open one filled and marked with the pixel sun
+    /// when its label and the sun fit the row.
+    fn settings_nav(&self, section: Section, cx: &mut Context<Self>) -> Div {
+        let mut nav = div().flex().flex_col().gap(px(2.));
+        for (n, s) in Section::ALL.into_iter().enumerate() {
+            let on = s == section;
+            let label = tr(s.label());
+            let sun = on && sun_fits(nav_label_width(label), NAV_LABEL_ROOM);
+            nav = nav.child(
+                nav_row(format!("alt-settings-nav-{n}"), s.icon(), label, on, sun).on_click(
+                    cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.settings_open(s);
                         cx.notify();
-                    }
-                }),
-            )
-            .into_any_element()
+                    }),
+                ),
+            );
+        }
+        nav
     }
 
     /// Opens a section, leaving no question from another one standing.
