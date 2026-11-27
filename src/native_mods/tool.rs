@@ -88,7 +88,8 @@ impl Cancellation {
         let mut state = self.state();
         if state.stopped {
             drop(state);
-            terminate_process(pid);
+            // It has done nothing yet: it is killed outright, with no grace to ignore.
+            kill_process(pid);
             return Err(super::CANCELLED.into());
         }
         state.tool = Some(pid);
@@ -162,15 +163,43 @@ impl Cancellation {
         }
         if let Some(pid) = state.tool {
             terminate_process(pid);
+            // One that ignores the request, or is stuck in the file system, is killed once
+            // the grace is over, if it still runs for this attempt (review of #615).
+            #[cfg(unix)]
+            {
+                let cancellation = self.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(STOP_GRACE);
+                    if cancellation.state().tool == Some(pid) {
+                        kill_process(pid);
+                    }
+                });
+            }
         }
     }
 }
 
+/// How long a stopped child's process group gets to end on its own before it is killed.
+pub(crate) const STOP_GRACE: Duration = Duration::from_secs(2);
+
+/// Asks the child's process group to end: SIGTERM on Unix. On Windows the tree is ended at once
+/// (`taskkill /T /F`), which is already the hard kill.
 fn terminate_process(pid: u32) {
     // SAFETY: callers only pass PIDs of process groups they spawned for this attempt.
     #[cfg(unix)]
     unsafe {
         libc::kill(-(pid as libc::pid_t), libc::SIGTERM);
+    }
+    #[cfg(windows)]
+    kill_process(pid);
+}
+
+/// Ends the child's process group outright: SIGKILL on Unix, `taskkill /T /F` on Windows.
+fn kill_process(pid: u32) {
+    // SAFETY: callers only pass PIDs of process groups they spawned for this attempt.
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
     }
     #[cfg(windows)]
     let _ = crate::process::command(crate::process::taskkill())

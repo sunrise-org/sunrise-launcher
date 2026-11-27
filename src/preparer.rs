@@ -5,6 +5,7 @@ use std::fs;
 use std::io::{self, BufRead, BufReader};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
+use std::time::{Duration, Instant};
 
 /// The game's cache of prepared data in a resources folder (`sunrise_core::prepared_files::FILE_NAME`, checked by tests/test_launcher_copies.py).
 pub const DATA_FILE: &str = "sunrise-data.bin";
@@ -202,13 +203,20 @@ impl Handoff<'_> {
     }
 }
 
-/// Runs `command` to its end, each stdout line to `out`; stderr is read beside it (so no pipe fills) and its lines returned.
+/// Runs `command` to its end, each stdout line to `out`; stderr is read beside it (so no pipe
+/// fills) and its lines returned.
+///
+/// A stop is checked while the child runs, not only once its output ends: after a stop, the
+/// output, the child's exit and the stderr reader are each waited for at most
+/// [`STOPPED_WAIT`], as the stop kills the child's group once its grace is over (review of
+/// #615).
 fn run(
     mut command: Command,
     out: &mut dyn FnMut(String),
     handoff: Option<&Handoff<'_>>,
 ) -> Result<(ExitStatus, Vec<String>), String> {
     use crate::process::owned::Owned;
+    use std::sync::mpsc::RecvTimeoutError;
     let stop = handoff.and_then(Handoff::stop);
     if let Some(stop) = stop {
         stop.check()?;
@@ -224,34 +232,80 @@ fn run(
     }
     .map_err(unrun)?;
     let _tracked = match stop {
-        Some(stop) => match stop.track_process(child.child().id()) {
-            Ok(guard) => Some(guard),
-            Err(cancelled) => {
-                let _ = child.wait();
-                return Err(cancelled);
-            }
-        },
+        Some(stop) => Some(stop.track_process(child.child().id())?),
         None => None,
     };
     drop(child.child().stdin.take());
     let stderr = child.child().stderr.take().expect("piped");
-    let errors = std::thread::spawn(move || tail(stderr));
+    let (errors_tx, errors_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = errors_tx.send(tail(stderr));
+    });
+    let stdout = child.child().stdout.take().expect("piped");
+    let (lines_tx, lines_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for text in lines(stdout) {
+            if lines_tx.send(text).is_err() {
+                break;
+            }
+        }
+    });
+    let stopped = || stop.is_some_and(crate::native_mods::Cancellation::is_stopped);
+    // When the stop came, once one did: from then on every wait is bounded.
+    let mut stopped_at = None;
+    let give_up = |stopped_at: &mut Option<Instant>| {
+        if stopped() {
+            stopped_at.get_or_insert_with(Instant::now).elapsed() > STOPPED_WAIT
+        } else {
+            false
+        }
+    };
     let mut read = 0;
-    for text in lines(child.child().stdout.take().expect("piped")) {
-        let text = text.map_err(unrun)?;
-        read += text.len();
-        // Past the cap the rest is drained unread, so the preparer never blocks on a full pipe.
-        if read <= MAX_OUTPUT {
-            out(text);
+    loop {
+        match lines_rx.recv_timeout(POLL) {
+            Ok(text) => {
+                let text = text.map_err(unrun)?;
+                read += text.len();
+                // Past the cap the rest is drained unread, so the preparer never blocks on a full pipe.
+                if read <= MAX_OUTPUT {
+                    out(text);
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Timeout) => {}
+        }
+        if give_up(&mut stopped_at) {
+            return Err(crate::native_mods::CANCELLED.into());
         }
     }
-    let status = child.wait().map_err(unrun)?;
-    let errors = errors.join().unwrap_or_default();
+    let status = loop {
+        if !stopped() {
+            break child.wait().map_err(unrun)?;
+        }
+        if let Some(status) = child.try_wait().map_err(unrun)? {
+            break status;
+        }
+        if give_up(&mut stopped_at) {
+            return Err(crate::native_mods::CANCELLED.into());
+        }
+        std::thread::sleep(POLL);
+    };
+    let errors = if stopped() {
+        errors_rx.recv_timeout(STOPPED_WAIT).unwrap_or_default()
+    } else {
+        errors_rx.recv().unwrap_or_default()
+    };
     if let Some(stop) = stop {
         stop.check()?;
     }
     Ok((status, errors))
 }
+
+/// How often a running child's stop is checked while its output is awaited.
+const POLL: Duration = Duration::from_millis(100);
+/// The longest a stopped child is waited for: its grace, then a margin for the kill to land.
+const STOPPED_WAIT: Duration =
+    crate::native_mods::STOP_GRACE.saturating_add(Duration::from_secs(3));
 
 pub(crate) fn run_staged(
     command: Command,

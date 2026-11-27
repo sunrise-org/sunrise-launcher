@@ -8426,6 +8426,110 @@ pub fn {f}("
         );
     }
 
+    /// A switch's Cancel reaches a data-file writer that ignores SIGTERM: the stop kills its
+    /// process group once the grace is over, and the install returns soon after, with the lock
+    /// free and none of the writer's processes left (review of #615).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_cancel_ends_a_data_file_writer_that_ignores_sigterm() {
+        use std::os::unix::fs::PermissionsExt;
+        const TAG: &str = "v2026.11.28";
+        let Some(root) = std::env::var_os("DATA_FILE_STUBBORN_ROOT") else {
+            let root = tempfile::tempdir().unwrap();
+            assert!(Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "backend::tests::a_cancel_ends_a_data_file_writer_that_ignores_sigterm",
+                ])
+                .env("DATA_FILE_STUBBORN_ROOT", root.path())
+                .env("SUNRISE_LAUNCHER_HOME", root.path())
+                .env("SUNRISE_HOME", root.path().join("home"))
+                .env("XDG_DATA_HOME", root.path().join("xdg-data"))
+                .env("XDG_CONFIG_HOME", root.path().join("xdg-config"))
+                .env("SUNRISE_LAUNCHER_NO_SELF_UPDATE", "1")
+                .env("SUNRISE_NO_AUDIO", "1")
+                .status()
+                .unwrap()
+                .success());
+            return;
+        };
+        let root = PathBuf::from(root);
+        let version = root.join("versions").join(TAG);
+        let resources = version.join(".local/sunrise-client/26.3");
+        fs::create_dir_all(&resources).unwrap();
+        fs::write(
+            version.join("research-lock.json"),
+            r#"{"minecraft":{"version":"26.3"}}"#,
+        )
+        .unwrap();
+        fs::write(version.join(COMPLETE), "").unwrap();
+        fs::write(resources.join(RESOURCES_MANIFEST), "{}").unwrap();
+        // The install's writer ignores SIGTERM, and so does the child it waits on; each says its
+        // pid. A seal's cache, under `launcher-prepared`, is answered at once.
+        let preparer = version.join("sunrise-prepare");
+        fs::write(
+            &preparer,
+            concat!(
+                "#!/bin/sh\n",
+                "trap '' TERM\n",
+                "dir=$(dirname \"$0\")\n",
+                "case \"$*\" in\n",
+                "  data-file*launcher-prepared*) echo '{\"format\":1,\"written\":false}';;\n",
+                "  data-file*) echo $$ > \"$dir/writer.pid\"; sleep 30 & echo $! > \"$dir/sleep.pid\"; wait;",
+                " echo '{\"format\":1,\"written\":true}';;\n",
+                "  *) exit 2;;\n",
+                "esac\n",
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&preparer, fs::Permissions::from_mode(0o700)).unwrap();
+        let stop = crate::native_mods::Cancellation::default();
+        let later = stop.clone();
+        let started = version.join("sleep.pid");
+        let canceller = std::thread::spawn(move || {
+            let waiting = std::time::Instant::now();
+            while !started.exists() && waiting.elapsed() < std::time::Duration::from_secs(20) {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            later.stop();
+            std::time::Instant::now()
+        });
+        reuse_prepared_for_cancellable(TAG, Some(&stop));
+        let returned = std::time::Instant::now();
+        let cancelled = canceller.join().unwrap();
+        assert!(version.join("writer.pid").exists(), "the writer started");
+        let took = returned.saturating_duration_since(cancelled);
+        assert!(
+            took < crate::native_mods::STOP_GRACE + std::time::Duration::from_secs(5),
+            "the install returned {took:?} after Cancel"
+        );
+        assert!(
+            prepare_lock(TAG).is_ok(),
+            "nothing holds the preparation lock"
+        );
+        // Running, or not yet reaped by anyone: a zombie has ended.
+        let alive = |file: &str| {
+            let pid = fs::read_to_string(version.join(file)).unwrap();
+            fs::read_to_string(format!("/proc/{}/stat", pid.trim()))
+                .ok()
+                .and_then(|stat| {
+                    stat.rsplit(')')
+                        .next()
+                        .map(|rest| rest.trim_start().to_owned())
+                })
+                .is_some_and(|rest| !rest.starts_with('Z'))
+        };
+        let waiting = std::time::Instant::now();
+        while (alive("writer.pid") || alive("sleep.pid"))
+            && waiting.elapsed() < std::time::Duration::from_secs(2)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(!alive("writer.pid"), "the writer was left running");
+        assert!(!alive("sleep.pid"), "the writer's child was left running");
+    }
+
     /// Cancel reaches the data-file writer once it runs: the preparer it started is stopped,
     /// and the install returns at once rather than when the writer would have finished.
     #[cfg(unix)]
