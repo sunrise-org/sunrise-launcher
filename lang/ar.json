@@ -2451,5 +2451,15 @@
   "Sunrise {tag} isn't prepared yet: press Prepare on the Play page (it uses your own Minecraft {version})": "لم يتم تجهيز Sunrise ‏{tag} بعد: اضغط «تجهيز» في صفحة اللعب (يستخدم Minecraft ‏{version} الخاص بك)",
   "copying {tag}: {error}": "جارٍ نسخ {tag}: ‏{error}",
   "The server programs aren't set up yet: create a server, or press Prepare on its page.": "لم يتم إعداد برامج الخادم بعد: أنشئ خادمًا أو اضغط «تجهيز» في صفحته.",
-  "Port {port} is already used by another program (maybe another server). Use a free port instead: friends then add it to the address.": "المنفذ {port} مستخدم بالفعل من برنامج آخر (ربما خادم آخر). استخدم منفذًا متاحًا، ثم يضيفه أصدقاؤك إلى العنوان."
+  "Port {port} is already used by another program (maybe another server). Use a free port instead: friends then add it to the address.": "المنفذ {port} مستخدم بالفعل من برنامج آخر (ربما خادم آخر). استخدم منفذًا متاحًا، ثم يضيفه أصدقاؤك إلى العنوان.",
+  "The server needs the game files from your own Minecraft. Prepare them: it takes a few minutes, once.": "يحتاج الخادم إلى ملفات لعبة Minecraft الخاصة بك. جهّزها؛ يستغرق ذلك بضع دقائق لمرة واحدة.",
+  "The game didn't start. Its log below says why.": "لم تبدأ اللعبة. يوضح سجلها أدناه السبب.",
+  "sunrise-server failed without saying why": "فشل sunrise-server دون ذكر السبب",
+  "The server isn't running.": "الخادم لا يعمل.",
+  "The server now uses port {port}. Press Start again.": "يستخدم الخادم الآن المنفذ {port}. اضغط «بدء» مجددًا.",
+  "Copying the game files prepared for Sunrise {tag}": "جارٍ نسخ ملفات اللعبة المجهزة لـ Sunrise ‏{tag}",
+  "The game files are ready. Press Start again.": "ملفات اللعبة جاهزة. اضغط «بدء» مجددًا.",
+  "Install a Sunrise version first.": "ثبّت إصدار Sunrise أولًا.",
+  "Type the line players see under the name.": "اكتب السطر الذي يراه اللاعبون أسفل الاسم.",
+  "Letting {name} in": "جارٍ السماح لـ {name} بالدخول"
 }

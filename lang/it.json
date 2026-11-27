@@ -2550,5 +2550,15 @@
   "Hardcore": "Hardcore",
   "Hides and turns off every AI feature.": "Nasconde e disattiva tutte le funzioni IA.",
   "Horizon Minecraft": "Horizon Minecraft",
-  "How the game starts. Its build is chosen beside Play on Home.": "Come si avvia il gioco. La build viene scelta accanto a Gioca nella Home."
+  "How the game starts. Its build is chosen beside Play on Home.": "Come si avvia il gioco. La build viene scelta accanto a Gioca nella Home.",
+  "Install a Sunrise game build first, then prepare it.": "Installa prima una build di gioco Sunrise, poi preparala.",
+  "Install a game build first. An import reuses its game files.": "Installa prima una build di gioco. L’importazione riutilizza i relativi file.",
+  "Installed mods": "Mod installate",
+  "Installed resource and shader packs": "Pacchetti di risorse e shader installati",
+  "Keep editing": "Continua a modificare",
+  "Keyboard shortcuts": "Scorciatoie da tastiera",
+  "Language, network and this version.": "Lingua, rete e questa versione.",
+  "Manage game builds, downloads and where your files are kept.": "Gestisci build di gioco, download e posizione dei file.",
+  "Not reviewed by the Sunrise registry. Native mods run with full access to this computer. Read the source first.": "Non verificato dal registro Sunrise. Le mod native hanno accesso completo a questo computer. Leggi prima il sorgente.",
+  "Not signed in": "Non connesso"
 }
