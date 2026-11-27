@@ -204,7 +204,7 @@ impl Handoff<'_> {
 }
 
 /// Runs `command` to its end, each stdout line to `out`; stderr is read beside it (so no pipe
-/// fills) and its lines returned.
+/// fills) and its last lines returned.
 ///
 /// Nothing here waits without a deadline: one loop takes the output, sees whether the child
 /// ended and checks the stop, each with a timed wait (review of #670). The child's process group
@@ -224,16 +224,47 @@ fn run(
 
 /// [`run`], stopped by `stop`, which is the handoff's own outside tests.
 fn run_with(
-    mut command: Command,
+    command: Command,
     out: &mut dyn FnMut(String),
     handoff: Option<&Handoff<'_>>,
     stop: Option<&crate::native_mods::Cancellation>,
 ) -> Result<(ExitStatus, Vec<String>), String> {
+    let mut stdout = |stream: Stream, text: String| {
+        if stream == Stream::Out {
+            out(text);
+        }
+    };
+    run_streams(command, &mut stdout, handoff, stop)
+}
+
+/// Which of a child's streams a line came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stream {
+    Out,
+    Err,
+}
+
+/// What a run's readers hand its loop, through one bounded queue.
+enum Read {
+    Line(Stream, String),
+    Failed(std::io::Error),
+}
+
+/// [`run_with`], with both streams' lines to `out` as they come, each through the same bounded
+/// queue. The last lines of stderr are also returned.
+fn run_streams(
+    mut command: Command,
+    out: &mut dyn FnMut(Stream, String),
+    handoff: Option<&Handoff<'_>>,
+    stop: Option<&crate::native_mods::Cancellation>,
+) -> Result<(ExitStatus, Vec<String>), String> {
     use crate::process::owned::Owned;
-    use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
+    use std::sync::mpsc::RecvTimeoutError;
     if let Some(stop) = stop {
         stop.check()?;
     }
+    // The reaper starts here, before the child: no destructor of a run starts a thread.
+    reaper::start();
     let spawned = if let Some(handoff) = handoff {
         handoff.spawn(command, true).map(Owned::start_preparer)
     } else {
@@ -245,7 +276,7 @@ fn run_with(
     }
     .map_err(unrun)?;
     // From here the child is the guard's: whatever way this returns, a `?` included, a child not
-    // reaped here is killed and reaped off this thread (review of #670).
+    // reaped here is killed and left to the reaper thread (review of #670).
     let mut child = Held::new(spawned);
     #[cfg(test)]
     test_hooks::hook(&test_hooks::BEFORE_TRACK);
@@ -259,7 +290,7 @@ fn run_with(
                 Ok(guard) => Some(guard),
                 Err(cancelled) => {
                     // The stop came between the spawn and here, and has ended the child's tree:
-                    // the guard only leaves it to a reaping thread.
+                    // the guard only leaves it to the reaper.
                     child.killed = true;
                     return Err(cancelled);
                 }
@@ -267,55 +298,52 @@ fn run_with(
         }
         None => None,
     };
-    let (lines_rx, errors_rx) = read_output(child.get()).map_err(unrun)?;
+    let queue = read_output(child.get()).map_err(unrun)?;
     let stopped = || stop.is_some_and(crate::native_mods::Cancellation::is_stopped);
     let mut watch = Watch::default();
-    let (mut stdout_open, mut errors, mut exited, mut failed) = (true, None, false, None);
+    let mut errors = Tail::default();
+    let (mut open, mut exited, mut failed) = (true, false, None);
     // The time spent in `out`: the deadlines run on a clock without it, so they judge the child
     // and its pipes, never how fast the caller takes its lines. A slow caller can't drop the
     // final reply queued behind the lines before it (review of #670).
     let mut in_out = Duration::ZERO;
     loop {
         let ending = stopped() || failed.is_some();
-        if stdout_open {
-            match lines_rx.recv_timeout(POLL) {
-                // Once the run is ending its lines are only drained: they go nowhere.
-                Ok(Ok(text)) if !ending => {
-                    let took = Instant::now();
-                    out(text);
-                    in_out += took.elapsed();
+        if open {
+            match queue.recv_timeout(POLL) {
+                Ok(Read::Line(stream, text)) => {
+                    if stream == Stream::Err {
+                        errors.keep(text.clone());
+                    }
+                    // Once the run is ending its lines are only drained: they go nowhere.
+                    if !ending {
+                        let took = Instant::now();
+                        out(stream, text);
+                        in_out += took.elapsed();
+                    }
                 }
-                Ok(Ok(_)) => {}
-                Ok(Err(error)) => {
+                Ok(Read::Failed(error)) => {
                     // A read error ends the run at once, as the base's return did: the child's
                     // tree is killed now, and every wait from here has the stop's bound.
-                    failed = Some(unrun(error));
-                    stdout_open = false;
+                    failed.get_or_insert(unrun(error));
                     watch.killed = true;
                     child.kill();
                 }
-                Err(RecvTimeoutError::Disconnected) => stdout_open = false,
+                // Both streams ended.
+                Err(RecvTimeoutError::Disconnected) => open = false,
                 Err(RecvTimeoutError::Timeout) => {}
             }
         } else {
             std::thread::sleep(POLL);
         }
-        if errors.is_none() {
-            match errors_rx.try_recv() {
-                Ok(lines) => errors = Some(lines),
-                Err(TryRecvError::Disconnected) => errors = Some(Vec::new()),
-                Err(TryRecvError::Empty) => {}
-            }
-        }
         if !exited {
             exited = probe(child.get()).map_err(unrun)?;
         }
-        let pipes_open = stdout_open || errors.is_none();
         let ending = stopped() || failed.is_some();
         let now = Instant::now()
             .checked_sub(in_out)
             .unwrap_or_else(Instant::now);
-        match next(&mut watch, ending, exited, pipes_open, now) {
+        match next(&mut watch, ending, exited, open, now) {
             Next::Wait => {}
             Next::Kill => child.kill(),
             // Given up only once the stop's wait is over, or once the child had ended and its
@@ -323,6 +351,9 @@ fn run_with(
             Next::Done | Next::GiveUp => break,
         }
     }
+    // Without a stop or a failure, a kill means the child ended while something it started
+    // still held its output: that was killed, and what it would have written was not read.
+    let cut_off = watch.killed;
     #[cfg(test)]
     test_hooks::hook(&test_hooks::BEFORE_UNTRACK);
     let status = finish(Ending {
@@ -336,29 +367,35 @@ fn run_with(
     if let Some(failed) = failed {
         return Err(failed);
     }
+    // Never a clean success with output cut off (review of #670).
+    if cut_off {
+        return Err(crate::i18n::tr(
+            "The game's preparer ended, but a process it started kept its output open, so the launcher stopped that process. Some of the output was not read.",
+        )
+        .into());
+    }
     // Without a stop the loop ends only once the child has, so it was reaped.
     let status = status.ok_or_else(|| unrun(std::io::Error::other("it did not end")))?;
-    Ok((status, errors.unwrap_or_default()))
+    Ok((status, errors.into()))
 }
 
-/// A run's stdout lines, and the last lines of its stderr.
-type Output = (
-    std::sync::mpsc::Receiver<std::io::Result<String>>,
-    std::sync::mpsc::Receiver<Vec<String>>,
-);
-
-/// Starts the threads that read `child`'s output: its stdout lines, queued at most [`QUEUE`]
-/// at a time, and the last lines of its stderr.
-fn read_output(child: &mut crate::process::owned::Owned) -> std::io::Result<Output> {
-    use std::sync::mpsc::sync_channel;
+/// Starts the threads that read `child`'s output, both streams' lines into one queue of at
+/// most [`QUEUE`]: a child that writes faster than its lines are taken waits on its pipe.
+fn read_output(
+    child: &mut crate::process::owned::Owned,
+) -> std::io::Result<std::sync::mpsc::Receiver<Read>> {
     drop(child.child().stdin.take());
+    let (lines_tx, queue) = std::sync::mpsc::sync_channel::<Read>(QUEUE);
     let stderr = child.child().stderr.take().expect("piped");
-    let (errors_tx, errors_rx) = sync_channel(1);
+    let errors_tx = lines_tx.clone();
     reader(move || {
-        let _ = errors_tx.send(tail(stderr));
+        for text in lines(stderr).map_while(Result::ok) {
+            if errors_tx.send(Read::Line(Stream::Err, text)).is_err() {
+                break;
+            }
+        }
     })?;
     let stdout = child.child().stdout.take().expect("piped");
-    let (lines_tx, lines_rx) = sync_channel::<std::io::Result<String>>(QUEUE);
     #[cfg(test)]
     let mut fails_after = test_hooks::READ_FAILS_AFTER.with(std::cell::Cell::take);
     reader(move || {
@@ -376,7 +413,7 @@ fn read_output(child: &mut crate::process::owned::Owned) -> std::io::Result<Outp
             let text = match text {
                 Ok(text) => text,
                 Err(error) => {
-                    let _ = lines_tx.send(Err(error));
+                    let _ = lines_tx.send(Read::Failed(error));
                     break;
                 }
             };
@@ -386,12 +423,12 @@ fn read_output(child: &mut crate::process::owned::Owned) -> std::io::Result<Outp
             if read > MAX_OUTPUT {
                 continue;
             }
-            if lines_tx.send(Ok(text)).is_err() {
+            if lines_tx.send(Read::Line(Stream::Out, text)).is_err() {
                 break;
             }
         }
     })?;
-    Ok((lines_rx, errors_rx))
+    Ok(queue)
 }
 
 /// Starts one of a run's reader threads. A thread that can't start is an error like any other:
@@ -408,8 +445,9 @@ fn reader(read: impl FnOnce() + Send + 'static) -> std::io::Result<()> {
 }
 
 /// A preparer child from its spawn to its reap. Dropped before it was reaped, an early `?` or
-/// a stop that gave up, it kills the child's tree, which is not reaped yet, and leaves it to a
-/// thread to reap, so the run's thread never waits on a child that may be stuck (review of #670).
+/// a stop that gave up, it kills the child's tree, which is not reaped yet, and leaves it to the
+/// reaper ([`abandon`]), so the run's thread never waits long on a child that may be stuck
+/// (review of #670).
 struct Held {
     child: Option<crate::process::owned::Owned>,
     pid: u32,
@@ -576,11 +614,67 @@ impl End for Ending {
     }
 }
 
-/// Leaves a child that may not have ended to a thread to reap.
+/// Leaves a child that may not have ended, and was killed, to the reaper thread. With no reaper,
+/// the child is waited for here, but no longer than a stop's wait: one that still hasn't ended
+/// is left unreaped, so its PID stays its own. Nothing here starts a thread or can panic.
 fn abandon(child: crate::process::owned::Owned) {
     #[cfg(test)]
     test_hooks::ABANDONED.with(|count| count.set(count.get() + 1));
-    std::thread::spawn(move || drop(child));
+    let Err(mut child) = reaper::reap(child) else {
+        return;
+    };
+    let waiting = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) if waiting.elapsed() < STOPPED_WAIT => std::thread::sleep(POLL),
+            _ => break,
+        }
+    }
+    std::mem::forget(child);
+}
+
+/// The one thread that reaps the children runs gave up on, fed by a channel. It starts in a run
+/// before the run's child does, never in a destructor, so a launcher out of threads gets an
+/// error from the run, not a panic in a drop (review of #670).
+mod reaper {
+    use crate::process::owned::Owned;
+    use std::sync::mpsc::Sender;
+    use std::sync::{Mutex, PoisonError};
+
+    static REAPER: Mutex<Option<Sender<Owned>>> = Mutex::new(None);
+
+    /// Starts the reaper, once. When it can't start, [`super::abandon`] waits a bounded time.
+    pub(super) fn start() {
+        #[cfg(test)]
+        if super::test_hooks::NO_REAPER.with(std::cell::Cell::get) {
+            return;
+        }
+        let mut reaper = REAPER.lock().unwrap_or_else(PoisonError::into_inner);
+        if reaper.is_some() {
+            return;
+        }
+        let (send, children) = std::sync::mpsc::channel::<Owned>();
+        let started = std::thread::Builder::new()
+            .name("preparer reaper".into())
+            .spawn(move || children.into_iter().for_each(drop));
+        if started.is_ok() {
+            *reaper = Some(send);
+        }
+    }
+
+    /// Hands `child` to the reaper; gives it back when there is none.
+    pub(super) fn reap(child: Owned) -> Result<(), Owned> {
+        #[cfg(test)]
+        if super::test_hooks::NO_REAPER.with(std::cell::Cell::get) {
+            return Err(child);
+        }
+        let reaper = REAPER.lock().unwrap_or_else(PoisonError::into_inner);
+        match reaper.as_ref() {
+            Some(send) => send.send(child).map_err(|unsent| unsent.0),
+            None => Err(child),
+        }
+    }
 }
 
 /// Ends the child's whole tree, which is not reaped yet: SIGKILL to its process group on Unix,
@@ -604,46 +698,39 @@ fn probe(child: &mut crate::process::owned::Owned) -> std::io::Result<bool> {
     if test_hooks::PROBE_FAILS.with(std::cell::Cell::take) {
         return Err(std::io::Error::other("a test's failed probe"));
     }
-    ended_unreaped(child)
+    child.child().ended_unreaped(false)
 }
 
-/// Whether the child has ended, without reaping it: on Unix its zombie stays, keeping its PID.
-#[cfg(unix)]
-fn ended_unreaped(child: &mut crate::process::owned::Owned) -> std::io::Result<bool> {
-    // SAFETY: a zeroed siginfo_t is valid for waitid to fill, and the PID is this run's child.
-    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-    let pid = child.child().id() as libc::id_t;
-    let flags = libc::WEXITED | libc::WNOWAIT | libc::WNOHANG;
-    if unsafe { libc::waitid(libc::P_PID, pid, &mut info, flags) } == -1 {
-        return Err(std::io::Error::last_os_error());
-    }
-    // SAFETY: waitid filled `info`; si_pid is 0 when the child has not ended.
-    Ok(unsafe { info.si_pid() } != 0)
-}
-
-/// Whether the child has ended. On Windows the child's handle keeps its PID from reuse until it
-/// is dropped, and its job object ends the whole tree.
-#[cfg(windows)]
-fn ended_unreaped(child: &mut crate::process::owned::Owned) -> std::io::Result<bool> {
-    Ok(child.child().try_wait()?.is_some())
-}
-
+/// Runs a preparation's preparer, both streams' lines to `line` as they come (review of #670).
+/// When it fails, its error ends with the last line it wrote, as a preparer's exit status alone
+/// says little.
 pub(crate) fn run_staged(
     command: Command,
     handoff: &Handoff<'_>,
     line: &dyn Fn(String),
 ) -> Result<(), String> {
-    let (status, errors) = run(command, &mut |text| line(text), Some(handoff))?;
-    for error in errors {
-        line(error);
+    let mut last = None;
+    let mut forward = |_: Stream, text: String| {
+        if !text.trim().is_empty() {
+            last = Some(text.clone());
+        }
+        line(text);
+    };
+    let (status, _) = run_streams(command, &mut forward, Some(handoff), handoff.stop())?;
+    if status.success() {
+        return Ok(());
     }
-    if !status.success() {
-        return Err(crate::i18n::trf(
+    let status = status.to_string();
+    Err(match last {
+        Some(last) => crate::i18n::trf(
+            "The game's preparer stopped ({status}): {line}",
+            &[("status", &status), ("line", &last)],
+        ),
+        None => crate::i18n::trf(
             "The game's preparer stopped ({status}).",
-            &[("status", &status.to_string())],
-        ));
-    }
-    Ok(())
+            &[("status", &status)],
+        ),
+    })
 }
 
 /// The most a preparer's standard output is read for, and the most of its error output kept (its last lines).
@@ -663,18 +750,37 @@ fn lines(stream: impl std::io::Read) -> impl Iterator<Item = std::io::Result<Str
     })
 }
 
-/// The last lines of `stream`, at most [`MAX_ERRORS`] bytes of them.
-fn tail(stream: impl std::io::Read) -> Vec<String> {
-    let mut kept = std::collections::VecDeque::new();
-    let mut size = 0;
-    for line in lines(stream).map_while(Result::ok) {
-        size += line.len();
-        kept.push_back(line);
-        while size > MAX_ERRORS {
-            size -= kept.pop_front().map_or(0, |line| line.len());
+/// The last lines of a stream, at most [`MAX_ERRORS`] bytes of them.
+#[derive(Default)]
+struct Tail {
+    kept: std::collections::VecDeque<String>,
+    size: usize,
+}
+
+impl Tail {
+    fn keep(&mut self, line: String) {
+        self.size += line.len();
+        self.kept.push_back(line);
+        while self.size > MAX_ERRORS {
+            self.size -= self.kept.pop_front().map_or(0, |line| line.len());
         }
     }
-    kept.into()
+}
+
+impl From<Tail> for Vec<String> {
+    fn from(tail: Tail) -> Self {
+        tail.kept.into()
+    }
+}
+
+/// The last lines of `stream`, at most [`MAX_ERRORS`] bytes of them.
+#[cfg(all(test, unix))]
+fn tail(stream: impl std::io::Read) -> Vec<String> {
+    let mut tail = Tail::default();
+    lines(stream)
+        .map_while(Result::ok)
+        .for_each(|line| tail.keep(line));
+    tail.into()
 }
 
 /// The JSON reply on the last stdout line of `command`, when the preparer has the subcommand (exit 2 means it doesn't); its log lines go to `line`.
@@ -919,6 +1025,8 @@ mod test_hooks {
         pub(crate) static PROBE_FAILS: Cell<bool> = const { Cell::new(false) };
         /// The next reader thread fails to start.
         pub(crate) static READERS_FAIL: Cell<bool> = const { Cell::new(false) };
+        /// This thread's runs find no reaper thread, as when none could start.
+        pub(crate) static NO_REAPER: Cell<bool> = const { Cell::new(false) };
         /// The next run's stdout fails to read after this many lines.
         pub(crate) static READ_FAILS_AFTER: Cell<Option<usize>> = const { Cell::new(None) };
     }
@@ -933,8 +1041,11 @@ mod test_hooks {
 
 #[cfg(all(test, unix))]
 mod tests {
+    use super::test_hooks::{ABANDONED, BEFORE_TRACK};
+    // Their tests run on Linux only.
+    #[cfg(target_os = "linux")]
     use super::test_hooks::{
-        ABANDONED, BEFORE_TRACK, BEFORE_UNTRACK, PROBE_FAILS, READERS_FAIL, READ_FAILS_AFTER,
+        BEFORE_UNTRACK, NO_REAPER, PROBE_FAILS, READERS_FAIL, READ_FAILS_AFTER,
     };
     use super::*;
     use std::cell::Cell;
@@ -1115,6 +1226,86 @@ mod tests {
             started.elapsed()
         );
         assert!(ends_soon(&marker), "the child still runs");
+    }
+
+    /// With no reaper thread, as when the launcher can't start another, a run whose reader can't
+    /// start still ends its child: the guard kills it and waits for it here, bounded, with no
+    /// thread started and no panic in a destructor (review of #670).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_run_with_no_reaper_thread_ends_its_child_here_within_a_bound() {
+        let marker = format!("no-reaper-{}", std::process::id());
+        NO_REAPER.with(|none| none.set(true));
+        READERS_FAIL.with(|fails| fails.set(true));
+        let started = Instant::now();
+        let result = run_with(stubborn(&marker), &mut |_| {}, None, None);
+        NO_REAPER.with(|none| none.set(false));
+        assert!(result.unwrap_err().contains("a test's failed thread start"));
+        assert!(
+            started.elapsed() < STOPPED_WAIT + Duration::from_secs(1),
+            "it waited {:?}",
+            started.elapsed()
+        );
+        assert!(ends_soon(&marker), "the child still runs");
+    }
+
+    /// A leader that exits with success while a helper it started keeps its output open: the
+    /// helper is killed after the grace, and the run is an error, as what the helper held was not
+    /// read to its end (review of #670).
+    #[test]
+    fn a_leader_that_succeeds_while_a_helper_holds_its_output_is_not_a_success() {
+        use std::os::unix::process::CommandExt;
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "sleep 30 & echo done; exit 0"])
+            .process_group(0);
+        let started = Instant::now();
+        let error = run_with(command, &mut |_| {}, None, None)
+            .expect_err("a run whose output was cut off is not a clean success");
+        assert!(error.contains("kept its output open"), "{error}");
+        assert!(started.elapsed() < STOPPED_WAIT + Duration::from_secs(1));
+    }
+
+    /// A preparation's stderr reaches its caller while the preparer runs, as the backend's monitor
+    /// forwarded it (review of #670): this preparer goes on only once its caller has seen its
+    /// line. A failed one's error ends with the last line it wrote.
+    #[test]
+    fn a_preparations_stderr_reaches_its_caller_while_it_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let seen = dir.path().join("seen");
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(dir.path().join(".prepare.lock"))
+            .unwrap();
+        lock.lock().unwrap();
+        let preparation = Preparation::new(lock);
+        let mut live = Command::new("sh");
+        live.args([
+            "-c",
+            "echo working >&2; i=0; while [ ! -e \"$1\" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done; [ -e \"$1\" ]",
+            "live",
+        ])
+        .arg(&seen);
+        let result = run_staged(live, &preparation.handoff(None), &|line| {
+            if line == "working" {
+                fs::write(&seen, "").unwrap();
+            }
+        });
+        assert_eq!(
+            result,
+            Ok(()),
+            "its stderr reached the caller only after it gave up waiting"
+        );
+        let mut failing = Command::new("sh");
+        failing.args([
+            "-c",
+            "echo copying; sleep 0.2; echo 'the sounds index is missing' >&2; exit 3",
+        ]);
+        let error = run_staged(failing, &preparation.handoff(None), &|_| {}).unwrap_err();
+        assert!(error.ends_with(": the sounds index is missing"), "{error}");
     }
 
     /// A preparer that ended with its final reply queued behind many log lines, taken by a slow

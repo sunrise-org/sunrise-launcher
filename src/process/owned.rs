@@ -63,9 +63,12 @@ impl Registry {
         self.entries().retain(|entry| entry.pid != pid);
     }
 
-    /// Stops every child and group still running.
+    /// Stops every child and group still running, under the registry's lock: a reap forgets its
+    /// child under the same lock first ([`Owned::reap`]), so no signal here reaches a PID that a
+    /// reap freed for another process.
     pub fn stop_all(&self) {
-        for entry in std::mem::take(&mut *self.entries()) {
+        let mut entries = self.entries();
+        for entry in std::mem::take(&mut *entries) {
             stop(entry);
         }
     }
@@ -113,27 +116,38 @@ impl Owned {
     }
 
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        let status = self.child.try_wait()?;
-        if status.is_some() {
-            self.registry.release(self.child.id());
+        if !self.child.ended_unreaped(false)? {
+            return Ok(None);
         }
-        Ok(status)
+        self.reap().map(Some)
     }
 
     pub fn wait(&mut self) -> io::Result<ExitStatus> {
+        drop(self.child.stdin.take());
+        self.child.ended_unreaped(true)?;
+        self.reap()
+    }
+
+    /// Reaps the child, which has ended. The registry forgets it first, under the lock a quit
+    /// signals under: once reaped, its PID can go to another process, which a quit must not
+    /// signal (review of #670).
+    fn reap(&mut self) -> io::Result<ExitStatus> {
+        let pid = self.child.id();
+        self.registry.release(pid);
         let status = self.child.wait();
-        self.registry.release(self.child.id());
+        #[cfg(all(test, unix))]
+        tests::REAPS.with(|reaps| reaps.borrow_mut().push((pid, self.registry.holds(pid))));
         status
     }
 }
 
 impl Drop for Owned {
     fn drop(&mut self) {
-        if matches!(self.child.try_wait(), Ok(None)) {
+        if !matches!(self.child.ended_unreaped(false), Ok(true)) {
             let _ = self.child.kill();
-            let _ = self.child.wait();
         }
-        self.registry.release(self.child.id());
+        let _ = self.child.ended_unreaped(true);
+        let _ = self.reap();
     }
 }
 
@@ -176,6 +190,49 @@ fn stop(entry: Entry) {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    thread_local! {
+        /// Each reap on this thread: the PID, and whether the registry still held it right after.
+        pub(super) static REAPS: std::cell::RefCell<Vec<(u32, bool)>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// Whether the registry still held `pid` just after its reap, once the PID was free for
+    /// another process. A quit then would signal whatever got the PID.
+    fn held_after_its_reap(pid: u32) -> Option<bool> {
+        REAPS.with(|reaps| {
+            reaps
+                .borrow()
+                .iter()
+                .find(|(reaped, _)| *reaped == pid)
+                .map(|(_, held)| *held)
+        })
+    }
+
+    /// Every way a child is reaped, a wait, a polled end and a drop, forgets it in the registry
+    /// before the reap that frees its PID, so a quit racing the reap can't signal a reused PID
+    /// or group (review of #670).
+    #[test]
+    fn every_reap_forgets_the_child_before_its_pid_is_freed() {
+        static OWN: Registry = Registry::new();
+        let mut waited = OWN.spawn(&mut Command::new("true")).unwrap();
+        let pid = waited.child().id();
+        assert!(waited.wait().unwrap().success());
+        assert_eq!(held_after_its_reap(pid), Some(false), "a wait");
+
+        let mut polled = OWN.spawn(&mut Command::new("true")).unwrap();
+        let pid = polled.child().id();
+        while polled.try_wait().unwrap().is_none() {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(held_after_its_reap(pid), Some(false), "a polled end");
+
+        let mut dropped = OWN.spawn(Command::new("sleep").arg("30")).unwrap();
+        let pid = dropped.child().id();
+        drop(dropped);
+        assert_eq!(held_after_its_reap(pid), Some(false), "a drop");
+        assert!(!OWN.holds(pid));
+    }
 
     #[test]
     #[ignore = "daily"]

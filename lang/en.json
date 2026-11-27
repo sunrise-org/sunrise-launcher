@@ -641,5 +641,7 @@
   "Not from the registry, so not checked: {mods}.": "Not from the registry, so not checked: {mods}.",
   "Withdrawn from the registry: {mods}.": "Withdrawn from the registry: {mods}.",
   "Not every mod could be kept on {build}, so nothing changed.": "Not every mod could be kept on {build}, so nothing changed.",
-  "This profile is already on {build}, so nothing changed.": "This profile is already on {build}, so nothing changed."
+  "This profile is already on {build}, so nothing changed.": "This profile is already on {build}, so nothing changed.",
+  "The game's preparer stopped ({status}): {line}": "The game's preparer stopped ({status}): {line}",
+  "The game's preparer ended, but a process it started kept its output open, so the launcher stopped that process. Some of the output was not read.": "The game's preparer ended, but a process it started kept its output open, so the launcher stopped that process. Some of the output was not read."
 }

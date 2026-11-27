@@ -20,9 +20,10 @@ use windows_sys::Win32::{
 /// An owned process object; neither waiting nor termination guesses ownership from a PID.
 pub struct WindowsChild(OwnedHandle, u32, Option<Arc<Job>>);
 
-/// No job permits breakaway. The compiler and a piped preparer die with their launcher. A
-/// wrapped game must survive the launcher after its confirmed handoff, like a directly started
-/// game.
+/// No job permits breakaway. The compiler dies with its launcher. A wrapped game must survive
+/// the launcher after its confirmed handoff, like a directly started game. A piped preparer
+/// holds the preparation's locks, and on an abrupt exit of the launcher it finishes under them,
+/// as it did before it had a job.
 #[derive(Debug)]
 pub(crate) struct Job(OwnedHandle, JobKind);
 
@@ -34,8 +35,9 @@ pub(crate) enum JobKind {
     Compiler,
     /// A wrapped game: its wait lasts until every member ended.
     Wrapper,
-    /// A piped preparer: a stop or the escalation ends the whole job, which also ends with its
-    /// handle, so nothing the leader started outlives it (review of #670).
+    /// A piped preparer: a stop or the escalation ends the whole job, so nothing the leader
+    /// started outlives it (review of #670). Closing its handle doesn't: a launcher that exits
+    /// abruptly leaves the preparer to finish under its locks.
     Preparer,
 }
 
@@ -48,7 +50,7 @@ impl Job {
         }
         // SAFETY: CreateJobObjectW returned an owned handle. Set a fixed-size, no-breakaway limit.
         let job = Self(unsafe { OwnedHandle::from_raw_handle(handle) }, kind);
-        if kind == JobKind::Wrapper {
+        if kind != JobKind::Compiler {
             return Ok(job);
         }
         let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
