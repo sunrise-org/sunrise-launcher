@@ -2420,5 +2420,15 @@
   "{compiler} did not contain the compiler and linker files the launcher needs.": "{compiler} non contiene i file del compilatore e del linker necessari al launcher.",
   "Native mods need Apple's Command Line Tools to link the game. Run `xcode-select --install` in Terminal, then build again.": "Le mod native richiedono gli Strumenti da riga di comando di Apple per collegare il gioco. Esegui `xcode-select --install` nel Terminale, poi ricompila.",
   "ALSA's development files": "File di sviluppo ALSA",
-  "libudev's development files": "File di sviluppo libudev"
+  "libudev's development files": "File di sviluppo libudev",
+  "On NixOS they are only visible inside a shell that provides them: run `nix-shell` in the launcher's folder (its shell.nix has these packages), then build again.": "Su NixOS sono visibili solo in una shell che le fornisce: esegui `nix-shell` nella cartella del launcher (shell.nix contiene questi pacchetti), poi ricompila.",
+  "SteamOS ships without them and its system is read-only, so native mods can't be built on it yet.": "SteamOS non include questi componenti e il sistema è di sola lettura, quindi per ora non è possibile compilare mod native.",
+  "Install them in a terminal, then build again:\n{command}": "Installali in un terminale, poi ricompila:\n{command}",
+  "Install them with your distribution's package manager, then build again (on Debian, Ubuntu or Mint: {apt}).": "Installali con il gestore pacchetti della distribuzione, poi ricompila (su Debian, Ubuntu o Mint: {apt}).",
+  "Native mods need these to build the game on Linux, and this computer lacks them: {missing}. {how}": "Le mod native richiedono questi componenti per compilare il gioco su Linux, ma mancano su questo computer: {missing}. {how}",
+  "No screenshot {query} in {path}": "Nessuna schermata {query} in {path}",
+  "Could not move {name} to the trash: {error}": "Impossibile spostare {name} nel Cestino: {error}",
+  "A server needs an address.": "Un server richiede un indirizzo.",
+  "There is no server {number}.": "Il server {number} non esiste.",
+  "Could not save the server list: {error}": "Impossibile salvare l’elenco dei server: {error}"
 }

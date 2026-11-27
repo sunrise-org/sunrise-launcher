@@ -2321,5 +2321,15 @@
   "Too many redirects": "Troppi reindirizzamenti",
   "Artifact requires a 40-character SHA-1": "L’artefatto richiede uno SHA-1 di 40 caratteri",
   "Downloaded size or SHA-1 does not match the manifest": "La dimensione o lo SHA-1 del download non corrisponde al manifest",
-  "{url}: {message} (after {seconds}s)": "{url}: {message} (dopo {seconds}s)"
+  "{url}: {message} (after {seconds}s)": "{url}: {message} (dopo {seconds}s)",
+  "{completed} files complete, {active} active, {pending} pending; {speed} MiB/s; {verified}/{total} bytes": "اكتمل {completed} ملفًا، نشط {active}، معلّق {pending}؛ ‏{speed} MiB/s؛ ‏{verified}/{total} بايت",
+  "Unexpected partial metadata response": "استجابة بيانات وصفية جزئية غير متوقعة",
+  "Metadata exceeds 16 MiB": "تتجاوز البيانات الوصفية 16 MiB",
+  "Redirect target must use HTTPS": "يجب أن يستخدم هدف إعادة التوجيه HTTPS",
+  "{name} has no world {world}.": "لا يحتوي {name} على العالم {world}.",
+  "{name} has nothing to share yet: no settings, packs, mods or worlds.": "لا يتوفر لدى {name} ما يشاركه بعد: لا إعدادات أو حزم أو إضافات أو عوالم.",
+  "Could not export {name}: {error}": "تعذّر تصدير {name}: {error}",
+  "Log sharing is not configured for this build.": "مشاركة السجل غير مهيأة لهذا البناء.",
+  "mclo.gs didn't take the log: {error}": "لم يقبل mclo.gs السجل: {error}",
+  "mclo.gs answered something unexpected: {error}": "أجاب mclo.gs بشيء غير متوقع: {error}"
 }
