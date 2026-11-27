@@ -1989,5 +1989,15 @@
   "The source could not be verified.": "تعذّر التحقق من المصدر.",
   "The staged GitHub packages changed. Nothing was changed; try again.": "تغيّرت حزم GitHub المجهزة. لم يتغير شيء؛ حاول مجددًا.",
   "There are no pending build changes for this profile.": "لا توجد تغييرات بناء معلّقة لهذا الملف الشخصي.",
-  "There is more than one installed package for {mod}. Move the duplicate before trying again.": "توجد أكثر من حزمة مثبّتة لـ {mod}. انقل النسخة المكررة قبل المحاولة مجددًا."
+  "There is more than one installed package for {mod}. Move the duplicate before trying again.": "توجد أكثر من حزمة مثبّتة لـ {mod}. انقل النسخة المكررة قبل المحاولة مجددًا.",
+  "There is no newer source on the same tracker.": "لا يوجد مصدر أحدث على أداة التتبع نفسها.",
+  "These build changes are no longer current. Close this report and open Build changes again.": "لم تعد تغييرات البناء هذه حديثة. أغلق هذا التقرير وافتح «تغييرات البناء» مجددًا.",
+  "These mods are already installed: {mods}. Update them from Installed.": "هذه الإضافات مثبّتة بالفعل: {mods}. حدّثها من «المثبّتة».",
+  "These mods need the ones you are removing. They will be turned off, but their files will stay installed: {mods}.": "تحتاج هذه الإضافات إلى ما تزيله. ستتوقف، لكن ستظل ملفاتها مثبّتة: {mods}.",
+  "These worlds were last played on a newer game: {worlds}": "تم لعب هذه العوالم آخر مرة على إصدار أحدث من اللعبة: {worlds}",
+  "They need updates from their authors; when one is out, it shows here and under Mods.": "تحتاج إلى تحديثات من مؤلفيها؛ عند توفر تحديث سيظهر هنا وتحت «الإضافات».",
+  "This GitHub link could not be found.": "تعذّر العثور على رابط GitHub هذا.",
+  "This Nightly list format is not supported.": "تنسيق قائمة Nightly هذا غير مدعوم.",
+  "This build includes a mod the registry took down. Choose another game build.\n{mod}: {reason}": "يتضمن هذا البناء إضافة سحبها السجل. اختر إصدارًا آخر للعبة.\n{mod}: {reason}",
+  "This build includes native mods that don't match this profile. Rebuild the mods or choose another game build.": "يتضمن هذا البناء إضافات أصلية لا تطابق هذا الملف الشخصي. أعد بناء الإضافات أو اختر إصدارًا آخر للعبة."
 }

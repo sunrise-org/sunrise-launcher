@@ -2484,5 +2484,15 @@
   "Run `{command}` in a terminal and open the link it prints.": "เรียก `{command}` ในเทอร์มินัลแล้วเปิดลิงก์ที่แสดง",
   "Tailscale's app didn't open: start it from your applications.": "แอป Tailscale ไม่เปิด ให้เริ่มจากรายการแอปพลิเคชัน",
   "1 item waiting to be sent, exactly as they will leave (compressed):": "มี 1 รายการรอส่ง ในรูปแบบที่จะส่งจริง (บีบอัดแล้ว):",
-  "{count} items waiting to be sent, exactly as they will leave (compressed):": "มี {count} รายการรอส่ง ในรูปแบบที่จะส่งจริง (บีบอัดแล้ว):"
+  "{count} items waiting to be sent, exactly as they will leave (compressed):": "มี {count} รายการรอส่ง ในรูปแบบที่จะส่งจริง (บีบอัดแล้ว):",
+  "Nothing is waiting. One example of each kind, from this machine; the game fills in the GPU and screen it uses where these say example (a benchmark upload is the report itself, see docs/benchmark-report.md):": "ไม่มีรายการรอส่ง ตัวอย่างอย่างละหนึ่งรายการจากเครื่องนี้ เกมจะเติม GPU และหน้าจอที่ใช้ในตำแหน่งที่ระบุว่าตัวอย่าง (การอัปโหลดเกณฑ์วัดประสิทธิภาพคือตัวรายงานเอง ดู docs/benchmark-report.md):",
+  "Nothing was ever sent from here.": "ไม่เคยส่งข้อมูลจากที่นี่",
+  "Sending is turned off here (SUNRISE_TELEMETRY_URL=off), so the server was not asked.": "ปิดการส่งข้อมูลที่นี่ (SUNRISE_TELEMETRY_URL=off) จึงไม่มีการส่งคำขอไปยังเซิร์ฟเวอร์",
+  "The server could not be reached ({error}). Try again later.": "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ({error}) ลองอีกครั้งภายหลัง",
+  "The server deleted everything sent from here.": "เซิร์ฟเวอร์ลบทุกอย่างที่ส่งจากที่นี่แล้ว",
+  "{remote} Nothing is waiting, and this install has a new ID.": "{remote} ไม่มีรายการรอส่ง และการติดตั้งนี้มี ID ใหม่",
+  "{name} are off: turn them on in Settings → Data collection first.": "ปิด {name} อยู่: เปิดใช้ก่อนในการตั้งค่า → การเก็บข้อมูล",
+  "Today's limit for these is reached; try again tomorrow.": "ถึงขีดจำกัดของวันนี้แล้ว ลองอีกครั้งพรุ่งนี้",
+  "Sent. Thank you.": "ส่งแล้ว ขอบคุณ",
+  "Kept; sending is turned off here (SUNRISE_TELEMETRY_URL=off).": "เก็บไว้แล้ว ปิดการส่งข้อมูลที่นี่ (SUNRISE_TELEMETRY_URL=off)"
 }

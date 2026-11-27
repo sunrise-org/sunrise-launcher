@@ -2088,5 +2088,15 @@
   "{mod} is on. The game reads this when it starts.": "{mod} è attiva. Il gioco la legge all’avvio.",
   "{mod} needs {required} {version}. Install or turn on a version that fits before trying again.": "{mod} richiede {required} {version}. Installa o attiva una versione compatibile prima di riprovare.",
   "{mod} needs {required}. Install a fitting version first.": "{mod} richiede {required}. Installa prima una versione compatibile.",
-  "{mod} pins build {made_for} and its package carries no list of what it uses for that build, so it can't be shown to fit another build. Its author can pack it with `cargo sunrise-mod build`, which writes the list, or repin it first with `cargo sunrise-mod update --sunrise <build>`.": "{mod} blocca la build {made_for} e il pacchetto non include l’elenco delle dipendenze per quella build, quindi non è possibile dimostrare la compatibilità con altre build. L’autore può ricrearlo con `cargo sunrise-mod build`, che registra l’elenco, oppure bloccare prima un’altra build con `cargo sunrise-mod update --sunrise <build>`."
+  "{mod} pins build {made_for} and its package carries no list of what it uses for that build, so it can't be shown to fit another build. Its author can pack it with `cargo sunrise-mod build`, which writes the list, or repin it first with `cargo sunrise-mod update --sunrise <build>`.": "{mod} blocca la build {made_for} e il pacchetto non include l’elenco delle dipendenze per quella build, quindi non è possibile dimostrare la compatibilità con altre build. L’autore può ricrearlo con `cargo sunrise-mod build`, che registra l’elenco, oppure bloccare prima un’altra build con `cargo sunrise-mod update --sunrise <build>`.",
+  "{mod} was taken down and will be removed.": "{mod} è stata ritirata e verrà rimossa.",
+  "{mod}'s package was made with a newer tool than this game uses. Update the game to read its list.": "Il pacchetto di {mod} è stato creato con uno strumento più recente di quello usato dal gioco. Aggiorna il gioco per leggerne l’elenco.",
+  "{mod}'s package was made with an older tool and doesn't record enough to show it fits this game. Its author can pack it again with `cargo sunrise-mod build`.": "Il pacchetto di {mod} è stato creato con uno strumento più vecchio e non contiene informazioni sufficienti per verificarne la compatibilità. L’autore può ricrearlo con `cargo sunrise-mod build`.",
+  "{mod}: {disposition}. {reason}": "{mod}: {disposition}. {reason}",
+  "{mod}: {reason}": "{mod}: {reason}",
+  "{mod}: {reason}.": "{mod}: {reason}.",
+  "{names} need it. They'll be turned off, and their files stay installed.": "{names} ne hanno bisogno. Verranno disattivate, ma i relativi file resteranno installati.",
+  "{names} need one or more of these mods. They'll be turned off, and their files stay installed.": "{names} richiedono una o più di queste mod. Verranno disattivate, ma i relativi file resteranno installati.",
+  "{name} could not go to the Trash: {error}": "Impossibile spostare {name} nel Cestino: {error}",
+  "{name} is the game's own folder: it can't be deleted.": "{name} è la cartella del gioco e non può essere eliminata."
 }
