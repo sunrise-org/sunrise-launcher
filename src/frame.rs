@@ -76,12 +76,7 @@ impl Launcher {
         // Tint the frame from the very same decoded picture that will be drawn behind the page.
         // The picture is behind every page, not Home's alone, so leaving Home keeps it.
         let photo = self.home_photo(window, cx);
-        crate::paint::begin(
-            &self.settings,
-            &self.theme,
-            photo.as_ref(),
-            self.panel_opacity_preview(),
-        );
+        crate::paint::begin(&self.theme);
         scrolls_begin();
         // Records start-up and UI frame times, and lets a benchmark window begin once the
         // window has drawn. Nothing on screen is read here: a benchmark reads where the build
