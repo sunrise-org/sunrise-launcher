@@ -2583,5 +2583,15 @@
   "This version has a {installed} game build, but Settings selects {selected}. Reinstall it from the version picker beside Play before launching.": "يحتوي هذا الإصدار على نسخة لعبة {installed}، لكن الإعدادات تختار {selected}. أعد تثبيتها من قائمة اختيار الإصدار بجوار «العب» قبل التشغيل.",
   "This version has a {installed} game build, but Settings selects {selected}. Switch back to the installed architecture or Automatic, or choose another available build.": "يحتوي هذا الإصدار على نسخة لعبة {installed}، لكن الإعدادات تختار {selected}. عُد إلى البنية المثبّتة أو اختر «تلقائي»، أو اختر إصدارًا آخر متاحًا.",
   "Use a local executable or archive with files from an installed build.": "استخدم ملفًا تنفيذيًا محليًا أو أرشيفًا يحتوي على ملفات من إصدار مثبّت.",
-  "What Sunrise sends, and what it never does.": "ما ترسله Sunrise وما لا ترسله أبدًا."
+  "What Sunrise sends, and what it never does.": "ما ترسله Sunrise وما لا ترسله أبدًا.",
+  "Who plays, and the Microsoft accounts signed in here.": "من يلعب، وحسابات Microsoft المسجّلة هنا.",
+  "Withdraw": "سحب",
+  "a .zip, a .sshader or a Sunrise game build": "ملف .zip أو .sshader أو إصدار من لعبة Sunrise",
+  "teal, 176 or #2563eb": "أزرق مخضر، 176 أو #2563eb",
+  "{mod} stays off. Fit could not be verified.": "ستظل {mod} معطّلة. تعذّر التحقق من توافقها.",
+  "{mod} stays off. Needs an update from its author.": "ستظل {mod} معطّلة. تحتاج إلى تحديث من مطوّرها.",
+  "{mod} was turned off. Fit could not be verified.": "تم تعطيل {mod}. تعذّر التحقق من توافقها.",
+  "{mod} was turned off. Needs an update from its author.": "تم تعطيل {mod}. تحتاج إلى تحديث من مطوّرها.",
+  "A short report when the game crashes, so the crash can be fixed.": "تقرير موجز عند تعطل اللعبة للمساعدة في إصلاح المشكلة.",
+  "Backing up": "جارٍ إنشاء نسخة احتياطية"
 }
