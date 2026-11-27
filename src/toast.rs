@@ -213,24 +213,26 @@ impl Launcher {
 fn toast_card(top: f32) -> Option<Div> {
     let (parts, n, leaving) = current_parts()?;
     let p = crate::paint::palette();
+    // One line, never taller: a part too long for the card is cut off with an ellipsis.
     let mut line = div()
         .flex()
-        .flex_wrap()
         .items_baseline()
         .gap_x(px(6.))
-        .min_w_0();
+        .min_w_0()
+        .overflow_hidden()
+        .whitespace_nowrap();
     for (part, mono) in parts {
         let part = part.trim().to_string();
         line = line.child(if mono {
-            // `max_w_full` caps the path at the line's width, so it wraps inside the card.
             div()
-                .max_w_full()
+                .flex_1()
                 .min_w_0()
+                .truncate()
                 .font_family(crate::theme::MONO)
                 .text_color(gpui::rgb(p.accent_ink))
                 .child(part)
         } else {
-            div().min_w_0().child(part)
+            div().min_w_0().truncate().child(part)
         });
     }
     // The bar shrinks over the time left, and waits while the pointer holds the card. Under
