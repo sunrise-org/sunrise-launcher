@@ -2421,5 +2421,15 @@
   "Native mods need Apple's Command Line Tools to link the game. Run `xcode-select --install` in Terminal, then build again.": "تحتاج الإضافات الأصلية إلى أدوات سطر الأوامر من Apple لربط اللعبة. شغّل `xcode-select --install` في الطرفية، ثم أعد البناء.",
   "ALSA's development files": "ملفات تطوير ALSA",
   "libudev's development files": "ملفات تطوير libudev",
-  "On NixOS they are only visible inside a shell that provides them: run `nix-shell` in the launcher's folder (its shell.nix has these packages), then build again.": "على NixOS لا تظهر هذه الملفات إلا داخل shell يوفرها: شغّل `nix-shell` في مجلد المشغّل (يحتوي shell.nix على هذه الحزم)، ثم أعد البناء."
+  "On NixOS they are only visible inside a shell that provides them: run `nix-shell` in the launcher's folder (its shell.nix has these packages), then build again.": "على NixOS لا تظهر هذه الملفات إلا داخل shell يوفرها: شغّل `nix-shell` في مجلد المشغّل (يحتوي shell.nix على هذه الحزم)، ثم أعد البناء.",
+  "SteamOS ships without them and its system is read-only, so native mods can't be built on it yet.": "لا يتضمن SteamOS هذه الملفات ونظامه للقراءة فقط، لذا لا يمكن بناء الإضافات الأصلية عليه بعد.",
+  "Install them in a terminal, then build again:\n{command}": "ثبّتها في الطرفية ثم أعد البناء:\n{command}",
+  "Install them with your distribution's package manager, then build again (on Debian, Ubuntu or Mint: {apt}).": "ثبّتها عبر مدير الحزم في توزيعتك ثم أعد البناء (على Debian أو Ubuntu أو Mint: ‏{apt}).",
+  "Native mods need these to build the game on Linux, and this computer lacks them: {missing}. {how}": "تحتاج الإضافات الأصلية إلى هذه الملفات لبناء اللعبة على Linux، لكنها غير موجودة على هذا الكمبيوتر: {missing}. ‏{how}",
+  "No screenshot {query} in {path}": "لا توجد لقطة شاشة {query} في {path}",
+  "Could not move {name} to the trash: {error}": "تعذّر نقل {name} إلى المهملات: {error}",
+  "A server needs an address.": "يحتاج الخادم إلى عنوان.",
+  "There is no server {number}.": "لا يوجد خادم {number}.",
+  "Could not save the server list: {error}": "تعذّر حفظ قائمة الخوادم: {error}",
+  "No server {query} in the list": "لا يوجد خادم {query} في القائمة"
 }

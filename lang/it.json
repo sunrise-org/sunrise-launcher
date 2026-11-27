@@ -2520,5 +2520,15 @@
   "Nightly list unavailable offline": "Elenco Nightly non disponibile offline",
   "No Nightly mods match your search.": "Nessuna mod Nightly corrisponde alla ricerca.",
   "Profile: {build}": "Profilo: {build}",
-  "Search source projects": "Cerca progetti sorgente"
+  "Search source projects": "Cerca progetti sorgente",
+  "Show more": "Mostra altro",
+  "You're offline · showing the saved list from {date}": "Sei offline · visualizzazione dell’elenco salvato il {date}",
+  "{count} source projects": "{count} progetti sorgente",
+  "Address to share": "Indirizzo da condividere",
+  "Local network": "Rete locale",
+  "Internet": "Internet",
+  "Last detected public address": "Ultimo indirizzo pubblico rilevato",
+  "Public IP not detected": "IP pubblico non rilevato",
+  "Finding public IP…": "Ricerca dell’IP pubblico…",
+  "Public IP unavailable": "IP pubblico non disponibile"
 }
