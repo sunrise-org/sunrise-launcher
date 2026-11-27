@@ -48,10 +48,18 @@ fn menu_row(
 fn menu_under(
     id: &'static str,
     rows: Vec<AnyElement>,
+    current: Option<usize>,
     cx: &mut Context<Launcher>,
 ) -> [gpui::Deferred; 2] {
     let count = rows.len();
-    dropdown::layer(&SharedString::from(id), rows, count, None, dialog_close(cx))
+    dropdown::layer(
+        &SharedString::from(id),
+        rows,
+        count,
+        current,
+        None,
+        dialog_close(cx),
+    )
 }
 
 /// Closes the dialog's open menu.
@@ -168,7 +176,18 @@ impl Launcher {
             })));
         if open && pinning {
             let rows = self.profile_versions(channel, pin.clone(), cx);
-            wrap = wrap.children(menu_under("new-build", rows, cx));
+            // The two rows before the versions are the way back and a rule, then Follow latest.
+            let current = match &pin {
+                None => 2,
+                Some(tag) => {
+                    3 + self
+                        .profile_build_choices(channel)
+                        .iter()
+                        .position(|t| t == tag)
+                        .unwrap_or(0)
+                }
+            };
+            wrap = wrap.children(menu_under("new-build", rows, Some(current), cx));
         } else if open {
             let mut rows: Vec<AnyElement> = Vec::new();
             for (id, option) in [
@@ -228,7 +247,9 @@ impl Launcher {
                 }))
                 .into_any_element(),
             );
-            wrap = wrap.children(menu_under("new-build", rows, cx));
+            wrap = wrap.children(menu_under("new-build", rows, None, cx));
+        } else {
+            dropdown::forget("new-build");
         }
         let mut row = row.child(wrap);
         if channel == Channel::Stable && !self.stable_available() && pin.is_none() {
@@ -368,6 +389,11 @@ impl Launcher {
                 .filter(|i| i.kind != instances::Kind::Pack)
                 .cloned()
                 .collect();
+            // The row to show on open: Empty profile is first, the copies follow it.
+            let current = Some(match source.as_deref() {
+                None => 0,
+                Some(id) => 1 + profiles.iter().position(|p| p.id == id).unwrap_or(0),
+            });
             for (idx, profile) in profiles.into_iter().enumerate() {
                 let sub = match profile.last_played {
                     Some(when) => trf("Played {when}", &[("when", &crate::worlds_page::ago(when))]),
@@ -401,7 +427,9 @@ impl Launcher {
                     .into_any_element(),
                 );
             }
-            wrap = wrap.children(menu_under("new-start", rows, cx));
+            wrap = wrap.children(menu_under("new-start", rows, current, cx));
+        } else {
+            dropdown::forget("new-start");
         }
         div()
             .flex()

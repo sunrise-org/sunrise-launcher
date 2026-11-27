@@ -289,8 +289,9 @@ impl Launcher {
                     cx.notify();
                 }),
             )
-            .child(
-                body.id(plate)
+            .child({
+                let card = body
+                    .id(plate)
                     .absolute()
                     // Never taller than the room under the picker: the choices scroll.
                     .max_h(px((self.window_height - top - 12.).max(120.)))
@@ -308,15 +309,21 @@ impl Launcher {
                     .text_color(rgb(palette().text))
                     .on_mouse_down(MouseButton::Left, |_: &MouseDownEvent, _, cx| {
                         cx.stop_propagation()
-                    })
-                    // It fades in from 4 px higher up, as the shared dropdown's menu does, and
-                    // is simply there under reduced motion.
-                    .with_animation(
+                    });
+                // It fades in from 4 px higher up, as the shared dropdown's menu does, except
+                // while a benchmark runs (its frames measure the list, not the fade) and under
+                // reduced motion.
+                if crate::motion::arrivals() {
+                    card.with_animation(
                         SharedString::from(format!("{plate}-in")),
                         crate::motion::eased(sunrise_launcher_theme::QUICK),
                         move |d, t| d.top(px(top - 4. * (1. - t))).opacity(t),
-                    ),
-            )
+                    )
+                    .into_any_element()
+                } else {
+                    card.into_any_element()
+                }
+            })
     }
 }
 

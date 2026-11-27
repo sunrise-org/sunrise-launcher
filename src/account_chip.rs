@@ -19,7 +19,6 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-mod hover;
 mod menu;
 
 /// The side of a face on the chip, the same height as the search field's icon row.
@@ -46,17 +45,6 @@ pub(crate) struct Menu {
     /// Counts the pointer's comings and goings, so a close timer started by a leave does nothing
     /// when the pointer has come back since.
     leaves: u64,
-    /// The same for the chip's own open and close timers (`hover.rs`).
-    hovers: u64,
-    /// Where the pointer is: on the chip, on the card, on the submenu.
-    hover_chip: bool,
-    in_card: bool,
-    in_sub: bool,
-    /// The menu was drawn last frame.
-    was_open: bool,
-    /// The menu has just closed with the pointer still on the chip: it stays shut until the
-    /// pointer has left.
-    blocked: bool,
 }
 
 /// One account under "Play as".
@@ -136,6 +124,13 @@ pub(crate) fn sign_in_title(for_play: bool, again: bool, signed_in: usize) -> &'
     })
 }
 
+/// How wide the chip is drawn with `name` and its name showing, about: border, padding, face, gap,
+/// the name (capped at its 160 px box) and the chevron.
+pub(crate) fn full_width(name: &str) -> f32 {
+    let name = (name.chars().count() as f32 * 7.5).min(160.);
+    2. + 6. + CHIP_FACE + 8. + name + 8. + 12. + 8.
+}
+
 /// Where the menu goes: its top, and how far its right edge is from the window's. Under the
 /// chip, flush with its right edge.
 fn place(chip: Option<Bounds<Pixels>>, window_width: f32) -> (f32, f32) {
@@ -210,10 +205,12 @@ impl Launcher {
             .min_w_0()
             .flex()
             .items_center()
-            .gap(px(8.))
+            .gap(px(if compact { 6. } else { 8. }))
             .h(px(CHIP_HEIGHT))
-            .pl(px(6.))
-            .pr(px(8.))
+            // The compact chip is its face and chevron with the same 5 px all round (34 less
+            // the border, less the 22 px face, over two).
+            .when(compact, |d| d.px(px(5.)))
+            .when(!compact, |d| d.pl(px(6.)).pr(px(8.)))
             .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
             .border_1()
             .border_color(palette().input_edge())
@@ -249,7 +246,6 @@ impl Launcher {
                 12.,
                 rgb(palette().chrome_muted).into(),
             ))
-            .on_hover(cx.listener(|this, hovered: &bool, _, cx| this.chip_hover(*hovered, cx)))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.account_menu.sub = None;
                 if this.ui.sheet == Some(Sheet::AccountMenu) {

@@ -13,9 +13,19 @@ impl Launcher {
         let sidebar = self.sidebar_toggle(cx);
         let search = self.search_button(cx);
         let update = self.launcher_update_control(cx);
-        let compact_account = self.window_width < 970. && update.is_some();
-        let account = self.account_chip(compact_account, cx);
         let controls = titlebar::controls(&self.theme, window, cx);
+        let chip_name = match self.accounts.selected() {
+            Some(account) => account.name.clone(),
+            // "Choose who plays" or the signed-out button: about as long as a name.
+            None => tr("Choose who plays").to_string(),
+        };
+        let compact_account = chip_is_compact(
+            self.window_width,
+            crate::account_chip::full_width(&chip_name),
+            update.is_some(),
+            controls.is_some(),
+        );
+        let account = self.account_chip(compact_account, cx);
         let drag = titlebar::drag_area(window, cx);
         div()
             .relative()
@@ -83,6 +93,21 @@ impl Launcher {
             cx.notify();
         }))
     }
+}
+
+/// The least gap kept between the search field and the account chip.
+const CHIP_GAP: f32 = 16.;
+
+/// Whether the account chip shows only its face: when its full width would leave less than
+/// `CHIP_GAP` between it and the centred search field. The right end of the bar is the
+/// window controls, the update button (taken as 150 px, wider than its dot) and the chip, with
+/// the bar's 8 px padding and gaps.
+fn chip_is_compact(window: f32, chip: f32, update: bool, controls: bool) -> bool {
+    let search_right = window / 2. + crate::command_search::search_width(window) / 2.;
+    let controls = if controls { 3. * 46. + 8. } else { 0. };
+    let update = if update { 150. + 8. } else { 0. };
+    let chip_left = window - 8. - controls - chip - update;
+    chip_left - search_right < CHIP_GAP
 }
 
 /// The sun and the name, at the bar's left, after the sidebar toggle.

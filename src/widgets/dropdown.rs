@@ -22,6 +22,8 @@ pub(crate) type Close = Rc<dyn Fn(&mut Window, &mut App)>;
 const ROW_H: f32 = 32.;
 /// The most a menu grows before it scrolls.
 const MENU_MAX: f32 = 300.;
+/// The least a menu is allowed when the window has little room.
+const MENU_MIN: f32 = 96.;
 /// The gap between the field and its menu.
 const GAP: f32 = 4.;
 
@@ -36,8 +38,17 @@ struct Place {
 }
 
 thread_local! {
+    /// Each open menu's scroll handle, so its position survives a redraw. It is dropped when the
+    /// menu closes (`forget`), so the next opening starts at its current row again.
+    static HANDLES: std::cell::RefCell<std::collections::HashMap<SharedString, gpui::ScrollHandle>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
     static PLACES: std::cell::RefCell<std::collections::HashMap<SharedString, Place>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Drops the scroll positions of the menus of the field `id`: call it while that menu is closed.
+pub(crate) fn forget(id: &str) {
+    HANDLES.with_borrow_mut(|m| m.retain(|key, _| !key.starts_with(id)));
 }
 
 /// A child of the field, taking no room, that notes where the field is as it is laid out.
@@ -227,21 +238,41 @@ pub(crate) fn with_keys(
 /// The open menu for the field `id` (which sits in a `relative` parent as tall as the field),
 /// over everything after it, with a backdrop whose press calls `close`. `rows` is what to list,
 /// `count` how many rows that is (to tell whether it fits below), `min_width` a floor under the
-/// field's own width.
+/// field's own width, `current` the index in `rows` of the row to scroll into view when the menu
+/// opens. The menu is at most `MENU_MAX` tall, less where the window has less room on its side
+/// of the field, and scrolls inside past that.
 pub(crate) fn layer(
     id: &SharedString,
     rows: Vec<AnyElement>,
     count: usize,
+    current: Option<usize>,
     min_width: Option<f32>,
     close: Close,
 ) -> [gpui::Deferred; 2] {
     let p = palette();
     let place = PLACES.with_borrow(|m| m.get(id).copied());
     let height = (count as f32 * (ROW_H + 1.) + 8.).min(MENU_MAX);
-    let flip = place.is_some_and(|at| {
-        let below = at.window - at.bottom - 12.;
-        below < height && at.top - 12. > below
+    let room_below = place.map(|at| at.window - at.bottom - 12. - GAP);
+    let room_above = place.map(|at| at.top - 12. - GAP);
+    let flip = match (room_below, room_above) {
+        (Some(below), Some(above)) => below < height && above > below,
+        _ => false,
+    };
+    let room = if flip { room_above } else { room_below };
+    let cap = room.map_or(MENU_MAX, |room| room.clamp(MENU_MIN, MENU_MAX));
+    // A menu of other rows (the build menu's versions) starts at its top again.
+    let key = SharedString::from(format!("{id}:{count}"));
+    let (scroll, fresh) = HANDLES.with_borrow_mut(|m| match m.get(&key) {
+        Some(handle) => (handle.clone(), false),
+        None => {
+            let handle = gpui::ScrollHandle::new();
+            m.insert(key.clone(), handle.clone());
+            (handle, true)
+        }
     });
+    if let Some(row) = current.filter(|_| fresh) {
+        scroll.scroll_to_item(row);
+    }
     let width = place
         .map(|at| at.width)
         .unwrap_or(0.)
@@ -267,19 +298,28 @@ pub(crate) fn layer(
         .when(width <= 0., |d| d.w_full())
         .flex()
         .flex_col()
-        .gap(px(1.))
         .p(px(4.))
         .rounded(tokens::r(tokens::R_CONTROL))
         .border_1()
         .border_color(p.input_edge())
         .bg(c(p.raised))
         .shadow_lg()
-        .max_h(px(MENU_MAX))
-        .overflow_y_scroll()
+        .max_h(px(cap))
         .occlude()
         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_scroll(|_: &gpui::ScrollEvent, _, cx| cx.stop_propagation())
-        .children(rows);
+        .child(
+            div()
+                .id(SharedString::from(format!("{id}-menu-rows")))
+                .flex()
+                .flex_col()
+                .gap(px(1.))
+                .min_h_0()
+                .overflow_y_scroll()
+                .track_scroll(&scroll)
+                // Rows keep their height when there are more than fit: the menu scrolls.
+                .children(rows.into_iter().map(|row| div().flex_none().child(row))),
+        );
     let menu = with_keys(menu, true, close.clone(), close).with_animation(
         SharedString::from(format!("{id}-menu-in")),
         crate::motion::eased(sunrise_launcher_theme::QUICK),
@@ -484,12 +524,17 @@ impl Dropdown {
             .when(!fill, |d| d.flex_none().self_start())
             .child(field);
         if !open {
+            forget(&id);
             return wrap;
         }
         let key = SharedString::from(format!("{id}-row"));
+        let mut at: Option<usize> = None;
         let count = items.len();
         let mut rows: Vec<AnyElement> = Vec::new();
         for (n, item) in items.into_iter().enumerate() {
+            if item.current && at.is_none() {
+                at = Some(rows.len());
+            }
             let line = row_when(
                 ElementId::from((key.clone(), n)),
                 item.label,
@@ -511,6 +556,6 @@ impl Dropdown {
                 rows.push(rule());
             }
         }
-        wrap.children(layer(&id, rows, count, menu_min, close))
+        wrap.children(layer(&id, rows, count, at, menu_min, close))
     }
 }

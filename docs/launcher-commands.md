@@ -489,7 +489,7 @@ MCP: `instance_group`.
 
 ## `sunrise-launcher instance move`
 
-Move a profile up or down in the sidebar, among the profiles of its group. Sunrise's own profile stays first.
+Move a profile up or down in the sidebar, among the profiles of its group. Sunrise's own profile moves like the others.
 
     sunrise-launcher instance move <INSTANCE> <DIRECTION>
 

@@ -1,8 +1,8 @@
 //! Drawing the page: the title and the preview on the left, with the player model and Save under
 //! it; the account's skins and capes on the right, as tiles. The preview turns by dragging.
 use super::*;
-use crate::widgets::button::{primary, secondary};
-use crate::widgets::choice::choices;
+use crate::widgets::button::{button, primary, secondary, Look, Size, Style};
+use crate::widgets::choice::compact_choices;
 use crate::widgets::feedback::{banner, empty_state_icon, progress, Tone};
 use crate::widgets::focus::c;
 use sunrise_launcher::account::capes::Cape;
@@ -278,33 +278,48 @@ impl Launcher {
         // A Save also waits while what an earlier one confirmed is being recorded.
         let saving = self.skins.saving.is_some() || self.skins.recording > 0;
         let this = cx.entity();
-        let arms: [(bool, SharedString); 2] =
-            [(false, tr("Wide").into()), (true, tr("Slim").into())];
+        // The bar before each word is the arm's width as the game draws it: 4 pixels wide, 3
+        // slim.
+        let arms: [(bool, SharedString, Option<f32>); 2] = [
+            (false, tr("Wide").into(), Some(4.)),
+            (true, tr("Slim").into(), Some(3.)),
+        ];
+        // The arms the skin is drawn for: wide (like Steve) or slim (like Alex), named as the
+        // official launcher names them. Only an edit: the saved skin takes these arms once it is
+        // worn with them.
         let model = div()
             .flex()
-            .flex_col()
-            .gap(px(6.))
+            .items_center()
+            .justify_between()
+            .gap(px(12.))
             .child(
                 div()
-                    .text_size(px(tokens::SMALL))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(p.muted))
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(tokens::BODY))
+                    .text_color(rgb(p.text))
                     .child(tr("Player model")),
             )
-            // The arms the skin is drawn for: wide (4 pixels, like Steve) or slim (3, like Alex),
-            // named as the official launcher names them. Only an edit: the saved skin takes these
-            // arms once it is worn with them.
-            .child(choices("skins-model", &arms, slim, move |wanted, _, cx| {
-                this.update(cx, |this, cx| {
-                    this.choose(|edit| edit.slim = Some(wanted));
-                    cx.notify();
-                });
-            }));
+            .child(compact_choices(
+                "skins-model",
+                &arms,
+                slim,
+                move |wanted, _, cx| {
+                    this.update(cx, |this, cx| {
+                        this.choose(|edit| edit.slim = Some(wanted));
+                        cx.notify();
+                    });
+                },
+            ));
         let save = primary(
             "skins-save",
-            if saving { tr("Saving…") } else { tr("Save") },
+            if saving {
+                tr("Saving…")
+            } else {
+                tr("Save skin")
+            },
         )
-        .flex_1()
         .when(!changed || saving, |d| d.opacity(0.5).cursor_default())
         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
             this.look_save();
@@ -312,17 +327,25 @@ impl Launcher {
         }));
         let actions = div()
             .flex()
+            .items_center()
+            .justify_end()
             .gap(px(8.))
-            .child(save)
             .when(changed && !saving, |d| {
-                d.child(secondary("skins-undo", tr("Undo")).on_click(cx.listener(
-                    |this, _: &ClickEvent, _, cx| {
+                d.child(
+                    button(
+                        "skins-undo",
+                        tr("Undo"),
+                        Look::new(Style::Ghost, Size::Medium),
+                    )
+                    .text_color(rgb(p.muted))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.skins.edit = Edit::default();
                         this.skins.said.clear();
                         cx.notify();
-                    },
-                )))
-            });
+                    })),
+                )
+            })
+            .child(save);
         let saving_line = saving.then(|| progress(tr("Saving to your account…"), None, None));
         let writing_line = (self.skins.disk_writes > 0)
             .then(|| progress(tr("Updating your saved skins…"), None, None));

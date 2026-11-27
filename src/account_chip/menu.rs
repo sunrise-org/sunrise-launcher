@@ -10,11 +10,13 @@
 //! across the gap between them doesn't lose it.
 use super::*;
 use crate::widgets::dropdown;
-use gpui::{MouseButton, MouseDownEvent, MouseMoveEvent};
+use gpui::{MouseButton, MouseDownEvent};
 use std::time::Duration;
 
 /// An account row: its face, and the name with its status right under it.
 const ACCOUNT_ROW: f32 = 40.;
+/// The most the card grows before its accounts scroll.
+const CARD_MAX: f32 = 380.;
 /// The submenu's width, and how far it sits from the card.
 const SUB_WIDTH: f32 = 208.;
 const SUB_GAP: f32 = 2.;
@@ -287,12 +289,9 @@ impl Launcher {
             .on_hover(cx.listener({
                 let uuid = uuid.clone();
                 move |this, hovered: &bool, _, cx| {
-                    this.account_menu.in_sub = *hovered;
                     if *hovered {
-                        this.menu_enter();
                         this.sub_enter(&uuid, cx);
                     } else {
-                        this.menu_leave(cx);
                         this.sub_leave(cx);
                     }
                 }
@@ -311,12 +310,7 @@ impl Launcher {
     pub(crate) fn account_menu(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         if !shows(self.ui.sheet, self.sign_in_screen.open) {
             self.account_menu.sub = None;
-            self.menu_closed();
             return None;
-        }
-        self.account_menu.was_open = true;
-        if self.account_menu.sub.is_none() {
-            self.account_menu.in_sub = false;
         }
         let (top, right) = place(self.account_menu.chip.get(), self.window_width);
         let mut list = div()
@@ -352,7 +346,7 @@ impl Launcher {
             .right(px(right))
             .w(px(MENU_WIDTH))
             .max_w(px((self.window_width - 2. * EDGE).max(0.)))
-            .max_h(px((self.window_height - top - EDGE).max(0.)))
+            .max_h(px((self.window_height - top - EDGE).clamp(0., CARD_MAX)))
             .child(
                 div()
                     .flex_none()
@@ -383,14 +377,6 @@ impl Launcher {
                 tr("Settings"),
                 Action::Settings,
             ))
-            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                this.account_menu.in_card = *hovered;
-                if *hovered {
-                    this.menu_enter();
-                } else {
-                    this.menu_leave(cx);
-                }
-            }))
             // As the dropdown's menu: it fades in from 4 px nearer the chip.
             .with_animation(
                 "account-menu-in",
@@ -404,9 +390,6 @@ impl Launcher {
                 .inset_0()
                 .occlude()
                 .on_scroll(|_, _, cx| cx.stop_propagation())
-                .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
-                    this.pointer_moved(ev.position, cx)
-                }))
                 // On the layer, which has the keyboard until a row does.
                 .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                     let back = match ev.keystroke.key.as_str() {

@@ -204,9 +204,10 @@ impl Launcher {
         let facing_left = view.left;
         let bubble = outing_bubble.and_then(|b| {
             let alpha = bubble_alpha(now - b.since, b.lasts, crate::motion::still())?;
-            // The cat's head, from the lane's left edge: the sprite's left edge, and the head's
-            // place in it, which the mirror image moves to the other side.
-            let sprite_left = self.ui.cat.lane.get() - out - UNDER - WIDTH / 2.;
+            // The cat's head, from the lane's left edge: the sprite's left edge (it is drawn
+            // `out + UNDER - WIDTH` in from the lane's right, so its left edge is `out + UNDER`
+            // in from it) and the head's place in it, which the mirror image moves across.
+            let sprite_left = self.ui.cat.lane.get() - out - UNDER;
             let head = if facing_left {
                 W as f32 - 1. - HEAD_AT
             } else {

@@ -137,6 +137,9 @@ fn folded_dots(i: &Instance, hover_id: &SharedString, cx: &mut Context<Launcher>
                         .absolute()
                         .inset_0(),
                     )
+                    // A press on the dots is the dots' own: it never reaches the profile's row,
+                    // which would take it as a press to pick the profile.
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(move |e, w, cx| pick(e, w, cx)),
             )
         },
@@ -204,52 +207,105 @@ fn profile_button(id: ElementId, name: String, on: bool, look: Look) -> Stateful
         })
 }
 
+/// How far the open sidebar's dots slide in from the right, in px.
+const DOTS_SLIDE: f32 = 8.;
+
+/// The three dots of an actions button, in `ink`.
+fn dots_mark(ink: gpui::Rgba) -> Div {
+    div()
+        .flex()
+        .gap(px(2.))
+        .children((0..3).map(move |_| div().size(px(3.)).rounded_full().bg(ink)))
+}
+
 /// The actions button of a profile, beside its name once the sidebar is open enough to show it,
 /// fading out as it folds. Folded, the row is the mark alone and the menu is on a right-click.
 /// It opens the profile's menu under it.
-fn profile_actions(i: &Instance, open: f32, cx: &mut Context<Launcher>) -> Option<Stateful<Div>> {
+///
+/// Two parts: the dots that slide in from the right and fade in while the pointer is on the entry
+/// `hover_id` (see `track_hover`), and the button itself over them, which is always there so the
+/// keyboard can reach it. It is clear until it has the focus, when it shows. Its press stops at
+/// it, so it never picks the profile under it.
+fn profile_actions(
+    i: &Instance,
+    open: f32,
+    hover_id: &SharedString,
+    cx: &mut Context<Launcher>,
+) -> Vec<AnyElement> {
     if !actions_shown(open) {
-        return None;
+        return Vec::new();
     }
     let p = palette();
+    let shown = label_opacity(open);
+    let top = (row_height(open) - 28.) / 2.;
+    let (ink, hover) = (rgb(p.chrome_text), rgb(p.hover));
+    let plate = SharedString::from(format!("profile-actions-plate-{}", i.id));
+    let dots = crate::widgets::hover_fade(
+        hover_id,
+        move || {
+            div()
+                .absolute()
+                .top(px(top))
+                .w(px(28.))
+                .h(px(28.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+        },
+        move |d, v| {
+            let v = v.clamp(0., 1.);
+            d.right(px(6. - DOTS_SLIDE * (1. - v)))
+                .opacity(v * shown)
+                .child(
+                    div()
+                        .id(plate.clone())
+                        .absolute()
+                        .inset_0()
+                        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                        .hover(move |d| d.bg(hover)),
+                )
+                .child(dots_mark(ink))
+        },
+    );
     let button = Rc::new(Cell::new(gpui::Bounds::<gpui::Pixels>::default()));
     let read_button = button.clone();
     let i = i.clone();
-    Some(
-        div()
-            .id(SharedString::from(format!("profile-actions-{}", i.id)))
-            .debug_selector(|| "selected-profile-actions".into())
-            .reach()
-            .absolute()
-            .top(px((row_height(open) - 28.) / 2.))
-            .right(px(6.))
-            .w(px(28.))
-            .opacity(label_opacity(open))
-            .h(px(28.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_pointer()
-            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-            .hover(|d| d.bg(rgb(p.hover)))
-            .tooltip(crate::glass_ui::tip(tr("Profile actions")))
-            .child(
-                div().flex().gap(px(2.)).children(
-                    (0..3).map(|_| div().size(px(3.)).rounded_full().bg(rgb(p.chrome_text))),
-                ),
-            )
-            .child(
-                gpui::canvas(move |bounds, _, _| button.set(bounds), |_, _, _, _| {})
-                    .absolute()
-                    .inset_0(),
-            )
-            // The profile's menu (settings, duplicate, folder, order, Delete) under the button;
-            // right-clicking the row opens the same one.
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.open_profile_menu_under(&i, read_button.get());
-                cx.notify();
-            })),
-    )
+    let press = div()
+        .id(SharedString::from(format!("profile-actions-{}", i.id)))
+        .debug_selector(|| "selected-profile-actions".into())
+        .reach()
+        .absolute()
+        .top(px(top))
+        .right(px(6.))
+        .w(px(28.))
+        .h(px(28.))
+        .opacity(0.)
+        // `reach` set the focus style (the mark `seen` reads); this one keeps it and shows the
+        // button when the keyboard is on it.
+        .focus(|s| s.text_bg(crate::widgets::focus::focus_mark()).opacity(1.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+        .tooltip(crate::glass_ui::tip(tr("Profile actions")))
+        .child(dots_mark(ink))
+        .child(
+            gpui::canvas(move |bounds, _, _| button.set(bounds), |_, _, _, _| {})
+                .absolute()
+                .inset_0(),
+        )
+        // The press is the button's alone: the row under it picks its profile on a click it
+        // sees go down.
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        // The profile's menu (settings, duplicate, folder, order, Delete) under the button;
+        // right-clicking the row opens the same one.
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.open_profile_menu_under(&i, read_button.get());
+            cx.notify();
+        }));
+    vec![dots, press.into_any_element()]
 }
 
 /// A profile's right-click target: where it was last drawn (for the menu that opens over it),
@@ -301,6 +357,8 @@ struct Glides {
 
 thread_local! {
     static GLIDES: RefCell<Glides> = RefCell::new(Glides::default());
+    /// The profile the list last scrolled to show: it scrolls again only when another is selected.
+    static SHOWN: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 impl Glides {
@@ -333,22 +391,18 @@ impl Glides {
 /// `entry` held `from` px off its place at the start of a glide, easing to it; at once under
 /// reduced motion. Layout moves with it, so the row stays clickable and its hover goes along.
 fn glide(entry: Stateful<Div>, id: &str, (moved, from): (usize, f32)) -> AnyElement {
-    let animation = if moved == 0 || from == 0. {
-        // Never moved: a one-frame animation that leaves the row where it is.
-        gpui::Animation::new(std::time::Duration::from_millis(1))
-    } else {
-        crate::motion::eased(sunrise_launcher_theme::MOVE)
-    };
-    div()
-        .flex_none()
-        .relative()
-        .child(entry)
-        .with_animation(
-            ElementId::named_usize(SharedString::from(format!("profile-glide-{id}")), moved),
-            animation,
-            move |d, progress| d.top(px(from * (1. - progress))),
-        )
-        .into_any_element()
+    let row = div().flex_none().relative().child(entry);
+    // A row that never moved is simply there: an animation on every row would keep the window
+    // drawing frames (and a benchmark counting them) for nothing.
+    if moved == 0 || from == 0. || !crate::motion::arrivals() {
+        return row.into_any_element();
+    }
+    row.with_animation(
+        ElementId::named_usize(SharedString::from(format!("profile-glide-{id}")), moved),
+        crate::motion::eased(sunrise_launcher_theme::MOVE),
+        move |d, progress| d.top(px(from * (1. - progress))),
+    )
+    .into_any_element()
 }
 
 impl Launcher {
@@ -512,6 +566,7 @@ impl Launcher {
         let selected = self.selected_instance().map(|i| i.id.clone());
         let rows = self.ui.profile_rows.clone();
         rows.borrow_mut().clear();
+        let scroll = crate::frame::scrolls("sidebar");
         let mut list = div()
             .id("sidebar-profiles")
             .flex()
@@ -520,18 +575,25 @@ impl Launcher {
             .flex_1()
             .gap(px(ROW_GAP))
             .overflow_y_scroll()
-            .track_scroll(&crate::frame::scrolls("sidebar"));
+            .track_scroll(&scroll);
         let headings = group_headings(self.instances.list.iter().map(|i| i.group.as_deref()));
         let ids: Vec<String> = self.instances.list.iter().map(|i| i.id.clone()).collect();
         let glides = GLIDES.with_borrow_mut(|glides| {
             glides.note(&ids, row_height(look.open) + ROW_GAP);
             glides.started.clone()
         });
+        // The list's children so far, so the selected profile's place in it is known.
+        let (mut children, mut selected_at) = (0, None);
         for (n, i) in self.instances.list.clone().into_iter().enumerate() {
             if let Some(group) = headings[n].clone() {
                 list = list.child(profile_heading(look.open, group));
+                children += 1;
             }
             let id = i.id.clone();
+            if selected.as_deref() == Some(id.as_str()) {
+                selected_at = Some(children);
+            }
+            children += 1;
             let entry = self.profile_entry(n, i, selected.as_deref(), look, cx);
             list = list.child(glide(
                 entry,
@@ -539,6 +601,15 @@ impl Launcher {
                 glides.get(&id).copied().unwrap_or((0, 0.)),
             ));
         }
+        // A profile selected from elsewhere (or at startup) scrolls into view, once.
+        SHOWN.with_borrow_mut(|shown| {
+            if *shown != selected {
+                if let Some(at) = selected_at {
+                    scroll.scroll_to_item(at);
+                }
+                *shown = selected.clone();
+            }
+        });
         list
     }
 
@@ -560,19 +631,21 @@ impl Launcher {
         // Folded, a profile is its mark alone until the pointer is on it.
         let more = (current || look.open > 0.) && !self.location_unavailable;
         let face = self.profile_face(n, &i, current, more, look, cx);
-        let actions = if more {
-            profile_actions(&i, look.open, cx)
-        } else {
-            None
-        };
         let hover_id = SharedString::from(format!("profile-entry-{}", i.id));
+        let folded = folds_open(look);
+        // Open, the dots slide in under the pointer, so the entry tracks it as the folded one does.
+        let dots_out = more && actions_shown(look.open);
+        let actions = if dots_out {
+            profile_actions(&i, look.open, &hover_id, cx)
+        } else {
+            Vec::new()
+        };
         let mut entry = div()
             .id(hover_id.clone())
             .relative()
             .flex()
             .flex_col()
             .flex_none();
-        let folded = folds_open(look);
         if folded {
             entry = crate::widgets::track_hover(entry, hover_id.clone())
                 .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
@@ -585,11 +658,15 @@ impl Launcher {
                         0.,
                     ))
                 });
+        } else if dots_out {
+            entry = crate::widgets::track_hover(entry, hover_id.clone());
         }
         entry = entry.child(face).children(actions);
-        if folded && !self.location_unavailable {
+        if (folded || dots_out) && !self.location_unavailable {
             // The dots stay out while the menu they opened, or a dialog it led to, is open.
             crate::widgets::pin_hover(&hover_id, self.profile_busy_with(&i.id));
+        }
+        if folded && !self.location_unavailable {
             entry = entry.child(folded_dots(&i, &hover_id, cx));
         }
         entry
