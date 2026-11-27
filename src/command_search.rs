@@ -31,7 +31,9 @@ use listing::{rank, PER_GROUP, SETTINGS_ROWS, SHOWN};
 
 /// The side of a row's picture.
 const ART: f32 = 28.;
-const WIDTH: f32 = 600.;
+const WIDTH: f32 = 620.;
+/// A result row: one line, its picture, label and hint.
+const ROW_H: f32 = 36.;
 /// Below this window width the top bar's field is its icon alone.
 const COMPACT_BELOW: f32 = 960.;
 /// From this width the field has room for its key beside the word.
@@ -338,10 +340,10 @@ impl Launcher {
         .id("search-field")
         .flex_none()
         .gap(px(12.))
-        .h(px(52.))
-        .px(px(16.))
+        .h(px(tokens::FIELD))
+        .px(px(12.))
         .cursor_text()
-        .text_size(px(tokens::LEAD));
+        .text_size(px(tokens::BODY));
         let field = line_edit::mouse(field, cx, |this: &mut Launcher| &mut this.search.query);
 
         let mut list = div()
@@ -377,8 +379,8 @@ impl Launcher {
                     .flex()
                     .items_center()
                     .gap(px(12.))
-                    .h(px(tokens::ACTION))
-                    .px(px(8.))
+                    .h(px(ROW_H))
+                    .px(px(10.))
                     .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                     .cursor_pointer()
                     .when(n == index, |d| d.bg(rgb(palette().selected)))
@@ -446,17 +448,15 @@ impl Launcher {
             .on_mouse_down(MouseButton::Left, |_: &MouseDownEvent, _, cx| {
                 cx.stop_propagation()
             })
-            .child(field)
-            .child(div().flex_none().h(px(1.)).bg(rgb(palette().divider)))
+            .child(div().flex_none().p(px(8.)).child(field))
             .child(list)
             .child(
                 div()
                     .flex_none()
                     .px(px(16.))
-                    .py(px(8.))
-                    .border_t_1()
-                    .border_color(rgb(palette().divider))
-                    .text_size(px(tokens::CAPTION))
+                    .pt(px(4.))
+                    .pb(px(10.))
+                    .text_size(px(tokens::SMALL))
                     .text_color(rgb(palette().muted))
                     .child(tr("↑ ↓ to move · Enter to open · Esc to close")),
             );

@@ -1,6 +1,7 @@
 //! A sheet's plates and titles, and stepping the keyboard through them.
 
 use super::*;
+use gpui::AnimationExt as _;
 
 pub(super) fn card() -> Div {
     div()
@@ -60,25 +61,73 @@ pub(crate) fn modal_frame(
                 cx.notify();
             }),
         )
-        .child(
-            // Never taller or wider than the window: a small one scrolls the sheet.
-            body.id((id, 1usize))
-                .w(px(width))
-                .max_w_full()
-                .max_h_full()
-                .overflow_y_scroll()
-                .track_scroll(&crate::frame::scrolls("sheet"))
-                .p(px(28.))
-                .gap(px(16.))
-                .rounded(crate::tokens::r(crate::tokens::R_PANEL))
-                .border_1()
-                .border_color(rgb(palette().line))
-                .bg(rgb(palette().raised))
-                .text_color(rgb(palette().text))
-                .on_mouse_down(MouseButton::Left, |_: &MouseDownEvent, _, cx| {
-                    cx.stop_propagation()
-                }),
+        .child(arriving(
+            id,
+            // The plate sits in its own box, so the arrival moves the box, not the plate's
+            // scroll state.
+            div()
+                .relative()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    // Never taller or wider than the window: a small one scrolls the sheet.
+                    body.id((id, 1usize))
+                        .w(px(width))
+                        .max_w_full()
+                        .max_h_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&crate::frame::scrolls("sheet"))
+                        .p(px(PLATE_PAD))
+                        .gap(px(16.))
+                        .rounded(crate::tokens::r(crate::tokens::R_PANEL))
+                        .border_1()
+                        .border_color(rgb(palette().line))
+                        .bg(rgb(palette().raised))
+                        .shadow(plate_shadow())
+                        .text_color(rgb(palette().text))
+                        .on_mouse_down(MouseButton::Left, |_: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation()
+                        }),
+                ),
+        ))
+}
+
+/// The plate's box arriving with a quick fade and a short rise, except while a benchmark runs
+/// (its frames measure the list in the sheet, not the fade) and under reduced motion.
+fn arriving(id: &'static str, plate: Div) -> gpui::AnyElement {
+    if !crate::motion::arrivals() {
+        return plate.into_any_element();
+    }
+    plate
+        .with_animation(
+            gpui::ElementId::Name(format!("{id}-open").into()),
+            crate::motion::eased(OPEN),
+            |d, t| d.opacity(t).top(px(tokens::RISE * (1. - t))),
         )
+        .into_any_element()
+}
+
+/// A popup's padding, from its edge to its content.
+const PLATE_PAD: f32 = 24.;
+
+/// How a popup arrives: a quick fade with the short rise of content arriving.
+const OPEN: sunrise_launcher_theme::Motion = sunrise_launcher_theme::Motion {
+    name: "sheet-open",
+    ms: 160,
+    curve: sunrise_launcher_theme::MOVE.curve,
+};
+
+/// The soft shadow that lifts a popup off the scrim.
+pub(super) fn plate_shadow() -> Vec<gpui::BoxShadow> {
+    vec![gpui::BoxShadow {
+        color: gpui::hsla(0., 0., 0., 0.35),
+        offset: gpui::point(px(0.), px(8.)),
+        blur_radius: px(32.),
+        spread_radius: px(0.),
+        inset: false,
+    }]
 }
 
 /// A prominent warning modal frame: strong warning border, edge-to-edge warning header band
@@ -134,8 +183,8 @@ pub(crate) fn warning_frame(
 
 pub(crate) fn title(text: String) -> Div {
     div()
-        .text_size(px(tokens::TITLE))
-        .font_weight(FontWeight::BOLD)
+        .text_size(px(tokens::HEADING))
+        .font_weight(FontWeight::SEMIBOLD)
         .child(crate::selectable::selectable(text))
 }
 

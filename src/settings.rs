@@ -257,10 +257,6 @@ pub(crate) fn off(b: Stateful<Div>) -> Stateful<Div> {
     b.opacity(0.4).cursor_default().tab_stop(false)
 }
 
-pub(crate) fn danger(b: Stateful<Div>) -> Stateful<Div> {
-    b.text_color(rgb(palette().danger))
-}
-
 fn corner_px(value: f32) -> u8 {
     (value * f32::from(backend::MAX_CORNER_RADIUS)).round() as u8
 }

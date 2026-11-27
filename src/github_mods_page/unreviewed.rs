@@ -1,7 +1,7 @@
 //! The unreviewed-code warning, for an added source and for a build's native mods nobody reviewed.
 
 use super::*;
-use crate::widgets::button::{button, primary, Look, Size, Style};
+use crate::widgets::button::{primary, secondary};
 use crate::widgets::feedback::{banner, Tone};
 use crate::widgets::focus::c;
 
@@ -270,7 +270,8 @@ fn warning_safety(lead: &'static str, body: String) -> Div {
         )
 }
 
-/// The warning's heading: its caption in the tone's colour, then the title.
+/// The warning's heading: a strip tinted with the warning colour, its caption in that colour,
+/// then the title below it.
 fn warning_heading(warn: Hsla, heading: &'static str) -> Div {
     div()
         .flex()
@@ -278,6 +279,14 @@ fn warning_heading(warn: Hsla, heading: &'static str) -> Div {
         .gap(px(4.))
         .px(px(24.))
         .pt(px(20.))
+        .pb(px(16.))
+        .bg(crate::widgets::focus::mix(
+            c(palette().card_color),
+            warn,
+            0.15,
+        ))
+        .border_b_1()
+        .border_color(warn.opacity(0.5))
         .child(
             div()
                 .text_size(px(tokens::CAPTION))
@@ -294,8 +303,9 @@ fn warning_heading(warn: Hsla, heading: &'static str) -> Div {
         )
 }
 
-/// The warning's two buttons, end to end: confirm (Accent, so it reads as the risky one) and the
-/// default Cancel, which takes the keyboard focus.
+/// The warning's two buttons, end to end: the default Cancel (primary, and it takes the keyboard
+/// focus) and the confirm as an outlined button, so the choice that adds the risk is not the one
+/// the eye lands on.
 fn warning_actions(
     confirm_id: &'static str,
     cancel_id: &'static str,
@@ -304,22 +314,18 @@ fn warning_actions(
     answer: fn(&mut Launcher, WarningAction),
     cx: &mut Context<Launcher>,
 ) -> Div {
-    let confirm = button(
-        confirm_id,
-        confirm_label,
-        Look::new(Style::Accent, Size::Medium),
-    )
-    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-        answer(this, WarningAction::Confirm);
-        cx.notify();
-    }))
-    .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _, cx| {
-        if matches!(e.keystroke.key.as_str(), "enter" | "space") {
+    let confirm = secondary(confirm_id, confirm_label)
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
             answer(this, WarningAction::Confirm);
-            cx.stop_propagation();
             cx.notify();
-        }
-    }));
+        }))
+        .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _, cx| {
+            if matches!(e.keystroke.key.as_str(), "enter" | "space") {
+                answer(this, WarningAction::Confirm);
+                cx.stop_propagation();
+                cx.notify();
+            }
+        }));
     let cancel = primary(cancel_id, tr("Cancel"))
         .track_focus(cancel_focus)
         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -336,7 +342,7 @@ fn warning_actions(
     div()
         .flex()
         .justify_end()
-        .gap(px(10.))
+        .gap(px(8.))
         .child(confirm)
         .child(cancel)
 }

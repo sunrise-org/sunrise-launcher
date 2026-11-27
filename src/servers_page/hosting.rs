@@ -3,7 +3,7 @@
 //! (`servers_page.rs`); only the drawing is new.
 use super::*;
 use crate::paint::palette;
-use crate::settings::{danger, group, hint, off, row};
+use crate::settings::{group, hint, off, row};
 use crate::widgets::check::switch;
 use crate::widgets::chip::choices;
 use gpui::rgb;

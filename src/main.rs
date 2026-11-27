@@ -313,7 +313,6 @@ struct Launcher {
     /// When page switches last checked every account's sign-in.
     auth_checked: Option<Instant>,
     sign_in_screen: launcher_play::SignInScreen,
-    sign_in_copies: owner_page::SignInCopies,
     auth_busy: HashMap<String, u64>,
     auth_next: u64,
     sign_in: Option<SignIn>,

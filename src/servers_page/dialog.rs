@@ -1,8 +1,5 @@
-//! The Create a server dialog in the glass look (the mockup's `ServerModal`, sunrise-site
-//! `components/launcher/server-modal.tsx`): one plate round at 28 over the dimmed page. On the
-//! left, what the server will be (a picture, its name and its rules); on the right, its name,
-//! world, game mode, difficulty, how many players, who may join and whether accounts are
-//! checked; the EULA, Cancel and Create at the foot. Dark appearance only.
+//! The Create a server dialog's state: the friend list it keeps (its view is in
+//! `hosting/create.rs`), and the check a friend's name has to pass.
 use super::*;
 
 /// A player name Minecraft accepts: 3 to 16 letters, digits or underscores.

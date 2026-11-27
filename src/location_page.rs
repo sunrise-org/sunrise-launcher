@@ -1,7 +1,7 @@
 //! Settings' two-step data move. Only the separate worker copies data, after this process exits.
 use super::*;
 use crate::settings::{hint, off, row};
-use crate::widgets::button::secondary;
+use crate::widgets::button::{primary, secondary};
 use crate::widgets::feedback::{banner, Tone};
 
 fn env_value(key: &str) -> Option<String> {
@@ -278,7 +278,7 @@ impl Launcher {
             );
         }
         if let Some(target) = &self.location_target {
-            let confirm = secondary("alt-confirm-move-data", tr("Move and restart"));
+            let confirm = primary("alt-confirm-move-data", tr("Move and restart"));
             let confirm = if self.location_blocked().is_some() {
                 off(confirm)
             } else {
@@ -295,15 +295,20 @@ impl Launcher {
                         "Move all data to {path}?",
                         &[("path", &target.display().to_string())],
                     ))))
-                    .child(div().flex().gap(px(8.)).child(confirm).child(
-                        secondary("alt-cancel-move-data", tr("Cancel")).on_click(cx.listener(
-                            |this, _: &ClickEvent, _, cx| {
-                                this.location_target = None;
-                                this.location_error = None;
-                                cx.notify();
-                            },
-                        )),
-                    )),
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap(px(8.))
+                            .child(secondary("alt-cancel-move-data", tr("Cancel")).on_click(
+                                cx.listener(|this, _: &ClickEvent, _, cx| {
+                                    this.location_target = None;
+                                    this.location_error = None;
+                                    cx.notify();
+                                }),
+                            ))
+                            .child(confirm),
+                    ),
             );
         }
         body

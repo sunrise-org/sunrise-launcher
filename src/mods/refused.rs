@@ -2,7 +2,7 @@
 //! mod's name; the checker's own words and the build log behind Show details.
 use super::*;
 use crate::frame::c;
-use crate::widgets::button::{primary, secondary};
+use crate::widgets::button::{button, primary, secondary, Look, Size, Style};
 use std::sync::Arc;
 use sunrise_launcher::browser::sunrise::{sources::Failure, SourceError};
 
@@ -256,25 +256,39 @@ impl Launcher {
                     .flex()
                     .flex_wrap()
                     .items_center()
+                    .justify_between()
                     .gap(px(8.))
+                    // Show details is a text link on the left; the actions sit on the right,
+                    // Close as the primary one.
                     .children(has_details.then(|| {
-                        secondary("refused-show-details", details_label(refused.details)).on_click(
-                            cx.listener(|this, _, _, cx| {
-                                if let Some(refused) = &mut this.mods_state.refused {
-                                    refused.details ^= true;
-                                }
-                                cx.notify();
-                            }),
+                        button(
+                            "refused-show-details",
+                            details_label(refused.details),
+                            Look::new(Style::Ghost, Size::Medium),
                         )
-                    }))
-                    .child(div().flex_1())
-                    .children(single_repo.map(|repo| github_button("refused-github-one", repo)))
-                    .child(primary("refused-close", tr("Close")).on_click(cx.listener(
-                        |this, _, _, cx| {
-                            this.close_sheet();
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(refused) = &mut this.mods_state.refused {
+                                refused.details ^= true;
+                            }
                             cx.notify();
-                        },
-                    ))),
+                        }))
+                    }))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .ml_auto()
+                            .children(
+                                single_repo.map(|repo| github_button("refused-github-one", repo)),
+                            )
+                            .child(primary("refused-close", tr("Close")).on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    this.close_sheet();
+                                    cx.notify();
+                                },
+                            ))),
+                    ),
             );
         Some(crate::sheets::frame("refused", 560., body, cx))
     }

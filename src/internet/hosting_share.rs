@@ -3,7 +3,7 @@
 //! server's port. Every action is `internet.rs`'s own; only the drawing is new.
 use super::*;
 use crate::paint::palette;
-use crate::settings::{danger, hint, off};
+use crate::settings::{hint, off};
 use crate::widgets::button::secondary;
 use crate::widgets::feedback::{banner, Tone};
 use gpui::rgb;
@@ -21,7 +21,33 @@ impl Launcher {
         cx: &mut Context<Self>,
         action: impl Fn(&mut Self, &mut Context<Self>) + 'static,
     ) -> Stateful<Div> {
-        let b = secondary(id, text);
+        self.share_action(secondary(id, text), enabled, cx, action)
+    }
+
+    /// A share button that changes who can reach the server: the destructive look.
+    fn share_danger(
+        &self,
+        id: impl Into<ElementId>,
+        text: impl Into<SharedString>,
+        enabled: bool,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+    ) -> Stateful<Div> {
+        self.share_action(
+            crate::widgets::button::danger(id, text),
+            enabled,
+            cx,
+            action,
+        )
+    }
+
+    fn share_action(
+        &self,
+        b: Stateful<Div>,
+        enabled: bool,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+    ) -> Stateful<Div> {
         if enabled {
             b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 action(this, cx);
@@ -443,7 +469,7 @@ impl Launcher {
                                     cx,
                                     |this, _| this.internet.confirm_limit = false,
                                 ))
-                                .child(danger(self.share_button(
+                                .child(self.share_danger(
                                     "share-limit-go",
                                     tr("Change the access controls"),
                                     true,
@@ -457,7 +483,7 @@ impl Launcher {
                                             );
                                         }
                                     },
-                                ))),
+                                )),
                         )
                 }
                 Reach::Everything => div().flex().child(self.share_button(

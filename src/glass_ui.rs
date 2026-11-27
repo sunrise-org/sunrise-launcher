@@ -1,7 +1,7 @@
 //! The glass look's controls ("Glass" in `docs/design-system.md`): the parts of the mockup's
 //! `components/launcher/launcher-ui.tsx` and its shell (`launcher-app.tsx`), at its sizes. White
 //! text and fills at a few opacities over [`glass`](crate::glass) plates; Geist throughout.
-use gpui::{div, prelude::*, px, rgb, svg, App, Div, FontWeight, Hsla, SharedString, Svg, Window};
+use gpui::{div, prelude::*, px, rgb, svg, App, Hsla, SharedString, Svg, Window};
 use std::cell::Cell;
 use std::cell::RefCell;
 
@@ -75,16 +75,6 @@ pub fn color(c: u32) -> Hsla {
     rgb(c).into()
 }
 
-/// Text at `size` px in Geist, white at `a`, at `weight`.
-pub fn text(size: f32, weight: FontWeight, a: f32) -> Div {
-    div()
-        .font_family(sunrise_launcher_theme::glass::FONT)
-        .text_size(px(size))
-        .line_height(px((size * 1.4).round()))
-        .font_weight(weight)
-        .text_color(white(a))
-}
-
 /// One of the mockup's Hugeicons, stroked in `color`.
 pub fn icon(name: &'static str, size: f32, color: Hsla) -> Svg {
     svg()
@@ -92,39 +82,6 @@ pub fn icon(name: &'static str, size: f32, color: Hsla) -> Svg {
         .flex_none()
         .size(px(size))
         .text_color(color)
-}
-
-/// What a dialog or the palette lays over the launcher (`bg-[#07050f]/50 backdrop-blur-xl`):
-/// GPUI can't blur what it drew, so the scene's blurred copy (a menu's, `hzl-float`) covers the
-/// page. The scrim goes over it.
-pub fn scrim_backdrop() -> impl IntoElement {
-    crate::glass::backdrop(0.)
-}
-
-/// The scrim over [`scrim_backdrop`]: 50 % in the dark look, 20 % in light, so the dimmed
-/// launcher stays day-lit.
-pub fn scrim() -> Hsla {
-    color(sunrise_launcher_theme::glass::SCRIM).opacity(if light() { 0.2 } else { 0.5 })
-}
-
-/// A dialog's plate, round at `radius` (`hzl-glass` over the scrim): its piece of the scene
-/// under the scrim's dimming, then the plates' white. The content goes after it.
-pub fn dialog_plate(radius: f32) -> Div {
-    let layer = |c: Hsla| {
-        div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .rounded(px(crate::glass_ui::rad(radius)))
-            .bg(c)
-    };
-    crate::glass::plate(radius)
-        // Light plates are already day-lit: no dimming under them.
-        .child(layer(
-            color(sunrise_launcher_theme::glass::SCRIM).opacity(if light() { 0. } else { 0.5 }),
-        ))
-        .child(layer(white(sunrise_launcher_theme::glass::TINT)))
 }
 
 thread_local! {

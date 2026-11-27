@@ -180,7 +180,6 @@
   "Mar {day}": "Mar {day}",
   "May {day}": "May {day}",
   "Microsoft": "Microsoft",
-  "Microsoft account": "Microsoft account",
   "Minecraft Server": "Minecraft Server",
   "Minecraft account needs attention": "Minecraft account needs attention",
   "Minecraft folder": "Minecraft folder",
@@ -2656,5 +2655,7 @@
   "Updated: {day}": "Updated: {day}",
   "Updating your saved skins…": "Updating your saved skins…",
   "Upload skin": "Upload skin",
-  "Version {number}": "Version {number}"
+  "Version {number}": "Version {number}",
+  "The name and icon you changed won't be saved.": "The name and icon you changed won't be saved.",
+  "This profile and its worlds and mods will move to the Trash. You can restore it from there.": "This profile and its worlds and mods will move to the Trash. You can restore it from there."
 }

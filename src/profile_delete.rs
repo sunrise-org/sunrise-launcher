@@ -1,11 +1,10 @@
 //! One confirmation for profile removal, whether opened in Settings or in the sidebar.
 use super::*;
-use crate::widgets::button::secondary;
+use crate::widgets::button::{primary, secondary};
 use crate::{
     frame::Reach as _,
     mods::refused::{details_box, details_label},
     paint::palette,
-    settings::danger,
     sheets::{modal_frame, title},
 };
 use gpui::{rgb, Global, MouseButton, MouseDownEvent};
@@ -163,10 +162,12 @@ impl Launcher {
             Action::Menu { target, top } => return Some(self.profile_actions_menu(target, *top, cx)),
             Action::Confirm(target) => body
                 .child(title(trf("Delete {name}?", &[("name", &target.name)])))
-                .child(tr(
-                    "This profile and its worlds and mods will move to the Trash.",
-                ))
-                .child(div().text_color(rgb(palette().muted)).child(crate::selectable::selectable(trf(
+                .child(
+                    div()
+                        .text_color(rgb(palette().muted))
+                        .child(tr("This profile and its worlds and mods will move to the Trash. You can restore it from there.")),
+                )
+                .child(div().text_size(px(tokens::SMALL)).text_color(rgb(palette().muted)).child(crate::selectable::selectable(trf(
                     "If you restore it from the Trash, move the restored folder back to {folder} in your game folder.",
                     &[("folder", &target.work.strip_prefix(backend::game_home()).unwrap_or(&target.work).to_string_lossy())],
                 ))))
@@ -174,7 +175,7 @@ impl Launcher {
                     footer()
                         .child(close("profile-delete-cancel", tr("Cancel"), cx))
                         .child(
-                            danger(secondary("profile-delete-confirm", tr("Delete profile")))
+                            primary("profile-delete-confirm", tr("Delete profile"))
                                 .on_click(cx.listener(|this, _, _, cx| this.delete_profile(cx))),
                         ),
                 ),
@@ -235,34 +236,51 @@ impl Launcher {
         let p = palette();
         let at = tokens::FRAME_INSET + crate::rail::rail_width(self.rail_open()) + 8.;
         let name = target.name.clone();
-        let item = |id: &'static str, label: &'static str| {
+        let item = |id: &'static str, icon: &'static str, label: &'static str, ink: u32| {
             div()
                 .id(id)
                 .reach()
                 .flex()
                 .items_center()
-                .h(px(tokens::FIELD))
+                .gap(px(8.))
+                .h(px(tokens::CONTROL))
                 .px(px(8.))
+                .rounded(tokens::r(tokens::R_SMALL))
                 .cursor_pointer()
+                .text_size(px(tokens::LABEL))
+                .text_color(rgb(ink))
                 .hover(|s| s.bg(rgb(p.hover)))
+                .child(crate::glass_ui::icon(
+                    icon,
+                    16.,
+                    crate::widgets::focus::c(ink),
+                ))
                 .child(label)
         };
         let edited = target.clone();
-        let edit = item("profile-menu-edit", tr("Edit profile…")).on_click(cx.listener(
-            move |this, _, _, cx| {
-                this.close_profile_action();
-                this.edit_profile(&edited, cx);
-            },
-        ));
+        let edit = item(
+            "profile-menu-edit",
+            "pencil-edit-02",
+            tr("Edit profile…"),
+            p.text,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.close_profile_action();
+            this.edit_profile(&edited, cx);
+        }));
         let target = target.clone();
-        let delete = item("profile-menu-delete", tr("Delete profile…"))
-            .text_color(rgb(p.danger))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.confirm_profile_delete(&target);
-                cx.notify();
-            }));
-        // Two rows, 26 for the title, 16 padding and 2 border.
-        let action_height = 2. * tokens::FIELD + 44.;
+        let delete = item(
+            "profile-menu-delete",
+            "delete-02",
+            tr("Delete profile…"),
+            p.danger,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.confirm_profile_delete(&target);
+            cx.notify();
+        }));
+        // Two rows, the title (26), a divider (9), 8 padding each side and the 1 px border.
+        let action_height = 2. * tokens::CONTROL + 26. + 9. + 18.;
         div()
             .id("profile-menu")
             .absolute()
@@ -321,6 +339,7 @@ impl Launcher {
                             .child(name),
                     )
                     .child(edit)
+                    .child(div().h(px(1.)).my(px(4.)).bg(rgb(p.divider)))
                     .child(delete),
             )
     }

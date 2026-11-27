@@ -148,11 +148,16 @@ impl Launcher {
                         trf("Selected profile: {name}", &[("name", &target.name)]),
                         tr("This profile and its worlds and mods will move to the Trash."),
                         div().child(
-                            danger(secondary("settings-delete-profile", tr("Delete profile…")))
-                                .on_click(cx.listener(move |this, _, _, cx| {
+                            crate::widgets::button::danger(
+                                "settings-delete-profile",
+                                tr("Delete profile…"),
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
                                     this.confirm_profile_delete(&target);
                                     cx.notify();
-                                })),
+                                },
+                            )),
                         ),
                     ))
             });

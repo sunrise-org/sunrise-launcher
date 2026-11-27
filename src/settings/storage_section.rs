@@ -112,14 +112,13 @@ impl Launcher {
                         )),
                     )
                     .child(
-                        danger(secondary("alt-storage-clear-yes", tr("Clear"))).on_click(
-                            cx.listener(|this, _: &ClickEvent, _, cx| {
+                        crate::widgets::button::danger("alt-storage-clear-yes", tr("Clear"))
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                 if let Some(clear) = this.storage_confirm.take() {
                                     this.refresh_storage(clear, clear.is_none());
                                 }
                                 cx.notify();
-                            }),
-                        ),
+                            })),
                     ),
             );
         }

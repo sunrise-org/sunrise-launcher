@@ -21,6 +21,8 @@ use std::rc::Rc;
 /// The side of a face on the chip and in the menu.
 const FACE: f32 = 28.;
 const MENU_WIDTH: f32 = 254.;
+/// A menu's action row: an icon and a label, one line.
+const MENU_ROW: f32 = 32.;
 /// The gap between the chip and its menu, and the least the menu keeps from the window's edge.
 const GAP: f32 = 6.;
 const EDGE: f32 = 8.;
@@ -315,7 +317,7 @@ impl Launcher {
                 .flex()
                 .items_center()
                 .gap(px(10.))
-                .h(px(tokens::FIELD))
+                .h(px(MENU_ROW))
                 .px(px(8.))
                 .cursor_pointer()
                 .text_size(px(tokens::LABEL))

@@ -555,13 +555,9 @@ impl Launcher {
                 .child(div().flex().justify_end().child(close(tr("Close"))));
             return Some(crate::sheets::frame("alt-pick", 520., body, cx));
         }
-        let mut list = div()
-            .flex()
-            .flex_col()
-            .rounded(crate::tokens::r(crate::tokens::R_CARD))
-            .border_1()
-            .border_color(palette().input_edge())
-            .overflow_hidden();
+        // One card per world, the tick on its right; a world that has the pack already stays
+        // in the list, marked, without a tick.
+        let mut list = div().flex().flex_col().gap(px(8.));
         let mut free = 0;
         for (n, (world, packs)) in worlds.iter().enumerate() {
             let has = pick.what.in_world(world, packs);
@@ -574,20 +570,9 @@ impl Launcher {
                 .gap(px(12.))
                 .px(px(14.))
                 .py(px(10.))
-                .when(n > 0, |d| d.border_t_1().border_color(palette().rule()))
-                .child(match has {
-                    // Its place is kept so the names line up.
-                    true => div().flex_none().size(px(18.)).into_any_element(),
-                    false => {
-                        // The row is the Tab stop, not the box in it.
-                        checkbox(
-                            ElementId::named_usize("alt-pick-box", n),
-                            if on { Tick::On } else { Tick::Off },
-                        )
-                        .tab_stop(false)
-                        .into_any_element()
-                    }
-                })
+                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                .border_1()
+                .border_color(palette().input_edge())
                 .child(world_icon(world, 36.))
                 .child(
                     div()
@@ -601,7 +586,20 @@ impl Launcher {
                         )
                         .child(muted(world_facts(world)).truncate()),
                 )
-                .children(has.then(added_mark));
+                .children(has.then(added_mark))
+                .child(match has {
+                    // A world that has it keeps no tick, and its place stays so the rows line up.
+                    true => div().flex_none().size(px(18.)).into_any_element(),
+                    false => {
+                        // The row is the Tab stop, not the box in it.
+                        checkbox(
+                            ElementId::named_usize("alt-pick-box", n),
+                            if on { Tick::On } else { Tick::Off },
+                        )
+                        .tab_stop(false)
+                        .into_any_element()
+                    }
+                });
             list = list.child(if has {
                 row
             } else {

@@ -41,6 +41,22 @@ thread_local! {
     static SAVING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+thread_local! {
+    /// A benchmark is running, as the frame being built saw it.
+    static BENCHMARK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Notes whether a benchmark runs, once a frame, for [`arrivals`].
+pub fn note_benchmark(on: bool) {
+    BENCHMARK.set(on);
+}
+
+/// Whether things that arrive (a popup's fade and rise) animate: not under reduced motion,
+/// and not while a benchmark runs, whose frames measure the page rather than the arrival.
+pub fn arrivals() -> bool {
+    !still() && !BENCHMARK.get()
+}
+
 /// Notes whether the system saves power, once a frame, for [`endless`].
 pub fn note_power(cx: &gpui::App) {
     SAVING.set(cx.power_mode() == gpui::PowerMode::LowPower);

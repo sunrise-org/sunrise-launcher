@@ -317,17 +317,14 @@ impl Launcher {
                     "Switching {mod} to {repo}",
                     &[("mod", &switch.mod_name), ("repo", &switch.to_repo)],
                 )))
-                .child(muted(if publishing {
-                    stage_label(running.progress)
-                } else {
-                    crate::eta::with_eta(
-                        stage_label(running.progress),
-                        running.eta.remaining(Instant::now()),
-                    )
-                }))
-                .child(crate::widgets::feedback::progress_bar(stage_fraction(
-                    running.progress,
-                )))
+                .child(crate::widgets::feedback::progress(
+                    stage_label(running.progress),
+                    (!publishing)
+                        .then(|| running.eta.remaining(Instant::now()))
+                        .flatten()
+                        .map(|left| crate::eta::eta_label(left).into()),
+                    stage_fraction(running.progress),
+                ))
                 .child(muted(tr("Your current port stays intact if you cancel.")))
                 .child(
                     div()

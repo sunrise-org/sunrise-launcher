@@ -206,14 +206,14 @@ impl Launcher {
                     })),
                 )
                 .child(
-                    danger(secondary(
+                    crate::widgets::button::danger(
                         "alt-data-delete",
                         tr(if confirm {
                             "Delete everything?"
                         } else {
                             "Delete my data"
                         }),
-                    ))
+                    )
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         if this.collection.confirm_delete {
                             this.collection.note = Some(match telemetry::delete_my_data() {

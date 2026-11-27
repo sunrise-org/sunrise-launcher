@@ -346,13 +346,14 @@ impl Launcher {
                     cx,
                     move |this, _| this.api_command(format!("kick {kick}")),
                 ))
-                .child(danger(self.host_button(
+                .child(self.host_action(
+                    crate::widgets::button::Style::Danger,
                     ElementId::named_usize("host-ban", i),
                     tr("Ban"),
                     running,
                     cx,
                     move |this, _| this.api_command(format!("ban {ban}")),
-                )));
+                ));
             let ping = p
                 .ping
                 .map(|ms| trf("{ms} ms ping", &[("ms", &ms.to_string())]));

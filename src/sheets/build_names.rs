@@ -21,7 +21,7 @@ pub(crate) fn build_name(tag: &str) -> String {
     )
 }
 
-fn channel_name(channel: instances::Channel) -> &'static str {
+pub(super) fn channel_name(channel: instances::Channel) -> &'static str {
     match channel {
         instances::Channel::Nightly => tr("Nightly"),
         instances::Channel::Stable => tr("Stable"),

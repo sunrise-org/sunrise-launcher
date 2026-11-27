@@ -591,8 +591,12 @@ impl Launcher {
                     )
                     .children(notes.map(crate::selectable::selectable))
                     .child(
-                        secondary("launcher-release-notes", tr("Read the full release notes"))
-                            .on_click(move |_, _, cx| cx.open_url(&url)),
+                        button(
+                            "launcher-release-notes",
+                            tr("Read the full release notes"),
+                            Look::new(Style::Ghost, Size::Small),
+                        )
+                        .on_click(move |_, _, cx| cx.open_url(&url)),
                     ),
             )
             .child(
@@ -620,32 +624,43 @@ impl Launcher {
                 div()
                     .flex()
                     .flex_wrap()
-                    .justify_end()
+                    .items_center()
+                    .justify_between()
                     .gap(px(8.))
-                    .children(dismiss)
+                    // The one that only hides this version sits apart, at the left.
+                    .child(div().flex().flex_wrap().gap(px(8.)).children(dismiss))
                     .child(
-                        secondary(
-                            "launcher-update-later",
-                            if self.restart_for_launcher_update {
-                                tr("Close")
-                            } else {
-                                tr("Later")
-                            },
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.close_sheet();
-                            cx.notify();
-                        })),
-                    )
-                    .children(cancel)
-                    .children(action.map(|label| {
-                        primary("launcher-update-confirm", label).on_click(cx.listener(
-                            |this, _, _, cx| {
-                                this.request_launcher_update();
-                                cx.notify();
-                            },
-                        ))
-                    })),
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .justify_end()
+                            .gap(px(8.))
+                            .child(
+                                secondary(
+                                    "launcher-update-later",
+                                    if self.restart_for_launcher_update {
+                                        tr("Close")
+                                    } else {
+                                        tr("Later")
+                                    },
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.close_sheet();
+                                        cx.notify();
+                                    },
+                                )),
+                            )
+                            .children(cancel)
+                            .children(action.map(|label| {
+                                primary("launcher-update-confirm", label).on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.request_launcher_update();
+                                        cx.notify();
+                                    },
+                                ))
+                            })),
+                    ),
             );
         Some(sheets::frame("launcher-update-sheet", 520., body, cx))
     }

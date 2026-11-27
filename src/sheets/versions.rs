@@ -198,6 +198,7 @@ impl Launcher {
                             let on = chosen.as_deref() == Some(b.tag.as_str());
                             let playing = now.as_deref() == Some(b.tag.as_str());
                             let tag = b.tag.clone();
+                            let channel = channel_build(&b.tag).map(|(c, _)| channel_name(c));
                             let handle = this
                                 .ui
                                 .sheets
@@ -213,22 +214,16 @@ impl Launcher {
                                 .px(px(14.))
                                 .flex()
                                 .items_center()
-                                .gap(px(12.))
+                                .gap(px(10.))
                                 .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                                .border_1()
+                                // The chosen row is outlined in the accent, as in the build chooser.
+                                .border_color(if on {
+                                    gpui::Hsla::from(rgb(palette().accent))
+                                } else {
+                                    gpui::transparent_black()
+                                })
                                 .when(on, |d| d.bg(rgb(palette().selected)))
-                                .child(
-                                    div()
-                                        .size(px(14.))
-                                        .flex_none()
-                                        .rounded_full()
-                                        .border_1()
-                                        .border_color(rgb(if on {
-                                            palette().text
-                                        } else {
-                                            palette().muted
-                                        }))
-                                        .when(on, |d| d.bg(rgb(palette().text))),
-                                )
                                 .child(
                                     div()
                                         .flex_none()
@@ -242,15 +237,30 @@ impl Launcher {
                                         .truncate()
                                         .text_size(px(tokens::SMALL)),
                                 )
+                                .children(channel.map(|name| {
+                                    crate::widgets::chip::tag(
+                                        name,
+                                        crate::widgets::chip::Kind::Neutral,
+                                    )
+                                }))
                                 .children(playing.then(|| {
-                                    muted(tr("Playing now"))
-                                        .flex_none()
-                                        .text_size(px(tokens::SMALL))
+                                    crate::widgets::chip::tag(
+                                        tr("Playing now"),
+                                        crate::widgets::chip::Kind::Neutral,
+                                    )
                                 }))
                                 .children((b.installed && !playing).then(|| {
-                                    muted(tr("Installed"))
-                                        .flex_none()
-                                        .text_size(px(tokens::SMALL))
+                                    crate::widgets::chip::tag(
+                                        tr("Installed"),
+                                        crate::widgets::chip::Kind::Neutral,
+                                    )
+                                }))
+                                .children(on.then(|| {
+                                    crate::glass_ui::icon(
+                                        "tick-02",
+                                        16.,
+                                        rgb(palette().accent).into(),
+                                    )
                                 }))
                                 .track_focus(&handle)
                                 .reach()
@@ -451,7 +461,9 @@ impl Launcher {
                 (!is_pack && !is_update && pick.is_some())
                     .then(|| muted(tr("This profile stays on this build until you change it."))),
             )
-            .children(plan.map(muted))
+            .children(plan.map(|text| {
+                crate::widgets::feedback::banner(crate::widgets::feedback::Tone::Info, text, None)
+            }))
             .children(self.prepare_error.as_ref().map(|e| muted(e.clone())))
             .children(
                 self.ui

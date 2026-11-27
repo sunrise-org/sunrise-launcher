@@ -209,7 +209,8 @@ impl Launcher {
         };
         let about = tr("Remove this server from Sunrise and move its worlds, settings and backups to the trash.");
         if !self.servers.confirm_delete {
-            let delete = danger(self.host_button(
+            let delete = self.host_action(
+                crate::widgets::button::Style::Danger,
                 "host-delete",
                 tr("Delete server…"),
                 ready,
@@ -220,7 +221,7 @@ impl Launcher {
                     let _ = this.focus_handle(Field::DeleteServer, cx);
                     this.servers.focus_soon = Some(Field::DeleteServer);
                 },
-            ));
+            );
             return row(
                 tr("Delete server"),
                 match wait {
@@ -232,7 +233,8 @@ impl Launcher {
         }
         let matches = self.servers.value(Field::DeleteServer) == name && !name.is_empty();
         let field = self.host_field(Field::DeleteServer, tr("Server name"), 220., cx);
-        let confirm = danger(self.host_button(
+        let confirm = self.host_action(
+            crate::widgets::button::Style::Danger,
             "host-delete-yes",
             tr("Move to trash"),
             ready && matches,
@@ -247,7 +249,7 @@ impl Launcher {
                     });
                 }
             },
-        ));
+        );
         let cancel = self.host_button("host-delete-no", tr("Keep it"), true, cx, |this, _| {
             this.servers.confirm_delete = false;
         });

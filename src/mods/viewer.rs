@@ -5,6 +5,7 @@
 use super::*;
 use crate::frame::c;
 use crate::paint::palette;
+use crate::widgets::button::{self, icon_only, Look, Style};
 use gpui::{
     img, AnimationExt, Bounds, ElementId, MouseButton, ObjectFit, Pixels, Point, ScrollHandle, Size,
 };
@@ -133,25 +134,14 @@ fn lerp(a: Bounds<Pixels>, b: Bounds<Pixels>, t: f32) -> Bounds<Pixels> {
     )
 }
 
-/// A round control over the dark: an icon, drawn square, not a glyph of the type.
-fn control(id: &'static str, icon: gpui::Svg) -> Stateful<Div> {
-    div()
-        .id(id)
-        .size(px(40.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_full()
-        // Over the dark, which closes the viewer on a press: the press is this control's.
-        .occlude()
-        .bg(gpui::black().opacity(0.45))
-        .hover(|s| s.bg(gpui::black().opacity(0.7)))
-        .cursor_pointer()
-        .child(icon)
-}
-
-fn icon(name: &'static str) -> gpui::Svg {
-    crate::blocks::icon(name, 18., c(palette().text))
+/// A control over the dark: a ghost icon button, as the window's own. The dark around it
+/// closes the viewer on a press, so the press is the control's.
+fn control(id: &'static str, glyph: &'static str) -> Stateful<Div> {
+    icon_only(
+        id,
+        Look::new(Style::Ghost, button::Size::Medium).icon(glyph),
+    )
+    .occlude()
 }
 
 impl Launcher {
@@ -256,7 +246,7 @@ impl Launcher {
         let dark = div()
             .absolute()
             .size_full()
-            .bg(gpui::black().opacity(0.85))
+            .bg(gpui::black().opacity(0.94))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
@@ -309,7 +299,7 @@ impl Launcher {
         let picture = div()
             .id("alt-viewer-picture-frame")
             .absolute()
-            .rounded(px(tokens::R_CONTROL))
+            .rounded(px(tokens::R_CARD))
             .overflow_hidden()
             // Its card's colour until the picture arrives.
             .bg(palette().card())
@@ -342,7 +332,7 @@ impl Launcher {
             .child(picture);
         if !closing {
             let mut controls = div().absolute().size_full().child(
-                control("alt-viewer-close", icon("close"))
+                control("alt-viewer-close", "cancel-01")
                     .absolute()
                     .top(px(ROOM.0 - 8.))
                     .right(px(16.))
@@ -354,23 +344,16 @@ impl Launcher {
                 let mid = full.center().y - px(20.);
                 controls = controls
                     .child(
-                        control(
-                            "alt-viewer-back",
-                            icon("chevron-right").with_transformation(
-                                gpui::Transformation::rotate(gpui::radians(std::f32::consts::PI)),
-                            ),
-                        )
-                        .absolute()
-                        .left(px(16.))
-                        .top(mid)
-                        .on_click(cx.listener(
-                            |this, _: &ClickEvent, _, cx| {
+                        control("alt-viewer-back", "arrow-left-01")
+                            .absolute()
+                            .left(px(16.))
+                            .top(mid)
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                 this.viewer_step(-1, cx);
-                            },
-                        )),
+                            })),
                     )
                     .child(
-                        control("alt-viewer-next", icon("chevron-right"))
+                        control("alt-viewer-next", "arrow-right-01")
                             .absolute()
                             .right(px(16.))
                             .top(mid)
@@ -380,38 +363,29 @@ impl Launcher {
                     );
             }
             if caption.is_some() || many {
-                let mut footer = div()
-                    .absolute()
-                    .w_full()
-                    .top(full.bottom() + px(14.))
-                    .px(px(24.))
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(4.));
-                if let Some(caption) = caption {
-                    footer = footer.child(
-                        div()
-                            .text_size(px(tokens::LABEL))
-                            .text_color(c(palette().text))
-                            .child(caption),
-                    );
-                }
-                if many {
-                    footer = footer.child(
-                        div()
-                            .text_size(px(tokens::SMALL))
-                            .text_color(c(palette().muted))
-                            .child(trf(
-                                "Picture {number} of {total}",
-                                &[
-                                    ("number", &(at + 1).to_string()),
-                                    ("total", &count.to_string()),
-                                ],
-                            )),
-                    );
-                }
-                controls = controls.child(footer);
+                // One quiet line under the picture: its place in the gallery, then its caption.
+                let place = many.then(|| {
+                    trf(
+                        "Picture {number} of {total}",
+                        &[
+                            ("number", &(at + 1).to_string()),
+                            ("total", &count.to_string()),
+                        ],
+                    )
+                });
+                let line: Vec<String> = [place, caption].into_iter().flatten().collect();
+                controls = controls.child(
+                    div()
+                        .absolute()
+                        .w_full()
+                        .top(full.bottom() + px(14.))
+                        .px(px(24.))
+                        .flex()
+                        .justify_center()
+                        .text_size(px(tokens::SMALL))
+                        .text_color(c(palette().muted))
+                        .child(line.join(" · ")),
+                );
             }
             overlay = overlay.child(controls.with_animation(
                 id("alt-viewer-controls"),

@@ -210,7 +210,7 @@ impl Launcher {
             .flex_col()
             .min_h_0()
             .gap(px(18.))
-            .p(px(28.))
+            .p(px(24.))
             .overflow_y_scroll()
             .child(
                 div()
@@ -291,7 +291,7 @@ impl Launcher {
             .flex_none()
             .items_center()
             .gap(px(10.))
-            .px(px(28.))
+            .px(px(24.))
             .py(px(16.))
             .border_t_1()
             .border_color(palette().rule())

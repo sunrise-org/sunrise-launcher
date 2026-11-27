@@ -17,6 +17,9 @@ pub(crate) enum Style {
     Ghost,
     /// The accent outline (the "Update" button): the accent as an edge, text in ink.
     Accent,
+    /// A destructive action (delete, discard, replace): the danger colour as edge and text,
+    /// so it never reads as the view's main way forward.
+    Danger,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -102,6 +105,7 @@ impl Size {
 fn ink(style: Style) -> u32 {
     match style {
         Style::Primary => palette().accent_on,
+        Style::Danger => palette().danger,
         Style::Secondary | Style::Ghost | Style::Accent => palette().text,
     }
 }
@@ -111,6 +115,7 @@ fn edge(style: Style) -> Option<u32> {
     match style {
         Style::Secondary => Some(palette().line),
         Style::Accent => Some(palette().accent_ink),
+        Style::Danger => Some(palette().danger),
         Style::Primary | Style::Ghost => None,
     }
 }
@@ -120,6 +125,7 @@ fn edge(style: Style) -> Option<u32> {
 fn hover_colour(style: Style) -> gpui::Hsla {
     match style {
         Style::Primary => mix(c(palette().accent), c(palette().hover), 0.25),
+        Style::Danger => c(palette().danger).opacity(0.14),
         Style::Secondary | Style::Ghost | Style::Accent => c(palette().hover),
     }
 }
@@ -143,6 +149,11 @@ pub(crate) fn secondary(id: impl Into<ElementId>, label: impl Into<SharedString>
 /// A view's main action: [`Style::Primary`] at [`Size::Medium`].
 pub(crate) fn primary(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
     button(id, label, Look::new(Style::Primary, Size::Medium))
+}
+
+/// A destructive action: [`Style::Danger`] at [`Size::Medium`].
+pub(crate) fn danger(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
+    button(id, label, Look::new(Style::Danger, Size::Medium))
 }
 
 /// A square icon button (as tall as a Medium button) showing `icon` centred, with `tooltip`

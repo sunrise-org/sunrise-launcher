@@ -85,6 +85,9 @@ impl Launcher {
             .as_ref()
             .and_then(Option::as_ref)
             .map(|c| c.preview.clone());
+        if discarding {
+            return Some(self.discard_profile_sheet(cx));
+        }
         let p = palette();
         let name = self.servers.value(Field::InstanceName).trim().to_owned();
         let tags = self.profile_build_choices(channel);
@@ -229,33 +232,35 @@ impl Launcher {
                     &[("build", build)],
                 )));
         } else {
-            let mut channels = row().flex_wrap();
-            for (id, c, label) in [
-                ("new-stable", Channel::Stable, tr("Stable")),
-                ("new-nightly", Channel::Nightly, tr("Nightly")),
-                ("new-dev", Channel::Dev, tr("Dev")),
-            ] {
-                // A channel with no build to follow can't be chosen.
-                let none = match c {
-                    Channel::Stable => !self.stable_available(),
-                    Channel::Dev => self.profile_build_choices(Channel::Dev).is_empty(),
-                    Channel::Nightly => false,
-                };
-                let b = secondary(id, label).when(c == channel, |d| {
-                    d.bg(rgb(p.selected)).border_color(rgb(p.accent_ink))
-                });
-                channels = channels.child(if none {
-                    b.opacity(0.5).cursor_default().tab_stop(false)
-                } else {
-                    b.on_click(cx.listener(move |this, _, _, cx| {
+            let view = cx.entity();
+            let options: Vec<(Channel, SharedString)> = [
+                (Channel::Stable, tr("Stable")),
+                (Channel::Nightly, tr("Nightly")),
+                (Channel::Dev, tr("Dev")),
+            ]
+            .into_iter()
+            // A channel with no build to follow can't be chosen, so it is not offered.
+            .filter(|(c, _)| match c {
+                Channel::Stable => self.stable_available(),
+                Channel::Dev => !self.profile_build_choices(Channel::Dev).is_empty(),
+                Channel::Nightly => true,
+            })
+            .map(|(c, label)| (c, label.into()))
+            .collect();
+            let channels = crate::widgets::chip::choices(
+                "new-channel",
+                &options,
+                channel,
+                move |c: Channel, _, cx: &mut App| {
+                    view.update(cx, |this, cx| {
                         if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
                             d.channel = c;
                             d.pin = None;
                         }
                         cx.notify();
-                    }))
-                });
-            }
+                    });
+                },
+            );
             let hint = match channel {
                 Channel::Stable if !self.stable_available() => Some(tr("No Stable build yet.")),
                 Channel::Dev if tags.is_empty() => Some(tr("No Dev build yet.")),
@@ -421,7 +426,7 @@ impl Launcher {
                     .child(form.child(start).child(icons)),
             )
             .children(error.map(|e| div().text_color(rgb(p.danger)).child(e)))
-            .child(self.profile_dialog_foot(editing, busy, ready, discarding, cx));
+            .child(self.profile_dialog_foot(editing, busy, ready, cx));
         Some(crate::sheets::modal_frame(
             "new-profile",
             680.,
@@ -431,45 +436,61 @@ impl Launcher {
         ))
     }
 
-    /// Cancel and Create (or Save), or, once a close found edits not saved, the question
-    /// whether to drop them: Keep editing goes back to the form, Discard closes it.
+    /// The question a close asks once it found edits not saved: Keep editing goes back to the
+    /// form, Discard closes it.
+    fn discard_profile_sheet(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(crate::sheets::title(tr("Discard your changes?").into()))
+            .child(
+                div()
+                    .text_color(rgb(palette().muted))
+                    .child(tr("The name and icon you changed won't be saved.")),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(8.))
+                    .pt(px(12.))
+                    .child(
+                        secondary("new-keep", tr("Keep editing")).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                if let Some(d) = &mut this.instances.dialog {
+                                    d.discarding = false;
+                                }
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(primary("new-discard", tr("Discard")).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.instances.dialog = None;
+                            cx.notify();
+                        },
+                    ))),
+            );
+        crate::sheets::modal_frame(
+            "new-profile",
+            450.,
+            body,
+            cx,
+            Launcher::close_instance_dialog,
+        )
+    }
+
+    /// Cancel and Create (or Save).
     fn profile_dialog_foot(
         &self,
         editing: bool,
         busy: bool,
         ready: bool,
-        discarding: bool,
         cx: &mut Context<Self>,
     ) -> Div {
         let row = div().flex().items_center().justify_end().gap(px(8.));
-        if discarding {
-            return row
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(tr("Discard your changes?")),
-                )
-                .child(
-                    secondary("new-keep", tr("Keep editing")).on_click(cx.listener(
-                        |this, _, _, cx| {
-                            if let Some(d) = &mut this.instances.dialog {
-                                d.discarding = false;
-                            }
-                            cx.notify();
-                        },
-                    )),
-                )
-                .child(
-                    crate::settings::danger(secondary("new-discard", tr("Discard"))).on_click(
-                        cx.listener(|this, _, _, cx| {
-                            this.instances.dialog = None;
-                            cx.notify();
-                        }),
-                    ),
-                );
-        }
         row.child(
             secondary("new-cancel", tr("Cancel")).on_click(cx.listener(|this, _, _, cx| {
                 this.close_instance_dialog();

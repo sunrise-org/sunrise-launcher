@@ -128,7 +128,7 @@ impl Launcher {
 
     /// A Medium button in `style`. Disabled, it is faded and takes no click; enabled, a click
     /// runs `action` and redraws.
-    fn host_action(
+    pub(super) fn host_action(
         &self,
         style: Style,
         id: impl Into<ElementId>,

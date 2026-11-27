@@ -5,7 +5,8 @@ use crate::glass_ui;
 use crate::shell::{c, text};
 use crate::theme::{self, night, Theme};
 use crate::titlebar;
-use crate::widgets::button::{primary, secondary, Look};
+use crate::widgets::button::{button, primary, secondary, Look, Size, Style};
+use crate::widgets::field::field_box;
 use gpui::{
     div, prelude::*, px, size, App, Bounds, ClickEvent, Context, Div, PathPromptOptions, Render,
     Task, Window, WindowBounds, WindowOptions,
@@ -242,29 +243,21 @@ impl Setup {
             )
     }
 
-    fn folder_row(&self, cx: &mut Context<Self>) -> Div {
+    /// Where the launcher goes: the folder in a field box. Change sits in the foot, by Install.
+    fn folder_row(&self) -> Div {
         let n = self.theme.night;
         div()
             .flex()
-            .items_center()
-            .gap(px(12.))
+            .flex_col()
+            .gap(px(8.))
+            .child(text(night::CAPTION, c(n.muted)).child(tr("Install to").to_string()))
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
-                    .child(text(night::CAPTION, c(n.muted)).child(tr("Install to").to_string()))
-                    .child(
-                        text(theme::MICRO, c(n.ink_soft))
-                            .font_family(theme::MONO)
-                            .truncate()
-                            .child(self.options.dir.display().to_string()),
-                    ),
-            )
-            .child(
-                secondary("change", tr("Change…"))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.choose_folder(cx))),
+                field_box(false, false).w_full().child(
+                    text(theme::MICRO, c(n.ink_soft))
+                        .font_family(theme::MONO)
+                        .truncate()
+                        .child(self.options.dir.display().to_string()),
+                ),
             )
     }
 
@@ -278,7 +271,7 @@ impl Setup {
                         tr("Installs Sunrise Launcher for this account. No administrator needed.")
                         .to_string(),
                     ))
-                    .child(self.folder_row(cx))
+                    .child(self.folder_row())
                     .child(self.toggle(
                         "desktop",
                         self.options.desktop,
@@ -287,15 +280,36 @@ impl Setup {
                         |o| o.desktop = !o.desktop,
                         cx,
                     ))
-                    .child(div().flex().justify_end().child(
-                        primary("go",
-                            if self.update {
-                                tr("Update").to_string()
-                            } else {
-                                tr("Install").to_string()
-                            })
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.start(cx))),
-                    ));
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                button(
+                                    "change",
+                                    tr("Change…"),
+                                    Look::new(Style::Ghost, Size::Medium),
+                                )
+                                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                    this.choose_folder(cx)
+                                })),
+                            )
+                            .child(
+                                button(
+                                    "go",
+                                    if self.update {
+                                        tr("Update").to_string()
+                                    } else {
+                                        tr("Install").to_string()
+                                    },
+                                    Look::new(Style::Primary, Size::Medium).icon("download-04"),
+                                )
+                                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                    this.start(cx)
+                                })),
+                            ),
+                    );
             }
             Stage::Welcome => {
                 body = body

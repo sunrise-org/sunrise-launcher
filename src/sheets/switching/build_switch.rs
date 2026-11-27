@@ -415,7 +415,13 @@ impl Launcher {
                     .flex()
                     .flex_col()
                     .gap(px(6.))
-                    .children(omissions.then(|| muted(question.omission_summary())))
+                    .children(omissions.then(|| {
+                        crate::widgets::feedback::banner(
+                            crate::widgets::feedback::Tone::Warning,
+                            question.omission_summary(),
+                            None,
+                        )
+                    }))
                     .child(
                         div()
                             .id("switch-mods")
@@ -543,41 +549,40 @@ impl Launcher {
             let publishing = running.progress == InstallProgress::Publishing;
             let cancel = secondary("cancel-switch", tr("Cancel"));
             // The step's line, the bar and Cancel keep their places while the steps change, so
-            // the dialog never jumps: one line of text, a bar that shuttles while a step has no
-            // known length, and Cancel dimmed once it can no longer stop the switch.
+            // the dialog never jumps: the step's name with its time left as the figure, a bar
+            // that shuttles while a step has no known length, and Cancel dimmed once it can no
+            // longer stop the switch.
+            let (label, left): (SharedString, Option<SharedString>) = if stopping {
+                (tr("Cancelling…").into(), None)
+            } else if publishing {
+                (tr("Applying the switch.").into(), None)
+            } else {
+                let now = Instant::now();
+                let remaining = match running.progress {
+                    InstallProgress::Minecraft(backend::PrepareStep::Prepare, _) => {
+                        match backend::prepare_step_state() {
+                            (backend::PrepareStep::Prepare, Some(started)) => {
+                                crate::eta::expected_prepare_duration().and_then(|expected| {
+                                    crate::eta::remaining_from_expected(started, expected, now)
+                                })
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => running.eta.remaining(now),
+                };
+                (
+                    stage_label(running.progress).into(),
+                    remaining.map(|left| crate::eta::eta_label(left).into()),
+                )
+            };
             div()
                 .flex()
                 .flex_col()
                 .child(title(trf("Switch to {build}", &[("build", &build)])))
-                .child(
-                    muted(if stopping {
-                        tr("Cancelling…").into()
-                    } else if publishing {
-                        tr("Applying the switch.").into()
-                    } else {
-                        let now = Instant::now();
-                        let remaining = match running.progress {
-                            InstallProgress::Minecraft(backend::PrepareStep::Prepare, _) => {
-                                match backend::prepare_step_state() {
-                                    (backend::PrepareStep::Prepare, Some(started)) => {
-                                        crate::eta::expected_prepare_duration().and_then(
-                                            |expected| {
-                                                crate::eta::remaining_from_expected(
-                                                    started, expected, now,
-                                                )
-                                            },
-                                        )
-                                    }
-                                    _ => None,
-                                }
-                            }
-                            _ => running.eta.remaining(now),
-                        };
-                        crate::eta::with_eta(stage_label(running.progress), remaining)
-                    })
-                    .truncate(),
-                )
-                .child(crate::widgets::feedback::progress_bar(
+                .child(crate::widgets::feedback::progress(
+                    label,
+                    left,
                     stage_fraction(running.progress).filter(|_| !stopping),
                 ))
                 .child(

@@ -6,6 +6,7 @@
 //! the current version without changing the computer's remembered pin.
 use super::*;
 use crate::widgets::button::{primary, secondary};
+use crate::widgets::feedback::{banner, Tone};
 use sunrise_launcher::browser::sunrise::PublisherChangeQuestion;
 
 pub(super) struct PendingPublisherChange {
@@ -226,110 +227,76 @@ impl Launcher {
         let warn_tint = warn.opacity(0.11);
         let warn_edge = warn.opacity(0.45);
 
-        let header = div()
+        // The two publishers side by side: what was remembered, and the release that differs
+        // from it (tinted, since that is the one to look at).
+        let remembered = card()
+            .flex_1()
+            .min_w_0()
             .flex()
-            .items_center()
-            .gap(px(12.))
+            .flex_col()
+            .gap(px(4.))
+            .p(px(14.))
             .child(
                 div()
-                    .flex_none()
-                    .size(px(40.))
-                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-                    .border_1()
-                    .border_color(warn_edge)
-                    .bg(warn_tint)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(crate::glass_ui::icon("shield", 20., warn)),
+                    .text_size(px(tokens::CAPTION))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(palette().muted))
+                    .child(copy.remembered_heading),
             )
             .child(
                 div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.))
-                    .child(title(copy.title))
-                    .child(
-                        div()
-                            .text_size(px(tokens::LABEL))
-                            .text_color(warn)
-                            .child(crate::selectable::selectable(copy.subtitle)),
-                    ),
-            );
-
-        let comparison = card()
-            .overflow_hidden()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .p(px(14.))
-                    .child(
-                        div()
-                            .text_size(px(tokens::CAPTION))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(palette().muted))
-                            .child(copy.remembered_heading),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(tokens::BODY))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .font_family(crate::theme::MONO)
-                            .text_color(rgb(palette().text))
-                            .child(crate::selectable::selectable(copy.remembered_repo)),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(tokens::SMALL))
-                            .font_family(crate::theme::MONO)
-                            .text_color(rgb(palette().muted))
-                            .child(crate::selectable::selectable(copy.remembered_workflow)),
-                    ),
+                    .text_size(px(tokens::BODY))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .font_family(crate::theme::MONO)
+                    .text_color(rgb(palette().text))
+                    .child(crate::selectable::selectable(copy.remembered_repo)),
             )
             .child(
                 div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .p(px(14.))
-                    .border_t_1()
-                    .border_color(warn_edge)
-                    .bg(warn_tint)
-                    .child(
-                        div()
-                            .text_size(px(tokens::CAPTION))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(warn)
-                            .child(copy.incoming_heading),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(tokens::BODY))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .font_family(crate::theme::MONO)
-                            .text_color(rgb(palette().text))
-                            .child(crate::selectable::selectable(copy.incoming_repo)),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(tokens::SMALL))
-                            .font_family(crate::theme::MONO)
-                            .text_color(rgb(palette().muted))
-                            .child(crate::selectable::selectable(copy.incoming_workflow)),
-                    ),
+                    .text_size(px(tokens::SMALL))
+                    .font_family(crate::theme::MONO)
+                    .text_color(rgb(palette().muted))
+                    .child(crate::selectable::selectable(copy.remembered_workflow)),
             );
-
-        let accept = secondary("publisher-change-accept", copy.accept_button)
+        let incoming = card()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .p(px(14.))
             .border_color(warn_edge)
-            .text_color(warn)
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            .bg(warn_tint)
+            .child(
+                div()
+                    .text_size(px(tokens::CAPTION))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(warn)
+                    .child(copy.incoming_heading),
+            )
+            .child(
+                div()
+                    .text_size(px(tokens::BODY))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .font_family(crate::theme::MONO)
+                    .text_color(rgb(palette().text))
+                    .child(crate::selectable::selectable(copy.incoming_repo)),
+            )
+            .child(
+                div()
+                    .text_size(px(tokens::SMALL))
+                    .font_family(crate::theme::MONO)
+                    .text_color(rgb(palette().muted))
+                    .child(crate::selectable::selectable(copy.incoming_workflow)),
+            );
+        let comparison = div().flex().gap(px(12.)).child(remembered).child(incoming);
+
+        let accept = secondary("publisher-change-accept", copy.accept_button).on_click(
+            cx.listener(|this, _: &ClickEvent, _, cx| {
                 resolve_pending(&mut this.ui.sheets.publisher_change, true);
                 cx.notify();
-            }));
+            }),
+        );
 
         // Default safe action: keep current version.
         let keep = primary("publisher-change-keep", copy.keep_button).on_click(cx.listener(
@@ -343,13 +310,12 @@ impl Launcher {
             .flex()
             .flex_col()
             .gap(px(14.))
-            .child(header)
-            .child(
-                div()
-                    .text_size(px(tokens::BODY))
-                    .text_color(rgb(palette().text))
-                    .child(crate::selectable::selectable(copy.explanation)),
-            )
+            .child(title(copy.title))
+            .child(banner(
+                Tone::Warning,
+                copy.subtitle,
+                Some(SharedString::from(copy.explanation)),
+            ))
             .child(comparison)
             .child(
                 div()

@@ -659,7 +659,12 @@ impl Launcher {
                 "The world is back as it was on {when}. The one it replaced is in the backups folder.",
                 &[("when", &when)],
             );
-            let restore = self.host_button(
+            let restore = self.host_action(
+                if confirming {
+                    crate::widgets::button::Style::Danger
+                } else {
+                    crate::widgets::button::Style::Secondary
+                },
                 ElementId::named_usize("host-restore", i),
                 tr(if confirming {
                     "Replace the world"
@@ -706,7 +711,7 @@ impl Launcher {
                 } else {
                     detail
                 },
-                actions.child(if confirming { danger(restore) } else { restore }),
+                actions.child(restore),
             ));
         }
         div()

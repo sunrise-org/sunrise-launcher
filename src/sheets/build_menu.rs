@@ -58,25 +58,19 @@ impl Launcher {
                 .id(id)
                 .reach()
                 .flex()
+                .items_center()
                 .gap(px(12.))
                 .p(px(10.))
                 .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                .border_1()
+                // The chosen row is outlined in the accent; the others keep the same box.
+                .border_color(if on {
+                    gpui::Hsla::from(rgb(palette().accent))
+                } else {
+                    gpui::transparent_black()
+                })
                 .cursor_pointer()
                 .when(on, |d| d.bg(rgb(palette().selected)))
-                .child(
-                    div()
-                        .mt(px(3.))
-                        .size(px(14.))
-                        .flex_none()
-                        .rounded_full()
-                        .border_1()
-                        .border_color(rgb(if on {
-                            palette().accent
-                        } else {
-                            palette().muted
-                        }))
-                        .when(on, |d| d.bg(rgb(palette().accent))),
-                )
                 .child(
                     div()
                         .flex_1()
@@ -91,6 +85,9 @@ impl Launcher {
                                 .text_color(rgb(palette().muted))
                                 .child(sub),
                         ),
+                )
+                .children(
+                    on.then(|| crate::glass_ui::icon("tick-02", 16., rgb(palette().accent).into())),
                 )
         };
         use instances::Channel;
@@ -166,6 +163,12 @@ impl Launcher {
                     None => tr("Pick one build and keep it until you change this.").into(),
                 },
             )
+            // A row that opens another sheet says so with a chevron.
+            .child(crate::glass_ui::icon(
+                "arrow-right-01",
+                16.,
+                rgb(palette().muted).into(),
+            ))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.open_versions();
                 cx.notify();
@@ -296,8 +299,9 @@ impl Launcher {
                     .p(px(14.))
                     .rounded(crate::tokens::r(crate::tokens::R_CARD))
                     .border_1()
-                    .border_color(palette().input_edge())
+                    .border_color(rgb(palette().line))
                     .bg(rgb(palette().raised))
+                    .shadow(super::chrome::plate_shadow())
                     .text_color(rgb(palette().text))
                     .on_mouse_down(MouseButton::Left, |_: &MouseDownEvent, _, cx| {
                         cx.stop_propagation()
