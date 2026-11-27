@@ -2285,5 +2285,21 @@
   "Data location changed while waiting; restart the launcher and retry the move": "ตำแหน่งข้อมูลเปลี่ยนระหว่างรอ เริ่ม launcher ใหม่แล้วลองย้ายอีกครั้ง",
   "Destination {target} overlaps existing data or its bootstrap {bootstrap}": "ปลายทาง {target} ซ้อนทับกับข้อมูลที่มีอยู่หรือ bootstrap {bootstrap}",
   "Destination {path} must be an empty folder": "ปลายทาง {path} ต้องเป็นโฟลเดอร์ว่าง",
-  "Copying and verifying launcher data": "กำลังคัดลอกและตรวจสอบข้อมูล launcher"
+  "Copying and verifying launcher data": "กำลังคัดลอกและตรวจสอบข้อมูล launcher",
+  "Copying and verifying game data": "กำลังคัดลอกและตรวจสอบข้อมูลเกม",
+  "Copying and verifying build data": "กำลังคัดลอกและตรวจสอบข้อมูลบิลด์",
+  "Committing data location": "กำลังบันทึกตำแหน่งข้อมูล",
+  "{error}. Original data was kept. Partial copies may remain in {path}; choose an empty folder to retry": "{error} เก็บข้อมูลต้นฉบับไว้แล้ว อาจมีสำเนาบางส่วนอยู่ใน {path}; เลือกโฟลเดอร์ว่างเพื่อลองอีกครั้ง",
+  "Data root must be a folder: {path}": "รูทข้อมูลต้องเป็นโฟลเดอร์: {path}",
+  "Source data roots overlap; only a build folder inside/equal to launcher is supported": "รูทข้อมูลต้นทางซ้อนทับกัน รองรับเฉพาะโฟลเดอร์บิลด์ที่อยู่ภายในหรือเท่ากับ launcher",
+  "Use an absolute path without '..': {path}": "ใช้พาธสัมบูรณ์ที่ไม่มี '..': {path}",
+  "Copy verification failed for {path}": "ตรวจสอบสำเนา {path} ไม่สำเร็จ",
+  "Source changed during copying: {path}; stop all writers and retry": "แหล่งข้อมูลเปลี่ยนระหว่างคัดลอก: {path}; หยุดทุกโปรแกรมที่เขียนข้อมูลแล้วลองอีกครั้ง",
+  "Unsupported special file: {path}": "ไม่รองรับไฟล์พิเศษ: {path}",
+  "Cannot preserve access permissions on {path}: {error}": "เก็บสิทธิ์การเข้าถึงของ {path} ไว้ไม่ได้: {error}",
+  "{name} is not a pack: it has no pack.mcmeta.": "{name} ไม่ใช่แพ็ก: ไม่มี pack.mcmeta",
+  "{name} is not a data pack the game reads.": "{name} ไม่ใช่ดาต้าแพ็กที่เกมอ่านได้",
+  "{name} has no data folder: it is a resource pack, not a data pack.": "{name} ไม่มีโฟลเดอร์ข้อมูล: เป็นรีซอร์สแพ็ก ไม่ใช่ดาต้าแพ็ก",
+  "{file} is not a data pack the game reads": "{file} ไม่ใช่ดาต้าแพ็กที่เกมอ่านได้",
+  "No data pack {query} in {folder}": "ไม่พบดาต้าแพ็ก {query} ใน {folder}"
 }

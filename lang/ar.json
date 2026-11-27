@@ -1790,5 +1790,21 @@
   "Kept for a profile": "تم الاحتفاظ بها لملف شخصي",
   "Kept the working version": "تم الاحتفاظ بالإصدار العامل",
   "Last detected public IP: {ip}.": "آخر عنوان IP عام تم اكتشافه: {ip}.",
-  "Last played {when}": "آخر لعب {when}"
+  "Last played {when}": "آخر لعب {when}",
+  "Latest Dev": "أحدث إصدار تطويري",
+  "Launch Sunrise Launcher": "تشغيل Sunrise Launcher",
+  "Leaving out {mod} for this build": "استبعاد {mod} من هذا الإصدار",
+  "Made for other Sunrise versions: {mods}; rebuild against this game.": "مخصّصة لإصدارات Sunrise أخرى: {mods}؛ أعد البناء لهذه اللعبة.",
+  "Made for this build": "مخصّصة لهذا الإصدار",
+  "Made for {build}": "مخصّصة لـ {build}",
+  "Manage accounts": "إدارة الحسابات",
+  "Minecraft version file not found: {path}": "لم يُعثر على ملف إصدار Minecraft: {path}",
+  "Mod": "إضافة",
+  "Name and group": "الاسم والمجموعة",
+  "Name it, pick what it plays, then an icon.": "سمّها، واختر ما تشغّله، ثم اختر أيقونة.",
+  "Name the copy and pick an icon.": "سمّ النسخة واختر أيقونة.",
+  "Native mods can't build on this computer": "يتعذّر بناء الإضافات الأصلية على هذا الكمبيوتر",
+  "Native mods need Rust, and the launcher has none for {os} {arch}.": "تحتاج الإضافات الأصلية إلى Rust، ولا يتوفر في المشغّل إصدار لـ {os} ‏{arch}.",
+  "Needs an update from its author": "تحتاج إلى تحديث من مؤلفها",
+  "Needs an update from its author: {count}.": "تحتاج إلى تحديث من مؤلفها: {count}."
 }

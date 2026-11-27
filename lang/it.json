@@ -1889,5 +1889,21 @@
   "Remove {count} old builds?": "Rimuovere {count} vecchie build?",
   "Remove {name}?": "Rimuovere {name}?",
   "Remove: {mods}.": "Rimuovi: {mods}.",
-  "Removed {mod}.": "{mod} rimossa."
+  "Removed {mod}.": "{mod} rimossa.",
+  "Remove…": "Rimozione…",
+  "Removing Sunrise modpacks is paused. Leave the pack in place; its files are unchanged.": "La rimozione dei modpack Sunrise è sospesa. Lascia il pacchetto al suo posto; i file non sono stati modificati.",
+  "Removing…": "Rimozione…",
+  "Replacement archive": "Archivio sostitutivo",
+  "Report for game build: {build}": "Rapporto per la build di gioco: {build}",
+  "Repository unavailable. It may be private, moved or deleted.": "Repository non disponibile. Potrebbe essere privato, spostato o eliminato.",
+  "Retry download": "Riprova download",
+  "Review changes…": "Esamina le modifiche…",
+  "Review the update before building.": "Esamina l’aggiornamento prima di compilare.",
+  "Running a server needs your agreement to the Minecraft EULA (https://aka.ms/MinecraftEULA). Accept it to continue.": "Per avviare un server devi accettare l’EULA di Minecraft (https://aka.ms/MinecraftEULA). Accettala per continuare.",
+  "Save log": "Salva log",
+  "Save report": "Salva rapporto",
+  "Saved the report to {file}.": "Rapporto salvato in {file}.",
+  "Search": "Cerca",
+  "Search…": "Cerca…",
+  "Server port unavailable": "Porta del server non disponibile"
 }
