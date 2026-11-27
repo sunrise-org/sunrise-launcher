@@ -4,6 +4,7 @@ use crate::frame::Page;
 use crate::mods::Installed;
 use gpui::{ScrollHandle, StatefulInteractiveElement};
 
+mod logs;
 mod scrollbar;
 mod servers;
 mod worlds;
@@ -15,11 +16,18 @@ pub(super) enum Tab {
     Worlds,
     Packs,
     Servers,
+    Logs,
 }
 
 impl Tab {
     /// In the order the profile's tabs stand under its banner.
-    const ALL: [Self; 4] = [Self::Mods, Self::Worlds, Self::Packs, Self::Servers];
+    const ALL: [Self; 5] = [
+        Self::Mods,
+        Self::Worlds,
+        Self::Packs,
+        Self::Servers,
+        Self::Logs,
+    ];
 
     fn index(self) -> usize {
         self as usize
@@ -31,11 +39,14 @@ impl Tab {
             Self::Worlds => tr("Worlds"),
             Self::Packs => tr("Packs"),
             Self::Mods => tr("Mods"),
+            Self::Logs => tr("Logs"),
         }
     }
 
     fn count(self, count: usize) -> String {
         let (one, many) = match self {
+            // The Logs tab has no count line.
+            Self::Logs => return String::new(),
             Self::Servers => ("1 saved server", "{count} saved servers"),
             Self::Worlds => ("1 world", "{count} worlds"),
             Self::Packs => ("1 resource pack", "{count} resource packs"),
@@ -60,7 +71,8 @@ struct View {
 pub(super) struct Tabs {
     profile: Option<String>,
     selected: Tab,
-    views: [View; 4],
+    views: [View; 5],
+    logs: logs::Logs,
     opener: Option<FocusHandle>,
     /// Stable even as a virtual row is recycled. Cleared when leaving the selected profile.
     rows: HashMap<SharedString, FocusHandle>,
@@ -166,6 +178,7 @@ impl Launcher {
             turned_off,
             items,
         } = match active {
+            Tab::Logs => return self.home_logs(strip, instance, inset, window, cx),
             Tab::Servers => self.home_servers(instance, compact, cx),
             Tab::Worlds => self.home_worlds(instance, window, cx),
             Tab::Packs | Tab::Mods => self.home_installed_tab(active == Tab::Packs, cx),

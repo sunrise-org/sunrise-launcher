@@ -124,7 +124,7 @@ collapsed, toasts sliding in, a page rising in. Use `motion::eased`, `motion::Fa
 | 9 | Final sweep: remove every leftover of the old design (the panel opacity, glass and blur settings, `HomePhoto::tone` and `Plates` are gone; the resolve sheet's own button colours are left) | to do |
 
 Not built because the backend has no data for them yet (see the Figma Notes page): a
-Modpacks kind in Discover, a Logs tab, ping on server rows, the mods count and loader in the
+Modpacks kind in Discover, ping on server rows, the mods count and loader in the
 profile's build line, a source filter in Discover.
 
 ## Checks before each merge into the branch
