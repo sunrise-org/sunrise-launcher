@@ -1,5 +1,14 @@
-//! The blocky look's building blocks and the hover tracking every look shares.
+//! The launcher's shared controls (one file each under `widgets/`), and the hover tracking they
+//! share. See docs/redesign.md: a page builds from these and never draws its own button.
 use super::*;
+
+pub(crate) mod button;
+pub(crate) mod check;
+pub(crate) mod chip;
+pub(crate) mod feedback;
+pub(crate) mod field;
+pub(crate) mod motion_bits;
+pub(crate) mod nav;
 use sunrise_launcher::backend::lock::recover;
 
 #[derive(Clone, Copy, PartialEq)]
