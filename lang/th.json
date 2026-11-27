@@ -2494,5 +2494,15 @@
   "{name} are off: turn them on in Settings → Data collection first.": "ปิด {name} อยู่: เปิดใช้ก่อนในการตั้งค่า → การเก็บข้อมูล",
   "Today's limit for these is reached; try again tomorrow.": "ถึงขีดจำกัดของวันนี้แล้ว ลองอีกครั้งพรุ่งนี้",
   "Sent. Thank you.": "ส่งแล้ว ขอบคุณ",
-  "Kept; sending is turned off here (SUNRISE_TELEMETRY_URL=off).": "เก็บไว้แล้ว ปิดการส่งข้อมูลที่นี่ (SUNRISE_TELEMETRY_URL=off)"
+  "Kept; sending is turned off here (SUNRISE_TELEMETRY_URL=off).": "เก็บไว้แล้ว ปิดการส่งข้อมูลที่นี่ (SUNRISE_TELEMETRY_URL=off)",
+  "Kept; it will be sent the next time the launcher starts.": "เก็บไว้แล้ว จะส่งในครั้งถัดไปที่เปิด launcher",
+  "{path}: not a JSON report ({error})": "{path}: ไม่ใช่รายงาน JSON ({error})",
+  "{name}: one of performance, crashes, bugs, benchmarks, all": "{name}: เลือก performance, crashes, bugs, benchmarks หรือ all",
+  "{name}: a colour name or a hue in degrees": "{name}: ชื่อสีหรือเฉดสีเป็นองศา",
+  "Could not start {path}: {error}": "เริ่ม {path} ไม่ได้: {error}",
+  "The reviewed world directory changed": "ไดเรกทอรีโลกที่ตรวจสอบแล้วเปลี่ยนไป",
+  "World evidence exceeds the save size limit": "หลักฐานโลกมีขนาดเกินขีดจำกัดการบันทึก",
+  "{mod} isn't ready for your game version yet. Its author needs to update it for this build.": "{mod} ยังไม่พร้อมสำหรับเกมเวอร์ชันของคุณ ผู้เขียนต้องอัปเดตให้รองรับบิลด์นี้",
+  "{mod} can't be added together with the mods this profile has.": "เพิ่ม {mod} พร้อมกับม็อดที่โปรไฟล์นี้มีอยู่ไม่ได้",
+  "The profile or its game build changed while {mod} was being checked. Nothing was changed; try again.": "โปรไฟล์หรือบิลด์เกมเปลี่ยนระหว่างตรวจสอบ {mod} ไม่มีการเปลี่ยนแปลง ลองอีกครั้ง"
 }

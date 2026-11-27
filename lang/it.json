@@ -2098,5 +2098,15 @@
   "{names} need it. They'll be turned off, and their files stay installed.": "{names} ne hanno bisogno. Verranno disattivate, ma i relativi file resteranno installati.",
   "{names} need one or more of these mods. They'll be turned off, and their files stay installed.": "{names} richiedono una o più di queste mod. Verranno disattivate, ma i relativi file resteranno installati.",
   "{name} could not go to the Trash: {error}": "Impossibile spostare {name} nel Cestino: {error}",
-  "{name} is the game's own folder: it can't be deleted.": "{name} è la cartella del gioco e non può essere eliminata."
+  "{name} is the game's own folder: it can't be deleted.": "{name} è la cartella del gioco e non può essere eliminata.",
+  "{name} needs it. It'll be turned off, and its files stay installed.": "{name} ne ha bisogno. Verrà disattivata, ma i relativi file resteranno installati.",
+  "{name} needs one or more of these mods. It'll be turned off, and its files stay installed.": "{name} richiede una o più di queste mod. Verrà disattivata, ma i relativi file resteranno installati.",
+  "{name} was left out of this build: fit could not be verified ({why}).": "{name} è stata esclusa da questa build: compatibilità non verificata ({why}).",
+  "{name} will go from {old} to {new}.": "{name} passerà da {old} a {new}.",
+  "{name} {version} will also be installed.": "Verrà installata anche {name} {version}.",
+  "{name} · by {authors}": "{name} · di {authors}",
+  "{name} · {source}": "{name} · {source}",
+  "{name} · {version}": "{name} · {version}",
+  "{profile} ({build})": "{profile} ({build})",
+  "{profile} uses {build}, which is not installed. Install it, or use Switch to choose another build.": "{profile} usa {build}, che non è installata. Installala oppure usa Passa per scegliere un’altra build."
 }

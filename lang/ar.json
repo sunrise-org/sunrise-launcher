@@ -1999,5 +1999,15 @@
   "This GitHub link could not be found.": "تعذّر العثور على رابط GitHub هذا.",
   "This Nightly list format is not supported.": "تنسيق قائمة Nightly هذا غير مدعوم.",
   "This build includes a mod the registry took down. Choose another game build.\n{mod}: {reason}": "يتضمن هذا البناء إضافة سحبها السجل. اختر إصدارًا آخر للعبة.\n{mod}: {reason}",
-  "This build includes native mods that don't match this profile. Rebuild the mods or choose another game build.": "يتضمن هذا البناء إضافات أصلية لا تطابق هذا الملف الشخصي. أعد بناء الإضافات أو اختر إصدارًا آخر للعبة."
+  "This build includes native mods that don't match this profile. Rebuild the mods or choose another game build.": "يتضمن هذا البناء إضافات أصلية لا تطابق هذا الملف الشخصي. أعد بناء الإضافات أو اختر إصدارًا آخر للعبة.",
+  "This build is in use or could not be safely removed.": "هذا البناء قيد الاستخدام أو تعذّرت إزالته بأمان.",
+  "This copy keeps {build} from the selected profile.": "تحتفظ هذه النسخة بـ {build} من الملف الشخصي المحدد.",
+  "This native build doesn't say exactly which mods it includes. Rebuild the mods or choose another game build.": "لا يحدد هذا البناء الأصلي الإضافات التي يتضمنها بدقة. أعد بناء الإضافات أو اختر إصدارًا آخر للعبة.",
+  "This pack controls which mods it installs.": "تتحكم هذه الحزمة في الإضافات التي تثبّتها.",
+  "This profile already plays {build}.": "يستخدم هذا الملف الشخصي {build} بالفعل.",
+  "This profile is in use. Close the game or wait for the other operation to finish.": "هذا الملف الشخصي قيد الاستخدام. أغلق اللعبة أو انتظر انتهاء العملية الأخرى.",
+  "This profile stays on this build until you change it.": "سيبقى هذا الملف الشخصي على هذا البناء حتى تغيّره.",
+  "This profile uses {build}, not {requested}. Use Switch to change its game build.": "يستخدم هذا الملف الشخصي {build} وليس {requested}. استخدم «تبديل» لتغيير إصدار اللعبة.",
+  "This profile was replaced while the request was waiting. Nothing was changed.": "تم استبدال هذا الملف الشخصي أثناء انتظار الطلب. لم يتغير شيء.",
+  "This profile's build": "بناء هذا الملف الشخصي"
 }
