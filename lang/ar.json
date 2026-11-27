@@ -2133,5 +2133,13 @@
   "{done} of {total}": "{done} من {total}",
   "Waiting for your answer": "في انتظار إجابتك",
   "Updating the launcher to {version}": "جارٍ تحديث المشغّل إلى {version}",
-  "Importing a game build": "جارٍ استيراد إصدار لعبة"
+  "Importing a game build": "جارٍ استيراد إصدار لعبة",
+  "Clearing downloads": "جارٍ مسح التنزيلات",
+  "Preparing the game": "جارٍ تجهيز اللعبة",
+  "Downloading the build": "جارٍ تنزيل البناء",
+  "Downloading build tools": "جارٍ تنزيل أدوات البناء",
+  "Show less": "عرض أقل",
+  "{count} more": "{count} أخرى",
+  "{what} · {step}": "{what} · {step}",
+  "Setting up the server": "جارٍ إعداد الخادم"
 }

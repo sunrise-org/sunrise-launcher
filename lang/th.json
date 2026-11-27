@@ -2628,5 +2628,13 @@
   "the field {name}": "ฟิลด์ {name}",
   "the function {name}": "ฟังก์ชัน {name}",
   "the hook {name}": "ฮุก {name}",
-  "the macro {name}": "มาโคร {name}"
+  "the macro {name}": "มาโคร {name}",
+  "the method {name}": "เมธอด {name}",
+  "the trait {name}": "trait {name}",
+  "the type {name}": "ชนิด {name}",
+  "the variant {name}": "รูปแบบ {name}",
+  "Building {mods}…": "กำลังบิลด์ {mods}…",
+  "Skins and capes": "สกินและผ้าคลุม",
+  "Search source projects…": "ค้นหาโปรเจกต์ซอร์ส…",
+  "Couldn't install the mod.": "ติดตั้งม็อดไม่ได้"
 }

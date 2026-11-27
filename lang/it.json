@@ -2232,5 +2232,13 @@
   "This launcher release has no build for this platform.": "Questa release del launcher non include una build per questa piattaforma.",
   "{tag} is not an AppImage, and this launcher runs from one. Install it from its release page instead.": "{tag} non è un’AppImage, da cui viene eseguito questo launcher. Installala dalla pagina della release.",
   "Could not replace the AppImage at {path}: {error}": "Impossibile sostituire l’AppImage in {path}: {error}",
-  "Could not replace the launcher at {path}: {error}": "Impossibile sostituire il launcher in {path}: {error}"
+  "Could not replace the launcher at {path}: {error}": "Impossibile sostituire il launcher in {path}: {error}",
+  "Could not start {path}: {error}. Close the launcher and open it again.": "Impossibile avviare {path}: {error}. Chiudi e riapri il launcher.",
+  "{url} isn't on Modrinth's or Sunrise's file servers, or a GitHub release.": "{url} non si trova sui server di file di Modrinth o Sunrise né in una release GitHub.",
+  "{name} isn't a plain file name.": "{name} non è un semplice nome di file.",
+  "Its source gives no checksum, so it can't be checked.": "La fonte non fornisce un checksum, quindi non è possibile verificarlo.",
+  "It is larger than any pack should be.": "È più grande di quanto dovrebbe essere un pacchetto.",
+  "The download is larger than its source says.": "Il download è più grande di quanto indicato dalla fonte.",
+  "Got {done} bytes of {size}.": "Ricevuti {done} byte su {size}.",
+  "The {algo} checksum doesn't match: the file isn't the one its source lists. Nothing was installed.": "Il checksum {algo} non corrisponde: il file non è quello indicato dalla fonte. Non è stato installato nulla."
 }
