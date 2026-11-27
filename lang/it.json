@@ -2560,5 +2560,15 @@
   "Language, network and this version.": "Lingua, rete e questa versione.",
   "Manage game builds, downloads and where your files are kept.": "Gestisci build di gioco, download e posizione dei file.",
   "Not reviewed by the Sunrise registry. Native mods run with full access to this computer. Read the source first.": "Non verificato dal registro Sunrise. Le mod native hanno accesso completo a questo computer. Leggi prima il sorgente.",
-  "Not signed in": "Non connesso"
+  "Not signed in": "Non connesso",
+  "Open access controls": "Apri controlli di accesso",
+  "Privacy": "Privacy",
+  "Quit Sunrise Launcher": "Esci da Sunrise Launcher",
+  "Remove old build": "Rimuovi vecchia build",
+  "Remove old builds": "Rimuovi vecchie build",
+  "Resource pack": "Pacchetto di risorse",
+  "Restore…": "Ripristina…",
+  "See what would be sent": "Visualizza cosa verrebbe inviato",
+  "Server address or a friend's invite code": "Indirizzo del server o codice d’invito di un amico",
+  "Shader pack": "Pacchetto shader"
 }

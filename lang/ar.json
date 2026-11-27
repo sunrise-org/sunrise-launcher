@@ -2461,5 +2461,15 @@
   "The game files are ready. Press Start again.": "ملفات اللعبة جاهزة. اضغط «بدء» مجددًا.",
   "Install a Sunrise version first.": "ثبّت إصدار Sunrise أولًا.",
   "Type the line players see under the name.": "اكتب السطر الذي يراه اللاعبون أسفل الاسم.",
-  "Letting {name} in": "جارٍ السماح لـ {name} بالدخول"
+  "Letting {name} in": "جارٍ السماح لـ {name} بالدخول",
+  "Made by hand": "إنشاء يدوي",
+  "Before an update": "قبل التحديث",
+  "Before updating to {version}": "قبل التحديث إلى {version}",
+  "{name} is ready. Press Start, then give your friends the address below.": "{name} جاهز. اضغط «بدء»، ثم أرسل العنوان أدناه إلى أصدقائك.",
+  "Server moved to the trash.": "تم نقل الخادم إلى المهملات.",
+  "{name} is already on the desktop, and isn't this profile's shortcut.": "يوجد {name} على سطح المكتب بالفعل، لكنه ليس اختصار هذا الملف الشخصي.",
+  "This computer has no desktop folder.": "لا يحتوي هذا الكمبيوتر على مجلد سطح المكتب.",
+  "{tag} is not a Sunrise release.": "{tag} ليس إصدارًا من Sunrise.",
+  "{file} is not the {version} release Sunrise was made for": "{file} ليس إصدار {version} الذي صُمم Sunrise له",
+  "{file} is here but not the game itself: play {version} once in that launcher to download it": "{file} موجود هنا لكنه ليس اللعبة نفسها: شغّل {version} مرة واحدة في ذلك المشغّل لتنزيلها"
 }
