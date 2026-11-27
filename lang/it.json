@@ -2580,5 +2580,15 @@
   "Sunrise's own server": "Server ufficiale Sunrise",
   "The game failed to start while checking support for offline developer play. Repeat your sunrise-launcher developer-install command, rebuild this build’s native mods with native-build, then try Play again. If it still fails, report this message on the Sunrise Discord (linked in the launcher).\nDetails: {reason}": "Il gioco non è partito durante la verifica del supporto al gioco offline per sviluppatori. Ripeti il comando sunrise-launcher developer-install, ricompila le mod native di questa build con native-build, poi riprova a giocare. Se non funziona, segnala questo messaggio su Sunrise Discord (collegato nel launcher).\nDettagli: {reason}",
   "The launcher stays open beside the game.": "Il launcher resta aperto accanto al gioco.",
-  "This version has a {installed} game build, but Settings selects {selected}. Reinstall it from the version picker beside Play before launching.": "Questa versione ha la build di gioco {installed}, ma Impostazioni seleziona {selected}. Reinstallala dal selettore accanto a Gioca prima di avviare."
+  "This version has a {installed} game build, but Settings selects {selected}. Reinstall it from the version picker beside Play before launching.": "Questa versione ha la build di gioco {installed}, ma Impostazioni seleziona {selected}. Reinstallala dal selettore accanto a Gioca prima di avviare.",
+  "This version has a {installed} game build, but Settings selects {selected}. Switch back to the installed architecture or Automatic, or choose another available build.": "Questa versione ha la build di gioco {installed}, ma Impostazioni seleziona {selected}. Torna all’architettura installata o ad Automatico, oppure scegli un’altra build disponibile.",
+  "Use a local executable or archive with files from an installed build.": "Usa un eseguibile locale o un archivio con i file di una build installata.",
+  "What Sunrise sends, and what it never does.": "Cosa invia Sunrise e cosa non invia mai.",
+  "Who plays, and the Microsoft accounts signed in here.": "Chi gioca e gli account Microsoft connessi qui.",
+  "Withdraw": "Ritira",
+  "a .zip, a .sshader or a Sunrise game build": "un file .zip, .sshader o una build di gioco Sunrise",
+  "teal, 176 or #2563eb": "teal, 176 o #2563eb",
+  "{mod} stays off. Fit could not be verified.": "{mod} resta disattivata. Compatibilità non verificata.",
+  "{mod} stays off. Needs an update from its author.": "{mod} resta disattivata. Richiede un aggiornamento dell’autore.",
+  "{mod} was turned off. Fit could not be verified.": "{mod} è stata disattivata. Compatibilità non verificata."
 }

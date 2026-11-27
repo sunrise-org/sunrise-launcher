@@ -2481,5 +2481,15 @@
   "{path}: not a file path": "{path}: ليس مسار ملف",
   "Tailscale is switched off.": "Tailscale متوقف.",
   "Tailscale is {state}.": "Tailscale ‏{state}.",
-  "Run `{command}` in a terminal and open the link it prints.": "شغّل `{command}` في الطرفية وافتح الرابط الذي يظهره."
+  "Run `{command}` in a terminal and open the link it prints.": "شغّل `{command}` في الطرفية وافتح الرابط الذي يظهره.",
+  "Tailscale's app didn't open: start it from your applications.": "لم يفتح تطبيق Tailscale: شغّله من تطبيقاتك.",
+  "1 item waiting to be sent, exactly as they will leave (compressed):": "عنصر واحد بانتظار الإرسال، كما سيُرسل تمامًا (مضغوطًا):",
+  "{count} items waiting to be sent, exactly as they will leave (compressed):": "{count} عنصرًا بانتظار الإرسال، كما ستُرسل تمامًا (مضغوطة):",
+  "Nothing is waiting. One example of each kind, from this machine; the game fills in the GPU and screen it uses where these say example (a benchmark upload is the report itself, see docs/benchmark-report.md):": "لا يوجد شيء بانتظار الإرسال. مثال واحد من كل نوع من هذا الجهاز؛ ستملأ اللعبة بيانات بطاقة الرسوميات والشاشة المستخدمة بدل قيم المثال (رفع نتائج القياس هو التقرير نفسه، راجع docs/benchmark-report.md):",
+  "Nothing was ever sent from here.": "لم يُرسل أي شيء من هنا قط.",
+  "Sending is turned off here (SUNRISE_TELEMETRY_URL=off), so the server was not asked.": "الإرسال متوقف هنا (SUNRISE_TELEMETRY_URL=off)، لذا لم تتم مخاطبة الخادم.",
+  "The server could not be reached ({error}). Try again later.": "تعذّر الوصول إلى الخادم ({error}). حاول لاحقًا.",
+  "The server deleted everything sent from here.": "حذف الخادم كل ما أُرسل من هنا.",
+  "{remote} Nothing is waiting, and this install has a new ID.": "{remote} لا يوجد شيء بانتظار الإرسال، ولهذا التثبيت معرّف جديد.",
+  "{name} are off: turn them on in Settings → Data collection first.": "{name} متوقفة: فعّلها أولًا من الإعدادات ← جمع البيانات."
 }
