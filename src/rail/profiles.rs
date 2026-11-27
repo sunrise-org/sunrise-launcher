@@ -3,10 +3,8 @@
 use super::*;
 use crate::widgets::button::{icon_button, Style};
 use crate::widgets::focus::Reach;
-use crate::widgets::nav::{sun, sun_fits};
 use gpui::{rgb, MouseButton, MouseDownEvent};
 use instances::{Icon, Instance, Kind};
-use std::{cell::Cell, rc::Rc};
 
 /// What the profiles are drawn with: how open the sidebar is, why profiles are locked (if they
 /// are), and whether the page is Home, where the selected profile is shown as selected.
@@ -45,6 +43,9 @@ fn profile_heading(open: f32, group: String) -> Div {
 }
 
 /// A profile's name, fading in as the sidebar opens.
+/// A profile row's height: its name over its channel.
+const PROFILE_ROW: f32 = 48.;
+
 fn label_text(open: f32, name: String, under: Option<&'static str>) -> Div {
     let line = |text: String| {
         div()
@@ -78,9 +79,11 @@ fn profile_button(id: ElementId, name: String, on: bool, look: Look) -> Stateful
     div()
         .id(id)
         .reach_edge()
-        .h(px(48.))
+        .h(px(PROFILE_ROW))
         .flex_none()
         .w_full()
+        // Open, the selected fill reaches a little past the mark on its left.
+        .pl(px(6. * look.open))
         .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
         .flex()
         .items_center()
@@ -104,8 +107,6 @@ fn profile_button(id: ElementId, name: String, on: bool, look: Look) -> Stateful
 fn profile_actions(i: &Instance, open: f32, cx: &mut Context<Launcher>) -> Option<Stateful<Div>> {
     let at = actions_at(open)?;
     let p = palette();
-    let top = Rc::new(Cell::new(0.));
-    let read_top = top.clone();
     let i = i.clone();
     Some(
         div()
@@ -114,8 +115,8 @@ fn profile_actions(i: &Instance, open: f32, cx: &mut Context<Launcher>) -> Optio
             .reach()
             .when(at == ActionsAt::Beside, |d| {
                 d.absolute()
-                    .top(px(6.))
-                    .right(px(5.))
+                    .top(px((PROFILE_ROW - 28.) / 2.))
+                    .right(px(6.))
                     .w(px(28.))
                     .opacity(label_opacity(open))
             })
@@ -124,23 +125,18 @@ fn profile_actions(i: &Instance, open: f32, cx: &mut Context<Launcher>) -> Optio
             .items_center()
             .justify_center()
             .cursor_pointer()
-            .hover(|d| d.bg(rgb(p.chrome_raised)))
-            .tooltip(crate::glass_ui::tip(tr("Profile actions")))
+            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+            .hover(|d| d.bg(rgb(p.hover)))
+            .tooltip(crate::glass_ui::tip(tr("Profile settings")))
             .child(
                 div().flex().gap(px(2.)).children(
                     (0..3).map(|_| div().size(px(3.)).rounded_full().bg(rgb(p.chrome_text))),
                 ),
             )
-            .child(
-                gpui::canvas(
-                    move |bounds, _, _| top.set(f32::from(bounds.top())),
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .inset_0(),
-            )
+            // The profile's settings (its edit dialog); right-clicking the row still opens its
+            // menu, with Delete.
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.open_profile_menu(&i, read_top.get());
+                this.edit_profile(&i, cx);
                 cx.notify();
             })),
     )
@@ -362,7 +358,9 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Div {
         let current = selected == Some(i.id.as_str());
-        let more = current && i.kind == Kind::Own && !self.location_unavailable;
+        // Every selected profile has settings (the default one too); only its menu (Delete)
+        // is for the player's own.
+        let more = current && !self.location_unavailable;
         let face = self.profile_face(n, &i, current, more, look, cx);
         let actions = if more {
             profile_actions(&i, look.open, cx)
@@ -383,8 +381,9 @@ impl Launcher {
             })
     }
 
-    /// A profile's button: its mark, its name, and the sun while it is the selected one and fits.
-    /// Right-clicking it opens its menu, and a press picks it unless the profiles are locked.
+    /// A profile's button: its mark and its name (the selected one's more button sits over its
+    /// right end). Right-clicking it opens its menu, and a press picks it unless the profiles
+    /// are locked.
     fn profile_face(
         &mut self,
         n: usize,
@@ -396,12 +395,6 @@ impl Launcher {
     ) -> Stateful<Div> {
         let on = current && look.on_home;
         let labelled = look.open > 0.;
-        // The room for the name and the sun: the row less its icon column, the gap, and the
-        // space the actions button takes on the right.
-        let trail = if labelled && more { 36. } else { 8. };
-        let room = rail_width(look.open) - 2. * RAIL_PAD - CLOSED_ROW - 4. - trail;
-        let name_width = i.name.chars().count() as f32 * CHAR_WIDTH;
-        let show_sun = on && labelled && sun_fits(name_width, room);
         let mut button = profile_button(
             ElementId::named_usize("sidebar-profile", n),
             i.name.clone(),
@@ -420,9 +413,6 @@ impl Launcher {
                 .and_then(crate::sheets::dated_channel)
                 .unwrap_or_else(|| crate::sheets::channel_name(i.channel));
             button = button.child(label_text(look.open, i.name.clone(), Some(under)));
-        }
-        if show_sun {
-            button = button.child(sun().ml(px(4.)));
         }
         if labelled && more {
             button = button.pr(px(36.));

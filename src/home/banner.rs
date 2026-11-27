@@ -50,7 +50,6 @@ impl Launcher {
             .items_center()
             .gap(px(8.))
             .child(self.play_button(view, compact, cx))
-            .child(profile_settings_button(instance, cx))
             .child(self.profile_options_button(cx));
         // The cat walks the room beside the controls and sleeps on Play.
         let (lane, _) = self.cat(true, false, window, cx);
@@ -416,26 +415,6 @@ fn identity_line(build: String, instance: &instances::Instance) -> String {
         Some((time, last)) => format!("{build} · {time} · {last}"),
         None => format!("{build} · {}", tr("Not played yet")),
     }
-}
-
-/// Profile settings: the profile's edit dialog, as its menu's "Edit profile…".
-fn profile_settings_button(
-    instance: &instances::Instance,
-    cx: &mut Context<Launcher>,
-) -> Stateful<Div> {
-    let target = instance.clone();
-    button(
-        "alt-profile-settings",
-        tr("Profile settings"),
-        Look::new(Style::Secondary, Size::Medium).icon("sliders-horizontal"),
-    )
-    .h(px(tokens::PLAY))
-    .px(px(16.))
-    .flex_none()
-    .on_click(cx.listener(move |this, _, _, cx| {
-        this.edit_profile(&target, cx);
-        cx.notify();
-    }))
 }
 
 /// The tone of the banner a profile state shows, if it shows one: a problem, a held update, an

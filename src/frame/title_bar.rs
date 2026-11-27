@@ -56,7 +56,7 @@ impl Launcher {
         let me = cx.weak_entity();
         icon_only(
             "sidebar-toggle",
-            Look::new(Style::Ghost, Size::Medium).icon("menu-01"),
+            Look::new(Style::Ghost, Size::Medium).icon("sidebar-left"),
         )
         .tooltip(crate::glass_ui::tip_with(move |cx| {
             let open = me

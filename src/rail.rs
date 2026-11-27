@@ -299,16 +299,18 @@ mod tests {
             launcher.update(cx, |l, cx| {
                 l.ui.rail_pin = Some(open);
                 l.ui.sheets.profile_action = None;
+                l.instances.dialog = None;
                 cx.notify();
             });
             cx.run_until_parked();
         };
+        // The button opens the profile's settings (its edit dialog).
         let menu = |cx: &mut gpui::VisualTestContext| {
             launcher.read_with(cx, |l, _| {
-                matches!(
-                    l.ui.sheets.profile_action,
-                    Some(crate::profile_delete::Action::Menu { .. })
-                )
+                l.instances
+                    .dialog
+                    .as_ref()
+                    .is_some_and(|d| d.editing.is_some())
             })
         };
         for open in [0., 1.] {
@@ -317,7 +319,10 @@ mod tests {
                 .debug_bounds("selected-profile-actions")
                 .unwrap_or_else(|| panic!("at {open} the button is drawn"));
             cx.simulate_click(button.center(), gpui::Modifiers::none());
-            assert!(menu(cx), "at {open} a press on the button opens the menu");
+            assert!(
+                menu(cx),
+                "at {open} a press on the button opens its settings"
+            );
         }
         for open in [0.05, 0.15, 0.25] {
             draw(cx, open);

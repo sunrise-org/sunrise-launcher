@@ -138,8 +138,9 @@ impl Launcher {
                 .flex()
                 .flex_none()
                 .items_center()
-                .h(px(28.))
-                .px(px(10.))
+                // As tall as the search field beside it.
+                .h(px(34.))
+                .px(px(12.))
                 .gap(px(8.))
                 .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                 .bg(rgb(p.chrome_raised))
