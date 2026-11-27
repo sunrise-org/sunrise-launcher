@@ -2224,5 +2224,13 @@
   "{name} owns Minecraft: downloading {version} from Mojang": "{name} possiede Minecraft: download di {version} da Mojang",
   "{missing}\n  • Minecraft's own Java from Mojang needs glibc ({loader} is missing; on NixOS, enable programs.nix-ld), so install compatible Java instead.": "{missing}\n  • Java di Minecraft fornito da Mojang richiede glibc (manca {loader}; su NixOS, attiva programs.nix-ld), quindi installa una versione Java compatibile.",
   "{missing}\n  • Sunrise also tried to download Minecraft's own Java from Mojang, but: {error}": "{missing}\n  • Sunrise ha anche provato a scaricare Java di Minecraft da Mojang, ma: {error}",
-  "Minecraft {version}'s assets: {error}": "Asset di Minecraft {version}: {error}"
+  "Minecraft {version}'s assets: {error}": "Asset di Minecraft {version}: {error}",
+  "The version's research-lock.json doesn't pin the Minecraft files": "Il file research-lock.json della versione non blocca i file di Minecraft",
+  "App bundles are a macOS thing.": "Gli app bundle sono specifici di macOS.",
+  "{path} is not a launcher update this launcher downloaded.": "{path} non è un aggiornamento del launcher scaricato da questo launcher.",
+  "The download has no launcher binary.": "Il download non contiene il binario del launcher.",
+  "This launcher release has no build for this platform.": "Questa release del launcher non include una build per questa piattaforma.",
+  "{tag} is not an AppImage, and this launcher runs from one. Install it from its release page instead.": "{tag} non è un’AppImage, da cui viene eseguito questo launcher. Installala dalla pagina della release.",
+  "Could not replace the AppImage at {path}: {error}": "Impossibile sostituire l’AppImage in {path}: {error}",
+  "Could not replace the launcher at {path}: {error}": "Impossibile sostituire il launcher in {path}: {error}"
 }

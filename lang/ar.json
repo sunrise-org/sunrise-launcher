@@ -2125,5 +2125,13 @@
   "Custom background": "خلفية مخصصة",
   "Your picture, behind every page.": "صورتك خلف كل صفحة.",
   "The theme's picture, behind every page.": "صورة السمة خلف كل صفحة.",
-  "The theme, its accent and what is behind the pages.": "السمة ولونها البارز والخلفية وراء الصفحات."
+  "The theme, its accent and what is behind the pages.": "السمة ولونها البارز والخلفية وراء الصفحات.",
+  "Download stopped.": "توقف التنزيل.",
+  "Installing {build}": "جارٍ تثبيت {build}",
+  "Starting the game": "جارٍ بدء اللعبة",
+  "Building {mods}": "جارٍ بناء {mods}",
+  "{done} of {total}": "{done} من {total}",
+  "Waiting for your answer": "في انتظار إجابتك",
+  "Updating the launcher to {version}": "جارٍ تحديث المشغّل إلى {version}",
+  "Importing a game build": "جارٍ استيراد إصدار لعبة"
 }
