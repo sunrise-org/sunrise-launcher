@@ -2523,5 +2523,15 @@
   "Search source projects": "البحث في المشاريع المصدرية",
   "Show more": "عرض المزيد",
   "You're offline · showing the saved list from {date}": "أنت غير متصل · يتم عرض القائمة المحفوظة بتاريخ {date}",
-  "{count} source projects": "{count} مشروعًا مصدريًا"
+  "{count} source projects": "{count} مشروعًا مصدريًا",
+  "Address to share": "العنوان المراد مشاركته",
+  "Local network": "الشبكة المحلية",
+  "Internet": "الإنترنت",
+  "Last detected public address": "آخر عنوان عام تم اكتشافه",
+  "Public IP not detected": "لم يتم اكتشاف عنوان IP عام",
+  "Finding public IP…": "جارٍ البحث عن عنوان IP عام…",
+  "Public IP unavailable": "عنوان IP العام غير متاح",
+  "Refresh public IP": "تحديث عنوان IP العام",
+  "Detect public IP": "اكتشاف عنوان IP عام",
+  "Local connections only": "الاتصالات المحلية فقط"
 }
