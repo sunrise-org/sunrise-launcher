@@ -2580,5 +2580,13 @@
   "Sunrise's own server": "เซิร์ฟเวอร์ของ Sunrise เอง",
   "The game failed to start while checking support for offline developer play. Repeat your sunrise-launcher developer-install command, rebuild this build’s native mods with native-build, then try Play again. If it still fails, report this message on the Sunrise Discord (linked in the launcher).\nDetails: {reason}": "เกมเริ่มทำงานไม่ได้ระหว่างตรวจสอบการรองรับการเล่นแบบนักพัฒนาออฟไลน์ เรียกคำสั่ง sunrise-launcher developer-install อีกครั้ง บิลด์ม็อดเนทีฟของบิลด์นี้ใหม่ด้วย native-build แล้วลองเล่นอีกครั้ง หากยังไม่สำเร็จ ให้รายงานข้อความนี้ใน Sunrise Discord (ลิงก์อยู่ใน launcher)\nรายละเอียด: {reason}",
   "The launcher stays open beside the game.": "launcher จะเปิดค้างอยู่ข้างเกม",
-  "This version has a {installed} game build, but Settings selects {selected}. Reinstall it from the version picker beside Play before launching.": "เวอร์ชันนี้มีบิลด์เกม {installed} แต่การตั้งค่าเลือก {selected} ติดตั้งใหม่จากตัวเลือกเวอร์ชันข้างปุ่มเล่นก่อนเริ่มเกม"
+  "This version has a {installed} game build, but Settings selects {selected}. Reinstall it from the version picker beside Play before launching.": "เวอร์ชันนี้มีบิลด์เกม {installed} แต่การตั้งค่าเลือก {selected} ติดตั้งใหม่จากตัวเลือกเวอร์ชันข้างปุ่มเล่นก่อนเริ่มเกม",
+  "This version has a {installed} game build, but Settings selects {selected}. Switch back to the installed architecture or Automatic, or choose another available build.": "เวอร์ชันนี้มีบิลด์เกม {installed} แต่การตั้งค่าเลือก {selected} กลับไปใช้สถาปัตยกรรมที่ติดตั้งไว้หรืออัตโนมัติ หรือเลือกบิลด์อื่นที่พร้อมใช้งาน",
+  "Use a local executable or archive with files from an installed build.": "ใช้ไฟล์ปฏิบัติการหรือคลังไฟล์ในเครื่องที่มีไฟล์จากบิลด์ที่ติดตั้งไว้",
+  "What Sunrise sends, and what it never does.": "ข้อมูลที่ Sunrise ส่งและข้อมูลที่ไม่เคยส่ง",
+  "Who plays, and the Microsoft accounts signed in here.": "ผู้เล่นและบัญชี Microsoft ที่ลงชื่อเข้าใช้ที่นี่",
+  "Withdraw": "ถอน",
+  "a .zip, a .sshader or a Sunrise game build": "ไฟล์ .zip, .sshader หรือบิลด์เกม Sunrise",
+  "teal, 176 or #2563eb": "teal, 176 หรือ #2563eb",
+  "{mod} stays off. Fit could not be verified.": "{mod} ยังคงปิดอยู่ ยืนยันความเข้ากันไม่ได้"
 }

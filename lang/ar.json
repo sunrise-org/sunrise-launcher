@@ -2085,5 +2085,13 @@
   "{mod} build log": "سجل بناء {mod}",
   "{mod} couldn't be read from GitHub. {why}": "تعذّرت قراءة {mod} من GitHub. {why}",
   "{mod} is already installed. Update it from Installed.": "{mod} مثبّتة بالفعل. حدّثها من «المثبّتة».",
-  "{mod} is on. The game reads this when it starts.": "{mod} مفعّلة. تقرؤها اللعبة عند بدء التشغيل."
+  "{mod} is on. The game reads this when it starts.": "{mod} مفعّلة. تقرؤها اللعبة عند بدء التشغيل.",
+  "{mod} needs {required} {version}. Install or turn on a version that fits before trying again.": "تحتاج {mod} إلى {required} ‏{version}. ثبّت إصدارًا متوافقًا أو فعّله قبل المحاولة مجددًا.",
+  "{mod} needs {required}. Install a fitting version first.": "تحتاج {mod} إلى {required}. ثبّت إصدارًا متوافقًا أولًا.",
+  "{mod} pins build {made_for} and its package carries no list of what it uses for that build, so it can't be shown to fit another build. Its author can pack it with `cargo sunrise-mod build`, which writes the list, or repin it first with `cargo sunrise-mod update --sunrise <build>`.": "تثبّت {mod} على البناء {made_for} ولا تتضمن حزمتها قائمة بما تستخدمه لهذا البناء، لذا لا يمكن إثبات توافقها مع بناء آخر. يمكن لمؤلفها تعبئتها باستخدام `cargo sunrise-mod build` لكتابة القائمة، أو تغيير البناء المثبّت أولًا باستخدام `cargo sunrise-mod update --sunrise <build>`.",
+  "{mod} was taken down and will be removed.": "تم سحب {mod} وستتم إزالتها.",
+  "{mod}'s package was made with a newer tool than this game uses. Update the game to read its list.": "تم إنشاء حزمة {mod} بأداة أحدث مما تستخدمه اللعبة. حدّث اللعبة لقراءة قائمتها.",
+  "{mod}'s package was made with an older tool and doesn't record enough to show it fits this game. Its author can pack it again with `cargo sunrise-mod build`.": "تم إنشاء حزمة {mod} بأداة أقدم ولا تسجل معلومات كافية لإثبات توافقها مع هذه اللعبة. يمكن لمؤلفها إعادة تعبئتها باستخدام `cargo sunrise-mod build`.",
+  "{mod}: {disposition}. {reason}": "{mod}: {disposition}. {reason}",
+  "{mod}: {reason}": "{mod}: {reason}"
 }

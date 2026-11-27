@@ -2184,5 +2184,13 @@
   "Too many sign-ins in a short time. Wait a minute and try again.": "Troppi accessi in poco tempo. Attendi un minuto e riprova.",
   "The Minecraft services refused the sign-in.": "I servizi Minecraft hanno rifiutato l’accesso.",
   "Could not check which games this account owns.": "Impossibile verificare quali giochi possiede questo account.",
-  "Could not read the Minecraft profile.": "Impossibile leggere il profilo Minecraft."
+  "Could not read the Minecraft profile.": "Impossibile leggere il profilo Minecraft.",
+  "The Minecraft services' answer couldn't be read.": "Impossibile leggere la risposta dei servizi Minecraft.",
+  "The rating couldn't be signed.": "Impossibile firmare la valutazione.",
+  "Couldn't reach Minecraft's services.": "Impossibile raggiungere i servizi Minecraft.",
+  "That account isn't signed in.": "L’account non ha effettuato l’accesso.",
+  "The keychain said: {why}": "Il portachiavi ha segnalato: {why}",
+  "This system has no keychain.": "Questo sistema non dispone di un portachiavi.",
+  "{file} can't be read ({kind} error at line {line}, column {column}).": "Impossibile leggere {file} (errore {kind} alla riga {line}, colonna {column}).",
+  "{key} is damaged. Remove it and {file} and sign in again.": "{key} è danneggiato. Rimuovilo insieme a {file} e accedi di nuovo."
 }
