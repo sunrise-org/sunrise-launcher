@@ -70,8 +70,11 @@ fn colours_go_to_hsl_and_back() {
 fn every_theme_palette_reads_over_its_sky() {
     use sunrise_launcher_theme::night::{over, UNCARDED_STOPS};
 
-    let palettes = THEMES.iter().filter_map(|t| t.palette.map(|p| (t.id, *p)));
-    for (id, p) in palettes {
+    let dark = THEMES.iter().filter_map(|t| t.palette.map(|p| (t.id, *p)));
+    let light = THEMES
+        .iter()
+        .filter_map(|t| t.light_palette.map(|p| (t.id, *p)));
+    for (id, p) in dark.chain(light) {
         let look = format!("{id} {}", if p.dark { "dark" } else { "light" });
         let texts = [
             ("ink", p.ink),

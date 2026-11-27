@@ -308,6 +308,33 @@ fn dawns_play_is_the_brand_orange_under_white() {
     );
 }
 
+/// Sunrise in the light look paints its pages from `DAWN_LIGHT` (a light background), and in the
+/// dark look from `DAWN_DARK`.
+#[test]
+fn sunrise_in_the_light_look_paints_from_dawn_light() {
+    use sunrise_launcher::themes::{DAWN_DARK, DAWN_LIGHT};
+    let light = Settings {
+        theme: Some("dawn".into()),
+        appearance: Appearance::Light,
+        ..Settings::default()
+    };
+    let theme = from_settings(&light, WindowAppearance::Dark);
+    assert_eq!(theme.night, DAWN_LIGHT);
+    assert!(!theme.dark);
+    let p = Palette::of(&light, &theme);
+    assert_eq!(p.background, DAWN_LIGHT.page);
+    assert!(contrast(p.text, p.background) >= TEXT);
+
+    let dark = Settings {
+        theme: Some("dawn".into()),
+        ..Settings::default()
+    };
+    let theme = from_settings(&dark, WindowAppearance::Light);
+    assert_eq!(theme.night, DAWN_DARK);
+    assert!(theme.dark);
+    assert_eq!(Palette::of(&dark, &theme).background, DAWN_DARK.page);
+}
+
 #[test]
 fn every_builtin_play_is_its_accent_toned_to_the_theme_at_readable_white_contrast() {
     let ids = [themes::TWILIGHT]

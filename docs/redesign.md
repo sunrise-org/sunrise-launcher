@@ -51,7 +51,10 @@ for a role. Figma variable → palette role:
 | accent/soft, text/link | `accent_ink` | `#F2BC96` |
 | status/* | `success`, `warning`, `danger`, `info` | `#7DC98C`, `#EFC56E`, `#EC8D8D`, `#8DB8EA` |
 
-Other themes keep working: they feed the same roles.
+Sunrise in the light look (`DAWN_LIGHT` in `src/themes.rs`, the same roles on a cream room with
+white cards, sky from pale peach to cream) is the light version of the same palette; the dark
+look keeps `DAWN_DARK`. Other themes keep working: they feed the same roles, and stay dark in both
+looks.
 
 ### Shape and type
 

@@ -95,13 +95,23 @@ pub fn pinned_dark(choice: Appearance) -> Option<bool> {
     }
 }
 
+/// Whether the look is dark: the appearance pinned, or the system's when it is followed.
+fn is_dark(choice: Appearance, system: WindowAppearance) -> bool {
+    let system_dark = !matches!(
+        system,
+        WindowAppearance::Light | WindowAppearance::VibrantLight
+    );
+    pinned_dark(choice).unwrap_or(system_dark)
+}
+
 /// The look Settings ask for: the accent and launcher theme, at the player's Glass and Blur. A
-/// theme is one look: Sunrise's own is the night (an old light appearance became Taiga when the
-/// settings were read).
+/// theme is one look, except Sunrise: its night in the dark look, its day (`DAWN_LIGHT`) in the
+/// light one. Other themes stay dark in both.
 pub fn from_settings(settings: &Settings, system: WindowAppearance) -> Theme {
     // What is painted, which is not always what is saved: a player's theme that is gone is
     // Dawn until it is back, and one without an accent picked under it wears its file's.
     let accent = sunrise_launcher::appearance::accent(settings);
+    let dark = is_dark(settings.appearance, system);
     let mut theme = Theme::for_appearance(Appearance::Dark, accent, system);
     let mut photo = settings.background.is_some();
     theme = match themes::resolve(settings.theme.as_deref()) {
@@ -109,12 +119,12 @@ pub fn from_settings(settings: &Settings, system: WindowAppearance) -> Theme {
             theme.scene_tone = Some(twilight_tone());
             theme
         }
-        themes::Resolved::Builtin(picked) => theme.with_launcher_theme(picked),
+        themes::Resolved::Builtin(picked) => theme.with_launcher_theme(picked, dark),
         themes::Resolved::Local(local) => {
             photo |= local.picture.is_some();
             theme.with_night(local.roles.night())
         }
-        themes::Resolved::Missing => theme.with_launcher_theme(&themes::DAWN_THEME),
+        themes::Resolved::Missing => theme.with_launcher_theme(&themes::DAWN_THEME, dark),
     };
     theme.photo = photo && settings.scenery();
     // Reduced graphics keeps the sky's colours and drops its decorative effects.
@@ -138,16 +148,17 @@ pub(crate) fn twilight_tone() -> u32 {
 impl Theme {
     /// The pinned look (`pinned_dark`: dark unless the player picked another), the system's when
     /// they asked to follow it, in the player's accent.
-    /// A launcher theme from Settings: its sky, or its whole palette when it brings one (dark,
-    /// whatever the look it was asked on), keeping the player's Glass and
-    /// Blur.
-    pub fn with_launcher_theme(mut self, picked: &themes::Theme) -> Self {
-        if let Some(night) = picked.palette {
+    /// A launcher theme from Settings: its sky, or its whole palette when it brings one (in the
+    /// light look, its light palette if it has one), keeping the player's Glass and Blur.
+    pub fn with_launcher_theme(mut self, picked: &themes::Theme, dark: bool) -> Self {
+        let sky = if let Some(night) = picked.palette_in(dark) {
             self = self.with_night(*night);
+            night.sky
         } else {
             self.night.sky = picked.sky;
-        }
-        self.scene_tone = Some(sky_tone(picked.sky));
+            picked.sky
+        };
+        self.scene_tone = Some(sky_tone(sky));
         self.play_seed = match picked.id {
             "cherry_blossom" if self.accent_choice == picked.accent.accent() => Some(0xc8297e),
             "nord" if self.accent_choice == picked.accent.accent() => Some(0x087d95),
@@ -178,11 +189,7 @@ impl Theme {
     }
 
     pub fn for_appearance(choice: Appearance, accent: Accent, system: WindowAppearance) -> Self {
-        let system_dark = !matches!(
-            system,
-            WindowAppearance::Light | WindowAppearance::VibrantLight
-        );
-        let dark = pinned_dark(choice).unwrap_or(system_dark);
+        let dark = is_dark(choice, system);
         let night = if dark { night::NIGHT } else { night::DAWN };
         Self::from(accent.apply(night.blocks()), night, accent).glass(accent)
     }

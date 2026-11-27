@@ -53,6 +53,20 @@ pub struct Theme {
     pub accent: ThemeAccent,
     /// The theme's own palette, for a theme that is more than a sky: every theme is one look.
     pub palette: Option<&'static Night>,
+    /// Its palette in the light look, for the one theme that has a light version (Sunrise). The
+    /// other themes have none, so they stay dark in both looks.
+    pub light_palette: Option<&'static Night>,
+}
+
+impl Theme {
+    /// The palette this theme paints Sunrise's pages with in the dark or the light look.
+    pub fn palette_in(&self, dark: bool) -> Option<&'static Night> {
+        if dark {
+            self.palette
+        } else {
+            self.light_palette.or(self.palette)
+        }
+    }
 }
 
 /// Nord's polar night and snow storm, with the frost accent.
@@ -105,6 +119,7 @@ pub const FIRST_LIGHT: Theme = Theme {
     sky: OLD_SCHOOL_NIGHT.sky,
     accent: ThemeAccent::Hue(246.),
     palette: Some(&OLD_SCHOOL_NIGHT),
+    light_palette: None,
 };
 
 /// Nord: the Nord palette's polar night, snow storm and frost.
@@ -115,6 +130,7 @@ pub const NORD: Theme = Theme {
     sky: NORD_DARK.sky,
     accent: ThemeAccent::Colour(0x88c0d0),
     palette: Some(&NORD_DARK),
+    light_palette: None,
 };
 
 /// Dawn's night: the Sunrise website's Morning palette (sunny `frontend/site/styles/globals.css`): a
@@ -149,6 +165,43 @@ pub const DAWN_DARK: Night = Night {
         lit: [0x57484b, 0x9a6646, 0xf4b98c],
         shade: 0x2c2427,
         star: 0xfbf1e6,
+        mood: Mood::Plain,
+        land: Land::Plain,
+    },
+};
+
+/// Dawn's day: the same warm palette as [`DAWN_DARK`] turned light, a cream room with white
+/// cards, the burnt-orange brand on its buttons and the sky at dawn, pale peach to cream. Sunrise
+/// draws it in the light look (`theme::from_settings`).
+pub const DAWN_LIGHT: Night = Night {
+    sky: [0xf9e1d3, 0xfae6d8, 0xfbebdd, 0xfcefe2, 0xfdf3e6, 0xfcf6ea],
+    page: 0xf7f1ee,
+    side: 0xefe7e3,
+    card: 0xffffff,
+    card_alpha: 0.9,
+    card_hi: 0xf3ebe7,
+    card_hi_alpha: 0.94,
+    stroke: 0xd9cdc8,
+    stroke_alpha: 0.67,
+    rule_alpha: 0.7,
+    ink: 0x2b2324,
+    ink_soft: 0x4a3e3e,
+    muted: 0x6f625e,
+    accent: 0xc2552d,
+    accent_hi: 0x9c3f1e,
+    on_accent: 0xffffff,
+    success: 0x23703a,
+    warn: 0x8a5e00,
+    danger: 0xb93a3a,
+    dark: false,
+    art: SkyArt {
+        sun: [0xfff6e6, 0xffe2c4, 0xffc99a],
+        far: 0xead8cc,
+        near: 0xdcc3b6,
+        cloud: [0xfff8f2, 0xfbeadf, 0xf7d9c8],
+        lit: [0xffffff, 0xfff4ea, 0xfbe0cd],
+        shade: 0xefd9cc,
+        star: 0xffffff,
         mood: Mood::Plain,
         land: Land::Plain,
     },
@@ -200,6 +253,7 @@ pub const DAWN_THEME: Theme = Theme {
     sky: DAWN_DARK.sky,
     accent: ThemeAccent::Colour(0xc2552d),
     palette: Some(&DAWN_DARK),
+    light_palette: Some(&DAWN_LIGHT),
 };
 
 /// Hypr Neon: OLED black with neon cyan and magenta, on Sunrise's pages with solid plates.
@@ -210,6 +264,7 @@ pub const HYPR_NEON: Theme = Theme {
     sky: HYPR_DARK.sky,
     accent: ThemeAccent::Colour(0x3fe0ff),
     palette: Some(&HYPR_DARK),
+    light_palette: None,
 };
 
 /// Deep Ocean's night: teal water under light shafts and rising bubbles.
@@ -255,6 +310,7 @@ pub const DEEP_OCEAN: Theme = Theme {
     sky: OCEAN_DARK.sky,
     accent: ThemeAccent::Colour(0x2cc4d6),
     palette: Some(&OCEAN_DARK),
+    light_palette: None,
 };
 
 /// Autumn Forest's night: embers of amber and rust, leaves falling.
@@ -300,6 +356,7 @@ pub const AUTUMN_FOREST: Theme = Theme {
     sky: AUTUMN_DARK.sky,
     accent: ThemeAccent::Colour(0xe0782a),
     palette: Some(&AUTUMN_DARK),
+    light_palette: None,
 };
 
 /// Cherry Blossom's night: a lavender twilight with pink petals drifting.
@@ -345,6 +402,7 @@ pub const CHERRY_BLOSSOM: Theme = Theme {
     sky: CHERRY_DARK.sky,
     accent: ThemeAccent::Colour(0xf59ac0),
     palette: Some(&CHERRY_DARK),
+    light_palette: None,
 };
 
 /// Midnight Aurora's night: deep blue with curtains of green and violet light.
@@ -390,6 +448,7 @@ pub const MIDNIGHT_AURORA: Theme = Theme {
     sky: AURORA_DARK.sky,
     accent: ThemeAccent::Colour(0x4fe0a0),
     palette: Some(&AURORA_DARK),
+    light_palette: None,
 };
 
 /// Overworld's night: a deep blue sky, stars, a square moon over stepped grassy land.
@@ -438,6 +497,7 @@ pub const OVERWORLD: Theme = Theme {
     sky: OVERWORLD_DARK.sky,
     accent: ThemeAccent::Colour(0x5fae3c),
     palette: Some(&OVERWORLD_DARK),
+    light_palette: None,
 };
 
 /// Taiga: what was the launcher's light appearance, now a theme of its own: a snowy blue hour
@@ -486,6 +546,7 @@ pub const TAIGA: Theme = Theme {
     sky: TAIGA_NIGHT.sky,
     accent: ThemeAccent::Colour(0x2b7690),
     palette: Some(&TAIGA_NIGHT),
+    light_palette: None,
 };
 
 /// Sunrise's own theme's line in Settings.
