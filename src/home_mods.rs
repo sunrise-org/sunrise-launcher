@@ -138,8 +138,11 @@ pub(crate) struct Item {
 /// Order is carried in from the inventory: mods by name; packs by priority, then name.
 #[derive(Default)]
 struct Collections {
+    /// The mods that are on: what the launch summary and the "enabled" count read.
     mods: Vec<Item>,
     mods_off: usize,
+    /// Every mod, on or off, by name: the Mods tab lists them all, each with its switch.
+    all_mods: Vec<Item>,
     resources: Vec<Item>,
 }
 
@@ -148,8 +151,14 @@ impl FromIterator<Item> for Collections {
         let mut tabs = Self::default();
         for item in items {
             match item.kind {
-                Kind::Mod if item.on => tabs.mods.push(item),
-                Kind::Mod => tabs.mods_off += 1,
+                Kind::Mod if item.on => {
+                    tabs.all_mods.push(item.clone());
+                    tabs.mods.push(item);
+                }
+                Kind::Mod => {
+                    tabs.all_mods.push(item);
+                    tabs.mods_off += 1;
+                }
                 Kind::Resource => tabs.resources.push(item),
             }
         }
@@ -415,8 +424,12 @@ fn retire(snapshot: &Snapshot, pictures: &mut crate::picture_cache::Pictures) {
     }
 }
 
-const PICTURE: f32 = 30.;
+/// A card's picture, as large as a world's.
+const PICTURE: f32 = 40.;
 
+mod add;
+mod cards;
+mod menu;
 mod view;
 
 #[cfg(test)]

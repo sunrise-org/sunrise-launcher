@@ -41,6 +41,8 @@ pub(super) enum Action {
         button: Option<(f32, f32)>,
         /// The list of groups to move it to is open beside the menu.
         groups: bool,
+        /// Where the pointer is, for that list to stay open while it travels onto it.
+        sub: menu::GroupSub,
         /// A group's menu (opened from its heading) rather than the profile's: `target` is
         /// then the group's first profile, which only stands for the group.
         group: Option<String>,
@@ -98,6 +100,7 @@ impl Launcher {
             top,
             button: None,
             groups: false,
+            sub: menu::GroupSub::default(),
             group: None,
         });
     }
@@ -114,6 +117,7 @@ impl Launcher {
             top: f32::from(button.bottom()) + 4.,
             button: Some((f32::from(button.left()), f32::from(button.top()))),
             groups: false,
+            sub: menu::GroupSub::default(),
             group: None,
         });
     }
@@ -236,6 +240,7 @@ impl Launcher {
                 button,
                 groups,
                 group,
+                ..
             } => {
                 return Some(match group {
                     Some(group) => self.group_actions_menu(group, *top, *button, cx),

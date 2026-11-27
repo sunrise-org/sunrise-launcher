@@ -329,14 +329,14 @@ const HEADING_EXTENT: f32 = 22. + 6. + ROW_GAP;
 const RULE_EXTENT: f32 = 1. + 4. + ROW_GAP;
 
 /// A group's folds: which are folded (read from `instances.json` once, and again after a change
-/// to the groups), what each was when last drawn, and the last time each turned over, so the
-/// rows under a heading slide shut or open once and then rest.
+/// to the groups), what each was when last drawn, and the ease of each that is turning over, so
+/// the rows under a heading slide shut or open once and then rest.
 #[derive(Default)]
 struct Folds {
     folded: Option<BTreeSet<String>>,
     drawn: HashMap<String, bool>,
-    /// Per group turned since the window opened: how many times, and when last.
-    turns: HashMap<String, (usize, Instant)>,
+    /// Per group still turning over: how open it is going to be (1 open, 0 folded).
+    fades: HashMap<String, crate::motion::Fade>,
 }
 
 impl Folds {
@@ -345,14 +345,30 @@ impl Folds {
             .get_or_insert_with(|| instances::group_choices().collapsed)
     }
 
-    /// Notes that the group is drawn folded or not; with the last turn it made, if any.
-    fn note(&mut self, group: &str, folded: bool) -> Option<(usize, Instant)> {
+    /// Notes that the group is drawn folded or not. Returns how open it is now (1 open, 0 folded)
+    /// and, while it turns over, the ease that plays it. A turn made while another is still
+    /// playing reverses from where that one is; under reduced motion and in benchmarks it snaps.
+    fn note(&mut self, group: &str, folded: bool) -> (f32, Option<crate::motion::Fade>) {
+        let now = Instant::now();
         if self.drawn.insert(group.to_owned(), folded) == Some(!folded) {
-            let turned = self.turns.get(group).map_or(0, |(n, _)| *n) + 1;
-            self.turns
-                .insert(group.to_owned(), (turned, Instant::now()));
+            if crate::motion::arrivals() {
+                let mut fade =
+                    crate::motion::Fade::toward(self.fades.get(group).copied(), !folded, now);
+                fade.motion = sunrise_launcher_theme::MOVE;
+                self.fades.insert(group.to_owned(), fade);
+            } else {
+                self.fades.remove(group);
+            }
         }
-        self.turns.get(group).copied()
+        match self.fades.get(group).copied() {
+            Some(fade) if crate::motion::arrivals() && fade.moving(now) => {
+                (fade.value(now).clamp(0., 1.), Some(fade))
+            }
+            _ => {
+                self.fades.remove(group);
+                (if folded { 0. } else { 1. }, None)
+            }
+        }
     }
 }
 
@@ -370,22 +386,29 @@ pub(crate) fn reload_group_folds() {
     FOLDS.with_borrow_mut(|folds| folds.folded = None);
 }
 
-/// The actions button of a group's heading: dots that slide in from the right and fade in while
-/// the pointer is on the heading `hover_id` (see `track_hover`), as a profile's do, and the
-/// button itself over them, clear until the keyboard has it. It opens the group's menu under it,
-/// and its press never reaches the heading, which folds the group.
-fn group_actions(
-    group: &str,
+/// One small button on a group's heading: `mark` slides in from the right and fades in while the
+/// pointer is on the heading `hover_id` (see `track_hover`), as a profile's dots do, and the
+/// button itself is over it, clear until the keyboard has it. `right` is how far its right edge
+/// is from the heading's, `tip` its tooltip (kept away while `busy`: what it opened is up), and
+/// `press` runs on a click, which never reaches the heading (that folds the group).
+#[allow(clippy::too_many_arguments)]
+fn group_button(
+    key: SharedString,
     hover_id: &SharedString,
+    right: f32,
     busy: bool,
+    tip: SharedString,
+    mark: impl Fn() -> AnyElement + Clone + 'static,
+    press: impl Fn(gpui::Bounds<gpui::Pixels>, &mut Launcher, &mut Context<Launcher>) + 'static,
     cx: &mut Context<Launcher>,
 ) -> Vec<AnyElement> {
     const WIDE: f32 = 24.;
     const HIGH: f32 = 22.;
     let p = palette();
-    let (ink, hover) = (rgb(p.chrome_text), rgb(p.hover));
-    let plate = SharedString::from(format!("group-actions-plate-{group}"));
-    let dots = crate::widgets::hover_fade(
+    let hover = rgb(p.hover);
+    let plate = SharedString::from(format!("{key}-plate"));
+    let drawn = mark.clone();
+    let fade = crate::widgets::hover_fade(
         hover_id,
         || {
             div()
@@ -400,7 +423,7 @@ fn group_actions(
         },
         move |d, v| {
             let v = v.clamp(0., 1.);
-            d.right(px(4. - DOTS_SLIDE * (1. - v)))
+            d.right(px(right - DOTS_SLIDE * (1. - v)))
                 .opacity(v)
                 .child(
                     div()
@@ -410,18 +433,25 @@ fn group_actions(
                         .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                         .hover(move |d| d.bg(hover)),
                 )
-                .child(dots_mark(ink))
+                .child(drawn())
         },
     );
+    // Each button's fade sits in its own keyed box, so two on one heading play under their own
+    // animation ids.
+    let fade = div()
+        .id(SharedString::from(format!("{key}-fade")))
+        .absolute()
+        .inset_0()
+        .child(fade)
+        .into_any_element();
     let button = Rc::new(Cell::new(gpui::Bounds::<gpui::Pixels>::default()));
     let read_button = button.clone();
-    let named = group.to_owned();
-    let press = div()
-        .id(SharedString::from(format!("group-actions-{group}")))
+    let pressed = div()
+        .id(key)
         .reach()
         .absolute()
         .top_0()
-        .right(px(4.))
+        .right(px(right))
         .w(px(WIDE))
         .h(px(HIGH))
         .opacity(0.)
@@ -431,8 +461,8 @@ fn group_actions(
         .justify_center()
         .cursor_pointer()
         .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-        .tooltip(crate::glass_ui::tip_unless(busy, tr("Group actions")))
-        .child(dots_mark(ink))
+        .tooltip(crate::glass_ui::tip_unless(busy, tip))
+        .child(mark())
         .child(
             gpui::canvas(move |bounds, _, _| button.set(bounds), |_, _, _, _| {})
                 .absolute()
@@ -440,10 +470,54 @@ fn group_actions(
         )
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _, _, cx| {
-            this.open_group_menu_under(&named, read_button.get());
+            press(read_button.get(), this, cx);
             cx.notify();
         }));
-    vec![dots, press.into_any_element()]
+    vec![fade, pressed.into_any_element()]
+}
+
+/// The buttons of a group's heading, which slide in from the right: a plus (a new profile in the
+/// group, which the "…" menu no longer lists) and the dots, which open the group's menu under
+/// them.
+fn group_actions(
+    group: &str,
+    hover_id: &SharedString,
+    busy: bool,
+    locked: Option<&'static str>,
+    cx: &mut Context<Launcher>,
+) -> Vec<AnyElement> {
+    let ink = rgb(crate::paint::palette().chrome_text);
+    let named = group.to_owned();
+    let mut buttons = group_button(
+        SharedString::from(format!("group-actions-{group}")),
+        hover_id,
+        4.,
+        busy,
+        tr("Group actions").into(),
+        move || dots_mark(ink).into_any_element(),
+        move |button, this, _| this.open_group_menu_under(&named, button),
+        cx,
+    );
+    let added = group.to_owned();
+    let plus = group_button(
+        SharedString::from(format!("group-add-{group}")),
+        hover_id,
+        4. + 24. + 2.,
+        busy,
+        locked
+            .unwrap_or_else(|| tr("New profile in this group"))
+            .into(),
+        move || crate::glass_ui::icon("plus-sign", 14., ink.into()).into_any_element(),
+        move |_, this, cx| {
+            if this.profile_lock().is_none() {
+                this.close_profile_action();
+                this.new_profile_in_group(&added, cx);
+            }
+        },
+        cx,
+    );
+    buttons.extend(plus);
+    buttons
 }
 
 /// Where each profile was last listed, and the glide the last move gave the rows it swapped.
@@ -550,9 +624,6 @@ fn glide(entry: Stateful<Div>, id: &str, (moved, from): (usize, f32)) -> AnyElem
     .into_any_element()
 }
 
-/// How long after a fold's slide its rows are still built: a frame or two past the animation.
-const SLIDE_SETTLE: std::time::Duration = std::time::Duration::from_millis(80);
-
 /// A group's rows while the list is built, until its last one is known.
 struct Run {
     group: String,
@@ -561,28 +632,28 @@ struct Run {
     rows: Vec<AnyElement>,
     /// Which of `rows` is the selected profile's.
     selected: Option<usize>,
-    /// Folded, so its rows are hidden.
-    folded: bool,
-    /// Its fold turned over a moment ago: the rows slide shut or open.
-    sliding: bool,
-    /// How many times its fold has turned over, so each slide plays once.
-    turns: usize,
+    /// Folded and at rest, so its rows aren't built.
+    hidden: bool,
+    /// Its fold is turning over: the rows sit in a box whose height follows this ease.
+    fade: Option<crate::motion::Fade>,
     /// The height of all its rows, in px.
     height: f32,
 }
 
-/// Puts a finished group's rows in the list: straight in, in a box that slides shut or open while
-/// its fold turns over, or not at all when it is folded.
+/// Puts a finished group's rows in the list: straight in, in one box whose height eases between
+/// shut and full while its fold turns over, or not at all when it is folded. The box holds the
+/// space of the list's gap above it with it as it shuts, so folded it takes none, and what comes
+/// after follows its height with nothing overlapping.
 fn finish_run(run: Option<Run>, items: &mut Vec<AnyElement>, selected_at: &mut Option<usize>) {
     let Some(run) = run else {
         return;
     };
     let at = items.len();
-    if run.sliding {
+    if let Some(fade) = run.fade {
         if run.selected.is_some() {
             *selected_at = Some(at);
         }
-        let (folded, height) = (run.folded, run.height);
+        let height = run.height;
         let rows = div()
             .flex_none()
             .flex()
@@ -590,21 +661,14 @@ fn finish_run(run: Option<Run>, items: &mut Vec<AnyElement>, selected_at: &mut O
             .gap(px(ROW_GAP))
             .overflow_hidden()
             .children(run.rows);
-        // The box takes the list's gap above it with it as it closes.
-        items.push(
-            rows.with_animation(
-                ElementId::named_usize(
-                    SharedString::from(format!("group-fold-{}", run.group)),
-                    run.turns,
-                ),
-                crate::motion::eased(sunrise_launcher_theme::MOVE),
-                move |d, progress| {
-                    let open = if folded { 1. - progress } else { progress };
-                    d.h(px(height * open)).mt(px(-ROW_GAP * (1. - open)))
-                },
-            )
-            .into_any_element(),
-        );
+        items.push(fade.play(
+            &SharedString::from(format!("group-fold-{}", run.group)),
+            rows,
+            move |d, open| {
+                let open = open.clamp(0., 1.);
+                d.h(px(height * open)).mt(px(-ROW_GAP * (1. - open)))
+            },
+        ));
         return;
     }
     if let Some(row) = run.selected {
@@ -796,7 +860,7 @@ impl Launcher {
         look: Look,
         group: &str,
         members: usize,
-        folded: bool,
+        open: f32,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let p = palette();
@@ -833,19 +897,26 @@ impl Launcher {
             .cursor_pointer()
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_group(&toggled, cx)))
             .child(div().min_w_0().truncate().child(group.to_owned()))
-            .when(folded, |d| {
+            // How many it holds fades in as the group folds and out as it opens.
+            .when(open < 1., |d| {
                 d.child(
                     div()
                         .flex_none()
                         .ml(px(6.))
-                        .opacity(0.7)
+                        .opacity(0.7 * (1. - open))
                         .child(members.to_string()),
                 )
             });
         if dots {
             heading = crate::widgets::track_hover(heading, hover_id.clone())
-                .pr(px(28.))
-                .children(group_actions(group, &hover_id, busy, cx));
+                .pr(px(56.))
+                .children(group_actions(
+                    group,
+                    &hover_id,
+                    busy,
+                    self.profile_lock(),
+                    cx,
+                ));
             // The dots stay out while the menu they opened, or a dialog it led to, is open.
             crate::widgets::pin_hover(&hover_id, busy);
         }
@@ -917,14 +988,10 @@ impl Launcher {
                 let members = named[n..].iter().take_while(|g| **g == named[n]).count();
                 // A folded group's profiles aren't built, once it has finished sliding shut.
                 let folded = group_collapsed(&group);
-                let turn = FOLDS.with_borrow_mut(|folds| folds.note(&group, folded));
-                let folded_now = look.open > 0. && folded;
-                let sliding = look.open > 0.
-                    && crate::motion::arrivals()
-                    && turn.is_some_and(|(_, at)| {
-                        at.elapsed() < sunrise_launcher_theme::MOVE.duration() + SLIDE_SETTLE
-                    });
-                let heading = self.group_heading(look, &group, members, folded, cx);
+                let (opened, fade) = FOLDS.with_borrow_mut(|folds| folds.note(&group, folded));
+                let fade = fade.filter(|_| look.open > 0.);
+                let hidden = look.open > 0. && folded && fade.is_none();
+                let heading = self.group_heading(look, &group, members, opened, cx);
                 let started = glides.get(&format!("group:{group}")).copied();
                 items.push(match started {
                     Some(started) => glide(heading, &format!("group:{group}"), started),
@@ -935,9 +1002,8 @@ impl Launcher {
                     heading_at: items.len() - 1,
                     rows: Vec::new(),
                     selected: None,
-                    folded: folded_now,
-                    sliding,
-                    turns: turn.map_or(0, |(turns, _)| turns),
+                    hidden,
+                    fade,
                     height: members as f32 * row_height(look.open)
                         + members.saturating_sub(1) as f32 * ROW_GAP,
                 });
@@ -949,7 +1015,7 @@ impl Launcher {
             }
             let id = i.id.clone();
             let current = selected.as_deref() == Some(id.as_str());
-            if let Some(run) = run.as_mut().filter(|r| r.folded && !r.sliding) {
+            if let Some(run) = run.as_mut().filter(|r| r.hidden) {
                 if current {
                     selected_at = Some(run.heading_at);
                 }

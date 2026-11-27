@@ -637,9 +637,10 @@ fn content_at(
         .when(focused && caret_first, |d| d.child(caret()))
         .when(!selected.is_empty(), |d| {
             d.child(
+                // The accent, as selected text has everywhere else: plainly visible on any field.
                 text(selected)
                     .rounded(px(if crate::glass_ui::on() { 2. } else { 0. }))
-                    .bg(rgb(palette().selected)),
+                    .bg(gpui::Hsla::from(rgb(palette().accent)).opacity(0.35)),
             )
         })
         .when(focused && !caret_first, |d| d.child(caret()))

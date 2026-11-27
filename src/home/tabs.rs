@@ -6,10 +6,13 @@ use crate::mods::Installed;
 use crate::widgets::check::{checkbox, Tick};
 use gpui::{ScrollHandle, StatefulInteractiveElement};
 
+mod cards;
 mod logs;
 mod scrollbar;
 mod servers;
 mod worlds;
+
+pub(crate) use cards::{Card, ItemAction, MenuEntry, GAP};
 
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 pub(super) enum Tab {
@@ -83,6 +86,12 @@ pub(crate) struct Tabs {
     /// The bar of the list drawn this frame, if rows are ticked: set while the rows are built,
     /// taken when the panel is.
     bar: Option<AnyElement>,
+    /// The "…" menu of a mod or pack card, while it is open.
+    menu: Option<cards::ItemMenu>,
+    /// A switch flip was asked for on a card: its result needs no toast, only a failure does.
+    pub(crate) quiet: bool,
+    /// What each mod's card says beyond the name, read from Installed once per change.
+    pub(crate) facts: crate::mods::selection::item::CardCache,
 }
 
 impl Tabs {
@@ -107,15 +116,6 @@ impl Tabs {
     }
 }
 
-pub(crate) struct RowDisplay {
-    pub(crate) id: SharedString,
-    pub(crate) picture: AnyElement,
-    pub(crate) title: String,
-    pub(crate) detail: Option<String>,
-    pub(crate) badge: Option<crate::mods::ManualBadge>,
-    pub(crate) tail: Option<String>,
-}
-
 /// How a row takes part in ticking: which list it is in, and what the list and its ticks are.
 pub(crate) struct Pick {
     /// The Packs tab, else the Mods tab.
@@ -138,22 +138,6 @@ pub(crate) struct Content {
 /// An empty tab: the launcher's empty state, centred in the list's room.
 pub(crate) fn empty(title: &'static str, line: &'static str, action: Option<Stateful<Div>>) -> Div {
     crate::widgets::feedback::empty_state(title, line, action.map(|a| a.into_any_element()))
-}
-
-pub(crate) fn row(id: impl Into<ElementId>) -> Stateful<Div> {
-    div()
-        .id(id)
-        .relative()
-        .flex_none()
-        .h(px(ROW))
-        .min_w_0()
-        .flex()
-        .items_center()
-        .gap(px(8.))
-        .px(px(6.))
-        .border_b_1()
-        .border_color(palette().rule())
-        .hover(|s| s.bg(rgb(palette().chrome_raised)))
 }
 
 pub(crate) fn row_name(name: impl Into<SharedString>) -> Div {
@@ -230,6 +214,7 @@ impl Launcher {
         });
         let separator = count.is_some() && off_link.is_some();
         let bar = self.ui.home.tabs.bar.take();
+        let menu = self.home_item_menu(active, cx);
         let view = &self.ui.home.tabs.views[active.index()];
         let scroll = view.scroll.clone();
         crate::frame::scrolls_with(&scroll);
@@ -326,110 +311,7 @@ impl Launcher {
             )
             // Under the list, not over it: the last rows stay in reach while rows are ticked.
             .children(bar)
-    }
-
-    /// A Home row that can be ticked. A press opens it as it does today; a press with Ctrl (Cmd)
-    /// or Shift held, or on its box, ticks it instead.
-    pub(crate) fn home_pick_row(
-        &mut self,
-        display: RowDisplay,
-        pick: Pick,
-        cx: &mut Context<Self>,
-        open: impl Fn(&mut Self, &mut Context<Self>) + 'static,
-    ) -> Stateful<Div> {
-        self.home_row(display, Some(pick), cx, open)
-    }
-
-    fn home_row(
-        &mut self,
-        display: RowDisplay,
-        pick: Option<Pick>,
-        cx: &mut Context<Self>,
-        open: impl Fn(&mut Self, &mut Context<Self>) + 'static,
-    ) -> Stateful<Div> {
-        let RowDisplay {
-            id,
-            picture,
-            title,
-            detail,
-            badge,
-            tail,
-        } = display;
-        let badge_label = badge.map(|b| b.label().to_owned());
-        let full = detail
-            .iter()
-            .chain(&badge_label)
-            .chain(&tail)
-            .fold(title.clone(), |label, next| format!("{label} · {next}"));
-        let focus = self.ui.home.tabs.focus_for(id.clone(), cx);
-        let ticked = pick.as_ref().is_some_and(|pick| pick.ticked);
-        // Its box shows under the pointer, and on every row once one is ticked.
-        let check = pick.as_ref().map(|pick| {
-            let (packs, key, order) = (pick.packs, pick.key.clone(), pick.order.clone());
-            div()
-                .flex_none()
-                .opacity(if pick.any { 1. } else { 0. })
-                .group_hover("home-pick", |s| s.opacity(1.))
-                .child(
-                    checkbox(
-                        SharedString::from(format!("{id}-pick")),
-                        if pick.ticked { Tick::On } else { Tick::Off },
-                    )
-                    .on_click(cx.listener(
-                        move |this, ev: &ClickEvent, _, cx| {
-                            cx.stop_propagation();
-                            this.home_pick(packs)
-                                .click(&order, &key, ev.modifiers().shift);
-                            cx.notify();
-                        },
-                    )),
-                )
-        });
-        row(id)
-            .group("home-pick")
-            .track_focus(&focus)
-            .reach()
-            .cursor_pointer()
-            .pr(px(12.))
-            .when(ticked, |d| d.bg(rgb(palette().selected)))
-            .tooltip(crate::glass_ui::tip(full))
-            .children(check)
-            .child(picture)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(row_name(title))
-                    .children(
-                        detail.map(|text| muted(text).flex_none().truncate().max_w(px(130.))),
-                    ),
-            )
-            .children(badge.map(|badge| {
-                crate::widgets::chip::tag(badge.label(), crate::widgets::chip::Kind::Neutral)
-            }))
-            .children(tail.map(|text| muted(text).max_w(px(170.)).truncate()))
-            .child(blocks::icon(
-                "chevron-right",
-                14.,
-                rgb(palette().muted).into(),
-            ))
-            .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
-                if let Some(pick) = &pick {
-                    let gesture = Gesture::of(&ev.modifiers());
-                    if gesture.selects() {
-                        this.home_pick(pick.packs)
-                            .click(&pick.order, &pick.key, gesture.range);
-                        cx.notify();
-                        return;
-                    }
-                }
-                this.ui.home.tabs.remember(Some(focus.clone()));
-                open(this, cx);
-                cx.notify();
-            }))
+            .children(menu)
     }
 
     /// Which list the Home tab shown ticks rows in: the Packs tab (true) or the Mods tab
@@ -461,6 +343,7 @@ impl Launcher {
         count: usize,
     ) -> (std::ops::Range<usize>, impl FnOnce(Div) -> Div + use<>) {
         let view = &self.ui.home.tabs.views[if packs { Tab::Packs } else { Tab::Mods }.index()];
-        view.near.list(&view.scroll, count, 1, ROW, 0.)
+        view.near
+            .list(&view.scroll, count, 1, WORLD_ROW, WORLD_ROW_GAP)
     }
 }

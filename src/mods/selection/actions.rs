@@ -129,10 +129,30 @@ impl Launcher {
         };
         self.mods_state.bulk_toast = false;
         self.dismiss_notice();
-        crate::toast::say(match notice {
-            Ok(text) | Err(text) => text,
-        });
+        // A switch flipped on a card shows its own result: only a failure is told.
+        let quiet = std::mem::take(&mut self.ui.home.tabs.quiet);
+        match notice {
+            Ok(_) if quiet => {}
+            Ok(text) | Err(text) => crate::toast::say(text),
+        }
         true
+    }
+
+    /// Why packs can't be changed now, if they can't: the game or a change is running, or the
+    /// selected profile isn't `home` any more.
+    pub(crate) fn pack_refusal(&self, home: &Path) -> Option<&'static str> {
+        if let Some(why) = self.mods_locked() {
+            Some(why)
+        } else if self.mutating() || self.location_unavailable {
+            Some(tr("Wait for the current operation to finish."))
+        } else if !self
+            .selected_instance()
+            .is_some_and(|instance| instance.home == home)
+        {
+            Some(tr("The selected profile changed. Try again."))
+        } else {
+            None
+        }
     }
 
     /// Does `op` to the packs `files` of `kind` in one background job, and says the result
@@ -145,19 +165,21 @@ impl Launcher {
         op: PackOp,
         cx: &mut Context<Self>,
     ) {
-        let refusal = if let Some(why) = self.mods_locked() {
-            Some(why)
-        } else if self.mutating() || self.location_unavailable {
-            Some(tr("Wait for the current operation to finish."))
-        } else if !self
-            .selected_instance()
-            .is_some_and(|instance| instance.home == home)
-        {
-            Some(tr("The selected profile changed. Try again."))
-        } else {
-            None
-        };
-        if let Some(why) = refusal {
+        self.run_pack_change(home, kind, files, op, true, cx);
+    }
+
+    /// [`Self::run_pack_op`], with `say_done` off for a change the screen already shows (a
+    /// switch flipped on a card): only a refusal or a failure is told.
+    pub(crate) fn run_pack_change(
+        &mut self,
+        home: PathBuf,
+        kind: PackKind,
+        files: Vec<String>,
+        op: PackOp,
+        say_done: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(why) = self.pack_refusal(&home) {
             crate::toast::say(why);
             return;
         }
@@ -165,6 +187,60 @@ impl Launcher {
         let task = cx
             .background_executor()
             .spawn(async move { change_packs(&home, kind, &files, op) });
+        cx.spawn(async move |this, cx| {
+            let said = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.mods_state.busy = None;
+                this.game_packs.stale();
+                this.home_inventory_changed();
+                match said {
+                    Ok(_) if !say_done => {}
+                    Ok(text) | Err(text) => crate::toast::say(text),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Add file on the Packs tab: picks pack files and copies them into the profile's
+    /// `resourcepacks/`, as the shelf's "Import from file" does, and says the result in a toast.
+    pub(crate) fn add_pack_files(&mut self, cx: &mut Context<Self>) {
+        let Some(home) = self
+            .selected_instance()
+            .map(|instance| instance.home.clone())
+        else {
+            return;
+        };
+        if let Some(why) = self.pack_refusal(&home) {
+            crate::toast::say(why);
+            return;
+        }
+        let pick = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some(tr("Import from file").into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = pick.await {
+                let _ = this.update(cx, |this, cx| this.add_pack_paths(home, paths, cx));
+            }
+        })
+        .detach();
+    }
+
+    /// Copies the picked `paths` in the background, under the profile's lock. The dialog may
+    /// outlive the moment it was asked in, so the profile is checked again.
+    fn add_pack_paths(&mut self, home: PathBuf, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        if paths.is_empty() || self.pack_refusal(&home).is_some() {
+            return;
+        }
+        self.mods_state.busy = Some((tr("Importing packs…").to_string(), 0.));
+        let task = cx
+            .background_executor()
+            .spawn(async move { import_packs(&home, &paths) });
         cx.spawn(async move |this, cx| {
             let said = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -257,6 +333,10 @@ impl Launcher {
                 true
             }
             Page::Home => {
+                // Escape shuts a card's menu before it clears the ticks under it.
+                if self.close_item_menu() {
+                    return true;
+                }
                 let Some(packs) = self.home_pick_scope() else {
                     return false;
                 };
@@ -307,6 +387,31 @@ fn counted(count: usize, one: &'static str, many: &'static str) -> String {
         1 => tr(one).to_string(),
         n => trf(many, &[("count", &n.to_string())]),
     }
+}
+
+/// Copies the pack files `paths` into the profile's resource pack folder, under the profile's
+/// lock, and says what happened. A file that fails doesn't stop the rest.
+fn import_packs(home: &Path, paths: &[PathBuf]) -> Result<String, String> {
+    let _lock = sunrise_launcher::browser::try_lock_home(home).ok_or_else(|| {
+        tr("This profile is busy. Try again when the operation finishes.").to_string()
+    })?;
+    let mut added = Vec::new();
+    let mut refused = Vec::new();
+    for path in paths {
+        match packs::add_local(home, PackKind::Resource, path) {
+            Ok(pack) => added.push(pack.title),
+            Err(why) => refused.push(why),
+        }
+    }
+    let mut parts = Vec::new();
+    if !added.is_empty() {
+        parts.push(trf("Imported {name}.", &[("name", &added.join(", "))]));
+    }
+    if refused.is_empty() {
+        return Ok(parts.join(" "));
+    }
+    parts.extend(refused);
+    Err(parts.join("\n"))
 }
 
 /// Changes the packs one after another under one hold of the profile, and says what happened.

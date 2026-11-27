@@ -151,7 +151,7 @@ impl Launcher {
     }
 
     /// The New profile dialog with Group already set to `group`.
-    pub(super) fn new_profile_in_group(&mut self, group: &str, cx: &mut Context<Self>) {
+    pub(crate) fn new_profile_in_group(&mut self, group: &str, cx: &mut Context<Self>) {
         self.new_profile(cx);
         self.servers
             .text(Field::InstanceGroup)
@@ -173,9 +173,6 @@ impl Launcher {
             .filter(|i| i.kind == instances::Kind::Own)
             .cloned()
             .collect();
-        if doomed.is_empty() {
-            return;
-        }
         let kept = inside.len() - doomed.len();
         self.ui.sheets.profile_action = Some(Action::ConfirmGroup {
             group: group.to_owned(),
@@ -200,29 +197,26 @@ impl Launcher {
             .collect::<Vec<_>>()
             .join(", ");
         let single = doomed.len() == 1;
-        let count = doomed.len().to_string();
-        let what = if single {
-            tr("This profile and its worlds and mods will move to the Trash. You can restore it from there.")
-                .to_owned()
-        } else {
-            trf(
-                "These {count} profiles and their worlds and mods will move to the Trash. You can restore them from there.",
-                &[("count", &count)],
-            )
+        let can_trash = !doomed.is_empty();
+        let what = tr("Delete only the group and its profiles stay, out of any group. Or delete the profiles with it: they and their worlds and mods move to the Trash, where you can restore them.");
+        let ungroup = {
+            let group = group.to_owned();
+            cx.listener(move |this, _, _, cx| {
+                this.close_profile_action();
+                this.ungroup(&group);
+                cx.notify();
+            })
         };
         body.gap(px(8.))
-            .child(title(trf(
-                "Delete {name} and its profiles?",
-                &[("name", group)],
-            )))
+            .child(title(trf("Delete the group {name}?", &[("name", group)])))
             .child(div().text_color(rgb(p.muted)).child(what))
-            .child(
+            .children(can_trash.then(|| {
                 div()
                     .text_size(px(tokens::SMALL))
                     .text_color(rgb(p.muted))
-                    .child(selectable(names)),
-            )
-            .children((kept > 0).then(|| {
+                    .child(selectable(names))
+            }))
+            .children((can_trash && kept > 0).then(|| {
                 div()
                     .text_size(px(tokens::SMALL))
                     .text_color(rgb(p.muted))
@@ -243,17 +237,18 @@ impl Launcher {
                             },
                         )),
                     )
-                    .child(
+                    .child(secondary("group-delete-only", tr("Delete group")).on_click(ungroup))
+                    .children(can_trash.then(|| {
                         danger(
                             "group-delete-confirm",
                             if single {
-                                tr("Delete profile")
+                                tr("Delete group and profile")
                             } else {
-                                tr("Delete profiles")
+                                tr("Delete group and profiles")
                             },
                         )
-                        .on_click(cx.listener(|this, _, _, cx| this.delete_group(cx))),
-                    ),
+                        .on_click(cx.listener(|this, _, _, cx| this.delete_group(cx)))
+                    })),
             )
     }
 

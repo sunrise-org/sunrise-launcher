@@ -38,7 +38,7 @@ fn only_a_paint_sized_thumbnail_reaches_the_renderer() {
         bytes
     };
     let art = pack_thumbnail(png(1024, 64)).expect("an ordinary large PNG is resized");
-    assert_eq!((art.size(0).width.0, art.size(0).height.0), (60, 60));
+    assert_eq!((art.size(0).width.0, art.size(0).height.0), (80, 80));
     assert!(
         pack_thumbnail(png(4097, 1)).is_none(),
         "reject over-limit dimensions"
@@ -58,6 +58,11 @@ fn the_mod_tab_lists_enabled_mods_and_keeps_off_packs_in_the_pack_tab() {
     .collect();
     assert_eq!(names(&tabs.mods), ["Lanternlight", "Quiet Rain"]);
     assert_eq!(tabs.mods_off, 1);
+    // The tab itself lists the mod that is off too, with its switch.
+    assert_eq!(
+        names(&tabs.all_mods),
+        ["Lanternlight", "Trailmarks", "Quiet Rain"]
+    );
     assert_eq!(names(&tabs.resources), ["Soft Edges", "Old Paper"]);
     assert!(!tabs.resources[1].on);
 }

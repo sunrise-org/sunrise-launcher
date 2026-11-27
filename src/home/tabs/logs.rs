@@ -84,21 +84,43 @@ fn severity(line: &str) -> u8 {
     }
 }
 
-/// One line of the log, coloured by how bad it is. Tabs (stack traces) become spaces.
-fn log_line(line: &str) -> Div {
+/// The lines drawn now as one block of selectable text, each line coloured by how bad it is, so
+/// a drag selects across lines and copies as any text does. Tabs (stack traces) become spaces;
+/// a line too long for the box is cut, not wrapped, so every line keeps its `LINE` height.
+fn log_lines(lines: &[&str]) -> Div {
     let p = palette();
-    let ink = match severity(line) {
-        2 => p.danger,
-        1 => p.warning,
-        _ => p.muted,
-    };
+    let mut text = String::new();
+    let mut runs = Vec::new();
+    for (n, line) in lines.iter().enumerate() {
+        if n > 0 {
+            text.push('\n');
+        }
+        let ink = match severity(line) {
+            2 => p.danger,
+            1 => p.warning,
+            _ => p.muted,
+        };
+        let start = text.len();
+        text.push_str(&line.replace('\t', "    "));
+        runs.push((
+            start..text.len(),
+            gpui::HighlightStyle {
+                color: Some(c(ink)),
+                ..Default::default()
+            },
+        ));
+    }
+    let styled = gpui::StyledText::new(text).with_highlights(runs);
     div()
         .flex_none()
-        .h(px(LINE))
         .min_w_0()
-        .truncate()
-        .text_color(c(ink))
-        .child(line.replace('\t', "    "))
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .line_height(px(LINE))
+        .text_color(c(p.muted))
+        .child(
+            crate::selectable::Selectable::styled("home-logs-text", styled).without_copy_preview(),
+        )
 }
 
 /// Moves the log by a key: the arrows, Page Up and Down, Home and End. Whether the key was one.
@@ -513,11 +535,7 @@ impl Launcher {
             logs.seen.set(now);
         }
         let (built, place) = view.near.list(&view.scroll, shown.len(), 1, LINE, 0.);
-        let rows = shown[built]
-            .iter()
-            .fold(div().flex().flex_col(), |rows, line| {
-                rows.child(log_line(line))
-            });
+        let rows = log_lines(&shown[built]);
         let keys = scroll.clone();
         let list = div()
             .id("home-logs-lines")

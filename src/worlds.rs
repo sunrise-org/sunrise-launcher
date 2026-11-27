@@ -22,8 +22,10 @@ pub(crate) mod switch;
 
 mod import;
 mod rename;
+mod seed;
 pub use import::import;
 pub use rename::rename;
+pub use seed::seed;
 
 /// The lock a running game holds on a world; vanilla's backups leave it out.
 pub(crate) const LOCK: &str = "session.lock";

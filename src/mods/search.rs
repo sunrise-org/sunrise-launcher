@@ -47,7 +47,7 @@ impl Launcher {
     pub(crate) fn open_installed(&mut self, to: Installed) {
         self.leave_section(!matches!(
             to,
-            Installed::Mods | Installed::ModsOff | Installed::Mod(_) | Installed::ModNamed(_)
+            Installed::ModsOff | Installed::Mod(_) | Installed::ModNamed(_)
         ));
         self.ui.page = self.mods_state.enter(&to);
         self.game_packs.confirm_remove = None;
@@ -59,16 +59,12 @@ impl Launcher {
 /// A place in Installed that another page opens.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Installed {
-    /// Mods › Installed, with every mod listed and no filters.
-    Mods,
     /// Mods › Installed, the mods that are turned off.
     ModsOff,
     /// Mods › Installed with every mod listed, at the mod with this ID.
     Mod(String),
     /// Mods › Installed, the mods a search for this name finds.
     ModNamed(String),
-    /// Packs › Installed, the shelf of this kind with all its packs.
-    Shelf(Kind),
     /// Packs › Installed on the shelf of this kind with all its packs, at the pack that is
     /// this file: two packs may share a name, never a file.
     Pack(Kind, String),
@@ -102,19 +98,15 @@ impl ModsState {
         self.reveal = None;
         self.revealed.set(false);
         match to {
-            Installed::Mods => {}
             Installed::ModsOff => self.row_filter.show = model::Show::Off,
             Installed::Mod(id) => self.reveal = Some(Reveal::Mod(id.clone())),
-            Installed::Shelf(_) => {}
             Installed::Pack(kind, file) => self.reveal = Some(Reveal::Pack(*kind, file.clone())),
             Installed::ModNamed(title) | Installed::PackNamed(_, title) => {
                 self.have.set(title.clone());
                 self.row_filter.text = title.clone();
             }
         }
-        let (Installed::Shelf(kind) | Installed::Pack(kind, _) | Installed::PackNamed(kind, _)) =
-            to
-        else {
+        let (Installed::Pack(kind, _) | Installed::PackNamed(kind, _)) = to else {
             self.last_mods = Some(Page::Installed);
             return Page::Installed;
         };
@@ -210,7 +202,7 @@ mod tests {
         let mut m = left_behind();
         m.enter(&Installed::ModsOff);
         assert_eq!(shown(&m), ["trail"]);
-        assert!(m.enter(&Installed::Mods) == Page::Installed);
+        assert!(m.enter(&Installed::ModNamed(String::new())) == Page::Installed);
         assert_eq!(shown(&m), ["lantern", "rain", "trail"]);
         assert_eq!(m.row_filter, RowFilter::default());
     }
@@ -263,7 +255,10 @@ mod tests {
             (Kind::Shader, Shelf::Shader),
         ] {
             let mut m = left();
-            assert!(m.enter(&Installed::Shelf(kind)) == Page::Packs, "Installed");
+            assert!(
+                m.enter(&Installed::PackNamed(kind, String::new())) == Page::Packs,
+                "Installed"
+            );
             assert_eq!(m.shelf, shelf, "the requested shelf");
             assert_eq!(shelf.kind(), Some(kind));
             // Every pack of the shelf is listed: no name is searched for.

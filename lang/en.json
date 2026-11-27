@@ -2825,5 +2825,18 @@
   "Turned off {count} packs.": "Turned off {count} packs.",
   "Removed 1 pack.": "Removed 1 pack.",
   "Removed {count} packs.": "Removed {count} packs.",
-  "Nothing needed changing.": "Nothing needed changing."
+  "Nothing needed changing.": "Nothing needed changing.",
+  "Duplicate": "Duplicate",
+  "Copy seed": "Copy seed",
+  "Copied the seed {seed}": "Copied the seed {seed}",
+  "Add file": "Add file",
+  "Find packs": "Find packs",
+  "Show in folder": "Show in folder",
+  "Copy name": "Copy name",
+  "Delete group…": "Delete group…",
+  "Delete the group {name}?": "Delete the group {name}?",
+  "Delete only the group and its profiles stay, out of any group. Or delete the profiles with it: they and their worlds and mods move to the Trash, where you can restore them.": "Delete only the group and its profiles stay, out of any group. Or delete the profiles with it: they and their worlds and mods move to the Trash, where you can restore them.",
+  "Delete group": "Delete group",
+  "Delete group and profile": "Delete group and profile",
+  "Delete group and profiles": "Delete group and profiles"
 }

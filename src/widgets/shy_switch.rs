@@ -169,7 +169,15 @@ fn nudge(key: &str, at: gpui::Point<gpui::Pixels>) -> bool {
         let near = dist(centre, pointer);
         let was_settled = shy.settled();
         let before = shy.target;
-        if near < RADIUS {
+        // Where it is already going is kept while that place, and the way there, stay clear of
+        // the pointer: picking afresh on every move of the mouse is what made it shiver.
+        let pointer_rel = (pointer.0 - home.0, pointer.1 - home.1);
+        let heading_clear = shy.engaged
+            && dist(shy.target, pointer_rel) >= RADIUS * 0.85
+            && segment_dist(shy.pos, shy.target, pointer_rel) >= CLEAR;
+        if near < RADIUS && heading_clear {
+            // Still on its way somewhere safe: nothing to change.
+        } else if near < RADIUS {
             let fresh = !shy.engaged;
             if fresh {
                 shy.engaged = true;

@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 
 mod actions;
 pub(crate) mod bar;
+pub(crate) mod item;
 
 pub(crate) use actions::{ModOp, PackOp};
 

@@ -4,7 +4,7 @@ use super::*;
 use crate::mods::selection::{bar, ModOp};
 
 impl Launcher {
-    fn open_home_item(&mut self, open: Open) {
+    pub(super) fn open_home_item(&mut self, open: Open) {
         match open {
             Open::Project(id) => self.mods_show_project(id),
             Open::Installed(id) => self.open_installed(crate::mods::Installed::Mod(id)),
@@ -90,190 +90,122 @@ impl Launcher {
         }
     }
 
-    /// Home reads the same row facts as Installed, once per inventory or registry change.
+    /// Home reads the same row facts as Installed, once per inventory or registry change. Each
+    /// mod or pack is a card as the Worlds tab has them, and Add file stands where Worlds has
+    /// Add world.
     pub(crate) fn home_installed_tab(&mut self, packs: bool, cx: &mut Context<Self>) -> Content {
-        use crate::mods::Installed;
-        let manage = if packs {
-            secondary("home-manage-resource", tr("Manage resource packs")).on_click(cx.listener(
-                |this, _, _, cx| {
-                    this.open_installed(Installed::Shelf(PackKind::Resource));
-                    cx.notify();
-                },
-            ))
-        } else {
-            secondary("home-manage-mods", tr("Manage mods")).on_click(cx.listener(
-                |this, _, _, cx| {
-                    this.open_installed(Installed::Mods);
-                    cx.notify();
-                },
-            ))
-        };
+        let add = self.add_file_button(
+            packs,
+            if packs {
+                "home-packs-add"
+            } else {
+                "home-mods-add"
+            },
+            cx,
+        );
         let Some(snapshot) = self.ui.home.mods.snapshot.clone() else {
             return Content {
                 count: None,
                 turned_off: 0,
-                manage: Some(manage),
+                manage: Some(add),
                 items: div(),
             };
         };
         let list = if packs {
             &snapshot.tabs.resources
         } else {
-            &snapshot.tabs.mods
+            &snapshot.tabs.all_mods
         };
-        let turned_off = if packs { 0 } else { snapshot.tabs.mods_off };
         if list.is_empty() {
-            let items = if packs {
-                tabs::empty(
-                    tr("No resource packs yet"),
-                    tr("Resource packs you add to this profile show up here."),
-                    Some(
-                        secondary("home-find-packs", tr("Find resource packs")).on_click(
-                            cx.listener(|this, _, _, cx| {
-                                this.show_resource_pack_discover();
-                                cx.notify();
-                            }),
-                        ),
-                    ),
-                )
-            } else if turned_off == 0 {
-                tabs::empty(
-                    tr("No mods yet"),
-                    tr("Mods you add to this profile show up here."),
-                    Some(
-                        secondary("home-browse-mods", tr("Find mods")).on_click(cx.listener(
-                            |this, _, _, cx| {
-                                this.show_discover();
-                                cx.notify();
-                            },
-                        )),
-                    ),
-                )
-            } else {
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(crate::home::muted(tr("No mods turned on")))
-            };
             return Content {
                 count: Some(0),
-                turned_off,
-                manage: (turned_off > 0).then_some(manage),
-                items,
+                turned_off: 0,
+                // The empty state has its own Add file.
+                manage: None,
+                items: self.home_installed_empty(packs, cx),
             };
         }
-        let mod_facts = (!packs).then(|| self.home_mod_facts(self.ui.home.mods.revision));
+        let turned_off = if packs { 0 } else { snapshot.tabs.mods_off };
+        let count = if packs {
+            list.len()
+        } else {
+            list.len() - turned_off
+        };
+        // Rows already gone drop out of the ticks; the rest keep them as the list changes.
+        let order: std::rc::Rc<Vec<String>> =
+            std::rc::Rc::new(list.iter().map(|item| item.id.clone()).collect());
+        self.home_pick(packs).retain(&order);
+        let rows = self.home_cards(packs, list, &order, cx);
+        let pick_bar = self.home_pick_bar(packs, list, &order, cx);
+        self.home_set_bar(pick_bar);
+        Content {
+            count: Some(count),
+            turned_off,
+            manage: Some(add),
+            items: rows,
+        }
+    }
+
+    /// The cards of the rows the list has room to build now.
+    fn home_cards(
+        &mut self,
+        packs: bool,
+        list: &[Item],
+        order: &std::rc::Rc<Vec<String>>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let revision = self.ui.home.mods.revision;
+        let facts = (!packs).then(|| {
+            (
+                self.home_mod_facts(revision),
+                self.home_card_facts(revision),
+            )
+        });
         let (built, place) = self.home_installed_list(packs, list.len());
-        let index = (!packs).then(sunrise::v2::shown_index).flatten();
         // No catalogue read yet this run: fetch it so registry mods get their icons, as the Mods
         // pages do.
         if !packs
-            && index.is_none()
+            && sunrise::v2::shown_index().is_none()
             && list[built.clone()]
                 .iter()
                 .any(|item| matches!(item.picture, Picture::Project(_)))
         {
             self.ensure_v2_catalog(false);
         }
-        // Rows already gone drop out of the ticks; the rest keep them as the list changes.
-        let order: std::rc::Rc<Vec<String>> =
-            std::rc::Rc::new(list.iter().map(|item| item.id.clone()).collect());
-        self.home_pick(packs).retain(&order);
         let ticked = self.home_pick(packs).clone();
-        let mut rows = div().flex().flex_col();
+        let mut rows = div().flex().flex_col().gap(px(tabs::GAP));
         let mut priority = list[..built.start].iter().filter(|item| item.on).count();
         for item in &list[built] {
-            let picture = match &item.picture {
-                Picture::Project(project) => tile(
-                    index
-                        .as_ref()
-                        .and_then(|catalog| Some(catalog.index.project(project)?.icon.clone()))
-                        .and_then(|icon| {
-                            self.v2_mod_image(
-                                project,
-                                &icon,
-                                sunrise_launcher::browser::images::ROW,
-                            )
-                        }),
-                    &item.id,
-                    &item.name,
-                    PICTURE,
-                ),
-                Picture::Local { package, source } => {
-                    let listing = if let Some(origin) = source {
-                        self.read_nightly_catalogue(false);
-                        self.source_listing(origin)
-                    } else {
-                        None
-                    };
-                    if let Some(source) = listing {
-                        self.source_tile(
-                            source,
-                            None,
-                            self.nightly_catalogue_current(),
-                            package.clone(),
-                            PICTURE,
-                            cx,
-                        )
-                    } else {
-                        tile(package.clone(), &item.id, &item.name, PICTURE)
-                    }
-                }
-                Picture::Pack(art) => tile(art.show(cx), &item.id, &item.name, PICTURE),
-            };
-            let (detail, badge, state) = if packs {
-                let status = if item.on {
-                    priority += 1;
-                    trf(
-                        "Enabled · {priority}",
-                        &[("priority", &priority.to_string())],
+            let (detail, switchable) = match &facts {
+                None => (Self::home_pack_detail(item, &mut priority), true),
+                Some((labels, facts)) => {
+                    let fact = facts.get(&item.id);
+                    (
+                        Self::home_mod_detail(item, labels.get(&item.id), fact),
+                        fact.is_none_or(|fact| fact.switchable),
                     )
-                } else {
-                    tr("Off").to_owned()
-                };
-                (None, None, Some(status))
-            } else {
-                let fact = mod_facts.as_ref().and_then(|facts| facts.get(&item.id));
-                let kind = fact.map(|fact| fact.kind).filter(|kind| !kind.is_empty());
-                let badge = fact.and_then(|fact| fact.badge).or(item.manual_badge);
-                (
-                    kind.map(str::to_owned),
-                    badge,
-                    fact.and_then(|fact| fact.status.clone()),
-                )
+                }
             };
             let open = item.open.clone();
-            let pick = tabs::Pick {
-                packs,
-                key: item.id.clone(),
-                order: order.clone(),
-                ticked: ticked.contains(&item.id),
-                any: !ticked.is_empty(),
-            };
-            rows = rows.child(self.home_pick_row(
-                tabs::RowDisplay {
-                    id: format!("home-item:{:?}:{}", item.kind, item.id).into(),
-                    picture: picture.into_any_element(),
-                    title: item.name.clone(),
-                    detail,
-                    badge,
-                    tail: state,
+            let card = tabs::Card {
+                id: format!("home-item:{:?}:{}", item.kind, item.id).into(),
+                picture: self.home_item_picture(item, cx),
+                title: item.name.clone(),
+                detail,
+                on: item.on,
+                switchable,
+                pick: tabs::Pick {
+                    packs,
+                    key: item.id.clone(),
+                    order: order.clone(),
+                    ticked: ticked.contains(&item.id),
+                    any: !ticked.is_empty(),
                 },
-                pick,
-                cx,
-                move |this, _| this.open_home_item(open.clone()),
-            ));
+            };
+            rows = rows
+                .child(self.home_card(card, cx, move |this, _| this.open_home_item(open.clone())));
         }
-        let pick_bar = self.home_pick_bar(packs, list, &order, cx);
-        self.home_set_bar(pick_bar);
-        Content {
-            count: Some(list.len()),
-            turned_off,
-            manage: Some(manage),
-            items: place(rows),
-        }
+        place(rows)
     }
 
     /// The bar under the list while rows are ticked, offering what applies to them.
@@ -397,7 +329,7 @@ impl Launcher {
         let list = if packs {
             &snapshot.tabs.resources
         } else {
-            &snapshot.tabs.mods
+            &snapshot.tabs.all_mods
         };
         list.iter().map(|item| item.id.clone()).collect()
     }

@@ -180,10 +180,27 @@ impl Launcher {
                 cx.notify();
             }),
         ));
+        // The seed, when level.dat has one: copied, and said, so the player knows it worked.
+        if let Some(seed) = worlds::seed(&world.path) {
+            rows.push(menu_row(
+                "world-menu-seed",
+                "copy-01",
+                tr("Copy seed").into(),
+                p.text,
+                None,
+                cx.listener(move |this, _, _, cx| {
+                    this.worlds.action = None;
+                    let text = seed.to_string();
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
+                    crate::toast::say(trf("Copied the seed {seed}", &[("seed", &text)]));
+                    cx.notify();
+                }),
+            ));
+        }
         rows.push(menu_row(
             "world-menu-copy",
             "copy-01",
-            tr("Copy").into(),
+            tr("Duplicate").into(),
             p.text,
             off(locked.is_some()),
             cx.listener(move |this, _, _, cx| {
@@ -423,7 +440,8 @@ impl Launcher {
         self.world_job(
             cx,
             move || worlds::rename(&instance, &folder, &name),
-            |renamed| trf("Renamed to {world}", &[("world", &renamed.name)]),
+            // The new name is right there in the list.
+            |_| None,
         );
     }
 
@@ -432,18 +450,8 @@ impl Launcher {
         let Some(instance) = self.world_profile() else {
             return;
         };
-        crate::toast::say(trf("Copying {world}…", &[("world", &world.name)]));
-        let name = world.name.clone();
-        self.world_job(
-            cx,
-            move || worlds::copy(&instance, &world.folder),
-            move |copy| {
-                trf(
-                    "Copied {world} as {copy}",
-                    &[("world", &name), ("copy", &copy.name)],
-                )
-            },
-        );
+        // The copy shows up in the list when it is done; only a failure is said.
+        self.world_job(cx, move || worlds::copy(&instance, &world.folder), |_| None);
     }
 
     /// Moves the world to the system's trash.
@@ -454,7 +462,7 @@ impl Launcher {
         self.world_job(
             cx,
             move || worlds::delete(&instance, &world.folder),
-            |gone| trf("{world} is in the Trash", &[("world", &gone.name)]),
+            |gone| Some(trf("{world} is in the Trash", &[("world", &gone.name)])),
         );
     }
 
@@ -492,30 +500,31 @@ impl Launcher {
         {
             return;
         }
-        crate::toast::say(tr("Adding the world…"));
         self.world_job(
             cx,
             move || worlds::import(&instance, &path),
-            |added| trf("Added {world}", &[("world", &added.name)]),
+            |added| Some(trf("Added {world}", &[("world", &added.name)])),
         );
     }
 
-    /// Runs `job` off the window's thread, then says what `said` makes of its result (or the
-    /// error) in a toast and reads the list again.
+    /// Runs `job` off the window's thread, then says what `said` makes of its result, if
+    /// anything (an error is always said), in a toast and reads the list again.
     fn world_job<T: Send + 'static>(
         &mut self,
         cx: &mut Context<Self>,
         job: impl FnOnce() -> Result<T, String> + Send + 'static,
-        said: impl FnOnce(T) -> String + 'static,
+        said: impl FnOnce(T) -> Option<String> + 'static,
     ) {
         let task = cx.background_executor().spawn(async move { job() });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
-                crate::toast::say(match result {
+                if let Some(line) = match result {
                     Ok(done) => said(done),
-                    Err(error) => error,
-                });
+                    Err(error) => Some(error),
+                } {
+                    crate::toast::say(line);
+                }
                 this.worlds.stale();
                 cx.notify();
             });

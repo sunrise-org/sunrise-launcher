@@ -3,12 +3,29 @@
 //! Delete. The frame and rows are the group menu's too (`group_menu.rs`).
 use super::*;
 use gpui::ClickEvent;
+use std::{cell::Cell, rc::Rc, time::Duration};
 
 /// How wide the menu is, and how far it keeps from the window's edge.
 pub(super) const WIDTH: f32 = 236.;
 const EDGE: f32 = 8.;
-/// How wide the list of groups beside it is.
+/// How wide the list of groups beside it is, how far it sits from the menu, and how far it
+/// slides while it fades in.
 const SIDE_WIDTH: f32 = 208.;
+const SIDE_GAP: f32 = 2.;
+const SIDE_SLIDE: f32 = 4.;
+/// How long the pointer may be away from the "Move to group" row and the list before it closes.
+const LEAVE_DELAY: Duration = Duration::from_millis(200);
+
+/// Where the pointer is, for the list of groups beside the menu: on its row, on the list, and
+/// where the row was last painted (its top is where the list's goes).
+#[derive(Default)]
+pub(crate) struct GroupSub {
+    row: bool,
+    over: bool,
+    bounds: Rc<Cell<gpui::Bounds<gpui::Pixels>>>,
+}
+
+type HoverFn = Box<dyn Fn(&bool, &mut Window, &mut App)>;
 
 /// One row of the menu.
 pub(super) struct Row {
@@ -20,6 +37,10 @@ pub(super) struct Row {
     off: Option<SharedString>,
     /// It opens a list beside the menu: an arrow ends the row.
     opens: bool,
+    /// What the pointer entering or leaving the row does.
+    hover: Option<HoverFn>,
+    /// Where the row is painted, kept here for whoever places something beside it.
+    seen: Option<Rc<Cell<gpui::Bounds<gpui::Pixels>>>>,
 }
 
 impl Row {
@@ -36,6 +57,8 @@ impl Row {
             ink,
             off: None,
             opens: false,
+            hover: None,
+            seen: None,
         }
     }
 
@@ -48,6 +71,16 @@ impl Row {
 
     fn opening(mut self) -> Self {
         self.opens = true;
+        self
+    }
+
+    fn on_hover(mut self, hover: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+        self.hover = Some(Box::new(hover));
+        self
+    }
+
+    fn painted_at(mut self, seen: Rc<Cell<gpui::Bounds<gpui::Pixels>>>) -> Self {
+        self.seen = Some(seen);
         self
     }
 
@@ -74,6 +107,14 @@ impl Row {
                 crate::widgets::focus::c(self.ink),
             ))
             .child(self.label)
+            .when_some(self.seen, |d, seen| {
+                d.child(
+                    gpui::canvas(move |bounds, _, _| seen.set(bounds), |_, _, _, _| {})
+                        .absolute()
+                        .inset_0(),
+                )
+            })
+            .when_some(self.hover, |d, hover| d.on_hover(hover))
             .when(self.opens, |d| {
                 d.child(div().flex_1()).child(crate::glass_ui::icon(
                     "arrow-right-01",
@@ -97,6 +138,16 @@ impl Row {
     }
 }
 
+/// Another row under the pointer closes the list of groups at once.
+fn away(cx: &mut Context<Launcher>) -> impl Fn(&bool, &mut Window, &mut App) + 'static {
+    let view = cx.weak_entity();
+    move |hovered: &bool, _: &mut Window, cx: &mut App| {
+        if *hovered {
+            let _ = view.update(cx, |this, cx| this.group_sub_close_now(cx));
+        }
+    }
+}
+
 impl Launcher {
     /// The menu's rows for `target` down to Open folder and the moves.
     fn profile_menu_rows(&self, target: &Instance, cx: &mut Context<Self>) -> Vec<AnyElement> {
@@ -110,6 +161,7 @@ impl Launcher {
                 tr("Profile settings…"),
                 p.text,
             )
+            .on_hover(away(cx))
             .draw(cx.listener(move |this, _, _, cx| {
                 this.close_profile_action();
                 this.edit_profile(&edited, cx);
@@ -125,6 +177,7 @@ impl Launcher {
                 p.text,
             )
             .unless(locked.is_some(), locked.unwrap_or_default())
+            .on_hover(away(cx))
             .draw(cx.listener(move |this, _, _, cx| {
                 this.close_profile_action();
                 this.duplicate_profile(&copied, cx);
@@ -138,6 +191,7 @@ impl Launcher {
                 tr("Open folder"),
                 p.text,
             )
+            .on_hover(away(cx))
             .draw(cx.listener(move |this, _, _, cx| {
                 this.close_profile_action();
                 crate::toast::open(cx, &folder);
@@ -159,13 +213,15 @@ impl Launcher {
                 continue;
             }
             let moved = target.id.clone();
-            rows.push(Row::new(id, icon, label, p.text).draw(cx.listener(
-                move |this, _, _, cx| {
-                    this.close_profile_action();
-                    this.move_profile(&moved, way);
-                    cx.notify();
-                },
-            )));
+            rows.push(
+                Row::new(id, icon, label, p.text)
+                    .on_hover(away(cx))
+                    .draw(cx.listener(move |this, _, _, cx| {
+                        this.close_profile_action();
+                        this.move_profile(&moved, way);
+                        cx.notify();
+                    })),
+            );
         }
         // The group it is in: a list of the groups opens beside the menu.
         rows.push(
@@ -176,14 +232,83 @@ impl Launcher {
                 p.text,
             )
             .opening()
-            .draw(cx.listener(|this, _, _, cx| {
-                if let Some(Action::Menu { groups, .. }) = &mut this.ui.sheets.profile_action {
-                    *groups = !*groups;
+            .painted_at(self.group_sub_bounds())
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if *hovered {
+                    this.group_sub_enter(cx);
+                } else {
+                    this.group_sub_row_left(cx);
                 }
-                cx.notify();
+            }))
+            .draw(cx.listener(|this, _, _, cx| {
+                // A press opens it too, for the keyboard and touch.
+                this.group_sub_enter(cx);
             })),
         );
         rows
+    }
+
+    /// Where the "Move to group" row was last painted, kept by the open menu.
+    fn group_sub_bounds(&self) -> Rc<Cell<gpui::Bounds<gpui::Pixels>>> {
+        match &self.ui.sheets.profile_action {
+            Some(Action::Menu { sub, .. }) => sub.bounds.clone(),
+            _ => Rc::default(),
+        }
+    }
+
+    /// The pointer is on the "Move to group" row (or it was pressed): the list is open.
+    fn group_sub_enter(&mut self, cx: &mut Context<Self>) {
+        if let Some(Action::Menu { groups, sub, .. }) = &mut self.ui.sheets.profile_action {
+            sub.row = true;
+            if !*groups {
+                *groups = true;
+                cx.notify();
+            }
+        }
+    }
+
+    /// The pointer is on another row: the list goes at once.
+    fn group_sub_close_now(&mut self, cx: &mut Context<Self>) {
+        if let Some(Action::Menu { groups, sub, .. }) = &mut self.ui.sheets.profile_action {
+            sub.row = false;
+            if std::mem::take(groups) {
+                cx.notify();
+            }
+        }
+    }
+
+    /// The pointer left the "Move to group" row.
+    fn group_sub_row_left(&mut self, cx: &mut Context<Self>) {
+        if let Some(Action::Menu { sub, .. }) = &mut self.ui.sheets.profile_action {
+            sub.row = false;
+        }
+        self.group_sub_wait_to_close(cx);
+    }
+
+    /// The pointer is on the list, or left it.
+    fn group_sub_over(&mut self, over: bool, cx: &mut Context<Self>) {
+        if let Some(Action::Menu { sub, .. }) = &mut self.ui.sheets.profile_action {
+            sub.over = over;
+        }
+        if !over {
+            self.group_sub_wait_to_close(cx);
+        }
+    }
+
+    /// Closes the list after a short while, unless the pointer is on the row or on it by then, so
+    /// a path across the gap between them doesn't lose it.
+    fn group_sub_wait_to_close(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(LEAVE_DELAY).await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(Action::Menu { groups, sub, .. }) = &mut this.ui.sheets.profile_action {
+                    if !sub.row && !sub.over && std::mem::take(groups) {
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
     }
 
     /// The New profile dialog, set to copy `profile`.
@@ -229,6 +354,11 @@ impl Launcher {
                     tr("Delete profile…"),
                     p.danger,
                 )
+                .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                    if *hovered {
+                        this.group_sub_close_now(cx);
+                    }
+                }))
                 .draw(cx.listener(move |this, _, _, cx| {
                     this.confirm_profile_delete(&doomed);
                     cx.notify();
@@ -236,7 +366,14 @@ impl Launcher {
             );
             count += 1;
         }
-        let side = groups.then(|| self.group_choices(target, cx));
+        let row_top = match &self.ui.sheets.profile_action {
+            Some(Action::Menu { sub, .. }) => f32::from(sub.bounds.get().top()),
+            _ => top,
+        };
+        let side = groups.then(|| {
+            let (rows, count) = self.group_choices(target, cx);
+            (rows, count, row_top)
+        });
         self.menu_frame(
             "profile-menu",
             target.name.clone(),
@@ -306,7 +443,8 @@ impl Launcher {
 
     /// The menu's frame: a title, the `rows` (`count` of them, with a divider if `divided`), at
     /// `top` (and hung from the actions button's `(left, top)`, if it has one). `side` is a
-    /// list beside it, with its rows and their count. Pressing the layer under it closes it.
+    /// list beside it, with its rows, their count and the top of the row it opens from; it fades
+    /// in beside the menu without moving it. Pressing the layer under it closes it.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn menu_frame(
         &self,
@@ -314,7 +452,7 @@ impl Launcher {
         name: String,
         rows: Vec<AnyElement>,
         (count, divided): (usize, bool),
-        side: Option<(Vec<AnyElement>, usize)>,
+        side: Option<(Vec<AnyElement>, usize, f32)>,
         (top, button): (f32, Option<(f32, f32)>),
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
@@ -341,20 +479,23 @@ impl Launcher {
                 top.min(self.window_height - action_height - EDGE),
             ),
         };
-        let side = side.map(|(rows, count)| {
-            let height =
-                (count as f32 * tokens::CONTROL + 26. + 18.).min(self.window_height - 2. * EDGE);
+        let side = side.map(|(rows, count, row_top)| {
+            let height = (count as f32 * tokens::CONTROL + 18.).min(self.window_height - 2. * EDGE);
             // Beside the menu, on its right, or on its left when the window ends first.
-            let left = if at + WIDTH + 4. + SIDE_WIDTH + EDGE <= self.window_width {
-                at + WIDTH + 4.
+            let (left, slide) = if at + WIDTH + SIDE_GAP + SIDE_WIDTH + EDGE <= self.window_width {
+                (at + WIDTH + SIDE_GAP, -SIDE_SLIDE)
             } else {
-                (at - SIDE_WIDTH - 4.).max(EDGE)
+                ((at - SIDE_WIDTH - SIDE_GAP).max(EDGE), SIDE_SLIDE)
             };
+            // Its first row is level with the menu's row: the card's border and padding sit above.
+            let top = (row_top - 9.)
+                .min(self.window_height - height - EDGE)
+                .max(EDGE);
             div()
                 .id("profile-menu-side")
                 .absolute()
                 .left(px(left))
-                .top(px(top.min(self.window_height - height - EDGE).max(EDGE)))
+                .top(px(top))
                 .w(px(SIDE_WIDTH))
                 .max_h(px(self.window_height - 2. * EDGE))
                 .overflow_y_scroll()
@@ -367,17 +508,15 @@ impl Launcher {
                 .shadow_lg()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-                .child(
-                    div()
-                        .h(px(26.))
-                        .px(px(8.))
-                        .truncate()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_size(px(tokens::SMALL))
-                        .text_color(rgb(p.muted))
-                        .child(tr("Move to group")),
-                )
+                .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                    this.group_sub_over(*hovered, cx);
+                }))
                 .children(rows)
+                .with_animation(
+                    "profile-menu-side-in",
+                    crate::motion::eased(sunrise_launcher_theme::QUICK),
+                    move |d, t| d.opacity(t).left(px(left + slide * (1. - t))),
+                )
         });
         div()
             .id(id)

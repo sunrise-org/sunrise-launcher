@@ -1,5 +1,5 @@
 //! A group's menu in the sidebar, opened by the button that slides in on its heading: rename,
-//! a new profile in it, move it up or down, fold or unfold it, take its profiles out of it, and
+//! move it up or down, fold or unfold it, take its profiles out of it, and
 //! delete it with them. It is drawn in the profile menu's frame (`menu.rs`).
 use super::menu::{divider_row, Row};
 use super::*;
@@ -26,23 +26,34 @@ impl Launcher {
             top: f32::from(button.bottom()) + 4.,
             button: Some((f32::from(button.left()), f32::from(button.top()))),
             groups: false,
+            sub: super::menu::GroupSub::default(),
             group: Some(group.to_owned()),
         });
     }
 
-    /// Whether the group `group` has its menu open, or a dialog opened from it is up: its
-    /// button stays out and its tooltip stays away.
+    /// Whether the group `group` has its menu open, or a dialog opened from it (or from its plus
+    /// button) is up: its buttons stay out and their tooltips stay away.
     pub(crate) fn group_busy_with(&self, group: &str) -> bool {
-        match &self.ui.sheets.profile_action {
-            Some(Action::Menu {
-                group: Some(open), ..
-            }) => open == group,
-            Some(Action::GroupName {
-                rename: Some(open), ..
-            }) => open == group,
-            Some(Action::ConfirmGroup { group: open, .. }) => open == group,
-            _ => false,
-        }
+        let new_here = self.instances.dialog.as_ref().is_some_and(|d| {
+            d.editing.is_none()
+                && d.copy.is_none()
+                && self
+                    .servers
+                    .value(crate::servers_page::Field::InstanceGroup)
+                    .trim()
+                    == group
+        });
+        new_here
+            || match &self.ui.sheets.profile_action {
+                Some(Action::Menu {
+                    group: Some(open), ..
+                }) => open == group,
+                Some(Action::GroupName {
+                    rename: Some(open), ..
+                }) => open == group,
+                Some(Action::ConfirmGroup { group: open, .. }) => open == group,
+                _ => false,
+            }
     }
 
     pub(super) fn group_actions_menu(
@@ -68,23 +79,6 @@ impl Launcher {
                     this.close_profile_action();
                     this.ask_group_name(Some(group.clone()), None, cx);
                     cx.notify();
-                }
-            })),
-        );
-        let locked = self.profile_lock();
-        rows.push(
-            Row::new(
-                "group-menu-new-profile",
-                "plus-sign",
-                tr("New profile in this group"),
-                p.text,
-            )
-            .unless(locked.is_some(), locked.unwrap_or_default())
-            .draw(cx.listener({
-                let group = named.clone();
-                move |this, _, _, cx| {
-                    this.close_profile_action();
-                    this.new_profile_in_group(&group, cx);
                 }
             })),
         );
@@ -132,31 +126,16 @@ impl Launcher {
                 }
             })),
         );
-        rows.push(
-            Row::new("group-menu-ungroup", "cancel-01", tr("Ungroup"), p.text).draw(cx.listener({
-                let group = named.clone();
-                move |this, _, _, cx| {
-                    this.close_profile_action();
-                    this.ungroup(&group);
-                    cx.notify();
-                }
-            })),
-        );
-        // Deleting is for the player's own profiles: a group of only the default profile or
-        // packs has nothing to delete.
-        let deletable = self
-            .instances
-            .list
-            .iter()
-            .any(|i| i.group.as_deref() == Some(group) && i.kind == instances::Kind::Own);
+        // Delete asks what goes: the group alone (its profiles stay, with no group), or the
+        // profiles with it.
         let mut count = rows.len();
-        if deletable {
+        {
             rows.push(divider_row());
             rows.push(
                 Row::new(
                     "group-menu-delete",
                     "delete-02",
-                    tr("Delete group and its profiles…"),
+                    tr("Delete group…"),
                     p.danger,
                 )
                 .draw(cx.listener({
@@ -173,7 +152,7 @@ impl Launcher {
             "group-menu",
             named,
             rows,
-            (count, deletable),
+            (count, true),
             None,
             (top, button),
             cx,
