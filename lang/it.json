@@ -2054,5 +2054,17 @@
   "Your worlds {worlds} use them. Opening those without them removes their blocks and what they hold, for good.": "I tuoi mondi {worlds} le usano. Aprirli senza di esse rimuove definitivamente i relativi blocchi e contenuti.",
   "its package was made with a newer tool than this game uses; update the game to read its list": "il pacchetto è stato creato con uno strumento più recente di quello usato dal gioco; aggiorna il gioco per leggerne l’elenco",
   "its package was made with an older tool and doesn't record enough to show it fits; its author can pack it again with `cargo sunrise-mod build`": "il pacchetto è stato creato con uno strumento più vecchio e non contiene informazioni sufficienti per verificarne la compatibilità; l’autore può ricrearlo con `cargo sunrise-mod build`",
-  "px": "px"
+  "px": "px",
+  "the game's function {name}": "la funzione di gioco {name}",
+  "the game's item {name}": "l’oggetto di gioco {name}",
+  "the game's loop {name}": "il ciclo di gioco {name}",
+  "the game's mixin tool": "lo strumento mixin del gioco",
+  "the game's type {name}": "il tipo di gioco {name}",
+  "worlds rows|tiles: how Home lists the worlds under Continue playing.": "worlds rows|tiles: come la Home elenca i mondi in Continua a giocare.",
+  "{build} ({commit})": "{build} ({commit})",
+  "{build} is installed, but Sunrise couldn't record it as the newest Nightly.": "{build} è installata, ma Sunrise non ha potuto registrarla come Nightly più recente.",
+  "{build} isn't in the Sunrise registry yet: mods are checked on this computer.": "{build} non è ancora nel registro Sunrise: le mod vengono verificate su questo computer.",
+  "{build} · {commit}": "{build} · {commit}",
+  "{channel} · {month}": "{channel} · {month}",
+  "{channel} · {version}": "{channel} · {version}"
 }

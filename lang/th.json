@@ -2450,5 +2450,17 @@
   "Writing the server's settings": "กำลังเขียนการตั้งค่าเซิร์ฟเวอร์",
   "Sunrise {tag} isn't prepared yet: press Prepare on the Play page (it uses your own Minecraft {version})": "ยังไม่ได้เตรียม Sunrise {tag}: กดเตรียมในหน้าเล่น (ใช้ Minecraft {version} ของคุณเอง)",
   "copying {tag}: {error}": "กำลังคัดลอก {tag}: {error}",
-  "The server programs aren't set up yet: create a server, or press Prepare on its page.": "ยังไม่ได้ตั้งค่าโปรแกรมเซิร์ฟเวอร์: สร้างเซิร์ฟเวอร์หรือกดเตรียมในหน้าของเซิร์ฟเวอร์"
+  "The server programs aren't set up yet: create a server, or press Prepare on its page.": "ยังไม่ได้ตั้งค่าโปรแกรมเซิร์ฟเวอร์: สร้างเซิร์ฟเวอร์หรือกดเตรียมในหน้าของเซิร์ฟเวอร์",
+  "Port {port} is already used by another program (maybe another server). Use a free port instead: friends then add it to the address.": "โปรแกรมอื่น (อาจเป็นเซิร์ฟเวอร์อื่น) ใช้พอร์ต {port} อยู่แล้ว ใช้พอร์ตว่างแทน จากนั้นให้เพื่อนเพิ่มพอร์ตในที่อยู่",
+  "The server needs the game files from your own Minecraft. Prepare them: it takes a few minutes, once.": "เซิร์ฟเวอร์ต้องใช้ไฟล์เกมจาก Minecraft ของคุณเอง กดเตรียมไฟล์ ใช้เวลาไม่กี่นาทีและทำครั้งเดียว",
+  "The game didn't start. Its log below says why.": "เกมไม่เริ่มทำงาน บันทึกด้านล่างระบุสาเหตุ",
+  "sunrise-server failed without saying why": "sunrise-server ล้มเหลวโดยไม่ระบุสาเหตุ",
+  "The server isn't running.": "เซิร์ฟเวอร์ไม่ได้ทำงาน",
+  "The server now uses port {port}. Press Start again.": "เซิร์ฟเวอร์ใช้พอร์ต {port} แล้ว กดเริ่มอีกครั้ง",
+  "Copying the game files prepared for Sunrise {tag}": "กำลังคัดลอกไฟล์เกมที่เตรียมไว้สำหรับ Sunrise {tag}",
+  "The game files are ready. Press Start again.": "ไฟล์เกมพร้อมแล้ว กดเริ่มอีกครั้ง",
+  "Install a Sunrise version first.": "ติดตั้งเวอร์ชัน Sunrise ก่อน",
+  "Type the line players see under the name.": "พิมพ์ข้อความที่ผู้เล่นจะเห็นใต้ชื่อ",
+  "Letting {name} in": "กำลังอนุญาตให้ {name} เข้าร่วม",
+  "Made by hand": "สร้างด้วยตนเอง"
 }

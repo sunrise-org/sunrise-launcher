@@ -1955,5 +1955,17 @@
   "The downloaded package for {mod} changed. Fetch it again.": "تغيّرت الحزمة المنزّلة لـ {mod}. نزّلها مجددًا.",
   "The files prepared for removal changed. Nothing was removed; try again.": "تغيّرت الملفات المعدّة للإزالة. لم يُزل شيء؛ حاول مجددًا.",
   "The game arguments change the folders or mods selected for this profile.": "تغيّر وسائط اللعبة المجلدات أو الإضافات المحددة لهذا الملف الشخصي.",
-  "The game couldn't be installed.": "تعذّر تثبيت اللعبة."
+  "The game couldn't be installed.": "تعذّر تثبيت اللعبة.",
+  "The game couldn't start.": "تعذّر بدء اللعبة.",
+  "The game is running": "اللعبة قيد التشغيل",
+  "The game port is unavailable, so Sunrise can't check access to that port.": "منفذ اللعبة غير متاح، لذا لا يستطيع Sunrise التحقق من إمكانية الوصول إليه.",
+  "The game stopped in {profile}. {reason}": "توقفت اللعبة في {profile}. {reason}",
+  "The game stopped.": "توقفت اللعبة.",
+  "The game wrapper stopped: {reason}": "توقف غلاف اللعبة: {reason}",
+  "The game's files couldn't be prepared.": "تعذّر تجهيز ملفات اللعبة.",
+  "The game's preparer stopped ({status}).": "توقف مُجهّز اللعبة ({status}).",
+  "The installed GitHub archive or origin for {mod} changed. Nothing was changed; try again.": "تغيّر أرشيف GitHub المثبّت أو مصدر {mod}. لم يتغير شيء؛ حاول مجددًا.",
+  "The last game build is unknown for these worlds: {worlds}": "إصدار اللعبة الأخير لهذه العوالم غير معروف: {worlds}",
+  "The launcher couldn't check for unfinished mod updates. You can still play.": "تعذّر على المشغّل التحقق من تحديثات الإضافات غير المكتملة. يمكنك اللعب رغم ذلك.",
+  "The launcher couldn't prove all native build workers stopped. Their build files were kept.": "تعذّر على المشغّل التأكد من توقف جميع عمليات البناء الأصلية. تم الاحتفاظ بملفات بنائها."
 }
