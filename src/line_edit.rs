@@ -266,6 +266,46 @@ impl LineEdit {
         self.run = Run::None;
     }
 
+    /// A press at `pos` (`count` clicks; Shift extends the selection), as [`mouse`] handles it,
+    /// for a field kept outside a view. True when the caret moved.
+    pub(super) fn press_at(
+        &mut self,
+        window: &Window,
+        pos: Point<Pixels>,
+        count: usize,
+        shift: bool,
+    ) -> bool {
+        let Some(at) = self.index_at(window, pos) else {
+            return false;
+        };
+        match count {
+            1 => self.move_to(at, shift),
+            2 => self.select_word(at),
+            _ => self.select_all(),
+        }
+        self.dragging = true;
+        true
+    }
+
+    /// The pointer moved to `pos` (`held`: the button is still down), as [`mouse`] handles it.
+    /// True when the selection grew.
+    pub(super) fn drag_at(&mut self, window: &Window, pos: Point<Pixels>, held: bool) -> bool {
+        if !held {
+            self.dragging = false;
+            return false;
+        }
+        if !self.dragging {
+            return false;
+        }
+        match self.index_at(window, pos) {
+            Some(at) => {
+                self.move_to(at, true);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// The start of the word before `from`, or the end of the one after it.
     fn word(&self, from: usize, forward: bool) -> usize {
         let chars: Vec<char> = self.text.chars().collect();

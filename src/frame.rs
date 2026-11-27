@@ -70,7 +70,7 @@ impl Launcher {
         cx.set_reduce_motion(crate::motion::still());
         crate::motion::note_power(cx);
         crate::motion::note_benchmark(self.bench.is_some());
-        crate::widgets::dropdown::new_frame();
+        crate::widgets::dropdown::new_frame(&self.theme);
         let size = window.viewport_size();
         self.window_width = f32::from(size.width);
         self.window_height = f32::from(size.height);

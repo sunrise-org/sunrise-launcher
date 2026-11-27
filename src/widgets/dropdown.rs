@@ -48,8 +48,10 @@ thread_local! {
         std::cell::RefCell::new(std::collections::HashMap::new());
     /// What was typed into each open menu's filter, by the field's id. Dropped when the menu
     /// closes (`forget`).
-    static FILTER: std::cell::RefCell<std::collections::HashMap<SharedString, String>> =
+    static FILTER: std::cell::RefCell<std::collections::HashMap<SharedString, crate::line_edit::LineEdit>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
+    /// The theme the frame draws with, for the filter's text field.
+    static THEME: std::cell::RefCell<Option<crate::theme::Theme>> = const { std::cell::RefCell::new(None) };
     /// The focus of each open menu, by the field's id, so opening it hands it the keyboard.
     /// Dropped when the menu closes (`forget`).
     static FOCUS: std::cell::RefCell<std::collections::HashMap<SharedString, gpui::FocusHandle>> =
@@ -97,17 +99,17 @@ fn claim_focus(id: SharedString) -> impl IntoElement {
 
 /// What has been typed into the menu of the field `id`.
 fn typed(id: &SharedString) -> String {
-    FILTER.with_borrow(|m| m.get(id).cloned().unwrap_or_default())
+    FILTER.with_borrow(|m| m.get(id).map(|e| e.text().to_string()).unwrap_or_default())
 }
 
-fn set_typed(id: &SharedString, text: String) {
+/// The filter field of the menu `id`, made when it is first typed in.
+fn with_filter<R>(id: &SharedString, f: impl FnOnce(&mut crate::line_edit::LineEdit) -> R) -> R {
     FILTER.with_borrow_mut(|m| {
-        if text.is_empty() {
-            m.remove(id);
-        } else {
-            m.insert(id.clone(), text);
-        }
-    });
+        let edit = m
+            .entry(id.clone())
+            .or_insert_with(|| crate::line_edit::LineEdit::new(String::new(), FILTER_MAX, 40));
+        f(edit)
+    })
 }
 
 /// The indices of the rows that match `typed` (case-insensitive, anywhere in the label or the
@@ -144,10 +146,42 @@ fn ranked(rows: &[(String, Option<String>)], typed: &str) -> Vec<usize> {
     hits.into_iter().map(|(_, n)| n).collect()
 }
 
-/// The line at the top of a filterable menu: a muted magnifier and what has been typed (a hint
-/// before anything is).
-fn search_line(text: &str) -> Div {
+/// The line at the top of a filterable menu: a muted magnifier and its filter, a text field
+/// like every other (selection, caret; a hint before anything is typed). The mouse selects in
+/// it as in any field.
+fn search_line(id: &SharedString) -> Div {
     let p = palette();
+    let theme = THEME.with_borrow(|t| *t);
+    let field = theme.map(|theme| {
+        let t = crate::mods::field_theme(theme);
+        let content = with_filter(id, |e| {
+            crate::line_edit::content(e, &t, true, false, false, "Type to filter")
+        });
+        let (press, drag) = (id.clone(), id.clone());
+        div()
+            .id(SharedString::from(format!("{id}-filter")))
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .flex()
+            .items_center()
+            .cursor_text()
+            .text_size(px(tokens::BODY))
+            .child(content)
+            .on_mouse_down(gpui::MouseButton::Left, move |ev, window, cx| {
+                cx.stop_propagation();
+                if with_filter(&press, |e| {
+                    e.press_at(window, ev.position, ev.click_count, ev.modifiers.shift)
+                }) {
+                    window.refresh();
+                }
+            })
+            .on_mouse_move(move |ev, window, _| {
+                if with_filter(&drag, |e| e.drag_at(window, ev.position, ev.dragging())) {
+                    window.refresh();
+                }
+            })
+    });
     div()
         .flex_none()
         .flex()
@@ -159,45 +193,7 @@ fn search_line(text: &str) -> Div {
         .border_b_1()
         .border_color(c(p.divider))
         .child(crate::glass_ui::icon("search-01", 16., c(p.muted)))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .items_center()
-                .overflow_hidden()
-                .text_size(px(tokens::BODY))
-                .when(!text.is_empty(), |d| {
-                    d.child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(c(p.text))
-                            .child(SharedString::from(text.to_owned())),
-                    )
-                })
-                // The caret: this is a text field that has the keyboard.
-                .child(
-                    div()
-                        .flex_none()
-                        .w(px(1.5))
-                        .h(px(16.))
-                        .ml(px(if text.is_empty() { 0. } else { 1. }))
-                        .rounded(px(1.))
-                        .bg(c(p.accent)),
-                )
-                .when(text.is_empty(), |d| {
-                    let hint: SharedString = tr("Type to filter").into();
-                    d.child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .ml(px(4.))
-                            .text_color(c(p.muted))
-                            .child(hint),
-                    )
-                }),
-        )
+        .children(field)
 }
 
 /// The filterable menu open now, as its last frame drew it: the window's root hands it the keys
@@ -213,9 +209,10 @@ thread_local! {
     static TYPING: std::cell::RefCell<Option<Typing>> = const { std::cell::RefCell::new(None) };
 }
 
-/// A new frame begins: only a menu drawn in it can take the keys.
-pub(crate) fn new_frame() {
+/// A new frame begins, drawn in `theme`: only a menu drawn in it can take the keys.
+pub(crate) fn new_frame(theme: &crate::theme::Theme) {
     TYPING.with_borrow_mut(|t| *t = None);
+    THEME.with_borrow_mut(|t| *t = Some(*theme));
 }
 
 /// A child, taking no room, that makes the menu of the field `id` the one the keyboard types
@@ -243,16 +240,18 @@ pub(crate) fn type_key(ev: &gpui::KeyDownEvent, window: &mut Window, cx: &mut Ap
         return false;
     };
     let k = &ev.keystroke;
-    if k.modifiers.control || k.modifiers.platform || k.modifiers.alt {
-        return false;
-    }
-    let mut text = typed(&id);
+    let text = typed(&id);
     match k.key.as_str() {
-        "escape" if !text.is_empty() => text.clear(),
-        "backspace" if !text.is_empty() => {
-            text.pop();
+        // The menu's own keys: moving through its rows, Tab, and closing it once the filter is
+        // empty (Escape first empties it).
+        "up" | "down" | "tab" => return false,
+        "escape" if text.is_empty() => return false,
+        "escape" => {
+            with_filter(&id, |e| e.set(String::new()));
+            return true;
         }
-        "enter" if !text.is_empty() => {
+        "enter" if text.is_empty() => return false,
+        "enter" => {
             if let Some(n) = first {
                 pick(n, window, cx);
                 close(window, cx);
@@ -260,22 +259,14 @@ pub(crate) fn type_key(ev: &gpui::KeyDownEvent, window: &mut Window, cx: &mut Ap
             return true;
         }
         // The first Space is a press on the row, as it was.
-        "space" if !text.is_empty() => text.push(' '),
-        _ => match k.key_char.as_deref() {
-            Some(ch)
-                if !ch.is_empty()
-                    && !ch.chars().any(char::is_control)
-                    && !(text.is_empty() && ch.trim().is_empty()) =>
-            {
-                if text.chars().count() < FILTER_MAX {
-                    text.push_str(ch);
-                }
-            }
-            _ => return false,
-        },
+        "space" if text.is_empty() => return false,
+        _ => {}
     }
-    set_typed(&id, text);
-    true
+    // Everything else is a text field's: typing, selecting, word jumps, copy, cut and paste.
+    !matches!(
+        with_filter(&id, |e| crate::line_edit::handle(e, ev, cx)),
+        crate::line_edit::Key::Pass
+    )
 }
 
 /// A child of the field, taking no room, that notes where the field is as it is laid out.
@@ -834,7 +825,7 @@ impl Dropdown {
         }
         let count = rows.len();
         let head = filterable
-            .then(|| search_line(&text).child(typing(id.clone(), first, pick, close.clone())));
+            .then(|| search_line(&id).child(typing(id.clone(), first, pick, close.clone())));
         wrap.children(layer_with(&id, head, rows, count, at, menu_min, close))
     }
 }
