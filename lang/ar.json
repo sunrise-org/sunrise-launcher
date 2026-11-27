@@ -2257,5 +2257,17 @@
   "{title} needs {dependency}.": "تحتاج {title} إلى {dependency}.",
   "{file} isn't a pack file in its expected folder.": "{file} ليس ملف حزمة في مجلده المتوقع.",
   "{file} goes through a filesystem link.": "يمر {file} عبر رابط في نظام الملفات.",
-  "{file} isn't a pack file in a plain pack folder.": "{file} ليس ملف حزمة في مجلد حزم عادي."
+  "{file} isn't a pack file in a plain pack folder.": "{file} ليس ملف حزمة في مجلد حزم عادي.",
+  "{title} has a different installed kind.": "نوع التثبيت الحالي لـ {title} مختلف.",
+  "{relative} belongs to {title}, installed from the browser.": "ينتمي {relative} إلى {title} المثبّتة من المتصفح.",
+  "{relative} is already there and wasn't installed by the browser: move it away first, or keep it.": "{relative} موجود بالفعل ولم يثبته المتصفح: انقله أولًا أو احتفظ به.",
+  "{title} wasn't installed by the browser.": "لم يتم تثبيت {title} من المتصفح.",
+  "{title} isn't a data pack.": "{title} ليست حزمة بيانات.",
+  "{title} has no data pack for {game}{suffix}.": "لا تحتوي {title} على حزمة بيانات لـ {game}{suffix}.",
+  " or any other version": " أو أي إصدار آخر",
+  "Modrinth: {id} is not a pack Sunrise loads.": "Modrinth: ‏{id} ليست حزمة يحمّلها Sunrise.",
+  "Modrinth asks to slow down: try again in a minute.": "يطلب Modrinth إبطاء الطلبات: حاول بعد دقيقة.",
+  "Modrinth answered {code}.": "أجاب Modrinth بـ {code}.",
+  "No connection to Modrinth: {error}": "لا يوجد اتصال بـ Modrinth: {error}",
+  "Modrinth's answer wasn't readable: {error}": "تعذّرت قراءة إجابة Modrinth: {error}"
 }

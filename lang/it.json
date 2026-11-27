@@ -2356,5 +2356,17 @@
   "{path} is not a folder to install in.": "{path} non è una cartella di installazione.",
   "The licence: {error}": "La licenza: {error}",
   "The licences: {error}": "Le licenze: {error}",
-  "The registry: {error}": "Il registro: {error}"
+  "The registry: {error}": "Il registro: {error}",
+  "{path} (not the launcher's own folder)": "{path} (non è la cartella del launcher)",
+  "Not removed: {item}": "Non rimosso: {item}",
+  "That file isn't a picture the launcher can read (PNG, JPEG, GIF, WebP).": "Il file non è un’immagine leggibile dal launcher (PNG, JPEG, GIF, WebP).",
+  "{name} plays its pack's mods: import the pack again for a second copy.": "{name} usa le mod del proprio pacchetto: importa di nuovo il pacchetto per crearne una seconda copia.",
+  "{path} is not a directory inside the game folder": "{path} non è una directory nella cartella del gioco",
+  "No profile {query}: sunrise-launcher instance list shows them": "Nessun profilo {query}: sunrise-launcher instance list li mostra",
+  "Paste the access token Tailscale showed (it begins with tskey-).": "Incolla il token di accesso mostrato da Tailscale (inizia con tskey-).",
+  "No keychain here: the token is kept until the launcher closes.": "Portachiavi non disponibile: il token viene conservato fino alla chiusura del launcher.",
+  "Done: friends you share this computer with reach only the Minecraft server.": "Fatto: gli amici con cui condividi questo computer possono raggiungere solo il server Minecraft.",
+  "Tailscale's default access controls are back.": "I controlli di accesso predefiniti di Tailscale sono stati ripristinati.",
+  "{url}: HTTP {status}": "{url}: HTTP {status}",
+  "Mojang has no Java {name}. Known: {known}.": "Mojang non offre Java {name}. Versioni note: {known}."
 }
