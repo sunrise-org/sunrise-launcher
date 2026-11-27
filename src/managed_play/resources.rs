@@ -24,6 +24,30 @@ pub(crate) struct Resources {
     accelerator: Option<[u8; 32]>,
 }
 
+/// Prepared resources selected for Play. `proven_by_seal` is true only when this call
+/// just sealed a brand-new snapshot into place (the seal itself already hashed the source
+/// tree under the preparation lock), so Play skips a redundant verify pass over that tree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct PreparedResources {
+    pub(super) resources: Resources,
+    pub(super) proven_by_seal: bool,
+}
+
+impl PreparedResources {
+    pub(super) fn reused(resources: Resources) -> Self {
+        Self {
+            resources,
+            proven_by_seal: false,
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Full prepared-file verifications requested on this thread. Tests take it with `Cell::take`.
+    pub(crate) static FULL_VERIFICATIONS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 impl Resources {
     pub(super) fn capture(
         base: &str,
@@ -66,7 +90,7 @@ impl Resources {
         base: &str,
         profile: ProfileHandoff<'_>,
         log: &dyn Fn(String),
-    ) -> Result<Self, String> {
+    ) -> Result<PreparedResources, String> {
         Self::for_play_with(base, profile, log, log)
     }
 
@@ -77,10 +101,12 @@ impl Resources {
         profile: ProfileHandoff<'_>,
         log: &dyn Fn(String),
         diagnostics: &dyn Fn(String),
-    ) -> Result<Self, String> {
+    ) -> Result<PreparedResources, String> {
         let preparation = backend::prepare_lock(base)?;
+        // A prepared profile uses its receipt here, without sealing or hashing again.
+        // The admitted Play handoff checks the saved snapshot digest.
         if let Some(resources) = Self::current(&backend::version_dir(base))? {
-            return Ok(resources);
+            return Ok(PreparedResources::reused(resources));
         }
         let handoff = preparation.handoff(Some(profile));
         if !backend::check_prepared(base) {
@@ -109,7 +135,7 @@ impl Resources {
                 }
             }
         }
-        Self::seal_prepared(base, &preparation, &handoff, None, None)
+        Self::seal_prepared(base, &preparation, &handoff, None, None, false)
     }
 
     /// Finish the shared preparation under its existing lock, before a profile needs it.
@@ -119,7 +145,15 @@ impl Resources {
         preparation: &preparer::Preparation,
         profile: Option<ProfileHandoff<'_>>,
     ) -> Result<Self, String> {
-        Self::seal_prepared(base, preparation, &preparation.handoff(profile), None, None)
+        Self::seal_prepared(
+            base,
+            preparation,
+            &preparation.handoff(profile),
+            None,
+            None,
+            true,
+        )
+        .map(|prepared| prepared.resources)
     }
 
     /// [`Self::prepare`] when the caller already probed `missing-extras` unlocked (startup).
@@ -135,7 +169,9 @@ impl Resources {
             &preparation.handoff(profile),
             None,
             Some(missing),
+            true,
         )
+        .map(|prepared| prepared.resources)
     }
 
     /// [`Self::prepare`], stopping at the next step once `stop` is set.
@@ -149,7 +185,8 @@ impl Resources {
             Some(stop) => preparation.handoff_cancellable(profile, stop),
             None => preparation.handoff(profile),
         };
-        Self::seal_prepared(base, preparation, &handoff, stop, None)
+        Self::seal_prepared(base, preparation, &handoff, stop, None, true)
+            .map(|prepared| prepared.resources)
     }
 
     fn seal_prepared(
@@ -158,7 +195,8 @@ impl Resources {
         handoff: &preparer::Handoff<'_>,
         stop: Option<&crate::native_mods::Cancellation>,
         probed_missing: Option<Option<preparer::Extras>>,
-    ) -> Result<Self, String> {
+        allow_repair: bool,
+    ) -> Result<PreparedResources, String> {
         let check = || stop.map_or(Ok(()), crate::native_mods::Cancellation::check);
         check()?;
         backend::need_base_prepared(base, Some(preparation))?;
@@ -171,14 +209,20 @@ impl Resources {
         }
         check()?;
         let root = backend::version_dir(base);
-        Self::seal(&root, &backend::resources(base), stop, |resources| {
-            check()?;
-            let Some(binary) = preparer::binary(&root) else {
-                return Ok(None);
-            };
-            launcher_log::play_detail(crate::i18n::tr("Preparing the game"));
-            pack_data_cache(&binary, &root, resources, Some(handoff), stop)
-        })
+        Self::seal_at(
+            &root,
+            &backend::resources(base),
+            stop,
+            allow_repair,
+            |resources| {
+                check()?;
+                let Some(binary) = preparer::binary(&root) else {
+                    return Ok(None);
+                };
+                launcher_log::play_detail(crate::i18n::tr("Preparing the game"));
+                pack_data_cache(&binary, &root, resources, Some(handoff), stop)
+            },
+        )
     }
 
     pub(crate) fn invalidate(root: &Path) -> io::Result<()> {
@@ -199,6 +243,8 @@ impl Resources {
     }
 
     pub(super) fn verify(&self, base: &str) -> Result<(), String> {
+        #[cfg(test)]
+        FULL_VERIFICATIONS.with(|count| count.set(count.get() + 1));
         let root = backend::version_dir(base);
         let path = self.path(base);
         for dir in [
@@ -207,7 +253,7 @@ impl Resources {
             &parent(&root),
             path.parent().expect("snapshot parent"),
         ] {
-            require_dir(dir)?;
+            require_dir(dir).map_err(|_| setup_error())?;
         }
         launcher_log::play_detail(crate::i18n::tr("Checking the game files"));
         let meter = launcher_log::PlayMeter::new(|done, total| {
@@ -225,14 +271,16 @@ impl Resources {
                     pool::workers(),
                     None,
                     Some(&on_done),
-                )? {
+                )
+                .map_err(|_| setup_error())?
+                {
                     Some((digest, files)) => (Some(digest), files),
                     None => (None, 0),
                 },
             )
         })?;
         if actual != Some(self.primary) {
-            return Err(setup_error(&path));
+            return Err(setup_error());
         }
         Ok(())
     }
@@ -244,17 +292,35 @@ impl Resources {
         })
     }
 
-    // When the source is prepared, flush a private primary tree and publish it without
-    // replacing anything. Build the optional cache against the final path: the game caches
+    // Flush a private primary tree before publishing it or replacing a damaged snapshot.
+    // Build the optional cache against the final path: the game caches
     // the canonical resource root inside it. A kill after exposure but before its evidence
     // write leaves a usable primary tree and an untrusted accelerator, never the reverse.
+    #[cfg(test)]
     fn seal(
         root: &Path,
         source: &Path,
         stop: Option<&Cancellation>,
         accelerator: impl FnOnce(&Path) -> Result<Option<[u8; 32]>, String>,
     ) -> Result<Self, String> {
-        Self::seal_with(root, source, pool::workers(), stop, accelerator)
+        Self::seal_at(root, source, stop, true, accelerator).map(|prepared| prepared.resources)
+    }
+
+    fn seal_at(
+        root: &Path,
+        source: &Path,
+        stop: Option<&Cancellation>,
+        allow_repair: bool,
+        accelerator: impl FnOnce(&Path) -> Result<Option<[u8; 32]>, String>,
+    ) -> Result<PreparedResources, String> {
+        Self::seal_with(
+            root,
+            source,
+            pool::workers(),
+            stop,
+            allow_repair,
+            accelerator,
+        )
     }
 
     // Each pass (hash, copy, flush) runs on `workers` threads and joins them before the next.
@@ -263,15 +329,16 @@ impl Resources {
         source: &Path,
         workers: usize,
         stop: Option<&Cancellation>,
+        allow_repair: bool,
         accelerator: impl FnOnce(&Path) -> Result<Option<[u8; 32]>, String>,
-    ) -> Result<Self, String> {
-        let relative = source.strip_prefix(root).map_err(|_| setup_error(source))?;
+    ) -> Result<PreparedResources, String> {
+        let relative = source.strip_prefix(root).map_err(|_| setup_error())?;
         if relative.as_os_str().is_empty()
             || relative
                 .components()
                 .any(|part| !matches!(part, std::path::Component::Normal(_)))
         {
-            return Err(setup_error(source));
+            return Err(setup_error());
         }
         for ancestor in source.ancestors().take_while(|path| *path != root) {
             require_dir(ancestor)?;
@@ -295,10 +362,10 @@ impl Resources {
             )
         })?;
         let Some(primary) = primary else {
-            return Err(setup_error(source));
+            return Err(setup_error());
         };
         let parent = parent(root);
-        fs::create_dir_all(&parent).map_err(|e| at(&parent, e))?;
+        fs::create_dir_all(&parent).map_err(io_failure)?;
         require_dir(&parent)?;
         let snapshot = parent.join(key(primary));
         let resources = snapshot.join("resources");
@@ -307,14 +374,36 @@ impl Resources {
         if exists {
             require_dir(&snapshot)?;
         }
-        let accelerator = if resources.is_dir() {
+        if let Some(stop) = stop {
+            stop.check()?;
+        }
+        // Only explicit preparation may verify-and-repair an existing snapshot here.
+        // On Play's receipt-miss path, leave an already-existing snapshot untouched and
+        // unhashed for the single counted cutoff, and do not publish a receipt for it yet.
+        if exists && !allow_repair {
+            let accelerator =
+                optional_bytes(&evidence)?.and_then(|bytes| serde_json::from_slice(&bytes).ok());
+            return Ok(PreparedResources::reused(Self {
+                primary,
+                accelerator,
+            }));
+        }
+        // Only preparation may repair a snapshot. Check reuse here, not on Play
+        // for a profile with a prepared snapshot.
+        let reusable = exists
+            && artifact::tree_with_workers(&resources, true, workers, stop)
+                .is_ok_and(|tree| tree.is_some_and(|(digest, _)| digest == primary));
+        if let Some(stop) = stop {
+            stop.check()?;
+        }
+        let accelerator = if reusable {
             optional_bytes(&evidence)?.and_then(|bytes| serde_json::from_slice(&bytes).ok())
         } else {
             // A move from .local flushes both directories, including the new store's entry.
             let stage = tempfile::Builder::new()
                 .prefix(".prepared-")
                 .tempdir_in(root.join(".local"))
-                .map_err(|error| at(root, error))?;
+                .map_err(io_failure)?;
             let candidate = stage.path().join("resources");
             let on_copy = |done, total: usize| {
                 seal_meter.tick(
@@ -343,12 +432,18 @@ impl Resources {
                 flush_copied(&copied, workers, stop, Some(&on_flush))?;
                 Ok(((), copied_files))
             })?;
-            let (from, to) = if exists {
-                (candidate.as_path(), &resources)
-            } else {
-                (stage.path(), &snapshot)
-            };
-            durable::move_new_directory(from, to).map_err(|e| at(to, e))?;
+            if let Some(stop) = stop {
+                stop.check()?;
+            }
+            // Move the entire damaged snapshot aside, including stale accelerator evidence.
+            // Publish only the already-flushed replacement while the preparation lock is held.
+            publish_snapshot(
+                root,
+                stage.path(),
+                &snapshot,
+                exists,
+                durable::move_new_directory,
+            )?;
             let digest = accelerator(&resources)?;
             if let Some(digest) = digest {
                 write_receipt(&evidence, &digest)?;
@@ -360,7 +455,10 @@ impl Resources {
             accelerator,
         };
         write_receipt(&parent.join(CURRENT), &prepared)?;
-        Ok(prepared)
+        Ok(PreparedResources {
+            resources: prepared,
+            proven_by_seal: true,
+        })
     }
 }
 
@@ -371,6 +469,46 @@ pub(super) fn generated_cache(name: &OsStr) -> bool {
                 .and_then(|name| name.strip_suffix(".tmp"))
                 .is_some_and(|pid| !pid.is_empty() && pid.bytes().all(|c| c.is_ascii_digit()))
         })
+}
+
+fn publish_snapshot(
+    root: &Path,
+    staged: &Path,
+    snapshot: &Path,
+    exists: bool,
+    publish: impl FnOnce(&Path, &Path) -> io::Result<()>,
+) -> Result<(), String> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static RETIRED: AtomicUsize = AtomicUsize::new(0);
+
+    let local = root.join(".local");
+    let retired = if exists {
+        require_dir(&local)?;
+        let name = format!(
+            ".prepared-damaged-{}-{}",
+            std::process::id(),
+            RETIRED.fetch_add(1, Ordering::Relaxed)
+        );
+        let path = local.join(&name);
+        durable::move_new_directory(snapshot, &path).map_err(io_failure)?;
+        Some((name, path))
+    } else {
+        None
+    };
+    if let Err(publish_err) = publish(staged, snapshot) {
+        if let Some((_, retired_path)) = retired {
+            durable::move_new_directory(&retired_path, snapshot).map_err(io_failure)?;
+        }
+        return Err(io_failure(publish_err));
+    }
+    if let Some((retired_name, _)) = retired {
+        if let Ok(local_dir) =
+            cap_std::fs::Dir::open_ambient_dir(&local, cap_std::ambient_authority())
+        {
+            let _ = crate::native_cache::remove_entry(&local_dir, Path::new(&retired_name));
+        }
+    }
+    Ok(())
 }
 
 fn parent(root: &Path) -> PathBuf {
@@ -389,12 +527,12 @@ fn receipt(root: &Path) -> Result<PathBuf, String> {
 // primary tree is already durable and a profile's independent digest is checked at cutoff.
 fn write_receipt(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let mut staged = tempfile::NamedTempFile::new_in(path.parent().expect("snapshot directory"))
-        .map_err(|e| at(path, e))?;
+        .map_err(io_failure)?;
     serde_json::to_writer(&mut staged, value).map_err(|e| e.to_string())?;
     staged
         .persist(path)
         .map(|_| ())
-        .map_err(|e| at(path, e.error))
+        .map_err(|e| io_failure(e.error))
 }
 fn key(digest: [u8; 32]) -> String {
     format!("{:x}", sha2::digest::Output::<Sha256>::from(digest))
@@ -462,11 +600,11 @@ fn copy_tree_with(
         on_done,
         || (),
         |_, (src, dst)| {
-            let meta = fs::symlink_metadata(src).map_err(|e| at(src, e))?;
+            let meta = fs::symlink_metadata(src).map_err(io_failure)?;
             if !plain_file(&meta) || !meta.is_file() {
-                return Err(setup_error(src));
+                return Err(setup_error());
             }
-            preparer::clone_or_copy(src, dst).map_err(|e| at(dst, e))
+            preparer::clone_or_copy(src, dst).map_err(io_failure)
         },
     )?;
     Ok(copied)
@@ -481,32 +619,32 @@ fn lay_out(
     copied: &mut Copied,
 ) -> Result<(), String> {
     if depth > 64 {
-        return Err(setup_error(source));
+        return Err(setup_error());
     }
     if let Some(stop) = stop {
         stop.check()?;
     }
     require_dir(source)?;
-    fs::create_dir(dest).map_err(|e| at(dest, e))?;
+    fs::create_dir(dest).map_err(io_failure)?;
     copied.dirs.push(dest.to_owned());
-    for entry in fs::read_dir(source).map_err(|e| at(source, e))? {
-        let entry = entry.map_err(|e| at(source, e))?;
+    for entry in fs::read_dir(source).map_err(io_failure)? {
+        let entry = entry.map_err(io_failure)?;
         let name = entry.file_name();
         if skip_accelerator && generated_cache(&name) {
             continue;
         }
         let src = entry.path();
         let dst = dest.join(name);
-        let meta = fs::symlink_metadata(&src).map_err(|e| at(&src, e))?;
+        let meta = fs::symlink_metadata(&src).map_err(io_failure)?;
         if !plain_file(&meta) {
-            return Err(setup_error(&src));
+            return Err(setup_error());
         }
         if meta.is_dir() {
             lay_out(&src, &dst, false, depth + 1, stop, copied)?;
         } else if meta.is_file() {
             copied.files.push((src, dst));
         } else {
-            return Err(setup_error(&src));
+            return Err(setup_error());
         }
     }
     Ok(())
@@ -526,23 +664,23 @@ fn flush_copied(
         stop,
         on_done,
         || (),
-        |_, (_, dst)| durable::flush_tree(dst).map_err(|e| at(dst, e)),
+        |_, (_, dst)| durable::flush_tree(dst).map_err(io_failure),
     )?;
     pool::run(
         &copied.dirs,
         workers,
         stop,
         || (),
-        |_, dir| durable::flush_directory(dir).map_err(|e| at(dir, e)),
+        |_, dir| durable::flush_directory(dir).map_err(io_failure),
     )
     .map(drop)
 }
 
-fn setup_error(path: &Path) -> String {
-    format!("{}: {}", path.display(), unsettled!())
+fn setup_error() -> String {
+    unsettled!()
 }
-fn at(path: &Path, error: io::Error) -> String {
-    format!("{}: {error}", path.display())
+fn io_failure(error: io::Error) -> String {
+    unsettled!(error.kind())
 }
 
 /// The optional data cache a seal packs, as a `launcher.log` step: its digest when written.
@@ -662,6 +800,35 @@ mod tests {
     }
 
     #[test]
+    fn sealing_replaces_a_damaged_snapshot_and_its_accelerator() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let source = nested_source(root);
+        let prepared = Resources::seal(root, &source, None, |dir| {
+            let data = dir.join(preparer::DATA_FILE);
+            fs::write(&data, b"old cache").unwrap();
+            digest_file(&data)
+        })
+        .unwrap();
+        let snapshot = prepared.path_at(root);
+        fs::write(snapshot.join("assets/deep/er/blob.bin"), b"damage").unwrap();
+        let repaired = Resources::seal(root, &source, None, |dir| {
+            let data = dir.join(preparer::DATA_FILE);
+            assert!(!data.exists());
+            fs::write(&data, b"rebuilt cache").unwrap();
+            digest_file(&data)
+        })
+        .unwrap();
+        assert_eq!(repaired.primary, prepared.primary);
+        assert_eq!(
+            artifact::tree(&snapshot, true).unwrap(),
+            Some(prepared.primary)
+        );
+        assert_ne!(repaired.accelerator, prepared.accelerator);
+        assert_eq!(Resources::current(root).unwrap(), Some(repaired));
+    }
+
+    #[test]
     fn a_receipt_cannot_select_stale_or_server_preparation() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
@@ -753,8 +920,9 @@ mod tests {
                 let path = source.join("assets/empty.txt");
                 fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
             }
-            let prepared =
-                Resources::seal_with(root, &source, workers, None, |_| Ok(None)).unwrap();
+            let prepared = Resources::seal_with(root, &source, workers, None, true, |_| Ok(None))
+                .unwrap()
+                .resources;
             let snapshot = prepared.path_at(root);
             assert_eq!(
                 artifact::tree(&snapshot, true).unwrap(),
@@ -785,7 +953,7 @@ mod tests {
         let stop = Cancellation::default();
         stop.stop();
         for workers in [1, 2] {
-            let error = Resources::seal_with(root, &source, workers, Some(&stop), |_| {
+            let error = Resources::seal_with(root, &source, workers, Some(&stop), true, |_| {
                 panic!("sealed after a stop")
             })
             .unwrap_err();
@@ -813,11 +981,11 @@ mod tests {
             let error = copy_tree_with(&source, &root.join("copy"), true, 0, workers, None, None)
                 .err()
                 .unwrap();
-            assert_eq!(error, setup_error(&link));
+            assert_eq!(error, setup_error());
             fs::remove_dir_all(root.join("copy")).unwrap();
             let error =
-                Resources::seal_with(root, &source, workers, None, |_| Ok(None)).unwrap_err();
-            assert_eq!(error, at(&link, io::ErrorKind::InvalidData.into()));
+                Resources::seal_with(root, &source, workers, None, true, |_| Ok(None)).unwrap_err();
+            assert!(error.contains("invalid data"), "{error}");
             assert!(!parent(root).exists());
         }
     }
@@ -841,5 +1009,96 @@ mod tests {
         assert_eq!(artifact::tree(&snapshot, true).unwrap(), Some(primary));
         let again = Resources::seal(root, &source, None, |_| panic!("sealed again")).unwrap();
         assert_eq!(again, sealed);
+    }
+
+    #[test]
+    fn play_receipt_miss_seals_new_snapshot_but_never_repairs_an_existing_one() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let source = nested_source(root);
+        let sealed = Resources::seal_with(root, &source, 1, None, false, |_| Ok(None)).unwrap();
+        assert!(sealed.proven_by_seal);
+        assert_eq!(
+            Resources::current(root).unwrap().as_ref(),
+            Some(&sealed.resources)
+        );
+        let snapshot = sealed.resources.path_at(root);
+        let blob = snapshot.join("assets/deep/er/blob.bin");
+        Resources::invalidate(root).unwrap();
+        fs::write(&blob, b"damaged on disk").unwrap();
+        let reused = Resources::seal_with(root, &source, 1, None, false, |_| {
+            panic!("Play receipt miss must not seal over an existing snapshot")
+        })
+        .unwrap();
+        assert!(!reused.proven_by_seal);
+        assert_eq!(reused.resources, sealed.resources);
+        assert_eq!(fs::read(&blob).unwrap(), b"damaged on disk");
+        assert_eq!(Resources::current(root).unwrap(), None);
+        let repaired = Resources::seal_with(root, &source, 1, None, true, |_| Ok(None)).unwrap();
+        assert!(repaired.proven_by_seal);
+        assert_eq!(
+            artifact::tree(&snapshot, true).unwrap(),
+            Some(sealed.resources.primary)
+        );
+        assert_eq!(
+            Resources::current(root).unwrap().as_ref(),
+            Some(&repaired.resources)
+        );
+    }
+
+    #[test]
+    fn publish_snapshot_restores_previous_on_failure_and_removes_retired_sibling_on_success() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let local = root.join(".local");
+        let snapshot = parent(root).join("snapshot-a");
+        let staged = local.join(".prepared-stage");
+        fs::create_dir_all(snapshot.join("resources")).unwrap();
+        fs::create_dir_all(staged.join("resources")).unwrap();
+        fs::write(snapshot.join("resources/blob.bin"), b"original snapshot").unwrap();
+        fs::write(snapshot.join("data-file.json"), b"old evidence").unwrap();
+        fs::write(staged.join("resources/blob.bin"), b"replacement snapshot").unwrap();
+
+        let damaged_siblings = || {
+            fs::read_dir(&local)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|name| name.starts_with(".prepared-damaged-"))
+                .collect::<Vec<_>>()
+        };
+
+        let err = publish_snapshot(root, &staged, &snapshot, true, |_, _| {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        })
+        .expect_err("failing publish must return an error");
+        assert!(!err.is_empty());
+        assert_eq!(
+            fs::read(snapshot.join("resources/blob.bin")).unwrap(),
+            b"original snapshot"
+        );
+        assert_eq!(
+            fs::read(snapshot.join("data-file.json")).unwrap(),
+            b"old evidence"
+        );
+        assert!(
+            damaged_siblings().is_empty(),
+            "retired sibling must be restored, not left behind"
+        );
+        assert_eq!(
+            fs::read(staged.join("resources/blob.bin")).unwrap(),
+            b"replacement snapshot"
+        );
+
+        publish_snapshot(root, &staged, &snapshot, true, durable::move_new_directory).unwrap();
+        assert_eq!(
+            fs::read(snapshot.join("resources/blob.bin")).unwrap(),
+            b"replacement snapshot"
+        );
+        assert!(!snapshot.join("data-file.json").exists());
+        assert!(!staged.exists());
+        assert!(
+            damaged_siblings().is_empty(),
+            "retired sibling must be removed after publish succeeds"
+        );
     }
 }

@@ -208,17 +208,14 @@ struct Launcher {
     instance_install: Option<String>,
     /// One for an instance waiting for the install running now to end.
     install_next: Option<Release>,
-    /// The install bar's previous and current fraction, so it moves rather than jumps.
-    bar: (f32, f32),
     releases: Load<Vec<Release>>,
     installed: Vec<String>,
     known_nightly: Option<String>,
-    installing: Option<(String, f32)>,
+    installing: Option<(String, backend::InstallPhase)>,
     /// The confirmed builds whose removal is in progress.
     removing: Vec<String>,
     storage_builds: storage_builds::View,
     storage_report: Option<storage::Report>,
-    storage_pending: bool,
     /// A Clear the player still has to confirm: `Some(None)` is Clear all.
     storage_confirm: Option<Option<storage::Category>>,
     storage_error: Option<String>,
@@ -463,10 +460,6 @@ fn main() {
             std::process::exit(status);
         }
     }
-    // After the child-process modes above, which are not launcher runs and would only add header
-    // lines; `data_dir()` is settled by now (it never fails: a location that does not open
-    // stands in as the default folders).
-    sunrise_launcher::launcher_log::init(&sunrise_launcher::backend::data_dir().join("logs"));
     startup::run();
 }
 

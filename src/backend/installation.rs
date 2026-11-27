@@ -190,7 +190,7 @@ pub(crate) fn install_as(
     requested_architecture: Option<GameArchitecture>,
     release_facts: Option<(&[u8], &str)>,
     intent: InstallIntent,
-    progress: impl Fn(f32),
+    progress: impl Fn(InstallPhase),
 ) -> Result<Option<ReceiptFailure>, String> {
     install_as_cancellable(
         release,
@@ -213,7 +213,7 @@ pub(crate) fn install_as_cancellable(
     requested_architecture: Option<GameArchitecture>,
     release_facts: Option<(&[u8], &str)>,
     intent: InstallIntent,
-    transfer: Transfer<'_, impl Fn(f32)>,
+    transfer: Transfer<'_, impl Fn(InstallPhase)>,
 ) -> Result<Option<ReceiptFailure>, String> {
     let Transfer { stop, progress } = transfer;
     let (url, size) = release
@@ -225,19 +225,26 @@ pub(crate) fn install_as_cancellable(
         tag,
         intent,
         stop,
-        &progress,
         |target| Artifact::matches_archive(target, tag, sha256),
         |stage| {
             let archive = stage.join("download");
+            let reported_unknown_length = std::cell::Cell::new(false);
             logged(format!("Downloading {tag} ({size} bytes)"), || {
-                download_cancellable(url, *size, sha256, &archive, stop, &progress)
+                download_cancellable(url, *size, sha256, &archive, stop, &|done, total| {
+                    if total > 0 {
+                        progress(InstallPhase::Downloading(
+                            (done as f32 / total as f32).min(1.0),
+                        ));
+                    } else if !reported_unknown_length.replace(true) {
+                        progress(InstallPhase::DownloadingUnknownLength);
+                    }
+                })
             })?;
             let unpacked = stage.join("unpacked");
-            crate::launcher_log::play_detail(crate::i18n::tr("Unpacking the build"));
+            progress(InstallPhase::Unpacking);
             logged(format!("Unpacking {tag}"), || {
                 unpack(&archive, url, &unpacked, stop)
             })?;
-            progress(0.97);
             // The archives usually hold one top folder; install its contents.
             let entries: Vec<_> = fs::read_dir(&unpacked)
                 .and_then(|entries| entries.collect::<std::io::Result<_>>())
@@ -249,6 +256,7 @@ pub(crate) fn install_as_cancellable(
             let architecture = requested_architecture
                 .zip(architecture_for_asset(url))
                 .map(|(requested, binary)| InstalledGameArchitecture { requested, binary });
+            progress(InstallPhase::Finishing);
             finish_image(&top, architecture, release_facts)?;
             Artifact::record_archive(&top, tag, sha256)?;
             Ok(top)
@@ -290,7 +298,6 @@ fn install_image(
     tag: &str,
     intent: InstallIntent,
     stop: Option<&crate::native_mods::Cancellation>,
-    progress: &impl Fn(f32),
     matches: impl Fn(&Path) -> bool,
     stage_tree: impl FnOnce(&Path) -> Result<PathBuf, String>,
 ) -> Result<Option<ReceiptFailure>, String> {
@@ -301,10 +308,7 @@ fn install_image(
     let target = version_dir(tag);
     if intent == InstallIntent::Exact {
         match fs::symlink_metadata(&target) {
-            Ok(_) if matches(&target) => {
-                progress(1.0);
-                return Ok(None);
-            }
+            Ok(_) if matches(&target) => return Ok(None),
             Ok(_) => return Err(existing_build(tag)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.to_string()),
@@ -320,7 +324,6 @@ fn install_image(
         stop.check()?;
     }
     // Its own step, so a failure here is logged by name with its error (#607).
-    crate::launcher_log::play_detail(crate::i18n::tr("Putting the build in place"));
     let publishing = crate::launcher_log::step(format!("Putting {tag} in place"));
     let published = (|| -> Result<(Option<ReceiptFailure>, &'static str), String> {
         intent.download().mark(&top)?;
@@ -386,7 +389,6 @@ fn install_image(
         Err(error) => publishing.failed(error),
     }
     let (warning, _) = published?;
-    progress(1.0);
     Ok(warning)
 }
 

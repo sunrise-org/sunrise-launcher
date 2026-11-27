@@ -60,9 +60,9 @@ impl Pinned {
         // The player confirmed this source's unreviewed code when it was added.
         backend::allow_native_files([index::sha256(&archive)]).unwrap();
         mod_list::set_enabled(home, ID, true).unwrap();
-        let active = Profile::open(home, None)
+        let (active, _) = Profile::open(home, None)
             .unwrap()
-            .refresh(
+            .refresh_for_play(
                 fixture.instance.native_profile,
                 &native_mods::Cancellation::default(),
                 |_| {},

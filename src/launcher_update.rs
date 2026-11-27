@@ -319,7 +319,7 @@ impl Launcher {
                     )
                 )
                 || self.settings_save_error.is_some()
-                || self.storage_pending
+                || self.ui.settings.storage_busy()
                 || self.finishing_game > 0
                 || !self.auth_busy.is_empty()
                 || (self.sign_in.is_some()

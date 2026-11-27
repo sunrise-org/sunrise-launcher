@@ -12,8 +12,8 @@ use sunrise_launcher::browser::sunrise::InstallProgress;
 /// What the launcher knows that Play depends on.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Facts {
-    /// A game build downloading, and how far it is (0 to 1).
-    pub installing: Option<f32>,
+    /// The current game build install phase.
+    pub installing: Option<backend::InstallPhase>,
     pub preparing: bool,
     /// Native mods are being built.
     pub building: bool,
@@ -56,7 +56,7 @@ pub(crate) struct Facts {
 /// Play itself: what it says, in the order the states win.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Main {
-    Installing(f32),
+    Installing(backend::InstallPhase),
     Preparing,
     Building,
     Starting,
@@ -337,11 +337,7 @@ impl Facts {
 impl Main {
     pub(crate) fn label(self) -> SharedString {
         match self {
-            Main::Installing(progress) => trf(
-                "Installing · {percent}%",
-                &[("percent", &format!("{:.0}", 100. * progress))],
-            )
-            .into(),
+            Main::Installing(phase) => crate::mods_page::install::stage_label(phase.into()).into(),
             Main::Preparing => tr("Preparing…").into(),
             Main::Building => tr("Building mods…").into(),
             Main::Starting => tr("Starting…").into(),

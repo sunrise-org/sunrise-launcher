@@ -192,7 +192,7 @@ enum InstalledReadError {
 type InstalledRead = Result<Option<(InstalledRows, Option<String>)>, InstalledReadError>;
 
 impl InstalledRows {
-    fn read(home: &Path) -> InstalledRead {
+    fn read(home: &Path, profile: native_mods::Profile, base: Option<&str>) -> InstalledRead {
         use sunrise_launcher::managed_play::{try_display_active, DisplayActiveError};
 
         // Resolve the hard game journal before the advisory or the visible rows.
@@ -249,7 +249,7 @@ impl InstalledRows {
             })
             .map(|hold| hold.id().to_owned())
             .collect();
-        let unbuilt = native_status::pending(home, active.as_ref())
+        let unbuilt = native_status::pending_for(home, active.as_ref(), profile, base)
             .into_iter()
             .collect();
         Ok(Some((
@@ -857,6 +857,25 @@ impl Launcher {
         self.choose_view(Page::PackFind);
     }
 
+    fn mods_snapshot_key(
+        &mut self,
+        home: &Path,
+        now: std::time::Instant,
+    ) -> (String, native_mods::Profile, Option<String>) {
+        let profile = self
+            .selected_instance()
+            .map_or_else(native_mods::Profile::default, |i| i.native_profile);
+        let base = self
+            .selected_instance()
+            .and_then(|i| self.version_of(i).cloned());
+        let key = format!(
+            "{}\n{}\n{base:?}",
+            self.ui.mods.fingerprints.read(home, None, now),
+            profile.name(),
+        );
+        (key, profile, base)
+    }
+
     /// The message pump's look at the mods folder while a Mods page is open: once the kept
     /// fingerprint is due its full read, read it, so a mod rewritten where it lies shows without
     /// waiting for input. True when the page has something new to read; an unchanged folder asks
@@ -870,7 +889,7 @@ impl Launcher {
             return false;
         }
         let home = self.mods_home();
-        let key = self.ui.mods.fingerprints.read(&home, None, now);
+        let (key, _, _) = self.mods_snapshot_key(&home, now);
         self.ui
             .mods
             .snapshot
@@ -1221,11 +1240,7 @@ impl Launcher {
         self.mods
             .follow_home(self.selected_instance().map(|i| i.home.clone()));
         // Asked on every frame of the Mods pages: read again only when something moved.
-        let key = self
-            .ui
-            .mods
-            .fingerprints
-            .read(&home, None, std::time::Instant::now());
+        let (key, profile, base) = self.mods_snapshot_key(&home, std::time::Instant::now());
         let moved = self
             .ui
             .mods
@@ -1252,10 +1267,10 @@ impl Launcher {
                 .filter(|s| s.home == home)
                 .map(|s| (s.rows, s.backup_notice))
                 .unwrap_or_default();
-            let (tx, worker_home, worker_key) =
-                (self.ui.mods.tx.clone(), home.clone(), key.clone());
+            let (tx, worker_home, worker_key, worker_base) =
+                (self.ui.mods.tx.clone(), home.clone(), key.clone(), base);
             std::thread::spawn(move || {
-                let result = InstalledRows::read(&worker_home);
+                let result = InstalledRows::read(&worker_home, profile, worker_base.as_deref());
                 if matches!(result, Ok(None)) {
                     // Delay just the busy display retry, without holding any profile/cache lock.
                     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -1934,7 +1949,11 @@ mod installed_refresh_tests {
             error: None,
             backup_notice: None,
         };
-        assert!(!snapshot.finish(InstalledRows::read(&home)));
+        assert!(!snapshot.finish(InstalledRows::read(
+            &home,
+            native_mods::Profile::default(),
+            None,
+        )));
         assert!(!snapshot.ready());
         assert!(matches!(
             InstalledRefresh::of(Some(&snapshot)),
@@ -1946,7 +1965,11 @@ mod installed_refresh_tests {
             "the same fingerprint must be reread"
         );
         drop(publication);
-        assert!(snapshot.finish(InstalledRows::read(&home)));
+        assert!(snapshot.finish(InstalledRows::read(
+            &home,
+            native_mods::Profile::default(),
+            None,
+        )));
         assert!(snapshot.ready());
     }
 
@@ -1976,7 +1999,11 @@ mod installed_refresh_tests {
             InstalledRefresh::of(Some(&snapshot)),
             InstalledRefresh::Reading
         ));
-        snapshot.finish(InstalledRows::read(home.path()));
+        snapshot.finish(InstalledRows::read(
+            home.path(),
+            native_mods::Profile::default(),
+            None,
+        ));
         assert!(snapshot.enabled.contains("ruby"));
         assert!(matches!(
             InstalledRefresh::of(Some(&snapshot)),
@@ -1984,7 +2011,11 @@ mod installed_refresh_tests {
         ));
         assert_eq!(std::fs::read(&journal).unwrap(), b"not a journal");
         std::fs::remove_file(journal).unwrap();
-        snapshot.finish(InstalledRows::read(home.path()));
+        snapshot.finish(InstalledRows::read(
+            home.path(),
+            native_mods::Profile::default(),
+            None,
+        ));
         assert!(matches!(
             InstalledRefresh::of(Some(&snapshot)),
             InstalledRefresh::Ready

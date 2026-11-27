@@ -1,7 +1,7 @@
 //! First Play freezes the candidate and its proof before downloading or preparing anything.
 use super::{
-    at, inputs, scan_packages, unsettled, Active, Artifact, Generation, HeldReason,
-    ReferencePublication, Resources,
+    at, inputs, resources::PreparedResources, scan_packages, unsettled, Active, Artifact,
+    Generation, HeldReason, ReferencePublication, Resources,
 };
 use crate::{
     backend::{
@@ -394,33 +394,51 @@ impl Profile {
 
     /// Bring an already committed profile forward on the same base. The game may have
     /// changed packages and the enable list; failed fits never change the launcher pointer.
-    pub(crate) fn refresh(
+    pub(crate) fn refresh_for_play(
         &mut self,
         mode: native_mods::Profile,
         cancellation: &native_mods::Cancellation,
         progress: impl Fn(native_mods::Step),
         log: Option<&dyn Fn(std::sync::Arc<str>)>,
         replacement: Option<Resources>,
-    ) -> Result<Option<Active>, native_mods::Failed> {
+    ) -> Result<Option<(Active, bool)>, RefreshError> {
         let home = self.home().to_owned();
-        let (old, epoch, stage) = {
+        let (old, epoch, stage, verified_resources) = {
             let _manifest = game_lock(&home)?;
             crate::browser::installed::recover_game_install(&home).map_err(String::from)?;
             let Some(old) = self.active()? else {
                 return Ok(None);
             };
-            old.verify_artifacts()?;
+            // The prepared files are hashed once: before native compilation when refresh
+            // would compile, otherwise at `verified_handoff`. A damaged snapshot is never
+            // copied forward into a new digest.
+            old.verify_binaries()?;
             let epoch = inputs(&home)?;
             super::inputs::check_browser_rows(&home, &scan_packages(&home)?)?;
             if old.inputs == epoch && replacement.is_none() {
                 super::verify_included(old.base(), old.executable(), &home)?;
-                return Ok(Some(old));
+                return Ok(Some((old, false)));
             }
+            let verified_resources = if replacement.is_none()
+                && needs_native_build(old.base(), old.executable(), &home)
+            {
+                old.resources
+                    .verify(old.base())
+                    .map_err(RefreshError::Snapshot)?;
+                true
+            } else {
+                false
+            };
             let _references = ReferencePublication::begin(&home)?;
             let tags = [old.base().to_owned(), old.executable().to_owned()]
                 .into_iter()
                 .collect();
-            (old, epoch, self.0.reserve(Intent::Install, tags)?)
+            (
+                old,
+                epoch,
+                self.0.reserve(Intent::Install, tags)?,
+                verified_resources,
+            )
         };
         let image = image_for_stage(
             old.base(),
@@ -445,13 +463,8 @@ impl Profile {
                 resources: replacement,
             },
         )?;
-        Ok(Some(publish_generation(
-            stage,
-            active,
-            &home,
-            epoch,
-            cancellation,
-        )?))
+        let published = publish_generation(stage, active, &home, epoch, cancellation)?;
+        Ok(Some((published, verified_resources)))
     }
 
     /// Recheck the actual committed generation immediately before creating its child.
@@ -462,29 +475,74 @@ impl Profile {
         cancellation: &native_mods::Cancellation,
         spawn: impl FnOnce(ProfileHandoff<'_>) -> Result<T, E>,
     ) -> Result<T, E> {
+        self.verified_handoff_for(active, None, cancellation, spawn)
+    }
+
+    pub(super) fn verified_handoff_for<T, E: From<String>>(
+        &self,
+        active: &Active,
+        proof: Option<VerifiedSnapshot>,
+        cancellation: &native_mods::Cancellation,
+        spawn: impl FnOnce(ProfileHandoff<'_>) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let _manifest = self
+            .verify_handoff(active, proof, cancellation)
+            .map_err(|error| E::from(String::from(error)))?;
+        spawn(self.handoff())
+    }
+
+    pub(super) fn verify_handoff(
+        &self,
+        active: &Active,
+        proof: Option<VerifiedSnapshot>,
+        cancellation: &native_mods::Cancellation,
+    ) -> Result<HomeLockGuard, super::StartError> {
         let home = self.home();
         let checking = crate::launcher_log::step("Verifying the game and its prepared files");
-        let _manifest = game_lock(home)?;
+        let manifest = game_lock(home)?;
         checking.note("the profile's lock is held");
-        let verified = (|| {
+        let verified: Result<(), super::StartError> = (|| {
             crate::browser::installed::recover_game_install(home).map_err(String::from)?;
             if self.active()?.as_ref() != Some(active) || inputs(home)? != active.inputs {
-                return Err(unsettled!());
+                return Err(unsettled!().into());
             }
-            active.verify_artifacts()?;
+            // First Play (or a fresh prepare seal) proved this exact snapshot, and the proof
+            // still owns the game-manifest lock from that check through this handoff.
+            match &proof {
+                Some(proof) if &proof.active == active && proof.home.as_path() == home => {
+                    active.verify_binaries()?;
+                }
+                Some(_) => return Err(unsettled!().into()),
+                None => {
+                    active.verify_binaries()?;
+                    active
+                        .resources
+                        .verify(active.base())
+                        .map_err(super::StartError::Snapshot)?;
+                }
+            }
             active
                 .resources
                 .check_play_output(active.base())
                 .map_err(|issue| issue.message(|| unsettled!()))?;
-            super::verify_included(active.base(), active.executable(), home)
+            super::verify_included(active.base(), active.executable(), home)?;
+            Ok(())
         })();
+        // Drop `proof` while `manifest` holds the re-entrant lock so `manifest` is the sole
+        // remaining guard on this thread.
+        drop(proof);
         match &verified {
             Ok(()) => checking.done(""),
-            Err(why) => checking.failed(why),
+            Err(why) => checking.failed(match why {
+                super::StartError::Snapshot(detail)
+                | super::StartError::UnknownSpawn(detail)
+                | super::StartError::Other(detail) => detail.as_str(),
+                _ => "verification failed",
+            }),
         }
         verified?;
         cancellation.check()?;
-        spawn(self.handoff())
+        Ok(manifest)
     }
 
     pub(super) fn release_failed_first_play(&self) -> Result<(), String> {
@@ -576,6 +634,31 @@ pub struct FirstAttempt<'a> {
     stage: Staging<'a>,
 }
 
+/// A committed generation and the manifest lock under which its snapshot was either
+/// verified or freshly sealed in `prepare`. Never persisted: a later Play must verify
+/// the saved resources again.
+pub(super) struct VerifiedSnapshot {
+    pub(super) active: Active,
+    home: PathBuf,
+    _manifest: HomeLockGuard,
+}
+
+impl VerifiedSnapshot {
+    pub(super) fn new(active: Active, home: PathBuf, manifest: HomeLockGuard) -> Self {
+        Self {
+            active,
+            home,
+            _manifest: manifest,
+        }
+    }
+}
+
+impl std::fmt::Debug for VerifiedSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VerifiedSnapshot").finish_non_exhaustive()
+    }
+}
+
 impl FirstAttempt<'_> {
     pub fn base(&self) -> &str {
         &self.bound.base
@@ -616,8 +699,8 @@ impl FirstAttempt<'_> {
         &self,
         log: &dyn Fn(String),
         diagnostics: &dyn Fn(String),
-    ) -> Result<(), String> {
-        Resources::for_play_with(self.base(), self.handoff(), log, diagnostics).map(drop)
+    ) -> Result<PreparedResources, String> {
+        Resources::for_play_with(self.base(), self.handoff(), log, diagnostics)
     }
 
     pub fn exact_image(
@@ -651,8 +734,29 @@ impl FirstAttempt<'_> {
         // publication fence while waiting on a preparer child for this one version.
         self.bound.verify_image()?;
         let resources = Resources::capture(self.base(), &self.stage)?;
-        let _manifest = game_lock(&self.home)?;
-        crate::browser::installed::recover_game_install(&self.home)?;
+        Ok(self
+            .commit_prepared(image, PreparedResources::reused(resources), cancellation)
+            .map_err(String::from)?
+            .active)
+    }
+
+    pub(super) fn commit_prepared(
+        self,
+        image: &str,
+        prepared: PreparedResources,
+        cancellation: &native_mods::Cancellation,
+    ) -> Result<VerifiedSnapshot, super::StartError> {
+        let manifest = game_lock(&self.home)?;
+        crate::browser::installed::recover_game_install(&self.home)
+            .map_err(super::StartError::Journal)?;
+        // Refuse a damaged reused tree before it can bind an unbound profile.
+        // A snapshot just sealed inside `prepare` is already proven by its seal.
+        if !prepared.proven_by_seal {
+            prepared
+                .resources
+                .verify(self.base())
+                .map_err(super::StartError::Snapshot)?;
+        }
         let _references = ReferencePublication::begin(&self.home)?;
         self.bound.verify_image()?;
         let active = Active::capture(
@@ -662,18 +766,19 @@ impl FirstAttempt<'_> {
             self.bound.inputs,
             Generation::First {
                 profile: self.bound.profile,
-                resources,
+                resources: prepared.resources,
                 variant: self.variant().map(Box::new),
             },
         )?;
         super::inputs::check_browser_rows(&self.home, &scan_packages(&self.home)?)?;
-        publish_generation(
+        let active = publish_generation(
             self.stage,
             active,
             &self.home,
             self.bound.inputs,
             cancellation,
-        )
+        )?;
+        Ok(VerifiedSnapshot::new(active, self.home, manifest))
     }
 }
 
@@ -687,13 +792,38 @@ fn publish_generation(
 ) -> Result<Active, String> {
     let pointer = serde_json::to_vec(&active).map_err(|e| e.to_string())?;
     stage.seal(pointer, &[])?.publish(|| {
-        active.verify_artifacts()?;
+        // First Play checks resources before publication; refresh keeps the saved digest
+        // and checks resources at the handoff.
+        active.verify_binaries()?;
         if inputs(home)? != epoch {
             return Err(unsettled!());
         }
         cancellation.check()
     })?;
     Ok(active)
+}
+
+#[derive(Debug)]
+pub(crate) enum RefreshError {
+    Native(native_mods::Failed),
+    Snapshot(String),
+}
+
+impl From<String> for RefreshError {
+    fn from(error: String) -> Self {
+        Self::Native(error.into())
+    }
+}
+
+impl From<native_mods::Failed> for RefreshError {
+    fn from(error: native_mods::Failed) -> Self {
+        Self::Native(error)
+    }
+}
+
+fn needs_native_build(base: &str, preferred: &str, home: &Path) -> bool {
+    super::verify_included(base, preferred, home).is_err()
+        && !crate::native_status::enabled(home).is_empty()
 }
 
 #[allow(clippy::too_many_arguments)]

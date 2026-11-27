@@ -1855,25 +1855,29 @@ fn secrets_in(store: &dyn SecretStore, uuid: &str) -> Option<Secrets> {
         .and_then(|s| serde_json::from_str(&s).ok())
 }
 
+fn register_accounts(accounts: &Accounts) {
+    for account in &accounts.accounts {
+        launcher_log::hide(&account.name);
+    }
+}
+
 impl Accounts {
     pub(crate) fn path() -> PathBuf {
         crate::backend::data_dir().join("accounts.json")
     }
     pub fn load() -> Self {
-        Self::load_from(&Self::path())
+        let accounts = Self::load_from(&Self::path());
+        register_accounts(&accounts);
+        accounts
     }
     pub fn save(&self) -> Result<(), String> {
         self.save_to(&Self::path())
     }
     pub(crate) fn load_from(path: &Path) -> Self {
-        let accounts: Self = std::fs::read_to_string(path)
+        std::fs::read_to_string(path)
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_default();
-        for account in &accounts.accounts {
-            launcher_log::hide(&account.name);
-        }
-        accounts
+            .unwrap_or_default()
     }
     pub(crate) fn save_to(&self, path: &Path) -> Result<(), String> {
         if let Some(dir) = path.parent() {
@@ -1894,6 +1898,7 @@ impl Accounts {
     /// accounts' lock: an account signed in or out while the services were asked stays so, where
     /// saving this copy, loaded before, would undo it.
     pub fn save_renewed(&self) -> Result<(), String> {
+        register_accounts(self);
         self.save_renewed_to(store(), &Self::path())
     }
     pub(crate) fn save_renewed_to(
@@ -2008,7 +2013,9 @@ impl Accounts {
     /// Switches who plays to `uuid`, on disk: the list as it is saved now with that account
     /// selected, saved again. The window keeps what this returns.
     pub fn switch(uuid: &str) -> Result<Self, String> {
-        Self::switch_in(&Self::path(), uuid)
+        let accounts = Self::switch_in(&Self::path(), uuid)?;
+        register_accounts(&accounts);
+        Ok(accounts)
     }
     pub(crate) fn switch_in(path: &Path, uuid: &str) -> Result<Self, String> {
         let mut accounts = Self::load_from(path);
@@ -2038,7 +2045,9 @@ impl Accounts {
 
     /// Reorders `uuid` by `delta` on disk and returns the saved list.
     pub fn reorder(uuid: &str, delta: isize) -> Result<Self, String> {
-        Self::reorder_in(&Self::path(), uuid, delta)
+        let accounts = Self::reorder_in(&Self::path(), uuid, delta)?;
+        register_accounts(&accounts);
+        Ok(accounts)
     }
     pub(crate) fn reorder_in(path: &Path, uuid: &str, delta: isize) -> Result<Self, String> {
         let mut accounts = Self::load_from(path);

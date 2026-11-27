@@ -80,10 +80,30 @@ pub fn unbuilt(enabled: &[Mod], built: Option<&[Mod]>) -> Vec<String> {
         .collect()
 }
 
-/// Enabled native packages not in the profile's active executable, or waiting for first Play.
+/// Enabled native packages that Play would have to compile: not in the profile's active
+/// executable and not already satisfied by a proved, admitted installed build (`reuse::lookup`).
 pub fn pending(home: &Path, active: Option<&crate::managed_play::Active>) -> Vec<String> {
+    pending_for(home, active, native_mods::Profile::default(), None)
+}
+
+/// Like [`pending`], using the profile's chosen native build `mode` and an optional fallback
+/// `base` when the profile has no active pointer yet.
+pub fn pending_for(
+    home: &Path,
+    active: Option<&crate::managed_play::Active>,
+    mode: native_mods::Profile,
+    base: Option<&str>,
+) -> Vec<String> {
     let compiled = active.and_then(|active| built(active.executable()));
-    unbuilt(&enabled(home), compiled.as_deref())
+    let missing = unbuilt(&enabled(home), compiled.as_deref());
+    if missing.is_empty() {
+        return missing;
+    }
+    let base = active.map(crate::managed_play::Active::base).or(base);
+    if base.is_some_and(|base| native_mods::exact_client_reusable(base, home, mode)) {
+        return Vec::new();
+    }
+    missing
 }
 
 /// What a native build was made from, as the Mods page and the instance list show it.
@@ -475,6 +495,7 @@ pub fn fingerprint(home: &Path, version: Option<&str>) -> String {
         let time = meta.as_ref().and_then(|m| m.modified().ok());
         out += &format!("\n{} {:?} {time:?}", path.display(), meta.map(|m| m.len()));
     }
+    out += &installed_versions_stamp();
     out
 }
 
@@ -558,6 +579,34 @@ fn glance(home: &Path) -> String {
         let meta = fs::symlink_metadata(&path).ok();
         let time = meta.as_ref().and_then(|m| m.modified().ok());
         out += &format!("{:?} {time:?}\n", meta.map(|m| m.len()));
+    }
+    out += &installed_versions_stamp();
+    out
+}
+
+/// Installed versions and their reuse evidence so removing or sealing a kept build in Storage
+/// invalidates both Mods and Home snapshots immediately.
+fn installed_versions_stamp() -> String {
+    let mut entries: Vec<_> = fs::read_dir(backend::versions_dir())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            let dir = entry.path();
+            let installed = fs::symlink_metadata(dir.join(".installed"))
+                .ok()
+                .and_then(|meta| meta.modified().ok());
+            let evidence = fs::symlink_metadata(dir.join(".native-reuse.json"))
+                .ok()
+                .map(|meta| (meta.len(), meta.modified().ok()));
+            Some((name, installed, evidence))
+        })
+        .collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut out = String::new();
+    for (name, installed, evidence) in entries {
+        out += &format!("\n{name} {installed:?} {evidence:?}");
     }
     out
 }

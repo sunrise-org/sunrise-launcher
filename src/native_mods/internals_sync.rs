@@ -4,35 +4,53 @@ use crate::rust_toolchain::Toolchain;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
+/// Execution context for a one-line SDK command (`native-discover`, `native-lock`).
+/// When `workspace` is present, Cargo's home and temp directories are isolated to it.
+pub(super) struct Context<'a> {
+    pub(super) program: &'a Path,
+    pub(super) rust: &'a Toolchain,
+    pub(super) work: &'a Path,
+    pub(super) workspace: Option<&'a super::workspace::Workspace>,
+}
+
 /// Runs the tool for the mod in `folder` on `command` with `plan` plus the work folder, the toolchain and the mod.
 fn ask(folder: &Path, command: &str, plan: Value) -> Result<Value, String> {
     let rust = rust_toolchain::install(|_| {})?;
     let program = super::tool_for(folder)?;
-    run(
-        &program,
-        &rust,
-        &root(),
-        folder,
-        command,
-        plan,
-        &Cancellation::default(),
-    )
+    let work = root();
+    let isolated = if super::workspace::cargo_home_unproved() {
+        std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
+        Some(super::workspace::Workspace::new(&work).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+    let ctx = Context {
+        program: &program,
+        rust: &rust,
+        work: &work,
+        workspace: isolated.as_ref(),
+    };
+    run(&ctx, folder, command, plan, &Cancellation::default())
 }
 
-/// Runs `program` on `command` for the mod in `folder`, with `plan` plus `work` (the tool's own folder), the toolchain and the mod.
+/// Runs `ctx.program` on `command` for the mod in `folder`, with `plan` plus `work` (the tool's own folder), the toolchain and the mod.
 pub(super) fn run(
-    program: &Path,
-    rust: &Toolchain,
-    work: &Path,
+    ctx: &Context<'_>,
     folder: &Path,
     command: &str,
     mut plan: Value,
     cancellation: &Cancellation,
 ) -> Result<Value, String> {
-    plan["work"] = json!(work);
-    plan["toolchain"] = tool::toolchain(rust);
+    let mut cmd = tool::command(ctx.rust, ctx.program);
+    let mut tools = tool::toolchain(ctx.rust);
+    if let Some(workspace) = ctx.workspace {
+        workspace.isolate(&mut cmd).map_err(|e| e.to_string())?;
+        tools["cargo_home"] = json!(workspace.cargo_home());
+    }
+    plan["work"] = json!(ctx.work);
+    plan["toolchain"] = tools;
     plan["mods"] = json!(folder);
-    tool::ask(tool::command(rust, program), command, &plan, cancellation)
+    tool::ask(cmd, command, &plan, cancellation)
 }
 
 /// The internals the mod in `folder` names, as the pinned game's catalog lists them (the tool's JSON).

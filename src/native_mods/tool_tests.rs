@@ -428,7 +428,7 @@ fn leader_success_or_blamed_failure_is_not_a_compiler_handoff() {
         let unproved = compiler_handoff(terminal(), false).unwrap_err();
         assert!(unproved
             .error
-            .contains("couldn't prove all native build workers stopped"));
+            .contains("Part of the mod build may still be running"));
         assert!(unproved.blame.is_none());
         assert_eq!(compiler_handoff(terminal(), true).is_ok(), success);
     }

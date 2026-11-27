@@ -106,8 +106,9 @@ pub fn configured_roots() -> Result<Option<Roots>> {
     // A unit test never reaches the player's real folders: unless it points at a location file
     // of its own, its roots are this test process's, under the temporary folder.
     if cfg!(test) && !overridden("SUNRISE_LAUNCHER_LOCATION_FILE") {
-        let home =
-            std::env::temp_dir().join(format!("sunrise-launcher-test-{}", std::process::id()));
+        let temp = std::env::temp_dir();
+        let home = plain_drive(temp.canonicalize().unwrap_or(temp))
+            .join(format!("sunrise-launcher-test-{}", std::process::id()));
         return Ok(Some(Roots {
             launcher: home.join("launcher"),
             game: home.join("game"),
@@ -291,6 +292,16 @@ fn lock_file(path: &Path, exclusive: bool) -> Result<MigrationLease> {
             &[("path", &path.to_string_lossy()), ("error", &error.to_string())],
         )
     })?;
+    Ok(MigrationLease(file))
+}
+
+/// Acquire an exclusive blocking OS lock on `path` using the same no-follow lock file rules.
+pub(crate) fn lock_exclusive_blocking(path: &Path) -> Result<MigrationLease> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| problem(parent, e))?;
+    }
+    let file = open_lock_file(path)?;
+    file.lock().map_err(|error| problem(path, error))?;
     Ok(MigrationLease(file))
 }
 

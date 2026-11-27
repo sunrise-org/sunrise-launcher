@@ -568,11 +568,21 @@ impl Launcher {
             }
             _ => self.ui.page = page,
         }
+        self.finish_page_change(before);
+    }
+
+    pub(crate) fn finish_page_change(&mut self, before: Page) {
         if self.ui.page != before {
             if before == Page::Hosting {
                 self.servers.reset_public_lookup();
             }
             self.storage_builds.confirm = None;
+            self.storage_confirm = None;
+            if self.ui.page == Page::Settings
+                && self.ui.settings.section == settings::Section::Storage
+            {
+                self.refresh_storage(None, false);
+            }
             self.refresh_open_storage_builds();
         }
     }
@@ -1026,5 +1036,54 @@ mod tests {
         assert_eq!(state.page_transition(Page::Installed, t3, false), Some(t3));
         let t4 = t3 + std::time::Duration::from_millis(300);
         assert!(state.page_transition(Page::Discover, t4, false).is_none());
+    }
+
+    #[test]
+    fn leaving_storage_for_installed_mods_or_packs_cancels_counts_and_clears_confirmations() {
+        let mut mods = crate::mods::ModsState::default();
+        for to in [
+            crate::mods::Installed::ModNamed("JEI".into()),
+            crate::mods::Installed::PackNamed(
+                sunrise_launcher::packs::Kind::Shader,
+                "Meadow Shaders".into(),
+            ),
+        ] {
+            let destination = mods.enter(&to);
+            assert_ne!(destination, Page::Settings);
+            let mut settings = crate::settings::SettingsView::default();
+            let mut builds = crate::storage_builds::View::default();
+            let count = crate::glass_storage::Work::count_for_test();
+            let count_token = count.cancel_token();
+            settings.storage_work = Some(count);
+            let (generation, builds_cancel) = builds.start_count(false).unwrap();
+            builds.confirm = Some(crate::storage_builds::Confirm::One("26.3-0.1.0".into()));
+            let mut storage_confirm = Some(Some(sunrise_launcher::storage::Category::OtherCaches));
+
+            crate::glass_storage::stop_storage_counts(
+                &mut settings,
+                &mut builds,
+                &mut storage_confirm,
+            );
+            assert!(count_token.is_cancelled());
+            assert!(!settings.storage_busy());
+            assert!(builds_cancel.is_cancelled());
+            assert!(builds.confirm.is_none());
+            assert!(storage_confirm.is_none());
+            builds.accept_rows(generation, Vec::new());
+            assert!(!builds.has_rows());
+        }
+        // A Clear in flight survives leaving Storage while build counting still stops.
+        let mut settings = crate::settings::SettingsView::default();
+        let mut builds = crate::storage_builds::View::default();
+        let clearing = crate::glass_storage::Work::clear_for_test();
+        let clear_token = clearing.cancel_token();
+        settings.storage_work = Some(clearing);
+        let (_, builds_cancel) = builds.start_count(false).unwrap();
+        let mut storage_confirm = Some(None);
+        crate::glass_storage::stop_storage_counts(&mut settings, &mut builds, &mut storage_confirm);
+        assert!(!clear_token.is_cancelled());
+        assert!(settings.storage_busy());
+        assert!(builds_cancel.is_cancelled());
+        assert!(storage_confirm.is_none());
     }
 }

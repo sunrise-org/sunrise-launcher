@@ -1557,6 +1557,9 @@ impl Launcher {
 
 pub(crate) fn stage_label(step: InstallProgress) -> String {
     match step {
+        InstallProgress::CheckingBuild => tr("Checking the build…").into(),
+        InstallProgress::UnpackingBuild => tr("Unpacking the build").into(),
+        InstallProgress::FinishingBuild => tr("Putting the build in place").into(),
         InstallProgress::PreparingBuild => tr("Getting the build ready…").into(),
         InstallProgress::Checking => tr("Checking the mod set…").into(),
         InstallProgress::Waiting => tr("Waiting for another build to finish…").into(),
@@ -1564,9 +1567,10 @@ pub(crate) fn stage_label(step: InstallProgress) -> String {
             "Downloading {percent}%",
             &[("percent", &format!("{:.0}", f * 100.))],
         ),
-        InstallProgress::DownloadingBuild(f) => trf(
+        InstallProgress::DownloadingBuild(None) => tr("Downloading the build…").into(),
+        InstallProgress::DownloadingBuild(Some(f)) => trf(
             "Downloading the build {percent}%",
-            &[("percent", &format!("{:.0}", f * 100.))],
+            &[("percent", &format!("{:.0}", f.clamp(0., 1.) * 100.))],
         ),
         InstallProgress::Minecraft(step, files) => {
             use sunrise_launcher::backend::PrepareStep;
@@ -1610,9 +1614,8 @@ pub(crate) fn stage_label(step: InstallProgress) -> String {
 
 pub(crate) fn stage_fraction(step: InstallProgress) -> Option<f32> {
     match step {
-        InstallProgress::Downloading(f)
-        | InstallProgress::DownloadingBuild(f)
-        | InstallProgress::Rust(f) => Some(f),
+        InstallProgress::DownloadingBuild(f) => f.map(|f| f.clamp(0., 1.)),
+        InstallProgress::Downloading(f) | InstallProgress::Rust(f) => Some(f),
         InstallProgress::Minecraft(_, Some((done, total))) if total > 0 => {
             Some(done as f32 / total as f32)
         }
@@ -1691,6 +1694,35 @@ fn failure_line(error: &InstallError) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_build_transfer_has_determinate_fill() {
+        for stage in [
+            InstallProgress::CheckingBuild,
+            InstallProgress::UnpackingBuild,
+            InstallProgress::FinishingBuild,
+            InstallProgress::PreparingBuild,
+        ] {
+            assert_eq!(stage_fraction(stage), None, "{stage:?}");
+            assert!(!stage_label(stage).contains('%'));
+        }
+        assert_eq!(
+            stage_fraction(InstallProgress::DownloadingBuild(Some(0.25))),
+            Some(0.25)
+        );
+        assert_eq!(
+            stage_fraction(InstallProgress::DownloadingBuild(Some(-0.25))),
+            Some(0.)
+        );
+        assert_eq!(
+            stage_fraction(InstallProgress::DownloadingBuild(Some(1.25))),
+            Some(1.)
+        );
+        let unknown = sunrise_launcher::backend::InstallPhase::DownloadingUnknownLength.into();
+        assert_eq!(stage_label(unknown), "Downloading the build…");
+        assert_eq!(stage_fraction(unknown), None);
+        assert_ne!(InstallProgress::FinishingBuild, InstallProgress::Publishing);
+    }
 
     #[test]
     fn a_build_preparation_names_its_step_and_counts_mojangs_files() {

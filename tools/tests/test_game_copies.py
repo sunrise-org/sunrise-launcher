@@ -113,11 +113,6 @@ SAME_CODE = (
     ("crates/sunrise-mod-package/src/modpack.rs", "crates/smod/src/modpack.rs", (
         ('#[cfg(feature = "index-read")] impl PackMod', "impl PackMod"),
     )),
-    # The launcher always walks a mod folder, so its copy has no `folder` feature.
-    ("crates/sunrise-mod-source/src/package.rs", "crates/smod/src/package.rs", (
-        ('#[cfg(feature = "folder")]', ""),
-        ('#[cfg(all(test, feature = "folder"))]', "#[cfg(test)]"),
-    )),
     ("crates/sunrise-attestation/Cargo.toml", "crates/attestation/Cargo.toml", (
         ("[dependencies]", "publish = false\n[dependencies]"),
     )),
@@ -196,6 +191,10 @@ def code(text: str) -> str:
 
 # (the game's file, the launcher's copy, the functions copied whole): compared as code, whole-line comments aside.
 SAME_FUNCTIONS = (
+    # The launcher owns the Cargo selector, but still shares the source-file and binary rules.
+    ("crates/sunrise-mod-source/src/package.rs", "crates/smod/src/package.rs", (
+        "source_file", "binary_kind",
+    )),
     ("crates/sunrise-prepare/src/java.rs", "src/jdk.rs", (
         "command", "executable", "real_path", "without_verbatim", "path_homes", "tool_major", "jdk_parents",
         "installed_jdks", "find", "find_runtime", "find_tools", "home",

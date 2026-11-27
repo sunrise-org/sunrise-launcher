@@ -30,6 +30,41 @@ fn parse_storage_row(value: &str) -> Result<ClearStorage, String> {
             .ok_or_else(|| tr("Unknown").into())
     }
 }
+
+/// The `storage` report. Counting says on stderr when each row is done (unless `--json` is
+/// asked for), so a big cache shows progress while stdout still gets the one finished report;
+/// a Clear needs no count first.
+fn storage_report(
+    storage: &Storage,
+    row: Option<Category>,
+    all: bool,
+    as_json: bool,
+) -> Result<sunrise_launcher::storage::Report, sunrise_launcher::storage::Error> {
+    use std::io::{self, Write};
+    if as_json || row.is_some() || all {
+        return storage.report(row, all);
+    }
+    storage.report_counting(|so_far| {
+        let Some(done) = so_far.rows.last() else {
+            return;
+        };
+        let _ = writeln!(
+            io::stderr(),
+            "{}",
+            trf(
+                "Counted {category}: {size}",
+                &[
+                    ("category", done.category.label()),
+                    (
+                        "size",
+                        &sunrise_launcher::storage::format_bytes(done.remaining_bytes)
+                    ),
+                ]
+            )
+        );
+    })
+}
+
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -658,6 +693,10 @@ enum Cmd {
         /// the one `account select` picked: several games can play as several accounts at once
         #[arg(long, value_name = "WHO")]
         account: Option<String>,
+        /// If this play builds the profile's native mods, build the ones the registry did not
+        /// review too, such as files copied in by hand (asked again on every run)
+        #[arg(long)]
+        trust_native_code: bool,
     },
     /// Switch a profile to an exact installed and prepared game build
     Switch {
@@ -682,16 +721,15 @@ enum Cmd {
         accept_eula: bool,
     },
     /// Show disposable storage by category as JSON, or clear a category by hand with `--clear`.
-    /// Read-only reports never block builds; `--clear` requires builds to be idle.
+    /// Read-only reports never block builds; `--clear` requires builds to be idle. A report counts
+    /// each row once and prints when done, with its progress on stderr; `--clear` needs no count first.
     ///
-    /// Rust/Cargo/temp build-tool caches remain clearable. Game-accessible caches and installed-version
-    /// removal retain files while any launch path lacks enforceable lifetime exclusion; an empty
-    /// process scan is not authorization. Read-only reports stay available.
-    /// Private launch records and raw captures are collected together only after all participating owners
-    /// exit, under the exclusive permanent namespace gate. Published unit keys persist until exclusive
-    /// unit removal. Registry entry counts are logged; lock entries are not age-collected.
+    /// Clear checks only the requested caches and keeps files in use.
+    #[command(
+        after_help = "Close the game before clearing. Use `storage --clear mod-build-cache` to remove compiled parts kept between native mod builds. Sunrise builds them again when needed."
+    )]
     Storage {
-        /// Request cleanup of build-files, prebuilt-games, spare-game-builds, rust-compiler, other-caches or all rows; game-accessible caches refuse cleanup without enforceable lifetime exclusion
+        /// Clear only build-files, prebuilt-games, spare-game-builds, rust-compiler, mod-build-cache, other-caches or all rows
         #[arg(long, value_parser = parse_storage_row)]
         clear: Option<ClearStorage>,
     },
@@ -1086,6 +1124,13 @@ fn json(value: serde_json::Value) {
     println!("{}", serde_json::to_string_pretty(&value).unwrap());
 }
 
+/// Reads a profile's `logs/latest.log` for `share-log` without embedding its root path or folder
+/// slug in the error returned to CLI logging.
+fn read_share_log(home: &std::path::Path) -> Result<String, String> {
+    std::fs::read_to_string(home.join("logs/latest.log"))
+        .map_err(|e| format!("Could not read latest.log: {e}"))
+}
+
 /// Runs the fixture process in this terminal and reports how it ended.
 #[cfg(test)]
 fn attached(cmd: Command) -> Result<i32, String> {
@@ -1179,7 +1224,9 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
         }
         Cmd::Install { tag } => {
             let label = format!("Installing {tag}");
-            let tag = backend::install_tag(&tag, false, progress(label))?;
+            let tag = progress::install_progress(&label, |report| {
+                backend::install_tag(&tag, false, report)
+            })?;
             if as_json {
                 json(
                     serde_json::json!({ "installed": tag, "prepared": backend::check_prepared(&tag) }),
@@ -1195,19 +1242,39 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             }
         }
         Cmd::Storage { clear } => {
-            let storage = Storage::open().map_err(native_mods::cache_error)?;
+            use std::io::{self, Write};
+            use sunrise_launcher::storage::error_message;
             let (row, all) = match clear {
                 Some(ClearStorage::Row(row)) => (Some(row), false),
                 Some(ClearStorage::All) => (None, true),
                 None => (None, false),
             };
-            let report = storage.report(row, all).map_err(native_mods::cache_error)?;
+            let report = match Storage::open()
+                .and_then(|storage| storage_report(&storage, row, all, as_json))
+            {
+                Ok(report) => report,
+                Err(error) => {
+                    let detail = sunrise_launcher::storage::error_log_detail(&error);
+                    let message = error_message(error);
+                    let _ = writeln!(io::stderr(), "{message}");
+                    match detail {
+                        Some(detail) => {
+                            sunrise_launcher::launcher_log::line(format!("{message} [{detail}]"))
+                        }
+                        None => sunrise_launcher::launcher_log::line(&message),
+                    }
+                    return Ok(1);
+                }
+            };
             println!("{}", serde_json::to_string_pretty(&report).unwrap());
-            if row.is_some() || all {
-                if let Some(kept) = report.rows.iter().flat_map(|row| &row.kept).next() {
-                    return Err(kept.reason.clone());
+            let mut kept_any = false;
+            for row in report.rows.iter().filter(|row| row.after_clear) {
+                if let Some(kept) = row.kept.first() {
+                    kept_any = true;
+                    let _ = writeln!(io::stderr(), "{}: {}", row.category.label(), kept.reason);
                 }
             }
+            return Ok(i32::from(kept_any));
         }
         Cmd::NativeLock {
             folder,
@@ -1415,7 +1482,11 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             server,
             arg,
             account,
+            trust_native_code,
         } => {
+            if trust_native_code {
+                trust_unreviewed_builds();
+            }
             let instance = instances::for_play(instance.as_deref())?;
             use sunrise_launcher::{jars, managed_play};
             let accounts = Accounts::load();
@@ -1621,9 +1692,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 Some(name) => instances::find(&name)?,
                 None => instances::selection()?,
             };
-            let path = i.home.join("logs/latest.log");
-            let text =
-                std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let text = read_share_log(&i.home)?;
             let names = game_log::names(&[&i.home, &backend::game_home()]);
             let text = game_log::private(&text, dirs::home_dir().as_deref(), &names);
             let shared = game_log::share(&text)?;
@@ -3610,6 +3679,19 @@ mod tests {
         }
     }
 
+    /// Play's own build refuses unreviewed mods and names this flag (#472), so play takes it too.
+    #[test]
+    fn play_takes_trust_native_code_for_one_launch() {
+        let parse = |args: &[&str]| match Cli::try_parse_from(args).unwrap().command {
+            Some(Cmd::Play {
+                trust_native_code, ..
+            }) => trust_native_code,
+            _ => panic!("not play"),
+        };
+        assert!(parse(&["sunrise-launcher", "play", "--trust-native-code"]));
+        assert!(!parse(&["sunrise-launcher", "play"]));
+    }
+
     #[test]
     fn play_takes_extra_arguments_that_start_with_hyphens() {
         let cli = Cli::try_parse_from([
@@ -3829,6 +3911,21 @@ mod tests {
             );
         }
         assert_eq!(native_mods::base_for(None, &[], false), None);
+    }
+
+    #[test]
+    fn share_log_open_failure_omits_profile_path_and_folder_slug() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root
+            .path()
+            .join("private-share-root/instances/secret-profile-slug");
+        let error = read_share_log(&home).unwrap_err();
+        assert!(error.starts_with("Could not read latest.log: "), "{error}");
+        assert!(!error.contains("private-share-root"), "{error}");
+        assert!(!error.contains("secret-profile-slug"), "{error}");
+        std::fs::create_dir_all(home.join("logs")).unwrap();
+        std::fs::write(home.join("logs/latest.log"), "hello log").unwrap();
+        assert_eq!(read_share_log(&home).unwrap(), "hello log");
     }
 }
 

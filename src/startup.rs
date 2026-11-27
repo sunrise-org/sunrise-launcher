@@ -67,6 +67,9 @@ fn run_launcher() {
     } else {
         None
     };
+    if location_error.is_none() && carry_over_error.is_none() {
+        sunrise_launcher::launcher_log::init(&backend::data_dir().join("logs"));
+    }
     perf::process_started();
     backend::exe_path();
     if let Some(code) = sunrise_launcher::update_handoff::run() {

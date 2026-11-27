@@ -261,6 +261,11 @@ enum Unread {
     Failed(String),
 }
 
+struct Opened {
+    reader: Box<dyn Read>,
+    remote: bool,
+}
+
 impl Base {
     /// [`BASE_VAR`]'s base, else this repository's releases.
     pub(crate) fn from_env() -> Self {
@@ -284,9 +289,12 @@ impl Base {
     /// The file `name` of the release `tag`, open, with its length when the base says it;
     /// `Ok(None)` when the base has no such file. `tag` and `name` are plain names: a tag this
     /// module makes, and a name `sdk.json` lists (`Asset::parts_of` accepts only plain ones).
-    fn open(&self, tag: &str, name: &str) -> Result<Option<Box<dyn Read>>, Unread> {
+    fn open(&self, tag: &str, name: &str) -> Result<Option<Opened>, Unread> {
         let file = |path: PathBuf| match fs::File::open(&path) {
-            Ok(file) => Ok(Some(Box::new(file) as Box<dyn Read>)),
+            Ok(file) => Ok(Some(Opened {
+                reader: Box::new(file),
+                remote: false,
+            })),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(Unread::Local(format!("{}: {error}", path.display()))),
         };
@@ -297,7 +305,10 @@ impl Base {
                     return file(path);
                 }
                 match crate::backend::get_unless_missing(&address) {
-                    Ok(Some(response)) => Ok(Some(Box::new(response.into_reader()))),
+                    Ok(Some(response)) => Ok(Some(Opened {
+                        reader: response.into_reader(),
+                        remote: true,
+                    })),
                     Ok(None) => Ok(None),
                     Err(why) if why.starts_with("No connection") => Err(Unread::Offline),
                     Err(why) => Err(Unread::Failed(why)),
@@ -309,11 +320,12 @@ impl Base {
 
     /// A small file whole (at most [`SMALL`] bytes; a larger one is refused, never cut).
     fn small(&self, tag: &str, name: &str) -> Result<Option<Vec<u8>>, Unread> {
-        let Some(body) = self.open(tag, name)? else {
+        let Some(Opened { reader, .. }) = self.open(tag, name)? else {
             return Ok(None);
         };
         let mut bytes = Vec::new();
-        body.take(SMALL + 1)
+        reader
+            .take(SMALL + 1)
             .read_to_end(&mut bytes)
             .map_err(|error| {
                 let why = format!("{name}: {error}");
@@ -372,6 +384,18 @@ fn root() -> PathBuf {
 /// Where the launcher keeps what it reads of build `commit`'s SDK.
 pub(super) fn build_folder(commit: &str) -> PathBuf {
     root().join(commit)
+}
+
+/// The index [`index`] keeps for build `commit`, read as [`index`] reads a kept one; None when
+/// none is kept or it doesn't read. Nothing is fetched: what the fast path (`reuse`) compares
+/// with the digest a build recorded of the index it was planned from.
+pub(super) fn kept(commit: &str) -> Option<Sdk> {
+    if !super::is_revision(commit) {
+        return None;
+    }
+    let dir = build_folder(commit);
+    let bytes = fs::read(dir.join(INDEX)).ok()?;
+    checked(&bytes, commit, dir).ok()
 }
 
 /// Write `bytes` to `path` whole or not at all: beside it first, then renamed into place.
@@ -532,7 +556,8 @@ fn compare_versions(a: &str, b: &str) -> Option<std::cmp::Ordering> {
     Some(parts(a)?.cmp(&parts(b)?))
 }
 
-/// The kept `surface.json` of `sdk`'s build, else fetched from `base`, checked against the index and kept. Kept, so a fit is told offline once a build was seen.
+/// The verified `surface.json` of `sdk`'s build: reused offline if it still matches the index,
+/// otherwise fetched from `base`, verified and kept.
 pub(super) fn surface_file(sdk: &Sdk, base: &Base) -> Result<PathBuf, Refusal> {
     const NAME: &str = "surface.json";
     let build = sdk.shown();
@@ -543,14 +568,13 @@ pub(super) fn surface_file(sdk: &Sdk, base: &Base) -> Result<PathBuf, Refusal> {
     let kept = sdk.dir.join(NAME);
     let listed = sdk.index.asset(NAME).map_err(|r| refused(r.to_string()))?;
     match fs::read(&kept) {
-        // Kept only once verified; a size that changed since is fetched again.
-        Ok(bytes) if bytes.len() as u64 == listed.size => return Ok(kept),
+        Ok(bytes) if sdk.index.verify(NAME, bytes.as_slice()).is_ok() => return Ok(kept),
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
             return Err(Refusal::Cache(format!("{}: {error}", kept.display())));
         }
         _ => {
             let tag = tag(sdk.commit());
-            let body = base
+            let Opened { reader, .. } = base
                 .open(&tag, NAME)
                 .map_err(|unread| match unread {
                     Unread::Offline => Refusal::Offline {
@@ -562,7 +586,8 @@ pub(super) fn surface_file(sdk: &Sdk, base: &Base) -> Result<PathBuf, Refusal> {
                 })?
                 .ok_or_else(|| refused(sdk::Refusal::Missing(vec![NAME.into()]).to_string()))?;
             let mut bytes = Vec::new();
-            body.take(listed.size.saturating_add(1))
+            reader
+                .take(listed.size.saturating_add(1))
                 .read_to_end(&mut bytes)
                 .map_err(|error| match base {
                     Base::Folder(_) => Refusal::Cache(format!("{NAME}: {error}")),
@@ -626,6 +651,22 @@ fn route_inputs(route: &str) -> Option<&'static str> {
 /// The SDK's native build tool for this computer (its `tool` route), fetched beside the slices and kept: the program to run.
 pub(super) fn tool(sdk: &Sdk, base: &Base, progress: &dyn Fn(Fetched)) -> Result<PathBuf, Refusal> {
     let host = rust_toolchain::host().ok_or(Refusal::Host)?;
+    tool_in(
+        &super::root().join("prebuilt"),
+        sdk,
+        base,
+        host.target,
+        progress,
+    )
+}
+
+fn tool_in(
+    prebuilt: &Path,
+    sdk: &Sdk,
+    base: &Base,
+    triple: &str,
+    progress: &dyn Fn(Fetched),
+) -> Result<PathBuf, Refusal> {
     let build = sdk.shown();
     let refused = |why: String| Refusal::Refused {
         build: build.clone(),
@@ -633,7 +674,7 @@ pub(super) fn tool(sdk: &Sdk, base: &Base, progress: &dyn Fn(Fetched)) -> Result
     };
     let names = sdk
         .index
-        .route_assets("tool", host.target, Side::Client)
+        .route_assets("tool", triple, Side::Client)
         .map_err(|r| match r {
             sdk::Refusal::Missing(_) => Refusal::Host,
             sdk::Refusal::Route(_) => {
@@ -641,10 +682,7 @@ pub(super) fn tool(sdk: &Sdk, base: &Base, progress: &dyn Fn(Fetched)) -> Result
             }
             other => refused(other.to_string()),
         })?;
-    let into =
-        super::root()
-            .join("prebuilt")
-            .join(format!("{}-{}-tool", sdk.commit(), host.target));
+    let into = prebuilt.join(format!("{}-{triple}-tool", sdk.commit()));
     let mut fetched = Fetched::default();
     for name in &names {
         if !stamp_holds(sdk, name, &into) {
@@ -855,7 +893,21 @@ fn fetch_into(
     fetched: &mut Fetched,
     progress: &dyn Fn(Fetched),
 ) -> Result<(), Refusal> {
-    fetch_into_cancellable(sdk, base, name, into, fetched, None, progress)
+    let start = fetched.done;
+    fetch_into_cancellable(sdk, base, name, into, fetched, None, &|phase| {
+        if let SliceProgress::Downloading(bytes) = phase {
+            progress(bytes);
+        }
+    })?;
+    if fetched.done != start {
+        progress(*fetched);
+    }
+    Ok(())
+}
+
+enum SliceProgress {
+    Downloading(Fetched),
+    Unpacking,
 }
 
 fn fetch_into_cancellable(
@@ -865,7 +917,7 @@ fn fetch_into_cancellable(
     into: &Path,
     fetched: &mut Fetched,
     stop: Option<&super::Cancellation>,
-    progress: &dyn Fn(Fetched),
+    progress: &dyn Fn(SliceProgress),
 ) -> Result<(), Refusal> {
     let build = sdk.shown();
     let refused = |why: String| Refusal::Refused {
@@ -911,7 +963,7 @@ fn fetch_into_cancellable(
             Err(error) => return Err(Refusal::Cache(format!("{}: {error}", path.display()))),
         },
         None => {
-            let body = base
+            let Opened { reader, remote } = base
                 .open(&tag, name)
                 .map_err(|unread| match unread {
                     Unread::Offline => Refusal::Offline {
@@ -925,25 +977,25 @@ fn fetch_into_cancellable(
             let file = parent.join(format!("{name}.download"));
             let listed = sdk.index.asset(name).map_err(|r| refused(r.to_string()))?;
             let total = fetched.total;
-            let report_progress = |fraction: f32| {
-                // `save_checked` reports nine tenths for the bytes, the rest for its check.
-                let part = ((fraction / 0.9).min(1.0) * size as f32) as u64;
-                progress(Fetched {
-                    done: start + part,
-                    total,
-                });
+            let report_progress = |done: u64, _| {
+                if remote {
+                    progress(SliceProgress::Downloading(Fetched {
+                        done: start.saturating_add(done.min(size)),
+                        total,
+                    }));
+                }
             };
             let saved = match stop {
-                Some(stop) => crate::backend::save_checked(
-                    stop.reader(body),
+                Some(stop) => crate::backend::save_checked_bytes(
+                    stop.reader(reader),
                     size,
                     name,
                     &listed.sha256,
                     &file,
                     &report_progress,
                 ),
-                None => crate::backend::save_checked(
-                    body,
+                None => crate::backend::save_checked_bytes(
+                    reader,
                     size,
                     name,
                     &listed.sha256,
@@ -973,6 +1025,7 @@ fn fetch_into_cancellable(
             return Err(refused(why));
         }
     }
+    progress(SliceProgress::Unpacking);
     let unpacked = sdk::unpack(&sdk.index, name, &archive, into, UNPACKED_LIMIT);
     if let Some(file) = downloaded {
         let _ = fs::remove_file(file);
@@ -1001,8 +1054,7 @@ fn fetch_into_cancellable(
     })
     .expect("a stamp serializes");
     write_whole(&stamp, &stamp_text)?;
-    fetched.done = start + size;
-    progress(*fetched);
+    fetched.done = start.saturating_add(size);
     Ok(())
 }
 
@@ -1012,6 +1064,20 @@ fn fetch_into_cancellable(
 /// version's commit prefix. A stable release's index is signed for its own tag.
 pub(super) fn build_of(version: &str, base: &Base, keys: &[PublicKey]) -> Result<String, Refusal> {
     build_of_in(&root().join("versions"), version, base, keys)
+}
+
+/// Read the build id already kept for `version`, without contacting a release mirror.
+pub(super) fn kept_build_of(version: &str) -> Option<String> {
+    let file = plain_version(version).then(|| root().join("versions").join(version))?;
+    let text = fs::read_to_string(file).ok()?;
+    super::is_revision(text.trim()).then(|| text.trim().to_owned())
+}
+
+fn plain_version(version: &str) -> bool {
+    !version.is_empty()
+        && version
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
 }
 
 fn build_of_in(
@@ -1024,11 +1090,7 @@ fn build_of_in(
         build: version.to_owned(),
         why,
     };
-    let plain = !version.is_empty()
-        && version
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'));
-    if !plain {
+    if !plain_version(version) {
         return Err(refused(trf(
             "{version} is not a game version",
             &[("version", version)],

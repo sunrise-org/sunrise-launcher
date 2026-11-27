@@ -16,9 +16,37 @@ type Next = fn(&mut Facts);
 const LONG: &str = "The build failed. The compiler said a great deal more than fits here.";
 
 #[test]
+fn installing_uses_build_phase_labels_and_keeps_the_donor_count() {
+    use backend::InstallPhase;
+    for (phase, label) in [
+        (InstallPhase::Checking, "Checking the build…"),
+        (InstallPhase::Unpacking, "Unpacking the build"),
+        (InstallPhase::Finishing, "Putting the build in place"),
+        (InstallPhase::Preparing, "Getting the build ready…"),
+    ] {
+        let view = Facts {
+            installing: Some(phase),
+            ..idle()
+        }
+        .view();
+        assert_eq!(view.main.label(), label);
+        assert_eq!(view.strip(), Some((label.into(), StripAct::Home)));
+    }
+    let detail = "Copying the prepared game files: 2 of 8";
+    let view = Facts {
+        installing: Some(InstallPhase::Preparing),
+        play_detail: Some(detail.into()),
+        ..idle()
+    }
+    .view();
+    assert_eq!(view.play_detail.as_deref(), Some(detail));
+    assert_eq!(view.strip(), Some((detail.into(), StripAct::Home)));
+}
+
+#[test]
 fn play_says_each_state_in_the_order_they_win() {
     let all = Facts {
-        installing: Some(0.42),
+        installing: Some(backend::InstallPhase::Downloading(0.42)),
         preparing: true,
         building: true,
         starting: true,
@@ -28,7 +56,10 @@ fn play_says_each_state_in_the_order_they_win() {
     };
     // Each step takes the winning state away: the next one shows.
     let steps: [(Main, Next); 9] = [
-        (Main::Installing(0.42), |f| f.installing = None),
+        (
+            Main::Installing(backend::InstallPhase::Downloading(0.42)),
+            |f| f.installing = None,
+        ),
         (Main::Preparing, |f| f.preparing = false),
         (Main::Building, |f| f.building = false),
         (Main::Starting, |f| f.starting = false),
@@ -46,7 +77,10 @@ fn play_says_each_state_in_the_order_they_win() {
     assert_eq!(Main::Play.label(), "Play");
     // Signed out, Play is still "Play": Home has no second "Sign in with Microsoft".
     assert_eq!(Main::SignIn.label(), "Play");
-    assert_eq!(Main::Installing(0.42).label(), "Installing · 42%");
+    assert_eq!(
+        Main::Installing(backend::InstallPhase::Downloading(0.42)).label(),
+        "Downloading the build 42%"
+    );
 }
 
 #[test]
@@ -188,7 +222,7 @@ fn play_can_be_pressed_unless_something_is_under_way_or_the_data_is_lost() {
     }
     for facts in [
         Facts {
-            installing: Some(0.),
+            installing: Some(backend::InstallPhase::Checking),
             ..idle()
         },
         Facts {
@@ -463,10 +497,10 @@ fn the_strip_shows_work_under_way_then_a_running_game_and_nothing_when_idle() {
     };
     home(
         Facts {
-            installing: Some(0.5),
+            installing: Some(backend::InstallPhase::Preparing),
             ..idle()
         },
-        "Installing · 50%",
+        "Getting the build ready…",
     );
     home(
         Facts {

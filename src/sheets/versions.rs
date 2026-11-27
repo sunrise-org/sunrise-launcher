@@ -163,6 +163,31 @@ fn confirm_label(tag: &str, current: Option<&str>) -> String {
     }
 }
 
+fn show_architecture_reinstall(
+    tag: &str,
+    repair_available: bool,
+    architecture_reinstall: Option<&str>,
+    installing: Option<&(String, backend::InstallPhase)>,
+) -> bool {
+    repair_available
+        || (architecture_reinstall == Some(tag)
+            && installing.is_some_and(|(started, _)| started == tag))
+}
+
+fn reinstall_label(
+    tag: &str,
+    installing: Option<&(String, backend::InstallPhase)>,
+    detail: Option<&str>,
+) -> String {
+    let Some((_, phase)) = installing.filter(|(started, _)| started == tag) else {
+        return tr("Reinstall for this architecture").into();
+    };
+    if let (backend::InstallPhase::Preparing, Some(detail)) = (*phase, detail) {
+        return detail.to_owned();
+    }
+    crate::mods_page::install::stage_label((*phase).into())
+}
+
 /// What the sheet offers for the picked build. Another build the profile can switch to is
 /// chosen in one press, which downloads and prepares it first when it needs that: a pick that
 /// only downloaded left the profile on its old build, still "the latest" (a player's report,
@@ -566,17 +591,21 @@ impl Launcher {
             },
         ));
         let reinstall = pick.as_ref().and_then(|tag| {
-            self.architecture_repair(tag)?;
+            let offered = self.architecture_repair(tag).is_some();
+            if !show_architecture_reinstall(
+                tag,
+                offered,
+                self.architecture_reinstall.as_deref(),
+                self.installing.as_ref(),
+            ) {
+                return None;
+            }
             let tag = tag.clone();
-            let label = match &self.installing {
-                Some((started, progress)) if started == &tag => trf(
-                    "Installing · {percent}%",
-                    &[("percent", &format!("{:.0}", progress * 100.))],
-                ),
-                _ => tr("Reinstall for this architecture").to_owned(),
-            };
-            let button = button("alt-versions-reinstall", label);
-            Some(if self.can_repair_now(&tag) {
+            let button = button(
+                "alt-versions-reinstall",
+                reinstall_label(&tag, self.installing.as_ref(), self.play_detail.as_deref()),
+            );
+            Some(if offered && self.can_repair_now(&tag) {
                 button.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     // Recheck the exact offer and the active jobs at click.
                     if this.can_repair_now(&tag) {
@@ -926,6 +955,61 @@ fn bench_wheel_event(bounds: gpui::Bounds<gpui::Pixels>, step: f32) -> gpui::Pla
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn architecture_reinstall_reports_only_the_picked_builds_phase() {
+        use backend::InstallPhase;
+        let tag = "26.3-0.1.0";
+        let active = |phase| (tag.to_owned(), phase);
+        let detail = "Copying the prepared game files: 2 of 8";
+        for (phase, label) in [
+            (InstallPhase::Checking, "Checking the build…"),
+            (InstallPhase::Downloading(0.25), "Downloading the build 25%"),
+            (InstallPhase::Unpacking, "Unpacking the build"),
+            (InstallPhase::Finishing, "Putting the build in place"),
+            (InstallPhase::Preparing, "Getting the build ready…"),
+        ] {
+            let installing = active(phase);
+            assert_eq!(reinstall_label(tag, Some(&installing), None), label);
+            assert_eq!(
+                reinstall_label("other", Some(&installing), Some(detail)),
+                "Reinstall for this architecture"
+            );
+        }
+        assert_eq!(
+            reinstall_label(tag, Some(&active(InstallPhase::Preparing)), Some(detail)),
+            detail
+        );
+    }
+
+    #[test]
+    fn architecture_reinstall_button_stays_visible_while_donor_prep_finishes() {
+        use backend::InstallPhase;
+        let tag = "26.3-0.1.0";
+        let preparing = (tag.to_owned(), InstallPhase::Preparing);
+        // Once the new binary lands on disk, `architecture_repair` becomes None while donor
+        // preparation still runs under `InstallPhase::Preparing`; keep the progress button visible.
+        assert!(show_architecture_reinstall(
+            tag,
+            false,
+            Some(tag),
+            Some(&preparing),
+        ));
+        assert!(!show_architecture_reinstall(
+            "other",
+            false,
+            Some(tag),
+            Some(&preparing),
+        ));
+        assert!(!show_architecture_reinstall(
+            tag,
+            false,
+            None,
+            Some(&preparing),
+        ));
+        assert!(!show_architecture_reinstall(tag, false, Some(tag), None));
+        assert!(show_architecture_reinstall(tag, true, None, None));
+    }
 
     #[test]
     fn confirmation_names_the_picked_build_only_when_switching() {

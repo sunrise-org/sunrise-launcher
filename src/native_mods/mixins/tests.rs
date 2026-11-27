@@ -116,6 +116,7 @@ fn the_resolved_pin_is_passed_to_older_tools_and_changes_the_key() {
             Target::Client,
             None,
             &[staged],
+            &[],
         )
         .unwrap()
     };

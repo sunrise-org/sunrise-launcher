@@ -2,10 +2,13 @@ use super::*;
 
 pub enum Msg {
     Playing(Option<u64>),
-    Storage(Result<Box<crate::storage::Report>, String>),
+    Storage(
+        crate::storage::Cancel,
+        Result<Box<crate::storage::Report>, String>,
+    ),
     Releases(Result<Vec<Release>, String>),
     Links(Links),
-    Progress(String, f32),
+    Progress(String, InstallPhase),
     Installed(String, Result<InstallOutcome, String>),
     NightlyReceiptRetried(Arc<NightlyReceiptWarning>, Result<(), String>),
     /// A Storage removal finished; any failed removal names its build.

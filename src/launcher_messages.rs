@@ -18,6 +18,63 @@ fn settle_managed_play_error(
     cancelled
 }
 
+/// Once Play reaches verification, the native build and profile publication are complete.
+fn finish_play_build_at_handoff(
+    run: Option<&mut crate::mods::build_run::Run>,
+    step: backend::PlayStep,
+) -> bool {
+    if matches!(step, backend::PlayStep::Assets | backend::PlayStep::SignIn) {
+        if let Some(run) = run.filter(|run| run.for_play && run.running()) {
+            run.done();
+            return true;
+        }
+    }
+    false
+}
+
+/// Route a Play failure that arrived while the Play build sheet was still open.
+/// Returns `(captured_build_error, close_build_sheet)`: a cached-snapshot failure
+/// belongs to Start, not Build, so the build run finishes and closes its sheet.
+fn route_active_play_build_error(
+    run: &mut crate::mods::build_run::Run,
+    error: &StartError,
+    cancelled: bool,
+) -> (bool, bool) {
+    match error {
+        _ if cancelled => {
+            run.cancelled();
+            (false, false)
+        }
+        StartError::Native(error, build) => {
+            run.failed_build = build.clone();
+            run.native_failed(error, &[]);
+            (false, false)
+        }
+        StartError::Snapshot(_) => {
+            run.done();
+            (false, true)
+        }
+        StartError::Other(error) => {
+            run.stopped(
+                tr("The build could not finish. No game was started.").into(),
+                error.clone(),
+            );
+            (true, false)
+        }
+        StartError::Journal(error) => {
+            run.stopped(error.summary().into(), error.details());
+            (false, false)
+        }
+        _ => {
+            run.stopped(
+                tr("The build couldn't be saved. No game was started.").into(),
+                String::new(),
+            );
+            (false, false)
+        }
+    }
+}
+
 impl Launcher {
     pub(super) fn refresh_installed(&mut self) {
         (self.installed, self.known_nightly) =
@@ -151,11 +208,9 @@ impl Launcher {
                         }
                         self.play_step = Some(step);
                     }
-                    if step == backend::PlayStep::SignIn && self.native_step.take().is_some() {
+                    if finish_play_build_at_handoff(self.ui.mods.build.as_mut(), step) {
+                        self.native_step = None;
                         self.native_progress = None;
-                        if let Some(run) = &mut self.ui.mods.build {
-                            run.done();
-                        }
                         if self.ui.sheet == Some(crate::sheets::Sheet::ModBuild) {
                             self.close_sheet();
                         }
@@ -209,31 +264,15 @@ impl Launcher {
                         })
                     });
                     let mut captured_build_error = false;
+                    let mut close_build_sheet = false;
                     if let (Some(run), Err(error)) = (&mut self.ui.mods.build, result.as_ref()) {
                         if active_play_build {
-                            match error {
-                                _ if cancelled => run.cancelled(),
-                                StartError::Native(error, build) => {
-                                    run.failed_build = build.clone();
-                                    run.native_failed(error, &[]);
-                                }
-                                StartError::Other(error) => {
-                                    run.stopped(
-                                        tr("The build could not finish. No game was started.")
-                                            .into(),
-                                        error.clone(),
-                                    );
-                                    captured_build_error = true;
-                                }
-                                StartError::Journal(error) => {
-                                    run.stopped(error.summary().into(), error.details())
-                                }
-                                _ => run.stopped(
-                                    tr("The build could not be published.").into(),
-                                    String::new(),
-                                ),
-                            }
+                            (captured_build_error, close_build_sheet) =
+                                route_active_play_build_error(run, error, cancelled);
                         }
+                    }
+                    if close_build_sheet && self.ui.sheet == Some(crate::sheets::Sheet::ModBuild) {
+                        self.close_sheet();
                     }
                     if !self.ui.mods.build.as_ref().is_some_and(|run| {
                         run.for_play
@@ -296,7 +335,11 @@ impl Launcher {
                         }
                         Err(StartError::Hook(error)) => self.client_error = Some(error.to_string()),
                         Err(StartError::Other(_)) if captured_build_error => (),
-                        Err(StartError::UnknownSpawn(error) | StartError::Other(error)) => {
+                        Err(
+                            StartError::UnknownSpawn(error)
+                            | StartError::Snapshot(error)
+                            | StartError::Other(error),
+                        ) => {
                             self.client_error = Some(error);
                         }
                     }
@@ -390,17 +433,32 @@ impl Launcher {
                         }
                     }
                 }
-                Msg::Progress(tag, p) => {
-                    self.bar = (self.bar.1, p);
-                    self.switch_download_progress(&tag, p);
-                    self.installing = Some((tag, p));
+                Msg::Progress(tag, phase) => {
+                    let Some((_, current)) = self
+                        .installing
+                        .as_mut()
+                        .filter(|(active, _)| *active == tag)
+                    else {
+                        continue;
+                    };
+                    let key = crate::eta::install_stage_key;
+                    if key((*current).into()) != key(phase.into()) {
+                        self.play_detail = None;
+                    }
+                    *current = phase;
+                    self.switch_download_progress(&tag, phase);
                 }
                 Msg::Installed(tag, result) => {
-                    self.installing = None;
+                    if self
+                        .installing
+                        .take_if(|(active, _)| *active == tag)
+                        .is_none()
+                    {
+                        continue;
+                    }
                     if self.starting_client.is_none() && !self.preparing {
                         self.play_detail = None;
                     }
-                    self.bar = (0., 0.);
                     self.refresh_installed();
                     if let Some(warning) = self.record_nightly_receipt_outcome(&tag, &result) {
                         glass_toast::say(trf(
@@ -474,7 +532,7 @@ impl Launcher {
                 Msg::BuildInventory(generation, rows) => {
                     self.storage_builds_arrived(generation, rows)
                 }
-                Msg::Storage(result) => self.storage_arrived(result),
+                Msg::Storage(token, result) => self.storage_arrived(token, result),
                 Msg::Imported(result) => self.storage_build_imported(result),
                 Msg::Pruned(errors) => self.storage_builds_pruned(errors),
                 Msg::Updates(updates) => {
@@ -808,6 +866,77 @@ impl Launcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verification_handoff_leaves_start_errors_out_of_the_build_sheet() {
+        use backend::PlayStep;
+        let mut run = crate::mods::build_run::Run::start(
+            "fixture".into(),
+            "fixture profile".into(),
+            "fixture".into(),
+            Vec::new(),
+            true,
+        );
+        assert!(!finish_play_build_at_handoff(
+            Some(&mut run),
+            PlayStep::Native
+        ));
+        assert!(run.running());
+        assert!(finish_play_build_at_handoff(
+            Some(&mut run),
+            PlayStep::Assets
+        ));
+        assert!(
+            !run.running(),
+            "a subsequent Other error belongs to Start, not Build"
+        );
+        assert!(matches!(run.end, Some(crate::mods::build_run::End::Done)));
+
+        // A cached snapshot failure arriving before the Verify step is processed must not be
+        // captured as a Build failure; it finishes the build sheet and surfaces on Start.
+        let mut pre_verify = crate::mods::build_run::Run::start(
+            "fixture".into(),
+            "fixture profile".into(),
+            "fixture".into(),
+            Vec::new(),
+            true,
+        );
+        let detail =
+            "Sunrise couldn't verify the profile's saved game build (managed_play/resources.rs:1)."
+                .to_owned();
+        let (captured, close_sheet) = route_active_play_build_error(
+            &mut pre_verify,
+            &StartError::Snapshot(detail.clone()),
+            false,
+        );
+        assert!(!captured);
+        assert!(close_sheet);
+        assert!(!pre_verify.running());
+        assert!(matches!(
+            pre_verify.end,
+            Some(crate::mods::build_run::End::Done)
+        ));
+
+        use crate::launch_state::{Act, Facts, Main};
+        let view = Facts {
+            client_error: Some(detail.clone()),
+            signed_in: true,
+            installed: true,
+            located: true,
+            ..Default::default()
+        }
+        .view();
+        assert_eq!(view.main, Main::Play);
+        assert!(view.enabled && view.failed);
+        assert_eq!(view.said.as_deref(), Some(tr("The game couldn't start.")));
+        assert_eq!(
+            view.act,
+            Some(Act::Notice {
+                text: detail,
+                way_out: None
+            })
+        );
+    }
 
     #[test]
     fn a_managed_play_build_failure_disarms_the_update_but_a_cancellation_does_not() {

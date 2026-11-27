@@ -827,7 +827,8 @@ impl Active {
         Ok(())
     }
 
-    pub fn verify_artifacts(&self) -> Result<(), String> {
+    /// Check the binaries and signed receipts without walking the prepared resource tree.
+    pub fn verify_binaries(&self) -> Result<(), String> {
         let base = match &self.variant {
             Some(variant) => variant.verify(self.base())?,
             None => Artifact::capture(self.base())?,
@@ -838,12 +839,17 @@ impl Active {
         {
             return Err(unsettled!());
         }
+        Ok(())
+    }
+
+    pub fn verify_artifacts(&self) -> Result<(), String> {
+        self.verify_binaries()?;
         self.resources.verify(self.base())
     }
 
     /// Capture a full immutable generation after owning the admitted profile and checking
     /// the chosen image. Only the journal's Switch arm may advance to a distinct base.
-    /// Verify the bound resources at the publication cutoff, not while assembling the pointer.
+    /// The caller owns resource verification at its cutoff; capture only records the selection.
     fn capture(
         base: &str,
         executable: &str,
@@ -924,6 +930,9 @@ impl Active {
         })
     }
 }
+
+#[cfg(test)]
+pub(crate) use resources::FULL_VERIFICATIONS;
 
 fn capture_mod_locks(home: &Path) -> Result<Vec<ModLock>, String> {
     let path = home.join(crate::browser::installed::MANIFEST);

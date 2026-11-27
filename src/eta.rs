@@ -173,6 +173,9 @@ pub(crate) fn install_stage_key(step: InstallProgress) -> u8 {
         InstallProgress::Building(_) => 12,
         InstallProgress::Publishing => 13,
         InstallProgress::Reviewing => 14,
+        InstallProgress::CheckingBuild => 15,
+        InstallProgress::UnpackingBuild => 16,
+        InstallProgress::FinishingBuild => 17,
     }
 }
 
@@ -318,6 +321,30 @@ pub(crate) fn record_prepare_duration(elapsed: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_build_downloads_have_an_eta_and_finishing_is_not_switch_publication() {
+        let stages = [
+            InstallProgress::CheckingBuild,
+            InstallProgress::UnpackingBuild,
+            InstallProgress::FinishingBuild,
+            InstallProgress::PreparingBuild,
+            InstallProgress::Publishing,
+        ];
+        let keys = stages.map(install_stage_key);
+        for (i, key) in keys.into_iter().enumerate() {
+            assert!(!keys[..i].contains(&key));
+            let mut eta = StageEta::default();
+            let start = Instant::now();
+            let download_key = install_stage_key(InstallProgress::DownloadingBuild(Some(0.)));
+            eta.update(download_key, Some(0.0), start);
+            let ready = start + Duration::from_secs(3);
+            eta.update(download_key, Some(0.25), ready);
+            assert!(eta.remaining(ready).is_some());
+            eta.update(key, None, ready);
+            assert_eq!(eta.remaining(ready), None);
+        }
+    }
 
     #[test]
     fn determinate_eta_warms_up_and_smooths_rate() {

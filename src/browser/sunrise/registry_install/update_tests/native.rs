@@ -82,9 +82,9 @@ enum HoldCase {
 
 fn disabled_pointer(fixture: &Fixture) -> PathBuf {
     mod_list::set_enabled(fixture.home(), ID, false).unwrap();
-    let active = Profile::open(fixture.home(), None)
+    let (active, _) = Profile::open(fixture.home(), None)
         .unwrap()
-        .refresh(
+        .refresh_for_play(
             fixture.instance.native_profile,
             &native_mods::Cancellation::default(),
             |_| {},

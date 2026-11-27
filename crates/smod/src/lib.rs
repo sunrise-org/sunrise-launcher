@@ -22,4 +22,4 @@ pub mod packages;
 pub mod runtime_leases;
 pub mod selection;
 
-pub use manifest::{Capability, Manifest, Package, find};
+pub use manifest::{Capability, Manifest, Package, find, find_until, try_find_until};

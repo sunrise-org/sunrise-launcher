@@ -1,6 +1,11 @@
 //! Resolve the mixins tool pins of native projects before handing them to an SDK's tool.
 use super::{sdk_cache, Bundle, Failed, MIXINS_REV, NATIVE_MANIFEST};
-use std::{collections::HashMap, fs, path::Path};
+use crate::i18n::trf;
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs,
+    path::Path,
+};
 
 /// The revisions of the native mods in order. An explicit pin never needs the mod's SDK;
 /// otherwise read the SDK of the mod's pin, not necessarily the version being built.
@@ -11,8 +16,33 @@ pub(super) fn pins(
     local: Option<&Path>,
 ) -> Result<Vec<String>, Failed> {
     let keys = sunrise_launcher_release_verify::sdk_keys_for(crate::backend::GAME_REPO);
-    resolve(mods, |pin| {
+    read_pins(mods, build_sdk, local, |pin| {
+        Ok(sdk_cache::index(base, pin, &keys)?)
+    })
+    .map(|(pins, _)| pins)
+}
+
+/// The SDK indexes a set of pins was read from: what a build made with those pins depends on.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct Read {
+    /// The SHA-256 of each signed index read, by build commit.
+    pub(super) sdk: BTreeMap<String, String>,
+    /// The SHA-256 of the developer SDK's index, when a pin was read from it.
+    pub(super) local: Option<String>,
+}
+
+/// [`pins`], with each index taken from `index` (the verified one, or only the one kept on disk)
+/// and the digests of those read.
+pub(super) fn read_pins(
+    mods: &[Bundle],
+    build_sdk: Option<&sdk_cache::Sdk>,
+    local: Option<&Path>,
+    mut index: impl FnMut(&str) -> Result<sdk_cache::Sdk, Failed>,
+) -> Result<(Vec<String>, Read), Failed> {
+    let mut read = Read::default();
+    let pins = resolve(mods, |pin| {
         if let Some(sdk) = build_sdk.filter(|sdk| sdk.commit() == pin) {
+            read.sdk.insert(pin.to_owned(), sdk.signed().to_owned());
             return Ok(sdk.index.mixins.rev.clone());
         }
         if let Some(local) = local {
@@ -21,14 +51,18 @@ pub(super) fn pins(
                 Ok(bytes) => {
                     let index = sunrise_launcher_sdk::Index::read(&bytes, pin)
                         .map_err(|e| format!("{}: {e}", path.display()))?;
+                    read.local = Some(sunrise_launcher_release_verify::sha256_hex(&bytes));
                     return Ok(index.mixins.rev);
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => return Err(format!("{}: {e}", path.display()).into()),
             }
         }
-        Ok(sdk_cache::index(base, pin, &keys)?.index.mixins.rev)
-    })
+        let sdk = index(pin)?;
+        read.sdk.insert(pin.to_owned(), sdk.signed().to_owned());
+        Ok(sdk.index.mixins.rev)
+    })?;
+    Ok((pins, read))
 }
 
 fn resolve(
@@ -60,7 +94,11 @@ fn resolve(
                                 refusal,
                                 mod_id: Some(bundle.manifest.id.clone()),
                             },
-                            other => format!("{}: could not resolve [native] mixins: {other}", bundle.manifest.id).into(),
+                            other => trf(
+                                "{id}: couldn't find the mixin tool version this mod needs: {error}",
+                                &[("id", &bundle.manifest.id), ("error", &other.to_string())],
+                            )
+                            .into(),
                         })?;
                     Ok(entry.insert(pin).clone())
                 }
@@ -89,7 +127,10 @@ pub(super) fn for_key(
                 .map(|pin| date(pin).map(|when| (when, pin)))
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| {
-                    format!("Can't tell which of the mods' horizon-mixins revisions is newest: {e}")
+                    trf(
+                        "Couldn't tell which version of the mixin tool is newest: {error}",
+                        &[("error", &e.to_string())],
+                    )
                 })
                 .map(|dated| {
                     dated
@@ -104,7 +145,8 @@ pub(super) fn for_key(
 }
 
 /// Write an inferred pin only on a launcher-owned copy. Older SDK tools require the field;
-/// the source or downloaded archive and its digest stay as authored.
+/// the source or downloaded archive and its digest stay as authored. Writing the same pin again
+/// leaves the copy as it is.
 pub(super) fn materialize(bundle: &Bundle, dir: &Path, revision: &str) -> Result<(), String> {
     if bundle.native().mixins.is_some() {
         return Ok(());

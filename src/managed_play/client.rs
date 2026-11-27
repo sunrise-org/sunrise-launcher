@@ -1,5 +1,9 @@
 //! Ordinary client Play keeps one admission on its worker through the actual spawn.
-use super::{catalogue, first::game_lock, unsettled, Active, FirstBuild, Profile};
+use super::{
+    catalogue,
+    first::{game_lock, RefreshError, VerifiedSnapshot},
+    unsettled, Active, FirstBuild, Profile,
+};
 use crate::{
     account::{self, NoOwner},
     backend::{self, installation::BoundVariant, RuntimeGuard},
@@ -38,6 +42,7 @@ pub enum StartError {
     Native(native_mods::Failed, Option<Arc<FailedBuild>>),
     Hook(crate::launch::PreLaunchError),
     UnknownSpawn(String),
+    Snapshot(String),
     Other(String),
 }
 
@@ -57,7 +62,9 @@ impl From<StartError> for String {
             },
             StartError::Native(error, _) => error.into(),
             StartError::Hook(error) => error.to_string(),
-            StartError::UnknownSpawn(error) | StartError::Other(error) => error,
+            StartError::UnknownSpawn(error)
+            | StartError::Snapshot(error)
+            | StartError::Other(error) => error,
         }
     }
 }
@@ -201,7 +208,7 @@ impl Client<'_> {
             backend::managed_game_architecture_launch_error(tag, variant)
                 .map_or(Ok(()), |error| Err(StartError::Other(error)))
         };
-        let (active, registry_notices) = self.ready(
+        let (active, registry_notices, proof) = self.ready(
             &mut profile,
             || selected.map_or_else(|| choose.expect("a first Play needs a selection")(), Ok),
             check_build,
@@ -242,9 +249,12 @@ impl Client<'_> {
                 &active,
                 cancellation,
                 cmd,
-                (launch, self.piped, &|line| {
-                    progress(Progress::HookLine(line))
-                }),
+                (
+                    launch,
+                    self.piped,
+                    &|line| progress(Progress::HookLine(line)),
+                    proof,
+                ),
                 prepare_jars,
                 |cmd| {
                     // The game refuses a session file older than two minutes, so it is made
@@ -296,7 +306,7 @@ impl Client<'_> {
         cancellation: &native_mods::Cancellation,
         progress: impl Fn(Progress),
         load_index: impl FnOnce() -> Option<std::sync::Arc<sunrise_launcher_smod::index_v2::Index>>,
-    ) -> Result<(Active, Vec<String>), StartError> {
+    ) -> Result<(Active, Vec<String>, Option<VerifiedSnapshot>), StartError> {
         let home = profile.home().to_owned();
         let mode = self.instance.native_profile;
         let started = std::cell::Cell::new(false);
@@ -318,8 +328,12 @@ impl Client<'_> {
             let replacement = match old.resources.check_play_output(old.base()) {
                 Ok(()) => None,
                 Err(backend::Unprepared::Incomplete | backend::Unprepared::ServerOnly) => {
-                    // The preparer is part of the saved image. Verify it before starting it.
-                    old.verify_artifacts()?;
+                    // The on-disk manifest is not proof of what the saved snapshot was.
+                    // Verify both the old resources and the preparer before replacing them.
+                    old.verify_binaries()?;
+                    old.resources
+                        .verify(old.base())
+                        .map_err(StartError::Snapshot)?;
                     progress(Progress::Prepare);
                     Some(super::Resources::for_play_with(
                         old.base(),
@@ -332,22 +346,33 @@ impl Client<'_> {
             };
             // Legacy writers still use the game lock, not profile admission. Keep
             // them out until refresh has staged the exact set we checked.
-            let _manifest = game_lock(&home)?;
+            let manifest = game_lock(&home)?;
             checking.note("the profile's lock is held");
             crate::browser::installed::recover_game_install(&home).map_err(StartError::Journal)?;
             let notices = catalogue::inspect(&home, load_index)?;
-            let active = profile
-                .refresh(
+            let (replacement_resources, proven_by_seal) = match replacement {
+                Some(prepared) => (Some(prepared.resources), prepared.proven_by_seal),
+                None => (None, false),
+            };
+            let (active, verified_resources) = profile
+                .refresh_for_play(
                     mode,
                     cancellation,
                     |step| native(old.base(), step),
                     Some(&log),
-                    replacement,
+                    replacement_resources,
                 )
-                .map_err(|error| native_failure(&home, error, || Some(Build::Active(old))))?
+                .map_err(|error| match error {
+                    RefreshError::Native(error) => {
+                        native_failure(&home, error, || Some(Build::Active(old)))
+                    }
+                    RefreshError::Snapshot(error) => StartError::Snapshot(error),
+                })?
                 .ok_or_else(|| unsettled!())?;
+            let proof = (proven_by_seal || verified_resources)
+                .then(|| VerifiedSnapshot::new(active.clone(), home.clone(), manifest));
             checking.done("");
-            return Ok((active, notices));
+            return Ok((active, notices, proof));
         }
 
         let ready = (|| {
@@ -356,9 +381,10 @@ impl Client<'_> {
             })?;
             check_build(first.base(), first.variant().as_ref())?;
             progress(Progress::Prepare);
-            first.prepare_with(&|line| emit_prepare_line(&progress, line), &|line| {
-                progress(Progress::Line(line))
-            })?;
+            let prepared = first
+                .prepare_with(&|line| emit_prepare_line(&progress, line), &|line| {
+                    progress(Progress::Line(line))
+                })?;
             let (image, notices) = {
                 let _manifest = game_lock(&home)?;
                 crate::browser::installed::recover_game_install(&home)
@@ -379,9 +405,11 @@ impl Client<'_> {
                     })?;
                 (image, notices)
             };
-            // Resource preparation takes a version lock. Don't take it under the game
-            // manifest lock; commit rechecks the frozen input epoch before publication.
-            Ok((first.commit(&image, cancellation)?, notices))
+            if !prepared.proven_by_seal {
+                progress(Progress::Verify);
+            }
+            let first = first.commit_prepared(&image, prepared, cancellation)?;
+            Ok((first.active.clone(), notices, Some(first)))
         })();
         if ready.is_err() {
             profile.release_failed_first_play()?;
@@ -558,6 +586,30 @@ mod cli_log_tests {
 
     #[test]
     fn cli_play_prepare_and_meter_lines_land_in_launcher_log_without_ui_sink() {
+        const CHILD: &str = "SUNRISE_TEST_CLI_PLAY_LOG_CHILD";
+        const TEST: &str = "managed_play::client::cli_log_tests::cli_play_prepare_and_meter_lines_land_in_launcher_log_without_ui_sink";
+        if std::env::var_os(CHILD).is_none() {
+            let root = tempfile::tempdir().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST, "--nocapture"])
+                .env(CHILD, "1")
+                .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+                .env("SUNRISE_HOME", root.path().join("game"))
+                .env(
+                    "SUNRISE_LAUNCHER_LOCATION_FILE",
+                    root.path().join("location"),
+                )
+                .env("SUNRISE_NO_KEYCHAIN", "1")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("test result: ok. 1 passed;"),
+                "{stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
         crate::launcher_log::hide("Alex_CliPlay");
         let before = crate::launcher_log::since(0).0;
         let seen = std::cell::RefCell::new(Vec::new());

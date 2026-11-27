@@ -73,21 +73,6 @@ struct Running {
     refused: Arc<std::sync::atomic::AtomicBool>,
 }
 
-/// The share of an install's progress that is its download (`backend::download_cancellable`
-/// reports it as 0 to 0.9, the unpack and putting the build in place the rest).
-const DOWNLOAD_SHARE: f32 = 0.9;
-
-/// A switch's stage for its install's progress `fraction`: the download, counted to its own
-/// 100%, then getting the build ready, so the bar and the time left stop reading as a download
-/// while the build is unpacked, put in place and given another build's prepared files.
-fn install_stage(fraction: f32) -> InstallProgress {
-    if fraction >= DOWNLOAD_SHARE {
-        InstallProgress::PreparingBuild
-    } else {
-        InstallProgress::DownloadingBuild(fraction / DOWNLOAD_SHARE)
-    }
-}
-
 /// How a switch ended, in its log: what it did, not what was last pressed. A cancel counts
 /// only when it was taken and the switch stopped for it; a switch that failed for another
 /// reason while a cancel was pending says why it failed.
@@ -182,9 +167,9 @@ impl Launcher {
         true
     }
 
-    pub(crate) fn switch_download_progress(&mut self, tag: &str, fraction: f32) {
+    pub(crate) fn switch_download_progress(&mut self, tag: &str, phase: backend::InstallPhase) {
         if self.ui.sheets.switching.cache_download.as_deref() == Some(tag) {
-            self.switch_progress(install_stage(fraction));
+            self.switch_progress(phase.into());
         }
     }
 
@@ -270,7 +255,7 @@ impl Launcher {
         let stop = self.stage_switch(tag.clone(), instance, identity, choice, policy);
         if let Some(release) = release {
             self.ui.sheets.switching.cache_download = Some(tag);
-            self.switch_progress(InstallProgress::DownloadingBuild(0.));
+            self.switch_progress(InstallProgress::CheckingBuild);
             self.install_cancellable(&release, Some(stop));
         } else {
             self.prepare_switch();
@@ -380,6 +365,9 @@ impl Launcher {
     }
 
     fn start_switch_worker(&mut self) {
+        // Both routes first check the profile's mods. In particular, the donor's counted
+        // detail belongs to the install, not to the switch worker.
+        self.switch_progress(InstallProgress::Checking);
         let running = self
             .ui
             .sheets
@@ -392,16 +380,6 @@ impl Launcher {
             identity,
             choice,
         } = running.pending.take().expect("switch queued");
-        // Both switch routes start by checking the profile's mods; a v2 profile first
-        // refreshes its index, so don't leave the last download or preparation step showing,
-        // nor its counted line.
-        running.progress = InstallProgress::PreparingBuild;
-        running.detail = None;
-        running.eta.update(
-            crate::eta::install_stage_key(InstallProgress::PreparingBuild),
-            None,
-            Instant::now(),
-        );
         let (tag, stop, op) = (
             running.tag.clone(),
             running.stop.clone(),
@@ -752,9 +730,10 @@ impl Launcher {
                 _ => running.eta.remaining(now),
             };
             let step = match (&running.detail, running.progress) {
-                // Past the download its own steps (unpacking, copying prepared files) say what
-                // they do: not "Downloading the build" in front of them.
-                (Some(detail), InstallProgress::DownloadingBuild(_)) => detail.clone(),
+                (
+                    Some(detail),
+                    InstallProgress::DownloadingBuild(_) | InstallProgress::PreparingBuild,
+                ) => detail.clone(),
                 (Some(detail), stage) => format!("{} · {detail}", stage_label(stage)),
                 (None, stage) => stage_label(stage),
             };
@@ -1601,8 +1580,8 @@ fn publish_report(
 #[cfg(test)]
 mod tests {
     use super::{
-        can_fast_save_choice, install_stage, publish_report, shown_outcome, switch_ending,
-        switch_start, SwitchStart,
+        can_fast_save_choice, publish_report, shown_outcome, switch_ending, switch_start,
+        SwitchStart,
     };
     use crate::sheets::Sheet;
     use crate::Load;
@@ -1835,7 +1814,29 @@ mod tests {
                 sunrise_launcher::browser::sunrise::SwitchPolicy::Ask,
             );
             l.ui.sheets.switching.cache_download = Some(TAG_DOWNLOAD_OK.into());
-            l.switch_progress(InstallProgress::DownloadingBuild(0.));
+            use sunrise_launcher::backend::InstallPhase;
+            l.switch_download_progress(TAG_DOWNLOAD_OK, InstallPhase::Checking);
+            assert_eq!(l.switch_line().as_deref(), Some("Checking the build…"));
+            l.switch_download_progress("other", InstallPhase::Finishing);
+            assert_eq!(l.switch_line().as_deref(), Some("Checking the build…"));
+            l.switch_download_progress(TAG_DOWNLOAD_OK, InstallPhase::Downloading(0.25));
+            l.switch_detail("Transfer detail".into());
+            l.switch_download_progress(TAG_DOWNLOAD_OK, InstallPhase::Downloading(0.50));
+            assert_eq!(l.switch_line().as_deref(), Some("Transfer detail"));
+            l.switch_download_progress(TAG_DOWNLOAD_OK, InstallPhase::Unpacking);
+            assert_eq!(l.switch_line().as_deref(), Some("Unpacking the build"));
+            l.switch_download_progress(TAG_DOWNLOAD_OK, InstallPhase::Finishing);
+            assert_eq!(
+                l.switch_line().as_deref(),
+                Some("Putting the build in place")
+            );
+            l.switch_download_progress(TAG_DOWNLOAD_OK, InstallPhase::Preparing);
+            assert_eq!(l.switch_line().as_deref(), Some("Getting the build ready…"));
+            l.switch_detail("Copying the prepared game files: 2 of 8".into());
+            assert_eq!(
+                l.switch_line().as_deref(),
+                Some("Copying the prepared game files: 2 of 8")
+            );
             assert_eq!(
                 saved_profile(&profile.id).version,
                 None,
@@ -1864,7 +1865,7 @@ mod tests {
                 ),
                 "worker received BuildChoice::Keep"
             );
-            assert_eq!(running.progress, InstallProgress::PreparingBuild);
+            assert_eq!(running.progress, InstallProgress::Checking);
         });
         wait_until_idle(cx);
         assert_eq!(
@@ -1872,6 +1873,48 @@ mod tests {
             None,
             "an unpublished switch leaves no saved build"
         );
+    }
+
+    #[test]
+    fn switch_can_cancel_install_finishing_but_not_profile_publication() {
+        if !in_scratch_child("switch_can_cancel_install_finishing_but_not_profile_publication") {
+            return;
+        }
+        let profile = sunrise_launcher::instances::create("Cabin", None).unwrap();
+        let mut settings = sunrise_launcher::backend::Settings::load();
+        settings.instance = Some(profile.id.clone());
+        settings.save().unwrap();
+        let mut app = gpui::TestAppContext::single();
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
+        let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+        launcher.update(cx, |l, _| {
+            let instance = l.selected_instance().cloned().unwrap();
+            let identity = sunrise_launcher::browser::sunrise::install_target(&instance).unwrap();
+            let tag = "26.3-0.1.0";
+            let stop = l.stage_switch(
+                tag.into(),
+                instance,
+                identity,
+                None,
+                sunrise_launcher::browser::sunrise::SwitchPolicy::Ask,
+            );
+            l.switch_progress(InstallProgress::Publishing);
+            assert_eq!(l.switch_line().as_deref(), Some("Applying the switch."));
+            l.cancel_switch();
+            assert!(!stop.is_stopped());
+
+            l.ui.sheets.switching.cache_download = Some(tag.into());
+            l.switch_download_progress(tag, sunrise_launcher::backend::InstallPhase::Finishing);
+            l.cancel_switch();
+            assert!(stop.is_stopped());
+            assert_eq!(l.switch_line().as_deref(), Some("Cancelling…"));
+            assert!(l.finish_switch_download(
+                tag,
+                &Err(sunrise_launcher::native_mods::CANCELLED.into()),
+            ));
+            assert!(l.ui.sheets.switching.running.is_none());
+        });
+        assert!(saved_profile(&profile.id).version.is_none());
     }
 
     /// Home's switch to a build that is already prepared starts its worker inside
@@ -1977,19 +2020,6 @@ mod tests {
     }
 
     use sunrise_launcher::browser::sunrise::{InstallProgress, Switched};
-
-    #[test]
-    fn after_the_download_the_stage_is_no_longer_a_download() {
-        assert_eq!(install_stage(0.0), InstallProgress::DownloadingBuild(0.0));
-        assert!(
-            matches!(install_stage(0.45), InstallProgress::DownloadingBuild(f) if (f - 0.5).abs() < 1e-6),
-            "half the download is half the bar"
-        );
-        // Unpacking (0.97) and putting the build in place (1.0): getting it ready.
-        for fraction in [0.9, 0.97, 1.0] {
-            assert_eq!(install_stage(fraction), InstallProgress::PreparingBuild);
-        }
-    }
 
     #[test]
     fn a_switch_ends_in_its_log_as_it_did_not_as_last_pressed() {

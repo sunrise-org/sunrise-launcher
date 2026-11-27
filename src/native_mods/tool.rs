@@ -359,7 +359,7 @@ pub(super) fn toolchain(rust: &Toolchain) -> Value {
 /// The plan's JSON line.
 fn plan_line(rust: &Toolchain, plan: &Plan<'_>) -> String {
     let mut tools = toolchain(rust);
-    tools["cargo_home"] = serde_json::json!(plan.workspace.path().join("cargo"));
+    tools["cargo_home"] = serde_json::json!(plan.workspace.cargo_home());
     serde_json::json!({
         "contract": CONTRACT,
         "work": plan.work,
@@ -415,9 +415,11 @@ fn compiler_handoff(terminal: Result<Built, Failure>, quiescent: bool) -> Result
     match terminal {
         Err(failure) if quiescent || failure.blame.is_none() => Err(failure),
         Ok(built) if quiescent => Ok(built),
-        _ => Err(tr("The launcher couldn't prove all native build workers stopped. Their build files were kept.")
-            .to_owned()
-            .into()),
+        _ => Err(tr(
+            "Part of the mod build may still be running, so its build files were kept. Wait a moment and try again.",
+        )
+        .to_owned()
+        .into()),
     }
 }
 

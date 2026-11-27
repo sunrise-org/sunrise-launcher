@@ -1,6 +1,5 @@
-//! Which files of a package are its source, and which of them are refused: the mod tools' one file
-//! list and binary rule, copied from the game's `sunrise-mod-source` (`package.rs`,
-//! tools/tests/test_game_copies.py), so the launcher packs and checks a mod by the same rule.
+//! The launcher's Cargo package selector. Its source-file and binary rules are shared with
+//! the game's `sunrise-mod-source` (`tools/tests/test_game_copies.py`).
 use crate::manifest::USES_FILE;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use std::{io, path::Path};
@@ -65,12 +64,12 @@ pub fn binary_kind(head: &[u8]) -> Option<&'static str> {
 /// The source files a package of the folder at `root` carries, `/`-separated and sorted: the files
 /// `cargo package` would put in the crate. The whole folder is walked, but not [`NOT_PACKAGED`]
 /// folders, nested packages (a folder holding its own `Cargo.toml`) that no packaged manifest names
-/// as a `path` dependency, `.`-named files and folders (unless `include` is set), the names [`source_file`] refuses, or what the root `.gitignore` ignores. A `path` dependency of a
-/// packaged manifest that leaves the package, or names a folder the walk leaves out, is refused by
-/// the manifest and path (one under `.sunrise/`, the SDK the native build replaces, is not). Two
-/// names that differ only by case are refused, since a Windows or macOS extraction keeps one. Then
-/// `[package] include` of `Cargo.toml` keeps only the files it matches, or else `[package]
-/// exclude` drops the files it matches, both as gitignore-style patterns. `Cargo.toml` and
+/// as a `path` dependency, dot files (unless `include` is set), names [`source_file`] refuses,
+/// or root `.gitignore` entries unless `[package].include` selects them. An ignored directory
+/// is entered only when it can contain an included path. A `path` dependency that leaves the
+/// package or names an omitted folder is refused (except the SDK under `.sunrise/`). Case-only
+/// twins are refused, since a Windows or macOS extraction keeps only one. `[package].exclude`
+/// takes precedence over `include`; both use gitignore-style patterns. `Cargo.toml` and
 /// `Cargo.lock` at the root are always kept. No entry whose name a package path cannot hold (not
 /// UTF-8, or with a `\` in it) is read. The walk keeps its own stack, so a deep tree needs no
 /// recursion.
@@ -83,30 +82,23 @@ pub fn source_files(root: &Path) -> io::Result<Vec<String>> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => toml::Table::new(),
         Err(e) => return Err(e),
     };
-    let patterns = |key: &str| -> io::Result<Option<Gitignore>> {
+    let patterns = |key: &str| -> io::Result<Vec<&str>> {
         let Some(value) = manifest.get("package").and_then(|package| package.get(key)) else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
-        let list = value
+        value
             .as_array()
-            .and_then(|list| {
-                list.iter()
-                    .map(toml::Value::as_str)
-                    .collect::<Option<Vec<_>>>()
-            })
+            .and_then(|list| list.iter().map(toml::Value::as_str).collect())
             .ok_or_else(|| {
                 invalid(format!(
                     "Cargo.toml: package.{key} must be a list of strings"
                 ))
-            })?;
-        // Cargo reads an empty `include` as none.
-        if list.is_empty() {
-            return Ok(None);
-        }
-        // Every name matched here is relative to the folder: with an empty root the matcher
-        // strips nothing from it, as a root that is itself a relative path would.
+            })
+    };
+    let compile = |key: &str, patterns: &[&str]| -> io::Result<Gitignore> {
+        // An empty matcher root leaves the package-relative paths intact.
         let mut builder = GitignoreBuilder::new("");
-        for pattern in list {
+        for pattern in patterns {
             builder.add_line(None, pattern).map_err(|e| {
                 invalid(format!(
                     "Cargo.toml: package.{key}: pattern `{pattern}`: {e}"
@@ -115,14 +107,17 @@ pub fn source_files(root: &Path) -> io::Result<Vec<String>> {
         }
         builder
             .build()
-            .map(Some)
             .map_err(|e| invalid(format!("Cargo.toml: package.{key}: {e}")))
     };
-    let include = patterns("include")?;
-    let exclude = patterns("exclude")?;
+    let includes = patterns("include")?;
+    let include = compile("include", &includes)?;
+    let include_dirs = include_ancestors(&includes)
+        .map_err(|e| invalid(format!("Cargo.toml: package.include: {e}")))?;
+    let exclude = compile("exclude", &patterns("exclude")?)?;
     let mut ignored = GitignoreBuilder::new("");
-    if root.join(".gitignore").is_file()
-        && let Some(error) = ignored.add(root.join(".gitignore"))
+    let ignore_path = root.join(".gitignore");
+    if ignore_path.is_file()
+        && let Some(error) = ignored.add(ignore_path)
     {
         return Err(invalid(format!(".gitignore: {error}")));
     }
@@ -133,27 +128,26 @@ pub fn source_files(root: &Path) -> io::Result<Vec<String>> {
         if !is_dir && (name == "Cargo.toml" || name == "Cargo.lock") {
             return true;
         }
-        if ignored
+        if exclude
             .matched_path_or_any_parents(name, is_dir)
             .is_ignore()
         {
             return false;
         }
-        match (&include, &exclude) {
-            // Cargo checks no folder against `include`, which names files.
-            (Some(include), _) => {
-                is_dir || include.matched_path_or_any_parents(name, false).is_ignore()
-            }
-            (None, Some(exclude)) => !exclude
-                .matched_path_or_any_parents(name, is_dir)
-                .is_ignore(),
-            (None, None) => true,
+        if !is_dir && !includes.is_empty() {
+            return include.matched_path_or_any_parents(name, false).is_ignore();
         }
+        !ignored
+            .matched_path_or_any_parents(name, is_dir)
+            .is_ignore()
+            || (is_dir
+                && (include.matched_path_or_any_parents(name, true).is_ignore()
+                    || include_dirs.matched(name, true).is_ignore()))
     };
 
     // Cargo skips `.*` unless `include` is set, which alone then decides.
     let hidden =
-        |name: &str| include.is_none() && name.split('/').any(|part| part.starts_with('.'));
+        |name: &str| includes.is_empty() && name.split('/').any(|part| part.starts_with('.'));
     let mut found = Vec::new();
     let mut pending = vec![(root.to_path_buf(), String::new())];
     // Folders a packaged manifest names as a `path` dependency, and the nested packages seen so far.
@@ -217,6 +211,46 @@ pub fn source_files(root: &Path) -> io::Result<Vec<String>> {
     }
     found.sort();
     Ok(found)
+}
+
+/// Directories on the way to an include match, without enumerating the directory. Basename
+/// patterns can match at any depth; for anchored paths each slash marks a possible ancestor.
+fn include_ancestors(patterns: &[&str]) -> Result<Gitignore, ignore::Error> {
+    let mut dirs = GitignoreBuilder::new("");
+    dirs.allow_unclosed_class(false);
+    for pattern in patterns {
+        let pattern = pattern.trim_end_matches(' ');
+        if pattern.is_empty() || pattern.starts_with(['#', '!']) {
+            continue;
+        }
+        let mut path = pattern.strip_prefix('/').unwrap_or(pattern);
+        if let Some(directory) = path.strip_suffix('/') {
+            path = directory.strip_suffix('\\').unwrap_or(directory);
+        }
+        if path.is_empty() {
+            continue;
+        }
+        if !pattern.starts_with('/') && !path.contains('/') {
+            dirs.add_line(None, "**")?;
+            break;
+        }
+        let mut scope = "";
+        for (cut, _) in path.match_indices('/') {
+            let prefix = &path[..cut];
+            // A slash inside an alternative or class can leave an incomplete glob. Keep
+            // that already-matched scope traversable rather than dropping possible includes.
+            if prefix.ends_with('\\') || dirs.add_line(None, &format!("/{prefix}/")).is_err() {
+                if scope.is_empty() {
+                    dirs.add_line(None, "**")?;
+                } else {
+                    dirs.add_line(None, &format!("/{scope}/**"))?;
+                }
+                break;
+            }
+            scope = prefix;
+        }
+    }
+    dirs.build()
 }
 
 /// Refuses two of `names` that differ only by case: a Windows or macOS extraction keeps one.
@@ -433,6 +467,81 @@ mod folder_tests {
         assert_eq!(
             names(root.path()),
             ["Cargo.lock", "Cargo.toml", "shim.c", "src/lib.rs"]
+        );
+    }
+
+    #[test]
+    fn include_overrides_gitignore_for_files_and_directories() {
+        let root = project(&[
+            (
+                "Cargo.toml",
+                "[package]\nname = 'ruby'\ninclude = ['src/**', 'generated/helper.c']\nexclude = ['src/bench.c', 'src/internal/']\n",
+            ),
+            (".gitignore", "generated/\n*.gen.c\nignored.c\n"),
+            ("generated/helper.c", ""),
+            ("generated/notes.txt", ""),
+            ("src/shim.gen.c", ""),
+            ("src/lib.rs", ""),
+            ("src/bench.c", ""),
+            ("src/internal/private.c", ""),
+            ("ignored.c", ""),
+        ]);
+        assert_eq!(
+            names(root.path()),
+            [
+                "Cargo.toml",
+                "generated/helper.c",
+                "src/lib.rs",
+                "src/shim.gen.c"
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_ignored_directories_that_can_match_include_are_read() {
+        use std::{fs, io::ErrorKind, os::unix::fs::PermissionsExt, path::PathBuf};
+
+        struct Unreadable(PathBuf, fs::Permissions);
+        impl Unreadable {
+            fn new(path: PathBuf) -> Self {
+                let original = fs::metadata(&path).unwrap().permissions();
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+                Self(path, original)
+            }
+        }
+        impl Drop for Unreadable {
+            fn drop(&mut self) {
+                fs::set_permissions(&self.0, self.1.clone()).unwrap();
+            }
+        }
+
+        let root = project(&[
+            (
+                "Cargo.toml",
+                "[package]\nname = 'ruby'\ninclude = ['src/**', 'generated/helper.c', 'extra-*/helper.c']\n",
+            ),
+            (".gitignore", "scratch/\ngenerated/\n"),
+            ("src/lib.rs", ""),
+            ("scratch/helper.c", ""),
+            ("generated/helper.c", ""),
+            ("generated/scratch/helper.c", ""),
+        ]);
+        let scratch = Unreadable::new(root.path().join("scratch"));
+        if fs::read_dir(&scratch.0).is_ok() {
+            // A privileged process can still enumerate mode-000 folders.
+            return;
+        }
+        let nested = Unreadable::new(root.path().join("generated/scratch"));
+        assert_eq!(
+            names(root.path()),
+            ["Cargo.toml", "generated/helper.c", "src/lib.rs"]
+        );
+        drop(nested);
+        let _selected = Unreadable::new(root.path().join("generated"));
+        assert_eq!(
+            source_files(root.path()).unwrap_err().kind(),
+            ErrorKind::PermissionDenied
         );
     }
 

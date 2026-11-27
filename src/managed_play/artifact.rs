@@ -26,7 +26,7 @@ impl Artifact {
         Self::capture_at(tag, &backend::version_dir(tag))
     }
 
-    pub(super) fn capture_at(tag: &str, dir: &Path) -> Result<Self, String> {
+    pub(crate) fn capture_at(tag: &str, dir: &Path) -> Result<Self, String> {
         Self::installed(dir, tag, None)
     }
 

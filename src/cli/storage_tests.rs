@@ -17,6 +17,14 @@ fn storage_command_and_legacy_cache_limit_setting() {
             clear: Some(ClearStorage::All)
         })
     ));
+    assert!(matches!(
+        Cli::try_parse_from(["sunrise-launcher", "storage", "--clear", "mod-build-cache"])
+            .unwrap()
+            .command,
+        Some(Cmd::Storage {
+            clear: Some(ClearStorage::Row(Category::ModBuildCache))
+        })
+    ));
     assert!(Cli::try_parse_from(["sunrise-launcher", "storage", "--clear", "worlds"]).is_err());
     assert!(Cli::try_parse_from(["sunrise-launcher", "native-cache"]).is_err());
     assert!(
@@ -77,4 +85,138 @@ fn the_worlds_setting_picks_rows_or_tiles() {
     set_setting(&mut settings, "worlds", "rows").unwrap();
     assert_eq!(settings.world_layout, WorldLayout::Rows);
     assert!(Cli::try_parse_from(["sunrise-launcher", "settings", "worlds", "tiles"]).is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn storage_scopes_clear_and_redacts_cli_errors() {
+    const ACTOR: &str = "SUNRISE_STORAGE_CLI_TEST";
+    if let Ok(mode) = std::env::var(ACTOR) {
+        let (clear, as_json) = match mode.as_str() {
+            "scoped" => (Some(ClearStorage::Row(Category::RustCompiler)), true),
+            "fatal" => (Some(ClearStorage::Row(Category::ModBuildCache)), true),
+            "kept" => (Some(ClearStorage::Row(Category::BuildFiles)), true),
+            _ => (None, false),
+        };
+        std::process::exit(execute(Cmd::Storage { clear }, as_json).unwrap());
+    }
+    let scratch = tempfile::tempdir().unwrap();
+    let private = scratch.path().join("private-home-canary");
+    let launcher = private.join("launcher");
+    let child = |mode: &str| {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "cli::storage_tests::storage_scopes_clear_and_redacts_cli_errors",
+                // The child exits with the CLI status before libtest can emit captured stdout.
+                "--nocapture",
+                "--quiet",
+            ])
+            .env(ACTOR, mode)
+            .env("SUNRISE_LAUNCHER_HOME", &launcher)
+            .env("SUNRISE_HOME", private.join("game"))
+            .env("SUNRISE_LAUNCHER_LOCATION_FILE", private.join("location"))
+            .env("SUNRISE_NO_KEYCHAIN", "1");
+        command
+    };
+    let run = |mode| child(mode).output().unwrap();
+    let rust = launcher.join("rust/old/output");
+    let native = launcher.join("native");
+    let outside = private.join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::create_dir_all(rust.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(&native).unwrap();
+    std::fs::write(&rust, b"output").unwrap();
+    std::os::unix::fs::symlink(&outside, native.join("w")).unwrap();
+    let output = run("scoped");
+    assert!(output.status.success(), "{output:?}");
+    assert!(!rust.exists());
+    let output = run("fatal");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("unexpected file or link"), "{stderr}");
+    assert!(!stderr.contains("private-home-canary"), "{stderr}");
+    std::fs::remove_file(native.join("w")).unwrap();
+    let attempt = native.join("source/revision");
+    std::fs::create_dir_all(&attempt).unwrap();
+    std::os::unix::fs::symlink(&outside, attempt.join("unexpected")).unwrap();
+    let output = run("kept");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let body: serde_json::Value =
+        serde_json::from_str(&stdout[stdout.find('{').unwrap()..]).unwrap();
+    assert_eq!(body["rows"][0]["category"], "build-files");
+    assert_eq!(body["rows"][0]["kept"].as_array().unwrap().len(), 1);
+    assert!(!stdout.contains("private-home-canary"), "{stdout}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("Build files"), "{stderr}");
+    assert!(!stderr.contains("private-home-canary"), "{stderr}");
+    let output = run("count");
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("Counted Rust compiler:"), "{stderr}");
+
+    use std::os::{fd::OwnedFd, unix::net::UnixStream};
+    let (reader, writer) = UnixStream::pair().unwrap();
+    drop(reader);
+    let output = child("count")
+        .stderr(std::process::Stdio::from(OwnedFd::from(writer)))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let body = String::from_utf8(output.stdout).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&body[body.find('{').unwrap()..]).unwrap();
+    assert_eq!(
+        report["rows"].as_array().unwrap().len(),
+        Category::ALL.len()
+    );
+}
+
+#[test]
+fn storage_json_count_prints_valid_json_with_empty_stderr() {
+    const ACTOR: &str = "SUNRISE_STORAGE_JSON_CLI_TEST";
+    if std::env::var_os(ACTOR).is_some() {
+        std::process::exit(execute(Cmd::Storage { clear: None }, true).unwrap());
+    }
+    let scratch = tempfile::tempdir().unwrap();
+    let launcher = scratch.path().join("launcher");
+    let rust = launcher.join("rust/old/output");
+    std::fs::create_dir_all(rust.parent().unwrap()).unwrap();
+    std::fs::write(&rust, b"output").unwrap();
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "cli::storage_tests::storage_json_count_prints_valid_json_with_empty_stderr",
+            // The child exits with the CLI status before libtest can emit captured stdout.
+            "--nocapture",
+            "--quiet",
+        ])
+        .env(ACTOR, "1")
+        .env("SUNRISE_LAUNCHER_HOME", &launcher)
+        .env("SUNRISE_HOME", scratch.path().join("game"))
+        .env(
+            "SUNRISE_LAUNCHER_LOCATION_FILE",
+            scratch.path().join("location"),
+        )
+        .env("SUNRISE_NO_KEYCHAIN", "1")
+        .env("SUNRISE_LAUNCHER_NO_SELF_UPDATE", "1")
+        .env("XDG_DATA_HOME", scratch.path().join("xdg-data"))
+        .env("XDG_CONFIG_HOME", scratch.path().join("xdg-config"))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.is_empty(), "expected empty stderr, got: {stderr}");
+    assert!(!stderr.contains("Counted"), "{stderr}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json = stdout
+        .find('{')
+        .map(|start| &stdout[start..])
+        .unwrap_or(&stdout);
+    let report: serde_json::Value = serde_json::from_str(json).unwrap();
+    assert_eq!(
+        report["rows"].as_array().unwrap().len(),
+        Category::ALL.len()
+    );
 }

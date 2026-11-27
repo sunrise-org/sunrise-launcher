@@ -197,9 +197,9 @@ impl Launcher {
         }
         let (release, tx) = (release.clone(), self.tx.clone());
         let tag = release.tag.clone();
-        self.installing = Some((tag.clone(), 0.0));
+        self.installing = Some((tag.clone(), backend::InstallPhase::Checking));
         self.install_started = Some(Instant::now());
-        self.bar = (0., 0.);
+        self.play_detail = None;
         self.install_error = None;
         // The steps after the download say what they do, and their counts (#607): into a
         // switch's own log and dialog when the install is a switch's, else to Home's line.

@@ -29,7 +29,7 @@ fn home_labels_follow_installed_replies_with_the_same_inventory() {
         "mods::home_tests::home_labels_follow_installed_replies_with_the_same_inventory",
         |launcher| {
             let home = launcher.mods_home();
-            let key = native_status::fingerprint(&home, None);
+            let (key, _, _) = launcher.mods_snapshot_key(&home, std::time::Instant::now());
             // The first Installed read has not answered.
             let inventory = 1;
             launcher.ui.mods.snapshot = Some(Snapshot {

@@ -283,7 +283,7 @@ impl Fixture {
         let cancel = native_mods::Cancellation::default();
         let mut profile = Profile::open(self.home(), None).unwrap();
         if profile
-            .refresh(self.instance.native_profile, &cancel, |_| {}, None, None)
+            .refresh_for_play(self.instance.native_profile, &cancel, |_| {}, None, None)
             .unwrap()
             .is_some()
         {

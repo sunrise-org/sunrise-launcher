@@ -18,6 +18,20 @@ const RING_LINES: usize = 5000;
 const FILE_LIMIT: u64 = 1 << 20;
 /// How many rotated files are kept: `launcher.1.log` to `launcher.3.log`.
 const OLD_FILES: u32 = 3;
+/// Staging name used while moving `launcher.log` out of the way before shifting older archives.
+const ROTATING_NAME: &str = "launcher.log.rotating";
+fn rotation_name(index: u32) -> String {
+    match index {
+        0 => "launcher.log".into(),
+        n => format!("launcher.{n}.log"),
+    }
+}
+
+pub(crate) fn is_rotation_file(name: &std::ffi::OsStr) -> bool {
+    name == std::ffi::OsStr::new(ROTATING_NAME)
+        || (0..=OLD_FILES).any(|index| name == std::ffi::OsStr::new(&rotation_name(index)))
+}
+
 /// What replaces a secret.
 const SECRET: &str = "<secret>";
 /// Query, form and JSON keys whose values are secrets. A key matches as the end of a longer
@@ -82,6 +96,7 @@ struct LogFile {
     file: Option<File>,
     size: u64,
     limit: u64,
+    rotation_failed: bool,
 }
 
 impl LogFile {
@@ -90,7 +105,7 @@ impl LogFile {
         let file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(dir.join("launcher.log"))
+            .open(dir.join(rotation_name(0)))
             .ok();
         let size = file
             .as_ref()
@@ -101,6 +116,7 @@ impl LogFile {
             file,
             size,
             limit,
+            rotation_failed: false,
         }
     }
 
@@ -108,7 +124,7 @@ impl LogFile {
         if self.file.is_none() {
             return;
         }
-        if self.size >= self.limit {
+        if self.size >= self.limit && !self.rotation_failed {
             self.rotate();
         }
         let Some(file) = self.file.as_mut() else {
@@ -121,29 +137,211 @@ impl LogFile {
         self.size += line.len() as u64 + 1;
     }
 
-    /// Moves `launcher.log` to `launcher.1.log` and each older file one up, dropping the oldest,
-    /// then starts a new `launcher.log`.
+    /// Moves `launcher.log` to a staging name first so a failed live rename never shifts or
+    /// deletes older archives (`launcher.1.log`..`launcher.3.log`). Once the live log moves,
+    /// shifts each archive up by one, places the staged file at `launcher.1.log`, and opens a
+    /// fresh `launcher.log`.
     fn rotate(&mut self) {
+        self.rotate_with(rename_path);
+    }
+
+    fn rotate_with(&mut self, mut rename: impl FnMut(&Path, &Path) -> std::io::Result<()>) {
         // Windows can't rename an open file, nor onto an existing one.
         self.file = None;
-        let name = |n: u32| match n {
-            0 => self.dir.join("launcher.log"),
-            n => self.dir.join(format!("launcher.{n}.log")),
-        };
-        for n in (0..OLD_FILES).rev() {
-            let _ = fs::remove_file(name(n + 1));
-            let _ = fs::rename(name(n), name(n + 1));
+        let name = |n| self.dir.join(rotation_name(n));
+        let staged = self.dir.join(ROTATING_NAME);
+        let _ = fs::remove_file(&staged);
+        if rename(&name(0), &staged).is_err() {
+            // Preserve existing archives and stop retrying rotation for this handle so a
+            // locked live file (e.g. a viewer on Windows) cannot wipe older archives.
+            *self = Self::open(&self.dir, self.limit);
+            self.rotation_failed = true;
+            return;
         }
+        for n in (1..OLD_FILES).rev() {
+            let _ = fs::remove_file(name(n + 1));
+            let _ = rename(&name(n), &name(n + 1));
+        }
+        let _ = fs::remove_file(name(1));
+        let _ = rename(&staged, &name(1));
         *self = Self::open(&self.dir, self.limit);
     }
 }
 
+fn rename_path(from: &Path, to: &Path) -> std::io::Result<()> {
+    fs::rename(from, to)
+}
+
 static RING: Mutex<Ring> = Mutex::new(Ring::new());
 static FILE: Mutex<Option<LogFile>> = Mutex::new(None);
-/// The scrubber, built on the first line after `init`.
-static SCRUBBER: Mutex<Option<Arc<Scrubber>>> = Mutex::new(None);
-/// What `hide` was told, kept for a scrubber that isn't built yet.
-static HIDDEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+struct HideState {
+    /// The scrubber, built on the first line after `init`.
+    scrubber: Option<Arc<Scrubber>>,
+    /// Registered filesystem roots, kept for a scrubber that isn't built yet.
+    paths: Vec<String>,
+    /// What `hide` was told, kept for a scrubber that isn't built yet.
+    terms: Vec<String>,
+    /// Whole-word private terms (1–2 byte profile names), kept for a scrubber that isn't built yet.
+    words: Vec<String>,
+}
+
+struct HideList(Mutex<HideState>);
+
+impl HideList {
+    const fn new() -> Self {
+        Self(Mutex::new(HideState {
+            scrubber: None,
+            paths: Vec::new(),
+            terms: Vec::new(),
+            words: Vec::new(),
+        }))
+    }
+
+    fn hide_path_root(&self, root: &str) {
+        let mut state = lock(&self.0);
+        if state
+            .paths
+            .iter()
+            .any(|existing| existing.to_lowercase() == root.to_lowercase())
+        {
+            return;
+        }
+        if let Some(built) = state.scrubber.as_mut() {
+            *built = Arc::new((**built).clone().path_term(root));
+        }
+        state.paths.push(root.to_owned());
+    }
+
+    fn register_path_spelling(&self, candidate: &Path) {
+        if !candidate
+            .components()
+            .any(|part| matches!(part, std::path::Component::Normal(_)))
+        {
+            return;
+        }
+        let raw = candidate.to_string_lossy();
+        if candidate.is_absolute() {
+            self.hide_path_root(&raw);
+            return;
+        }
+        // Strip leading `./` or `.\` segments to distinguish multi-segment relative roots (handled
+        // by `path_term` across separators) from single-segment relative directory names (handled
+        // by `hide` after `connecting_host`).
+        let mut clean = raw.as_ref();
+        while let Some(rest) = clean
+            .strip_prefix("./")
+            .or_else(|| clean.strip_prefix(r".\"))
+        {
+            clean = rest;
+        }
+        let clean = clean.trim_end_matches(['/', '\\']);
+        if clean.contains(['/', '\\']) {
+            self.hide_path_root(clean);
+        } else if clean.len() >= 3 {
+            self.hide(clean);
+        }
+    }
+
+    fn hide_path(&self, path: &Path) {
+        if !path
+            .components()
+            .any(|part| matches!(part, std::path::Component::Normal(_)))
+        {
+            return;
+        }
+        self.register_path_spelling(path);
+        if let Ok(abs) = std::path::absolute(path) {
+            self.register_path_spelling(&abs);
+        }
+        if let Ok(canon) = fs::canonicalize(path) {
+            self.register_path_spelling(&canon);
+        }
+    }
+
+    fn hide(&self, term: impl Into<String>) {
+        let term = term.into();
+        let mut state = lock(&self.0);
+        if state
+            .terms
+            .iter()
+            .any(|existing| existing.to_lowercase() == term.to_lowercase())
+        {
+            return;
+        }
+        if let Some(built) = state.scrubber.as_mut() {
+            *built = Arc::new((**built).clone().term(term.clone()));
+        }
+        state.terms.push(term);
+    }
+
+    fn hide_word(&self, term: impl Into<String>) {
+        let term = term.into();
+        let trimmed = term.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        let term = trimmed.to_owned();
+        let mut state = lock(&self.0);
+        if state
+            .words
+            .iter()
+            .any(|existing| existing.to_lowercase() == term.to_lowercase())
+        {
+            return;
+        }
+        if let Some(built) = state.scrubber.as_mut() {
+            *built = Arc::new((**built).clone().word_term(term.clone()));
+        }
+        state.words.push(term);
+    }
+
+    fn hide_profile_name(&self, name: &str) {
+        let trimmed = name.trim();
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("Sunrise") {
+            return;
+        }
+        if trimmed.len() >= 3 {
+            self.hide(trimmed);
+        } else {
+            self.hide_word(trimmed);
+        }
+    }
+
+    fn scrubber(&self, base: impl FnOnce() -> Scrubber) -> Arc<Scrubber> {
+        if let Some(built) = lock(&self.0).scrubber.clone() {
+            return built;
+        }
+        if BUILDING.replace(true) {
+            // A line logged while the accounts load: only the generic rules for it.
+            return Arc::new(Scrubber::new());
+        }
+        let mut built = base();
+        BUILDING.set(false);
+        let mut state = lock(&self.0);
+        if let Some(existing) = state.scrubber.clone() {
+            return existing;
+        }
+        for path in &state.paths {
+            built = built.path_term(path);
+        }
+        for term in &state.terms {
+            built = built.term(term);
+        }
+        for word in &state.words {
+            built = built.word_term(word);
+        }
+        let built = Arc::new(built);
+        state.scrubber = Some(built.clone());
+        built
+    }
+
+    fn scrub_with(&self, base: impl FnOnce() -> Scrubber, text: &str) -> String {
+        self.scrubber(base).scrub(&hide_secrets(text))
+    }
+}
+
+static HIDE: HideList = HideList::new();
 
 thread_local! {
     /// Whether this thread is inside building the scrubber, which reads the accounts and may log.
@@ -224,9 +422,19 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// Starts the file: `dir/launcher.log`, rotated at 1 MiB into launcher.1.log .. launcher.3.log
-/// (oldest dropped). Called once by `main()` before anything else logs, for the window and the
-/// command line alike. Without it (tests, other tools) lines go only to the ring.
+/// (oldest dropped). Called after the data location and carry-over settle, for the window and the
+/// command line alike. Until then, lines go only to the ring.
 pub fn init(dir: &Path) {
+    hide_path(&crate::backend::data_dir());
+    hide_path(&crate::backend::game_home());
+    for var in ["SUNRISE_LAUNCHER_HOME", "SUNRISE_HOME"] {
+        if let Some(raw) = std::env::var_os(var).filter(|value| !value.is_empty()) {
+            hide_path(Path::new(&raw));
+        }
+    }
+    if let Some(parent) = dir.parent() {
+        hide_path(parent);
+    }
     {
         let mut file = lock(&FILE);
         if file.is_some() {
@@ -530,44 +738,26 @@ fn http_status(text: &str) -> Option<u16> {
     })
 }
 
+fn hide_path(path: &Path) {
+    HIDE.hide_path(path);
+}
+
 /// Hide `term` from now on (an account name, a server address). Terms under 3 chars ignored.
 /// The accounts are read often, so a term already hidden is skipped.
 pub fn hide(term: impl Into<String>) {
-    let term = term.into();
-    let mut scrubber = lock(&SCRUBBER);
-    let mut hidden = lock(&HIDDEN);
-    if hidden.contains(&term) {
-        return;
-    }
-    if let Some(built) = scrubber.as_mut() {
-        *built = Arc::new((**built).clone().term(term.clone()));
-    }
-    hidden.push(term);
+    HIDE.hide(term);
 }
 
-/// The scrubber, built on first use like `crate::telemetry::scrubber()` and told every hidden term.
-fn scrubber() -> Arc<Scrubber> {
-    if let Some(built) = lock(&SCRUBBER).clone() {
-        return built;
-    }
-    if BUILDING.replace(true) {
-        // A line logged while the accounts load: only the generic rules for it.
-        return Arc::new(Scrubber::new());
-    }
-    let mut base = crate::telemetry::scrubber();
-    BUILDING.set(false);
-    let mut slot = lock(&SCRUBBER);
-    for term in lock(&HIDDEN).iter() {
-        base = base.term(term);
-    }
-    let built = Arc::new(base);
-    *slot = Some(built.clone());
-    built
+/// Hide a custom profile name or folder slug from now on, keeping the default `"Sunrise"` name
+/// visible. Short 1–2 byte names are registered as whole-word terms so they never blank
+/// substrings inside ordinary words.
+pub(crate) fn hide_profile_name(name: &str) {
+    HIDE.hide_profile_name(name);
 }
 
 /// The scrub every shown, copied or saved line passes (the game's lines in the panel too).
 pub fn scrub(text: &str) -> String {
-    hide_secrets(&scrubber().scrub(text))
+    HIDE.scrub_with(crate::telemetry::scrubber, text)
 }
 
 /// `text` with `SECRET` in place of what looks like a credential: a JWT, a bearer token, the
@@ -707,9 +897,251 @@ macro_rules! elog {
 mod tests {
     use super::*;
 
+    fn isolated(test: &str, run: impl FnOnce(&Path, &Path, &Path)) {
+        const CHILD: &str = "SUNRISE_TEST_LOG_PRIVACY_ROOT";
+        if let Some(root) = std::env::var_os(CHILD) {
+            let root = PathBuf::from(root);
+            run(
+                &root.join("custom-launcher"),
+                &root.join("custom-game"),
+                &root.join("custom-log-root/logs"),
+            );
+            println!("log-privacy-check-completed");
+            return;
+        }
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                &format!("launcher_log::tests::{test}"),
+                "--nocapture",
+            ])
+            .env(CHILD, root)
+            .env("SUNRISE_LAUNCHER_HOME", root.join("custom-launcher"))
+            .env("SUNRISE_HOME", root.join("custom-game"))
+            .env("SUNRISE_LAUNCHER_LOCATION_FILE", root.join("location.json"))
+            .env("SUNRISE_NO_KEYCHAIN", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success()
+                && String::from_utf8_lossy(&output.stdout).contains("log-privacy-check-completed"),
+            "{output:?}"
+        );
+    }
+
+    #[test]
+    fn log_init_hides_custom_roots_inside_longer_paths() {
+        isolated(
+            "log_init_hides_custom_roots_inside_longer_paths",
+            |data, game, logs| {
+                init(logs);
+                for root in [data, game, logs.parent().unwrap()] {
+                    assert_eq!(
+                        scrub(&format!("Could not open {}/saves/example", root.display())),
+                        "Could not open <private>/saves/example"
+                    );
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn hide_path_covers_relative_ip_bearing_and_alias_roots() {
+        isolated(
+            "hide_path_covers_relative_ip_bearing_and_alias_roots",
+            |_, _, _| {
+                let ip_root = Path::new("/mnt/10.0.0.5/private-vault/sunrise");
+                hide_path(ip_root);
+                assert_eq!(
+                    scrub("Could not open /mnt/10.0.0.5/private-vault/sunrise/saves/World from 10.0.0.5"),
+                    "Could not open <private>/saves/World from <ip>"
+                );
+
+                let relative_multi = Path::new("./rel-private-dir/10.0.0.5/sunrise-game");
+                hide_path(relative_multi);
+                assert_eq!(
+                    scrub("open ./rel-private-dir/10.0.0.5/sunrise-game/saves and rel-private-dir\\10.0.0.5\\sunrise-game\\logs"),
+                    "open <private>/saves and <private>\\logs"
+                );
+                let abs_relative = std::path::absolute(relative_multi).unwrap();
+                assert_eq!(
+                    scrub(&format!("open {}/saves", abs_relative.display())),
+                    "open <private>/saves"
+                );
+
+                let relative_single = Path::new("./rel-single-vault");
+                hide_path(relative_single);
+                assert_eq!(scrub("open rel-single-vault/logs"), "open <private>/logs");
+                let abs_single = std::path::absolute(relative_single).unwrap();
+                assert_eq!(
+                    scrub(&format!("open {}/logs", abs_single.display())),
+                    "open <private>/logs"
+                );
+
+                // Windows-style verbatim, drive-case, and mixed-separator aliases.
+                HIDE.hide_path_root(r"D:\10.0.0.5\PrivateVault\Sunrise");
+                assert_eq!(
+                    scrub(r"\\?\d:\10.0.0.5\privatevault/sunrise\logs"),
+                    r"<private>\logs"
+                );
+                assert_eq!(
+                    scrub(r"d:/10.0.0.5\PrivateVault/Sunrise/logs"),
+                    "<private>/logs"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn listing_hides_profile_names_but_not_sunrise() {
+        isolated(
+            "listing_hides_profile_names_but_not_sunrise",
+            |data, game, _| {
+                let name = "Private Observatory Profile";
+                fs::create_dir_all(game.join("instances/observatory")).unwrap();
+                fs::create_dir_all(data).unwrap();
+                fs::write(
+                    data.join("instances.json"),
+                    serde_json::json!({"instances": {"observatory": {"name": name}}}).to_string(),
+                )
+                .unwrap();
+                assert!(crate::instances::list()
+                    .iter()
+                    .any(|instance| instance.name == name));
+                assert_eq!(scrub(&format!("Sunrise: {name}")), "Sunrise: <private>");
+            },
+        );
+    }
+
+    #[test]
+    fn profile_name_forms_are_redacted_across_create_rename_and_short_names() {
+        isolated(
+            "profile_name_forms_are_redacted_across_create_rename_and_short_names",
+            |_, game, _| {
+                // 1. Create failure before listing must still register the proposed name (long and short).
+                fs::create_dir_all(game).unwrap();
+                fs::write(game.join("instances"), "not a directory").unwrap();
+                for proposed in ["Proposed Secret Name", "Q7"] {
+                    let error = crate::instances::create(proposed, None).unwrap_err();
+                    let scrubbed = scrub(&error);
+                    assert!(
+                        !scrubbed.contains(proposed)
+                            && !scrubbed.contains(&proposed.to_lowercase()),
+                        "{proposed} leaked in {scrubbed:?}"
+                    );
+                }
+                fs::remove_file(game.join("instances")).unwrap();
+
+                // 2. Case-variant duplicate names on create and rename are redacted.
+                crate::instances::create("Observatory Beta", None).unwrap();
+                assert_eq!(
+                    scrub("profile OBSERVATORY BETA and observatory beta"),
+                    "profile <private> and <private>"
+                );
+                let dup_create = crate::instances::create("OBSERVATORY BETA", None).unwrap_err();
+                assert!(
+                    !scrub(&dup_create)
+                        .to_ascii_lowercase()
+                        .contains("observatory beta"),
+                    "{dup_create:?}"
+                );
+                crate::instances::create("Second Profile", None).unwrap();
+                let dup_rename = crate::instances::edit("Second Profile", |meta| {
+                    meta.name = Some("observatory beta".into());
+                })
+                .unwrap_err();
+                assert!(
+                    !scrub(&dup_rename)
+                        .to_ascii_lowercase()
+                        .contains("observatory beta"),
+                    "{dup_rename:?}"
+                );
+
+                // 3. Short 1–2 byte profile names are redacted as whole words without harming prose.
+                crate::instances::create("TV", None).unwrap();
+                crate::instances::create("Z", None).unwrap();
+                assert_eq!(
+                    scrub("TV uses 26.3-0.1.0; tv duplicate; activity stays; Z failed; fuzzy stays"),
+                    "<private> uses 26.3-0.1.0; <private> duplicate; activity stays; <private> failed; fuzzy stays"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn headless_for_play_and_renamed_default_register_names_without_listing() {
+        isolated(
+            "headless_for_play_and_renamed_default_register_names_without_listing",
+            |data, game, _| {
+                fs::create_dir_all(game.join("instances/hidden-folder-slug")).unwrap();
+                fs::create_dir_all(data).unwrap();
+                fs::write(
+                    data.join("instances.json"),
+                    serde_json::json!({
+                        "instances": {
+                            "sunrise": {"name": "Private Main Home"},
+                            "hidden-folder-slug": {
+                                "name": "Headless Secret",
+                                "version": "26.3-9.9.9"
+                            }
+                        }
+                    })
+                    .to_string(),
+                )
+                .unwrap();
+
+                // Headless Play lookup without calling `instances::list()` hides display name and slug.
+                let profile = crate::instances::for_play(Some("Headless Secret")).unwrap();
+                let missing = profile.resolve_version(None).unwrap_err();
+                let scrubbed_missing = scrub(&missing);
+                assert!(
+                    !scrubbed_missing.contains("Headless Secret")
+                        && scrubbed_missing.contains("26.3-9.9.9"),
+                    "{scrubbed_missing:?}"
+                );
+                assert_eq!(
+                    scrub("instances/hidden-folder-slug/logs/latest.log"),
+                    "instances/<private>/logs/latest.log"
+                );
+
+                // Renamed default profile is hidden on delete refusal while "Sunrise" stays visible.
+                let refusal = crate::instances::delete("Private Main Home").unwrap_err();
+                let scrubbed_refusal = scrub(&refusal);
+                assert!(
+                    !scrubbed_refusal.contains("Private Main Home"),
+                    "{scrubbed_refusal:?}"
+                );
+                assert_eq!(scrub("Sunrise launcher"), "Sunrise launcher");
+            },
+        );
+    }
+
+    #[test]
+    fn private_terms_cannot_disable_credential_or_address_redaction() {
+        isolated(
+            "private_terms_cannot_disable_credential_or_address_redaction",
+            |_, _, _| {
+                hide("token");
+                hide("Connecting");
+                assert_eq!(scrub("access_token=abc123def"), "access_<private>=<secret>");
+                assert_eq!(
+                    scrub("Connecting to secret.example.org:25565"),
+                    "<private> to <private>:25565"
+                );
+                assert_eq!(
+                    scrub("Connecting to secret.example.org, 25565"),
+                    "<private> to <private>, 25565"
+                );
+            },
+        );
+    }
+
     #[test]
     fn a_sign_in_trace_carries_no_secret_and_keeps_hosts_and_statuses() {
-        hide("Steve_Tester");
+        let list = HideList::new();
+        list.hide("Steve_Tester");
         let jwt = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlMTIzNDU2";
         let trace = [
             "Signing in: login.microsoftonline.com".to_owned(),
@@ -727,7 +1159,7 @@ mod tests {
             "account 069a79f4-44e9-4726-a5be-fca90e38aaf5 is Steve_Tester".to_owned(),
         ]
         .join("\n");
-        let out = scrub(&trace);
+        let out = list.scrub_with(Scrubber::new, &trace);
         for secret in [
             "eyJ",
             "abc123def",
@@ -757,10 +1189,11 @@ mod tests {
 
     #[test]
     fn a_sha256_and_a_sentence_pass_unchanged() {
+        let list = HideList::new();
         let sha = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
         let sentence = "Checking game files: 1204 of 5310 verified, nothing to download";
-        assert_eq!(scrub(sha), sha);
-        assert_eq!(scrub(sentence), sentence);
+        assert_eq!(list.scrub_with(Scrubber::new, sha), sha);
+        assert_eq!(list.scrub_with(Scrubber::new, sentence), sentence);
     }
 
     #[test]
@@ -908,6 +1341,75 @@ mod tests {
     }
 
     #[test]
+    fn failed_live_rotation_preserves_existing_archives_and_keeps_writing() {
+        let dir = tempfile::tempdir().expect("a scratch folder");
+        fs::write(dir.path().join("launcher.1.log"), "archive one\n").unwrap();
+        fs::write(dir.path().join("launcher.2.log"), "archive two\n").unwrap();
+        fs::write(dir.path().join("launcher.3.log"), "archive three\n").unwrap();
+        let mut file = LogFile::open(dir.path(), 20);
+        file.write("line exceeding the rotation limit");
+        file.rotate_with(|_, _| Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied)));
+        assert!(file.rotation_failed);
+        for extra in [
+            "after failure one",
+            "after failure two",
+            "after failure three",
+        ] {
+            file.write(extra);
+        }
+        assert_eq!(
+            fs::read_to_string(dir.path().join("launcher.1.log")).unwrap(),
+            "archive one\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("launcher.2.log")).unwrap(),
+            "archive two\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("launcher.3.log")).unwrap(),
+            "archive three\n"
+        );
+        let live = fs::read_to_string(dir.path().join("launcher.log")).unwrap();
+        assert!(live.contains("after failure three"), "{live}");
+        assert!(!dir.path().join(ROTATING_NAME).exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn held_live_log_on_windows_does_not_wipe_archives() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+        let dir = tempfile::tempdir().expect("a scratch folder");
+        fs::write(dir.path().join("launcher.1.log"), "archive one\n").unwrap();
+        fs::write(dir.path().join("launcher.2.log"), "archive two\n").unwrap();
+        fs::write(dir.path().join("launcher.3.log"), "archive three\n").unwrap();
+        let mut file = LogFile::open(dir.path(), 20);
+        file.write("line exceeding the rotation limit");
+        // Hold `launcher.log` open without FILE_SHARE_DELETE, blocking rename.
+        let _viewer = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(dir.path().join("launcher.log"))
+            .unwrap();
+        for n in 0..5 {
+            file.write(&format!("oversized line {n} while held by viewer"));
+        }
+        assert!(file.rotation_failed);
+        assert_eq!(
+            fs::read_to_string(dir.path().join("launcher.1.log")).unwrap(),
+            "archive one\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("launcher.2.log")).unwrap(),
+            "archive two\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("launcher.3.log")).unwrap(),
+            "archive three\n"
+        );
+    }
+
+    #[test]
     fn a_step_dropped_without_a_result_logs_that_it_ended() {
         let before = since(0).0;
         drop(step("drop-test step alpha"));
@@ -924,16 +1426,21 @@ mod tests {
 
     #[test]
     fn a_preparation_line_is_logged_without_the_players_name() {
-        hide("Steve_Prepare");
-        let before = since(0).0;
-        line("Preparing: 12 of 4000 files for Steve_Prepare");
-        let (_, lines) = since(before);
-        let found: Vec<&String> = lines
-            .iter()
-            .filter(|l| l.contains("Preparing: 12 of 4000 files"))
-            .collect();
-        assert_eq!(found.len(), 1, "{lines:?}");
-        assert!(!found[0].contains("Steve_Prepare"), "{found:?}");
+        isolated(
+            "a_preparation_line_is_logged_without_the_players_name",
+            |_, _, _| {
+                hide("Steve_Prepare");
+                let before = since(0).0;
+                line("Preparing: 12 of 4000 files for Steve_Prepare");
+                let (_, lines) = since(before);
+                let found: Vec<&String> = lines
+                    .iter()
+                    .filter(|l| l.contains("Preparing: 12 of 4000 files"))
+                    .collect();
+                assert_eq!(found.len(), 1, "{lines:?}");
+                assert!(!found[0].contains("Steve_Prepare"), "{found:?}");
+            },
+        );
     }
 
     #[test]

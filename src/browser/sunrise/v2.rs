@@ -187,14 +187,30 @@ struct RefreshContext<'a> {
 
 static LOADED: Mutex<Option<LoadedState>> = Mutex::new(None);
 
+/// [`loaded_serial`]'s value: the exact serial, and whether one is loaded. Published apart from
+/// [`LOADED`], whose lock a refresh holds while it writes the verified index to disk, so a frame
+/// that reads the serial never waits on that write (review of #616). The serial is the whole
+/// `u64` range, so "none" is the flag, not a value of it (review of #671).
+static LOADED_SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static SERIAL_LOADED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Publishes the serial of the catalogue [`LOADED`] now holds. The serial is stored before the
+/// flag, and [`LOADED`] is never emptied again, so a reader that sees the flag sees a serial that
+/// was loaded: this one or a later one, never a torn or made-up value.
+fn publish_loaded_serial(serial: u64) {
+    use std::sync::atomic::Ordering;
+    LOADED_SERIAL.store(serial, Ordering::Release);
+    SERIAL_LOADED.store(true, Ordering::Release);
+}
+
 /// The serial of the verified catalogue held in memory, if one is: what a cached answer drawn
-/// from the index (Home's build suggestion) keys on, with no file read or fetch.
+/// from the index (Home's build suggestion, the picker's preview) keys on, with no lock, file
+/// read or fetch.
 pub fn loaded_serial() -> Option<u64> {
-    LOADED
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .as_ref()
-        .map(|loaded| loaded.catalog.index.serial)
+    use std::sync::atomic::Ordering;
+    SERIAL_LOADED
+        .load(Ordering::Acquire)
+        .then(|| LOADED_SERIAL.load(Ordering::Acquire))
 }
 /// The verified snapshot on disk, read by [`read_saved_index`] while nothing is loaded yet.
 static SAVED: Mutex<Option<Catalog>> = Mutex::new(None);
@@ -411,6 +427,9 @@ where
         catalog: catalog.clone(),
         highest_serial,
     });
+    if std::ptr::eq(loaded, &LOADED) {
+        publish_loaded_serial(catalog.index.serial);
+    }
     Ok(catalog)
 }
 

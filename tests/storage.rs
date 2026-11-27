@@ -13,11 +13,14 @@ impl Home {
         path
     }
     fn run(&self, args: &[&str]) -> std::process::Output {
+        self.run_in("game", args)
+    }
+    fn run_in(&self, game: &str, args: &[&str]) -> std::process::Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_sunrise-launcher"));
         command.args(args);
         command
             .current_dir(self.0.path())
-            .env("SUNRISE_HOME", self.0.path().join("game"))
+            .env("SUNRISE_HOME", self.0.path().join(game))
             .env("SUNRISE_LAUNCHER_HOME", self.0.path().join("launcher"))
             .env("XDG_DATA_HOME", self.0.path().join("data"))
             .env("XDG_CONFIG_HOME", self.0.path().join("config"))
@@ -46,15 +49,6 @@ impl Home {
         }
         command.output().unwrap()
     }
-    fn refuse(&self, row: &str) {
-        let output = self.run(&["storage", "--clear", row]);
-        assert!(!output.status.success(), "{output:?}");
-        assert!(
-            String::from_utf8_lossy(&output.stderr)
-                .contains("An older game build can use this cache without runtime leases."),
-            "{output:?}"
-        );
-    }
     fn clear(&self, row: &str) -> serde_json::Value {
         let output = self.run(&["storage", "--clear", row]);
         assert!(output.status.success(), "{output:?}");
@@ -63,44 +57,45 @@ impl Home {
 }
 
 #[test]
-fn storage_counts_unproved_compiler_work_but_never_offers_to_clear_it() {
+fn storage_clears_retained_compiler_attempts_on_explicit_clear() {
     let home = Home::new();
-    let old = home.file(
+    home.file("launcher/native/.nb-old/compiler/w", &[9; 16384]);
+    home.file(
         "launcher/native/.native-attempt-old/compiler/work",
         &[9; 16384],
     );
-    let output = home.run(&["storage", "--clear", "build-files"]);
-    assert!(!output.status.success(), "{output:?}");
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let report = home.clear("build-files");
     let row = report["rows"]
         .as_array()
         .unwrap()
         .iter()
         .find(|row| row["category"] == "build-files")
         .unwrap();
-    assert!(row["kept"][0]["reason"]
-        .as_str()
-        .unwrap()
-        .contains("prove all workers had stopped"));
-    assert!(row["kept"][0]["bytes"].as_u64().unwrap() >= 16384);
-    assert_eq!(row["kept"][0]["bytes"], row["remaining_bytes"]);
-    assert_eq!(fs::read(old).unwrap(), [9; 16384]);
+    assert!(row["kept"].as_array().unwrap().is_empty());
+    assert!(row["freed_bytes"].as_u64().unwrap() >= 32768);
+    assert_eq!(row["remaining_bytes"].as_u64().unwrap(), 0);
+    assert!(!home.0.path().join("launcher/native/.nb-old").exists());
+    assert!(!home
+        .0
+        .path()
+        .join("launcher/native/.native-attempt-old")
+        .exists());
 }
 
 #[test]
-fn build_files_refuse_without_touching_targets_sources_or_player_data() {
+fn build_files_clear_without_touching_player_data() {
     let home = Home::new();
     let world = home.file("launcher/worlds/precious/level.dat", b"world");
     let game_world = home.file("game/worlds/precious/level.dat", b"world");
     let output = home.file("launcher/native/target/fast/output", &[7; 8192]);
     let source = home.file("launcher/native/source/rev/lib.rs", b"source");
     let prebuilt = home.file("launcher/native/prebuilt/rev/game", b"prebuilt");
-    home.refuse("build-files");
-    home.refuse("prebuilt-games");
-    assert_eq!(fs::read(prebuilt).unwrap(), b"prebuilt");
-    assert_eq!(fs::read(output).unwrap(), vec![7; 8192]);
-    assert_eq!(fs::read(source).unwrap(), b"source");
-    home.refuse("all");
+    let clear = home.run(&["storage", "--clear", "build-files"]);
+    assert_eq!(clear.status.code(), Some(1), "{clear:?}");
+    home.clear("prebuilt-games");
+    assert!(!prebuilt.exists());
+    assert!(output.exists(), "incomplete native target was not kept");
+    assert!(!source.exists());
     assert_eq!(fs::read(world).unwrap(), b"world");
     assert_eq!(fs::read(game_world).unwrap(), b"world");
 }
@@ -138,9 +133,9 @@ fn running_unplayed_version_is_excluded_even_after_its_process_exits() {
     );
     process.kill().unwrap();
     process.wait().unwrap();
-    home.refuse("spare-game-builds");
-    assert_eq!(fs::read(game).unwrap(), b"running");
-    home.refuse("all");
+    home.clear("spare-game-builds");
+    assert!(!game.exists());
+    home.clear("all");
     assert!(
         played.exists(),
         "Clear all selected an instance-pinned native version"
@@ -156,12 +151,21 @@ impl Home {
 
 #[cfg(unix)]
 #[test]
-fn instance_caches_are_preserved_while_running_and_when_idle() {
+fn instance_caches_are_preserved_while_running_and_cleared_when_idle() {
     use std::process::Stdio;
     let home = Home::new();
     home.installed_version();
     let game = home.file("launcher/versions/v0.0.1/game", b"running");
-    let cache = home.file("game/.sunrise-cache/held-output", b"active instance cache");
+    let caches = [
+        home.file(
+            "game/.sunrise-cache/behaviours-v8.bin",
+            b"active instance cache",
+        ),
+        home.file(
+            "game/.sunrise-cache/behaviours-v7.bin",
+            b"active instance cache",
+        ),
+    ];
     let mut process = Command::new("sh")
         .args(["-c", "read -r ignored", "storage-instance"])
         .arg(game)
@@ -169,15 +173,19 @@ fn instance_caches_are_preserved_while_running_and_when_idle() {
         .spawn()
         .unwrap();
     home.clear("other-caches");
-    assert_eq!(
-        fs::read(&cache).unwrap(),
-        b"active instance cache",
-        "running instance cache was selected"
-    );
+    for cache in &caches {
+        assert_eq!(
+            fs::read(cache).unwrap(),
+            b"active instance cache",
+            "running instance cache was selected"
+        );
+    }
     process.kill().unwrap();
     process.wait().unwrap();
-    home.refuse("other-caches");
-    assert_eq!(fs::read(cache).unwrap(), b"active instance cache");
+    home.clear("other-caches");
+    for cache in caches {
+        assert!(!cache.exists());
+    }
 }
 
 #[test]
@@ -187,7 +195,10 @@ fn unresolved_instance_caches_are_never_selected() {
         "launcher/settings.json",
         br#"{"selected":"missing-version"}"#,
     );
-    let cache = home.file("game/.sunrise-cache/precious", b"unresolved instance cache");
+    let cache = home.file(
+        "game/.sunrise-cache/behaviours-v8.bin",
+        b"unresolved instance cache",
+    );
     home.clear("other-caches");
     assert_eq!(
         fs::read(cache).unwrap(),
@@ -197,7 +208,7 @@ fn unresolved_instance_caches_are_never_selected() {
 }
 
 #[test]
-fn report_cleanup_refuses_and_retains_old_recent_and_newest_reports() {
+fn report_cleanup_removes_only_old_non_latest_reports() {
     use std::time::{Duration, SystemTime};
     let home = Home::new();
     home.installed_version();
@@ -242,11 +253,8 @@ fn report_cleanup_refuses_and_retains_old_recent_and_newest_reports() {
         assert!(selected_bytes > 0);
         assert_eq!(row["bytes"], selected_bytes);
     }
-    home.refuse("other-caches");
-    assert!(
-        home.0.path().join("game/logs/old.log").exists(),
-        "14.5-day log was cleared despite refusal"
-    );
+    home.clear("other-caches");
+    assert!(!home.0.path().join("game/logs/old.log").exists());
     assert!(
         home.0.path().join("game/logs/recent.log").exists(),
         "13.5-day log was cleared"
@@ -255,10 +263,7 @@ fn report_cleanup_refuses_and_retains_old_recent_and_newest_reports() {
         home.0.path().join("game/logs/latest.log").exists(),
         "latest log was cleared"
     );
-    assert!(
-        home.0.path().join("game/crash-reports/old.txt").exists(),
-        "old crash report was cleared despite refusal"
-    );
+    assert!(!home.0.path().join("game/crash-reports/old.txt").exists());
     assert!(
         home.0.path().join("game/crash-reports/newest.txt").exists(),
         "newest crash report must survive even after 14 days"
@@ -266,13 +271,13 @@ fn report_cleanup_refuses_and_retains_old_recent_and_newest_reports() {
 }
 
 #[test]
-fn all_refuses_and_retains_caches_worlds_and_mod_packages() {
+fn all_preserves_unknown_caches_worlds_and_mod_packages() {
     let home = Home::new();
     home.installed_version();
     let cache = home.file("game/.sunrise-cache/output", b"cache");
     let world = home.file("game/worlds/precious/level.dat", b"world");
     let package = home.file("game/sunrise-mods/precious.smod", b"mod package");
-    home.refuse("all");
+    home.clear("all");
     assert_eq!(fs::read(cache).unwrap(), b"cache");
     assert_eq!(
         fs::read(world).unwrap(),
@@ -299,21 +304,17 @@ fn symlink_named_instance_is_refused_without_touching_its_outside_target() {
         home.0.path().join("game/instances/linked"),
     )
     .unwrap();
-    let output = home.run(&["storage", "--clear", "other-caches"]);
+    let _ = home.run(&["storage", "--clear", "other-caches"]);
     assert_eq!(
         fs::read(precious).unwrap(),
         b"outside cache",
         "outside instance target was touched"
     );
-    assert!(
-        !output.status.success(),
-        "symlink-named instance was accepted"
-    );
 }
 
 #[cfg(target_os = "linux")]
 #[test]
-fn hundreds_of_reports_and_jars_fit_the_descriptor_budget_and_refuse_repeatedly() {
+fn hundreds_of_reports_and_jars_fit_the_descriptor_budget() {
     let home = Home::new();
     home.installed_version();
     let old = std::time::SystemTime::now() - std::time::Duration::from_secs(15 * 86400);
@@ -332,25 +333,22 @@ fn hundreds_of_reports_and_jars_fit_the_descriptor_budget_and_refuse_repeatedly(
         report.status.success(),
         "read-only report exceeded 256 FDs: {report:?}"
     );
-    home.refuse("other-caches");
-    home.refuse("other-caches");
-    assert_eq!(
-        fs::read(home.0.path().join("game/jars/399.jar")).unwrap(),
-        b"unused jar"
-    );
+    home.clear("other-caches");
+    home.clear("other-caches");
+    assert!(!home.0.path().join("game/jars/399.jar").exists());
     assert_eq!(
         fs::read_dir(home.0.path().join("game/logs"))
             .unwrap()
             .filter_map(Result::ok)
             .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "log"))
             .count(),
-        400
+        1
     );
     assert_eq!(
         fs::read_dir(home.0.path().join("game/jars"))
             .unwrap()
             .count(),
-        400
+        0
     );
 }
 
@@ -419,4 +417,174 @@ fn explicit_removal_deletes_an_idle_version_from_before_runtime_leases() {
     assert!(output.status.success(), "{output:?}");
     assert!(!marker.exists());
     assert!(!game.exists());
+}
+
+#[test]
+fn markerless_profile_clears_only_the_named_game_caches() {
+    let home = Home::new();
+    home.installed_version();
+    home.file(
+        &format!(
+            "launcher/native/server-builds/server/sunrise-engine{}",
+            std::env::consts::EXE_SUFFIX
+        ),
+        b"markerless",
+    );
+    let paths = [
+        "game/.sunrise-cache/behaviours-v8.bin",
+        "game/.sunrise-cache/behaviours-v7.bin",
+        "game/.sunrise-cache/registry-v1.bin",
+        "game/.sunrise-cache/mod-content/overlay",
+        "game/.sunrise-cache/resourcepacks/overlay",
+        "game/cache/dx12-shaders.bin",
+    ]
+    .map(|path| home.file(path, b"rebuildable"));
+    let canaries = [
+        "game/.sunrise-cache/behaviours-v9.bin",
+        "game/.sunrise-cache/precious",
+        "game/.sunrise-cache/.trash-123-456/precious",
+        "game/cache/precious",
+        "game/cache/private/precious",
+        "game/saves/world/level.dat",
+        "game/options.txt",
+        "game/screenshots/precious",
+        "game/resourcepacks/precious",
+        "game/mods/precious",
+        "game/mod-browser/active-build.json",
+    ]
+    .map(|path| home.file(path, b"player data"));
+    home.clear("other-caches");
+    assert!(paths.iter().all(|path| !path.exists()));
+    for path in canaries {
+        assert_eq!(fs::read(path).unwrap(), b"player data");
+    }
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn profile_cache_links_never_delete_outside_targets() {
+    let home = Home::new();
+    home.installed_version();
+    let canary = home.file("outside/player-data", b"keep");
+    let target = canary.parent().unwrap();
+    for relative in [
+        "game/.sunrise-cache/behaviours-v8.bin",
+        "game/.sunrise-cache/behaviours-v7.bin",
+        "game/.sunrise-cache/registry-v1.bin",
+        "game/.sunrise-cache/mod-content",
+        "game/.sunrise-cache/mod-content/linked",
+        "game/.sunrise-cache/resourcepacks",
+        "game/.sunrise-cache/resourcepacks/linked",
+        "game/cache/dx12-shaders.bin",
+    ] {
+        let link = home.0.path().join(relative);
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, &link).unwrap();
+        #[cfg(windows)]
+        assert!(Command::new("cmd.exe")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(
+                link.as_os_str()
+                    .to_string_lossy()
+                    .trim_start_matches(r"\\?\")
+            )
+            .arg(
+                target
+                    .as_os_str()
+                    .to_string_lossy()
+                    .trim_start_matches(r"\\?\")
+            )
+            .status()
+            .unwrap()
+            .success());
+        let report = home.run(&["storage", "--clear", "other-caches"]);
+        assert_eq!(report.status.code(), Some(1), "{relative}: {report:?}");
+        assert_eq!(fs::read(&canary).unwrap(), b"keep", "{relative}");
+        #[cfg(unix)]
+        fs::remove_file(&link).unwrap();
+        #[cfg(windows)]
+        fs::remove_dir(&link).unwrap();
+    }
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn profile_name_gate_keeps_caches_until_released() {
+    let home = Home::new();
+    home.installed_version();
+    let gate = home.file("game/.install-txn.lock", b"");
+    let cache = home.file("game/cache/dx12-shaders.bin", b"cache");
+    let mut options = fs::File::options();
+    options.read(true).write(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.share_mode(0);
+    }
+    let gate = options.open(gate).unwrap();
+    #[cfg(unix)]
+    gate.lock().unwrap();
+    let output = home.run(&["storage", "--clear", "other-caches"]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(cache.exists());
+    drop(gate);
+    home.clear("other-caches");
+    assert!(!cache.exists());
+}
+
+#[test]
+fn detached_trash_does_not_sweep_a_profile_that_shares_the_launcher_root() {
+    let home = Home::new();
+    home.installed_version();
+    let unrelated = home.file("launcher/.trash-123-456/player-data", b"keep");
+    let unrelated_file = home.file("launcher/.trash-123-457-1", b"keep");
+    let transaction = home.file("launcher/mod-browser/install-txn.json", b"keep");
+    let caches = [
+        home.file("launcher/.sunrise-cache/behaviours-v8.bin", b"rebuildable"),
+        home.file("launcher/.sunrise-cache/behaviours-v7.bin", b"rebuildable"),
+    ];
+    let output = home.run_in("launcher", &["storage", "--clear", "other-caches"]);
+    assert!(output.status.success(), "{output:?}");
+    for path in [unrelated, unrelated_file, transaction] {
+        assert_eq!(fs::read(path).unwrap(), b"keep");
+    }
+    for cache in caches {
+        assert!(!cache.exists());
+    }
+}
+
+#[test]
+fn private_stage_directories_under_versions_are_excluded_from_spare_game_builds() {
+    let home = Home::new();
+    home.installed_version();
+    let build_stage = home.file("launcher/versions/.build-stage-active/payload", &[5; 16384]);
+    let repair_stage = home.file("launcher/versions/.repair-active/payload", &[6; 16384]);
+    let incomplete = home.file("launcher/versions/v0.0.0-incomplete/payload", &[7; 16384]);
+
+    let output = home.run(&["--json", "storage"]);
+    assert!(output.status.success(), "{output:?}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let row = report["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["category"] == "spare-game-builds")
+        .unwrap();
+    let expected = row["remaining_bytes"].as_u64().unwrap();
+    assert!(expected > 0, "incomplete build must still be reported");
+
+    let cleared = home.clear("spare-game-builds");
+    let cleared_row = cleared["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["category"] == "spare-game-builds")
+        .unwrap();
+    assert_eq!(cleared_row["freed_bytes"].as_u64().unwrap(), expected);
+    assert_eq!(cleared_row["remaining_bytes"].as_u64().unwrap(), 0);
+    assert!(cleared_row["kept"].as_array().unwrap().is_empty());
+    assert!(!incomplete.exists());
+    assert_eq!(fs::read(build_stage).unwrap(), vec![5; 16384]);
+    assert_eq!(fs::read(repair_stage).unwrap(), vec![6; 16384]);
 }
