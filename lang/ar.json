@@ -2573,5 +2573,15 @@
   "Shader pack": "حزمة تظليل",
   "Show or hide the sidebar": "إظهار الشريط الجانبي أو إخفاؤه",
   "Spectator": "المشاهد",
-  "Stay open": "إبقاء المشغّل مفتوحًا"
+  "Stay open": "إبقاء المشغّل مفتوحًا",
+  "Stop sharing": "إيقاف المشاركة",
+  "Sunrise Launcher": "مشغّل Sunrise",
+  "Sunrise server": "خادم Sunrise",
+  "Sunrise's own server": "خادم Sunrise الرسمي",
+  "The game failed to start while checking support for offline developer play. Repeat your sunrise-launcher developer-install command, rebuild this build’s native mods with native-build, then try Play again. If it still fails, report this message on the Sunrise Discord (linked in the launcher).\nDetails: {reason}": "تعذّر بدء اللعبة أثناء التحقق من دعم اللعب دون اتصال للمطورين. أعد تنفيذ الأمر sunrise-launcher developer-install، ثم أعد بناء الإضافات الأصلية لهذا الإصدار باستخدام native-build، وحاول اللعب مجددًا. إذا استمرت المشكلة، فأبلغ عن هذه الرسالة في Discord الخاص بـ Sunrise (الرابط موجود في المشغّل).\nالتفاصيل: {reason}",
+  "The launcher stays open beside the game.": "يبقى المشغّل مفتوحًا بجوار اللعبة.",
+  "This version has a {installed} game build, but Settings selects {selected}. Reinstall it from the version picker beside Play before launching.": "يحتوي هذا الإصدار على نسخة لعبة {installed}، لكن الإعدادات تختار {selected}. أعد تثبيتها من قائمة اختيار الإصدار بجوار «العب» قبل التشغيل.",
+  "This version has a {installed} game build, but Settings selects {selected}. Switch back to the installed architecture or Automatic, or choose another available build.": "يحتوي هذا الإصدار على نسخة لعبة {installed}، لكن الإعدادات تختار {selected}. عُد إلى البنية المثبّتة أو اختر «تلقائي»، أو اختر إصدارًا آخر متاحًا.",
+  "Use a local executable or archive with files from an installed build.": "استخدم ملفًا تنفيذيًا محليًا أو أرشيفًا يحتوي على ملفات من إصدار مثبّت.",
+  "What Sunrise sends, and what it never does.": "ما ترسله Sunrise وما لا ترسله أبدًا."
 }
