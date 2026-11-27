@@ -2278,5 +2278,21 @@
   "Cannot locate the platform configuration folder for the launcher location file": "Impossibile individuare la cartella di configurazione della piattaforma per il file di posizione del launcher",
   "Cannot open the data folder: {error}": "Impossibile aprire la cartella dati: {error}",
   "Invalid {path}: {error}; restore this file or the previous data folder": "{path} non valido: {error}; ripristina questo file o la cartella dati precedente",
-  "Unsupported data location version {version} in {path}": "Versione {version} della posizione dati non supportata in {path}"
+  "Unsupported data location version {version} in {path}": "Versione {version} della posizione dati non supportata in {path}",
+  "Data folder {path} is missing; reconnect its drive or restore location.json": "La cartella dati {path} non è disponibile; ricollega l’unità o ripristina location.json",
+  "Bootstrap needs a parent folder": "Bootstrap richiede una cartella padre",
+  "Unset SUNRISE_LAUNCHER_HOME and SUNRISE_HOME before moving data": "Rimuovi SUNRISE_LAUNCHER_HOME e SUNRISE_HOME prima di spostare i dati",
+  "Data location changed while waiting; restart the launcher and retry the move": "La posizione dei dati è cambiata durante l’attesa; riavvia il launcher e riprova a spostarli",
+  "Destination {target} overlaps existing data or its bootstrap {bootstrap}": "La destinazione {target} si sovrappone ai dati esistenti o al relativo bootstrap {bootstrap}",
+  "Destination {path} must be an empty folder": "La destinazione {path} deve essere una cartella vuota",
+  "Copying and verifying launcher data": "Copia e verifica dei dati del launcher",
+  "Copying and verifying game data": "Copia e verifica dei dati di gioco",
+  "Copying and verifying build data": "Copia e verifica dei dati della build",
+  "Committing data location": "Salvataggio della posizione dei dati",
+  "{error}. Original data was kept. Partial copies may remain in {path}; choose an empty folder to retry": "{error}. I dati originali sono stati conservati. Potrebbero esserci copie parziali in {path}; scegli una cartella vuota per riprovare",
+  "Data root must be a folder: {path}": "La radice dei dati deve essere una cartella: {path}",
+  "Source data roots overlap; only a build folder inside/equal to launcher is supported": "Le radici dei dati sorgente si sovrappongono; è supportata solo una cartella di build dentro o uguale a quella del launcher",
+  "Use an absolute path without '..': {path}": "Usa un percorso assoluto senza '..': {path}",
+  "Copy verification failed for {path}": "Verifica della copia non riuscita per {path}",
+  "Source changed during copying: {path}; stop all writers and retry": "La fonte è cambiata durante la copia: {path}; arresta tutti i processi di scrittura e riprova"
 }

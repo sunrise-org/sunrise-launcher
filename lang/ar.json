@@ -2179,5 +2179,21 @@
   "Xbox Live is not available in your country or region.": "Xbox Live غير متاح في بلدك أو منطقتك.",
   "This account needs adult verification on xbox.com before it can play.": "يحتاج هذا الحساب إلى التحقق من كونه للبالغين في xbox.com قبل اللعب.",
   "Xbox Live refused the sign-in (error {code}).": "رفض Xbox Live تسجيل الدخول (الخطأ {code}).",
-  "Xbox Live refused the sign-in.": "رفض Xbox Live تسجيل الدخول."
+  "Xbox Live refused the sign-in.": "رفض Xbox Live تسجيل الدخول.",
+  "The Minecraft services refused this launcher: its app is not approved by Mojang yet.": "رفضت خدمات Minecraft هذا المشغّل لأن Mojang لم توافق على التطبيق بعد.",
+  "Too many sign-ins in a short time. Wait a minute and try again.": "محاولات تسجيل دخول كثيرة خلال وقت قصير. انتظر دقيقة وحاول مجددًا.",
+  "The Minecraft services refused the sign-in.": "رفضت خدمات Minecraft تسجيل الدخول.",
+  "Could not check which games this account owns.": "تعذّر التحقق من الألعاب التي يملكها هذا الحساب.",
+  "Could not read the Minecraft profile.": "تعذّرت قراءة ملف Minecraft الشخصي.",
+  "The Minecraft services' answer couldn't be read.": "تعذّرت قراءة استجابة خدمات Minecraft.",
+  "The rating couldn't be signed.": "تعذّر توقيع التقييم.",
+  "Couldn't reach Minecraft's services.": "تعذّر الوصول إلى خدمات Minecraft.",
+  "That account isn't signed in.": "ذلك الحساب غير مسجّل الدخول.",
+  "The keychain said: {why}": "أفاد مخزن المفاتيح: {why}",
+  "This system has no keychain.": "لا يحتوي هذا النظام على مخزن مفاتيح.",
+  "{file} can't be read ({kind} error at line {line}, column {column}).": "تعذّرت قراءة {file} (خطأ {kind} في السطر {line}، العمود {column}).",
+  "{key} is damaged. Remove it and {file} and sign in again.": "تلف {key}. أزله مع {file} وسجّل الدخول مجددًا.",
+  "Account operation failed. Restart the launcher.": "فشلت عملية الحساب. أعد تشغيل المشغّل.",
+  "Could not create the account lock.": "تعذّر إنشاء قفل الحساب.",
+  "Could not open the account lock.": "تعذّر فتح قفل الحساب."
 }
