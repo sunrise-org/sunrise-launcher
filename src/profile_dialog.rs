@@ -247,7 +247,7 @@ impl Launcher {
             })
             .map(|(c, label)| (c, label.into()))
             .collect();
-            let channels = crate::widgets::chip::choices(
+            let channels = crate::widgets::choice::choices(
                 "new-channel",
                 &options,
                 channel,

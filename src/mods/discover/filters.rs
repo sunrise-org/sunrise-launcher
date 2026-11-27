@@ -325,7 +325,7 @@ impl Launcher {
             .collect();
         let picks: Rc<Vec<Pick>> = Rc::new(options.into_iter().map(|o| o.2).collect());
         let this = cx.entity();
-        let chips = crate::widgets::chip::choices(
+        let chips = crate::widgets::choice::choices(
             "alt-discover-categories",
             &labels,
             current,

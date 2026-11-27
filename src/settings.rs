@@ -4,7 +4,7 @@ use super::*;
 use crate::frame::Reach as _;
 use crate::paint::palette;
 use crate::widgets::check::switch;
-use crate::widgets::chip::choices;
+use crate::widgets::choice::choices;
 use crate::widgets::feedback::{banner, Tone};
 use crate::widgets::nav::{nav_row, sun_fits};
 use gpui::rgb;

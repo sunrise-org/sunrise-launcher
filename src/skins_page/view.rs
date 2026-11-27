@@ -2,7 +2,7 @@
 //! it; the account's skins and capes on the right, as tiles. The preview turns by dragging.
 use super::*;
 use crate::widgets::button::{primary, secondary};
-use crate::widgets::chip::choices;
+use crate::widgets::choice::choices;
 use crate::widgets::feedback::{banner, empty_state, progress, Tone};
 use crate::widgets::focus::c;
 use sunrise_launcher::account::capes::Cape;

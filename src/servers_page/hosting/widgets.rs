@@ -82,8 +82,7 @@ pub(super) fn chip_group(
                 set(this, value);
                 cx.notify();
             })
-        })
-        .gap(px(6.)),
+        }),
     )
 }
 

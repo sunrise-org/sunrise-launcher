@@ -1,9 +1,8 @@
-//! Chips: filter chips, source chips (Sunrise, Modrinth, GitHub), tags, and a group of chips that acts as one choice.
+//! Chips: filter chips, source chips (Sunrise, Modrinth, GitHub) and tags.
 #![allow(dead_code)] // Used by the shell and pages that the next redesign steps move over; removed in the final sweep.
 use super::focus::{c, Reach};
 use super::*;
 use crate::paint::palette;
-use std::rc::Rc;
 
 /// Modrinth's brand green (#1BD96A). A brand colour, so the one hex value a chip is drawn with.
 pub(crate) const MODRINTH: u32 = 0x1bd96a;
@@ -14,8 +13,6 @@ const PADDING: f32 = 10.;
 const GAP: f32 = 4.;
 /// The leading icon and the chevron.
 const ICON: f32 = 14.;
-/// The least width each chip of a [`choices`] group takes, so short words don't make one smaller.
-const CHOICE_MIN_WIDTH: f32 = 96.;
 
 /// What a chip says: a plain filter, the one that is on, or the source it comes from.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -135,74 +132,3 @@ pub(crate) fn chip_with(
 pub(crate) fn tag(label: impl Into<SharedString>, kind: Kind) -> Div {
     shape(kind).child(label.into())
 }
-
-/// Where the arrow key `key` moves a choice from `at` among `len` choices: the one before for
-/// left and up, the one after for right and down, wrapping round. None for any other key, or
-/// for no choices.
-fn next_choice(len: usize, at: usize, key: &str) -> Option<usize> {
-    if len == 0 {
-        return None;
-    }
-    let step = match key {
-        "left" | "up" => len - 1,
-        "right" | "down" => 1,
-        _ => return None,
-    };
-    Some((at + step) % len)
-}
-
-/// One choice among a few chips (`options`: the value each chip stands for, and its label), with
-/// `current` on. The group is one Tab stop with the ring around it. The arrow keys choose the
-/// chip before or after `current`, as a click on it would, and a click chooses the chip clicked.
-/// `on_pick` runs with the value chosen; it must redraw whatever shows the choice.
-pub(crate) fn choices<P: Copy + PartialEq + 'static>(
-    id: &str,
-    options: &[(P, SharedString)],
-    current: P,
-    on_pick: impl Fn(P, &mut Window, &mut App) + 'static,
-) -> Stateful<Div> {
-    let at = options
-        .iter()
-        .position(|(value, _)| *value == current)
-        .unwrap_or(0);
-    let values: Vec<P> = options.iter().map(|(value, _)| *value).collect();
-    let on_pick = Rc::new(on_pick);
-    let mut group = div()
-        .id(SharedString::from(id))
-        .tab_index(0)
-        .seen()
-        .flex()
-        .flex_wrap()
-        .items_center()
-        // Room for the ring, taken back so the chips stay where they were.
-        .p(px(3.))
-        .m(px(-4.))
-        .rounded(crate::tokens::r(crate::tokens::R_CONTROL) + px(4.))
-        .border_1()
-        .border_color(gpui::transparent_black())
-        .focus_visible(|s| s.border_color(c(palette().focus)));
-    for (n, (value, label)) in options.iter().enumerate() {
-        let value = *value;
-        let kind = if value == current {
-            Kind::Selected
-        } else {
-            Kind::Neutral
-        };
-        let pick = on_pick.clone();
-        group = group.child(
-            chip(SharedString::from(format!("{id}-{n}")), label.clone(), kind)
-                .min_w(px(CHOICE_MIN_WIDTH))
-                .on_click(move |_, window, cx| pick(value, window, cx)),
-        );
-    }
-    group.on_key_down(move |ev: &KeyDownEvent, window, cx| {
-        let Some(next) = next_choice(values.len(), at, ev.keystroke.key.as_str()) else {
-            return;
-        };
-        on_pick(values[next], window, cx);
-        cx.stop_propagation();
-    })
-}
-
-#[cfg(test)]
-mod tests;

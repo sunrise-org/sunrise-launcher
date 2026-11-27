@@ -4,7 +4,8 @@ use super::items::{installed_items_key, InstalledItem};
 use super::*;
 use crate::widgets::button::{primary, secondary};
 use crate::widgets::check::{checkbox, Tick};
-use crate::widgets::chip::{self, choices};
+use crate::widgets::choice::choices;
+use crate::widgets::chip;
 use crate::widgets::feedback::empty_state;
 use gpui::SharedString;
 
@@ -171,7 +172,7 @@ impl Launcher {
                 })
             },
         );
-        chips = chips.child(show_choice.gap(px(8.)));
+        chips = chips.child(show_choice);
         if !kinds.is_empty() {
             chips = chips.child(div().flex_none().w(px(1.)).h(px(20.)).bg(c(palette().line)));
         }

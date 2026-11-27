@@ -334,7 +334,7 @@ impl Launcher {
                     )
                 });
                 div().child(
-                    crate::widgets::chip::choices("alt-world-layout", &layouts, layout, move |way, _, cx| {
+                    crate::widgets::choice::choices("alt-world-layout", &layouts, layout, move |way, _, cx| {
                         this.update(cx, |this, cx| {
                             this.settings.world_layout = way;
                             this.save_settings();
@@ -342,7 +342,6 @@ impl Launcher {
                         })
                     })
                     .track_focus(&focus)
-                        .gap(px(6.))
                         .children(asked),
                 )
             },
@@ -666,7 +665,7 @@ impl Launcher {
             tr("System follows your computer's light or dark mode.").to_string()
         };
         let this = cx.entity();
-        let control = crate::widgets::chip::choices(
+        let control = crate::widgets::choice::choices(
             "alt-appearance",
             &options,
             self.settings.appearance,

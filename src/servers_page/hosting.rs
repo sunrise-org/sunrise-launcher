@@ -5,7 +5,7 @@ use super::*;
 use crate::paint::palette;
 use crate::settings::{group, hint, off, row};
 use crate::widgets::check::switch;
-use crate::widgets::chip::choices;
+use crate::widgets::choice::choices;
 use gpui::rgb;
 
 mod create;

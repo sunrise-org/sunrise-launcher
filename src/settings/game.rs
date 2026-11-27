@@ -28,8 +28,7 @@ impl Launcher {
                     this.save_settings();
                     cx.notify();
                 })
-            })
-            .gap(px(6.)),
+            }),
         );
         let while_playing = row(
             tr("While you play"),

@@ -5,7 +5,7 @@ use super::*;
 use crate::paint::palette;
 use crate::widgets::button::{primary, secondary};
 use crate::widgets::check::switch;
-use crate::widgets::chip::choices;
+use crate::widgets::choice::choices;
 use crate::widgets::feedback::empty_state;
 use gpui::ExternalPaths;
 use gpui::SharedString;
@@ -87,8 +87,7 @@ impl Launcher {
                     }
                     cx.notify();
                 })
-            })
-            .gap(px(8.)),
+            }),
         )
     }
 
