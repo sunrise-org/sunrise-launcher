@@ -1806,5 +1806,21 @@
   "Native mods can't build on this computer": "يتعذّر بناء الإضافات الأصلية على هذا الكمبيوتر",
   "Native mods need Rust, and the launcher has none for {os} {arch}.": "تحتاج الإضافات الأصلية إلى Rust، ولا يتوفر في المشغّل إصدار لـ {os} ‏{arch}.",
   "Needs an update from its author": "تحتاج إلى تحديث من مؤلفها",
-  "Needs an update from its author: {count}.": "تحتاج إلى تحديث من مؤلفها: {count}."
+  "Needs an update from its author: {count}.": "تحتاج إلى تحديث من مؤلفها: {count}.",
+  "Needs {mod}": "يتطلب {mod}",
+  "Needs {mod}. Install a fitting version first.": "يتطلب {mod}. ثبّت إصدارًا متوافقًا أولًا.",
+  "New profile": "ملف شخصي جديد",
+  "Nightly list is larger than 2 MiB.": "قائمة Nightly أكبر من 2 MiB.",
+  "Nightly mods": "إضافات Nightly",
+  "No Dev build yet.": "لا يتوفر بناء تطويري بعد.",
+  "No Nightly build yet.": "لا يتوفر بناء Nightly بعد.",
+  "No Stable build yet.": "لا يتوفر بناء مستقر بعد.",
+  "No Sunrise Dev build is tagged {tag}.": "لا يوجد بناء تطويري من Sunrise بالوسم {tag}.",
+  "No Sunrise mod at this commit": "لا توجد إضافة Sunrise في هذا الالتزام",
+  "No Sunrise mod at this commit.": "لا توجد إضافة Sunrise في هذا الالتزام.",
+  "No Sunrise mod at this commit. Expected {manifest}.": "لا توجد إضافة Sunrise في هذا الالتزام. المتوقع {manifest}.",
+  "No Sunrise mod packages were found at {source}.": "لم يُعثر على حزم إضافات Sunrise في {source}.",
+  "No Sunrise modpacks are installed.": "لا توجد حزم إضافات Sunrise مثبّتة.",
+  "No Sunrise mods were found at this link.": "لم يُعثر على إضافات Sunrise في هذا الرابط.",
+  "No Sunrise mods were found in this release.": "لم يُعثر على إضافات Sunrise في هذا الإصدار."
 }

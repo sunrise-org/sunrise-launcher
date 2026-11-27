@@ -2301,5 +2301,21 @@
   "{name} is not a data pack the game reads.": "{name} ไม่ใช่ดาต้าแพ็กที่เกมอ่านได้",
   "{name} has no data folder: it is a resource pack, not a data pack.": "{name} ไม่มีโฟลเดอร์ข้อมูล: เป็นรีซอร์สแพ็ก ไม่ใช่ดาต้าแพ็ก",
   "{file} is not a data pack the game reads": "{file} ไม่ใช่ดาต้าแพ็กที่เกมอ่านได้",
-  "No data pack {query} in {folder}": "ไม่พบดาต้าแพ็ก {query} ใน {folder}"
+  "No data pack {query} in {folder}": "ไม่พบดาต้าแพ็ก {query} ใน {folder}",
+  "Nothing in it runs in Sunrise yet.": "ยังไม่มีรายการใดในนี้ที่ทำงานบน Sunrise ได้",
+  "Runs its {counts}.": "ทำงานเป็น {counts}",
+  "{runs} Not read yet: {unread}.": "{runs} ยังไม่ได้อ่าน: {unread}",
+  "{kinds} and 1 other kind": "{kinds} และอีก 1 ประเภท",
+  "{kinds} and {n} other kinds": "{kinds} และอีก {n} ประเภท",
+  "Nothing to move": "ไม่มีอะไรให้ย้าย",
+  "it panicked": "เกิด panic",
+  "Server ignored or changed the requested byte range": "เซิร์ฟเวอร์เพิกเฉยหรือเปลี่ยนช่วงไบต์ที่ร้องขอ",
+  "Unexpected partial response": "ได้รับการตอบกลับบางส่วนโดยไม่คาดคิด",
+  "Resource changed during transfer": "ทรัพยากรเปลี่ยนระหว่างถ่ายโอน",
+  "Inconsistent Content-Length": "ค่า Content-Length ไม่สอดคล้องกัน",
+  "Response exceeds expected length": "การตอบกลับยาวเกินที่คาดไว้",
+  "Unsupported proxy scheme": "ไม่รองรับรูปแบบพร็อกซีนี้",
+  "URL has no host": "URL ไม่มีโฮสต์",
+  "Redirect has no Location": "การเปลี่ยนเส้นทางไม่มี Location",
+  "{url} answered {status}": "{url} ตอบกลับ {status}"
 }

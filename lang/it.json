@@ -1905,5 +1905,21 @@
   "Saved the report to {file}.": "Rapporto salvato in {file}.",
   "Search": "Cerca",
   "Search…": "Cerca…",
-  "Server port unavailable": "Porta del server non disponibile"
+  "Server port unavailable": "Porta del server non disponibile",
+  "Server status unavailable": "Stato del server non disponibile",
+  "Show all": "Mostra tutto",
+  "Show more ({count} left)": "Mostra altro (ne restano {count})",
+  "Show sidebar": "Mostra barra laterale",
+  "Show why": "Mostra motivo",
+  "Showing the saved registry list while offline.": "Visualizzazione dell’elenco del registro salvato mentre sei offline.",
+  "Some mods couldn't be built": "Impossibile compilare alcune mod",
+  "Some mods stayed off or kept their old version": "Alcune mod sono rimaste disattivate o hanno mantenuto la vecchia versione",
+  "Sorted by name": "Ordinato per nome",
+  "Sorted by recently updated": "Ordinato per aggiornamento recente",
+  "Source build canceled. Nothing was changed.": "Compilazione dal sorgente annullata. Non è stata apportata alcuna modifica.",
+  "Source · {repo} @ {sha}": "Fonte · {repo} @ {sha}",
+  "Start empty": "Inizia vuoto",
+  "Stay to leave all your mods unchanged. Continue to install the checked set with the changes below.": "Resta per lasciare tutte le mod invariate. Continua per installare l’insieme selezionato con le modifiche indicate sotto.",
+  "Stayed. No mods changed.": "Hai scelto di restare. Nessuna mod è stata modificata.",
+  "Stop the game before copying the profile it is using.": "Arresta il gioco prima di copiare il profilo che sta usando."
 }
