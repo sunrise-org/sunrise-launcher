@@ -2515,5 +2515,13 @@
   "Built from source · {repo} @ {sha}": "بُني من المصدر · {repo} @ {sha}",
   "Doesn't fit this build. {detail}": "غير متوافق مع هذا البناء. {detail}",
   "Find dependency": "البحث عن اعتماد",
-  "Loading the Nightly list…": "جارٍ تحميل قائمة Nightly…"
+  "Loading the Nightly list…": "جارٍ تحميل قائمة Nightly…",
+  "Name A–Z": "الاسم من A إلى Z",
+  "Nightly list unavailable offline": "قائمة Nightly غير متاحة دون اتصال",
+  "No Nightly mods match your search.": "لا توجد إضافات Nightly تطابق بحثك.",
+  "Profile: {build}": "الملف الشخصي: {build}",
+  "Search source projects": "البحث في المشاريع المصدرية",
+  "Show more": "عرض المزيد",
+  "You're offline · showing the saved list from {date}": "أنت غير متصل · يتم عرض القائمة المحفوظة بتاريخ {date}",
+  "{count} source projects": "{count} مشروعًا مصدريًا"
 }
