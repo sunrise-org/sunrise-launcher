@@ -90,12 +90,19 @@ thread_local! {
 }
 
 /// A tooltip's view: one line on a solid float, for controls shown by their icon alone.
-pub struct Tip(SharedString);
+/// A tooltip's label, and whether it sits above and right of the pointer rather than below.
+pub struct Tip(SharedString, bool);
 
 impl Render for Tip {
     fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
-        // Offset below the pointer so tooltips never sit directly on top of the hovered button.
-        div().pt(px(20.)).pl(px(4.)).child(
+        // Offset below the pointer so tooltips never sit directly on top of the hovered button,
+        // or above and right of it where what grows under the button must stay in view.
+        let place = if self.1 {
+            div().mt(px(-38.)).pl(px(16.))
+        } else {
+            div().pt(px(20.)).pl(px(4.))
+        };
+        place.child(
             div()
                 .max_w(px(360.))
                 .px(px(10.))
@@ -157,11 +164,27 @@ pub fn tip(label: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> 
 pub fn tip_with(
     label: impl Fn(&App) -> SharedString + 'static,
 ) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
+    tip_placed(label, false)
+}
+
+/// [`tip`], shown above and right of the pointer: for a control that grows something under
+/// itself on hover, such as a folded profile's actions.
+pub fn tip_above(
+    label: impl Into<SharedString>,
+) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
+    let label: SharedString = label.into();
+    tip_placed(move |_| label.clone(), true)
+}
+
+fn tip_placed(
+    label: impl Fn(&App) -> SharedString + 'static,
+    above: bool,
+) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
     let on_page = DRAWING_PAGE.get();
     move |_, cx| {
         if tip_shows(on_page) {
             let label = label(cx);
-            cx.new(|_| Tip(label)).into()
+            cx.new(|_| Tip(label, above)).into()
         } else {
             cx.new(|_| NoTip).into()
         }

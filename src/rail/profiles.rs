@@ -193,7 +193,8 @@ fn profile_button(id: ElementId, name: String, on: bool, look: Look) -> Stateful
         })
         .when(look.lock.is_some(), |d| d.opacity(0.45).tab_stop(false))
         .when(!labelled || look.lock.is_some(), |d| {
-            d.tooltip(crate::glass_ui::tip(
+            // Above and right, so the dots that grow under a folded profile stay in view.
+            d.tooltip(crate::glass_ui::tip_above(
                 look.lock.map_or(name.clone(), str::to_owned),
             ))
         })
