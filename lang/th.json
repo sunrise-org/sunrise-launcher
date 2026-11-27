@@ -2414,5 +2414,17 @@
   "--relocate-data needs an empty destination folder": "--relocate-data ต้องใช้โฟลเดอร์ปลายทางที่ว่าง",
   "{error}; diagnostic log: {log}": "{error}; บันทึกวินิจฉัย: {log}",
   "{error}; could not write launcher diagnostic log: {log_error}": "{error}; เขียนบันทึกวินิจฉัย launcher ไม่ได้: {log_error}",
-  "Unexpected download state.": "สถานะการดาวน์โหลดไม่คาดคิด"
+  "Unexpected download state.": "สถานะการดาวน์โหลดไม่คาดคิด",
+  "Download worker ended unexpectedly.": "worker ดาวน์โหลดหยุดทำงานโดยไม่คาดคิด",
+  "Rust {version} ({name}): {error}": "Rust {version} ({name}): {error}",
+  "{compiler} did not contain the compiler and linker files the launcher needs.": "{compiler} ไม่มีไฟล์คอมไพเลอร์และลิงเกอร์ที่ launcher ต้องใช้",
+  "Native mods need Apple's Command Line Tools to link the game. Run `xcode-select --install` in Terminal, then build again.": "ม็อดเนทีฟต้องใช้ Command Line Tools ของ Apple เพื่อลิงก์เกม เรียก `xcode-select --install` ใน Terminal แล้วบิลด์อีกครั้ง",
+  "ALSA's development files": "ไฟล์พัฒนาของ ALSA",
+  "libudev's development files": "ไฟล์พัฒนาของ libudev",
+  "On NixOS they are only visible inside a shell that provides them: run `nix-shell` in the launcher's folder (its shell.nix has these packages), then build again.": "บน NixOS ไฟล์เหล่านี้จะมองเห็นได้เฉพาะใน shell ที่จัดเตรียมไว้ เรียก `nix-shell` ในโฟลเดอร์ launcher (shell.nix มีแพ็กเกจเหล่านี้) แล้วบิลด์อีกครั้ง",
+  "SteamOS ships without them and its system is read-only, so native mods can't be built on it yet.": "SteamOS ไม่มีไฟล์เหล่านี้และระบบเป็นแบบอ่านอย่างเดียว จึงยังบิลด์ม็อดเนทีฟบนระบบนี้ไม่ได้",
+  "Install them in a terminal, then build again:\n{command}": "ติดตั้งในเทอร์มินัลแล้วบิลด์อีกครั้ง:\n{command}",
+  "Install them with your distribution's package manager, then build again (on Debian, Ubuntu or Mint: {apt}).": "ติดตั้งด้วยตัวจัดการแพ็กเกจของดิสโทร แล้วบิลด์อีกครั้ง (บน Debian, Ubuntu หรือ Mint: {apt})",
+  "Native mods need these to build the game on Linux, and this computer lacks them: {missing}. {how}": "ม็อดเนทีฟต้องใช้สิ่งเหล่านี้เพื่อบิลด์เกมบน Linux แต่คอมพิวเตอร์นี้ไม่มี: {missing} {how}",
+  "No screenshot {query} in {path}": "ไม่มีภาพหน้าจอ {query} ใน {path}"
 }

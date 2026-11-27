@@ -2018,5 +2018,17 @@
   "To decide, run Switch in a terminal.": "Per scegliere, esegui Switch in un terminale.",
   "Tracked branch or release unavailable.": "Branch o release monitorata non disponibile.",
   "Tracked branch/release unavailable": "Branch/release monitorata non disponibile",
-  "Try a different search or clear your category filter.": "Prova una ricerca diversa o rimuovi il filtro di categoria."
+  "Try a different search or clear your category filter.": "Prova una ricerca diversa o rimuovi il filtro di categoria.",
+  "Try a different search, or turn on Show all to see mods for other Sunrise builds.": "Prova una ricerca diversa o attiva Mostra tutto per vedere le mod per altre build Sunrise.",
+  "Trying again…": "Nuovo tentativo…",
+  "Turn on scenery to see how the backdrop shows through panels.": "Attiva lo sfondo per vedere il fondale attraverso i pannelli.",
+  "Turned on {count}.": "Attivate {count}.",
+  "Turning on mods…": "Attivazione delle mod…",
+  "Unsigned developer build": "Build di sviluppo non firmata",
+  "Unsigned import": "Importazione non firmata",
+  "Update available: {version}": "Aggiornamento disponibile: {version}",
+  "Update {name}?": "Aggiornare {name}?",
+  "Update: {mods}.": "Aggiorna: {mods}.",
+  "Updated {mod} from {from} to {to}": "{mod} aggiornata da {from} a {to}",
+  "Use default": "Usa predefinito"
 }

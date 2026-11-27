@@ -1919,5 +1919,17 @@
   "Source build canceled. Nothing was changed.": "أُلغي البناء من المصدر. لم يتغير شيء.",
   "Source · {repo} @ {sha}": "المصدر · {repo} @ {sha}",
   "Start empty": "البدء فارغًا",
-  "Stay to leave all your mods unchanged. Continue to install the checked set with the changes below.": "ابقَ لإبقاء إضافاتك دون تغيير. تابع لتثبيت المجموعة المحددة بالتغييرات أدناه."
+  "Stay to leave all your mods unchanged. Continue to install the checked set with the changes below.": "ابقَ لإبقاء إضافاتك دون تغيير. تابع لتثبيت المجموعة المحددة بالتغييرات أدناه.",
+  "Stayed. No mods changed.": "Hai scelto di restare. Nessuna aggiunta modificata.",
+  "Stop the game before copying the profile it is using.": "أوقف اللعبة قبل نسخ الملف الشخصي الذي تستخدمه.",
+  "Stopping…": "جارٍ الإيقاف…",
+  "Sunrise Launcher is not installed for this account.": "لم يتم تثبيت Sunrise Launcher لهذا الحساب.",
+  "Sunrise can't check whether this update removes blocks or items your worlds use.": "لا يستطيع Sunrise التحقق مما إذا كان هذا التحديث سيزيل كتلًا أو عناصر تستخدمها عوالمك.",
+  "Sunrise can't tell which affected blocks and items are still in those worlds.": "لا يستطيع Sunrise تحديد الكتل والعناصر المتأثرة التي لا تزال في تلك العوالم.",
+  "Sunrise couldn't check which profiles use this build, so it was kept.": "تعذّر على Sunrise التحقق من الملفات الشخصية التي تستخدم هذا البناء، لذا تم الاحتفاظ به.",
+  "Sunrise couldn't prove a working mod set for this build.": "تعذّر على Sunrise إثبات وجود مجموعة إضافات تعمل مع هذا البناء.",
+  "Sunrise couldn't settle the profile's install transaction. The profile can't be used yet. Any recovery data was kept.": "تعذّر على Sunrise إنهاء معاملة تثبيت الملف الشخصي. لا يمكن استخدام الملف الشخصي بعد. تم الاحتفاظ ببيانات الاسترداد.",
+  "Sunrise couldn't verify the full mod set for this build. Nothing was switched.": "تعذّر على Sunrise التحقق من مجموعة الإضافات كاملة لهذا البناء. لم يتم التبديل.",
+  "Sunrise couldn't verify the installed mod set. Nothing was installed.": "تعذّر على Sunrise التحقق من مجموعة الإضافات المثبّتة. لم يتم تثبيت شيء.",
+  "Sunrise didn't start: the game launch is no longer active or could not be verified.": "لم يبدأ Sunrise: لم يعد تشغيل اللعبة نشطًا أو تعذّر التحقق منه."
 }
