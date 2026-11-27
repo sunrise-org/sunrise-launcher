@@ -4,11 +4,14 @@ use std::io;
 use std::process::{Command, ExitStatus};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-/// A child process, or the process group it leads.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A child process, or the process group it leads, or on Windows the job it runs in.
+#[derive(Clone, Debug)]
 struct Entry {
     pid: u32,
     group: bool,
+    /// A preparer's job: a quit ends the whole job, as a stop does, and not only the leader.
+    #[cfg(windows)]
+    job: Option<std::sync::Arc<super::leases::CompilerJob>>,
 }
 
 /// The children a set of workers own: the launcher's is [`CHILDREN`]; a test keeps its own.
@@ -39,23 +42,47 @@ impl Registry {
     }
 
     fn track(&'static self, child: Child) -> Owned {
-        self.track_as(child, false)
+        self.track_entry(
+            Entry {
+                pid: child.id(),
+                group: false,
+                #[cfg(windows)]
+                job: None,
+            },
+            child,
+        )
     }
 
-    fn track_as(&'static self, child: Child, group: bool) -> Owned {
-        self.entries().push(Entry {
-            pid: child.id(),
-            group,
-        });
+    /// Tracks a piped preparer: on Unix the process group it leads, on Windows its job.
+    pub(crate) fn track_preparer(&'static self, child: Child) -> Owned {
+        self.track_entry(
+            Entry {
+                pid: child.id(),
+                group: cfg!(unix),
+                #[cfg(windows)]
+                job: child.preparer_job(),
+            },
+            child,
+        )
+    }
+
+    fn track_entry(&'static self, entry: Entry, child: Child) -> Owned {
+        self.entries().push(entry);
         Owned {
             child,
             registry: self,
+            reaped: None,
         }
     }
 
     /// Stops the process group `pid` leads (it was started in its own group) with the others, until [`Registry::release`].
     pub fn track_group(&self, pid: u32) {
-        self.entries().push(Entry { pid, group: true });
+        self.entries().push(Entry {
+            pid,
+            group: true,
+            #[cfg(windows)]
+            job: None,
+        });
     }
 
     /// Forgets `pid`, which ended.
@@ -83,6 +110,9 @@ impl Registry {
 pub struct Owned {
     child: Child,
     registry: &'static Registry,
+    /// Its status once reaped. From then on its PID may be another process's, so nothing here
+    /// looks at or signals the PID again (review of #670).
+    reaped: Option<ExitStatus>,
 }
 
 impl Owned {
@@ -100,10 +130,10 @@ impl Owned {
         Ok(CHILDREN.track(gate.spawn(command, role)?))
     }
 
-    /// Tracks a piped preparer, which leads its own process group: the launcher's quit stops the
-    /// whole group, as it did when the backend's monitor ran the switch's preparer.
+    /// Tracks a piped preparer, which leads its own process group on Unix and runs in its own job
+    /// on Windows: the launcher's quit stops the whole group, or ends the whole job.
     pub(crate) fn start_preparer(child: Child) -> Self {
-        CHILDREN.track_as(child, cfg!(unix))
+        CHILDREN.track_preparer(child)
     }
 
     #[cfg(windows)]
@@ -116,6 +146,9 @@ impl Owned {
     }
 
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        if self.reaped.is_some() {
+            return Ok(self.reaped);
+        }
         if !self.child.ended_unreaped(false)? {
             return Ok(None);
         }
@@ -123,6 +156,9 @@ impl Owned {
     }
 
     pub fn wait(&mut self) -> io::Result<ExitStatus> {
+        if let Some(status) = self.reaped {
+            return Ok(status);
+        }
         drop(self.child.stdin.take());
         self.child.ended_unreaped(true)?;
         self.reap()
@@ -137,12 +173,18 @@ impl Owned {
         let status = self.child.wait();
         #[cfg(all(test, unix))]
         tests::REAPS.with(|reaps| reaps.borrow_mut().push((pid, self.registry.holds(pid))));
+        if let Ok(status) = status {
+            self.reaped = Some(status);
+        }
         status
     }
 }
 
 impl Drop for Owned {
     fn drop(&mut self) {
+        if self.reaped.is_some() {
+            return;
+        }
         if !matches!(self.child.ended_unreaped(false), Ok(true)) {
             let _ = self.child.kill();
         }
@@ -167,6 +209,10 @@ fn stop(entry: Entry) {
 
 #[cfg(windows)]
 fn stop(entry: Entry) {
+    if let Some(job) = &entry.job {
+        let _ = job.terminate();
+        return;
+    }
     if entry.group {
         let _ = std::process::Command::new(super::taskkill())
             .args(["/PID", &entry.pid.to_string(), "/T", "/F"])
@@ -207,6 +253,27 @@ mod tests {
                 .find(|(reaped, _)| *reaped == pid)
                 .map(|(_, held)| *held)
         })
+    }
+
+    /// A child is reaped once. After that its PID may be another process's, so a later wait, look
+    /// or drop gives the kept status and never touches the PID (review of #670).
+    #[test]
+    fn a_reaped_child_is_never_looked_at_again() {
+        static OWN: Registry = Registry::new();
+        let mut child = OWN.spawn(&mut Command::new("true")).unwrap();
+        let pid = child.child().id();
+        let status = child.wait().unwrap();
+        assert_eq!(child.try_wait().unwrap(), Some(status));
+        assert_eq!(child.wait().unwrap(), status);
+        drop(child);
+        let reaps = REAPS.with(|reaps| {
+            reaps
+                .borrow()
+                .iter()
+                .filter(|(reaped, _)| *reaped == pid)
+                .count()
+        });
+        assert_eq!(reaps, 1, "reaped once, and its PID left alone after");
     }
 
     /// Every way a child is reaped, a wait, a polled end and a drop, forgets it in the registry

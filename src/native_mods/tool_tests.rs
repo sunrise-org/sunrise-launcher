@@ -808,7 +808,8 @@ fn a_stop_before_a_preparers_registration_ends_its_job_without_taskkill() {
     let lock = tempfile::tempfile().unwrap();
     let mut command = std::process::Command::new("cmd");
     command.args(["/c", "start", "", "/b", "ping", "-n", "30", "127.0.0.1"]);
-    let mut child = crate::process::leases::spawn_preparer(command, &lock, None, true).unwrap();
+    let mut child =
+        crate::process::leases::spawn_preparer(command, Some(&lock), None, true).unwrap();
     let job = child
         .preparer_job()
         .expect("a piped preparer runs in a job of its own");

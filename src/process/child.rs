@@ -133,8 +133,8 @@ impl Child {
 
     /// Whether the child has ended, without reaping it: on Unix its zombie keeps its PID, and so
     /// the group's ID, from going to another process until it is reaped. With `block` it waits for
-    /// the end. A child this handle already reaped counts as ended. Elsewhere the handle keeps the
-    /// PID from reuse until it is dropped.
+    /// the end. Only for a child not reaped yet: once reaped, its PID may be another process's.
+    /// Elsewhere the handle keeps the PID from reuse until it is dropped.
     pub(crate) fn ended_unreaped(&mut self, block: bool) -> io::Result<bool> {
         #[cfg(unix)]
         if let Handle::Std(child) = &self.process {
@@ -172,11 +172,8 @@ fn unreaped_end(pid: u32, block: bool) -> io::Result<bool> {
             return Ok(unsafe { info.si_pid() } != 0);
         }
         let error = io::Error::last_os_error();
-        match error.raw_os_error() {
-            Some(libc::EINTR) => {}
-            // This handle reaped it already: it ended.
-            Some(libc::ECHILD) => return Ok(true),
-            _ => return Err(error),
+        if error.raw_os_error() != Some(libc::EINTR) {
+            return Err(error);
         }
     }
 }

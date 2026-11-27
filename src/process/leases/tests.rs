@@ -375,7 +375,7 @@ fn a_piped_preparers_job_ends_what_its_leader_left_running() {
     let lock = tempfile::tempfile().unwrap();
     let mut command = std::process::Command::new("cmd");
     command.args(["/c", "start", "", "/b", "ping", "-n", "30", "127.0.0.1"]);
-    let mut child = super::spawn_preparer(command, &lock, None, true).unwrap();
+    let mut child = super::spawn_preparer(command, Some(&lock), None, true).unwrap();
     let job = child
         .preparer_job()
         .expect("a piped preparer runs in a job of its own");
@@ -396,4 +396,48 @@ fn a_piped_preparers_job_ends_what_its_leader_left_running() {
         0,
         "ending the job ended what the leader left running"
     );
+}
+
+/// A quit ends a preparer's whole job, as a stop does, so nothing the leader started outlives the
+/// launcher holding the preparation's lock (review of #670). Only Windows CI runs this.
+#[cfg(windows)]
+#[test]
+fn a_quit_ends_a_preparers_whole_job() {
+    use std::time::{Duration, Instant};
+    static OWN: crate::process::owned::Registry = crate::process::owned::Registry::new();
+    let lock = tempfile::tempfile().unwrap();
+    let mut command = std::process::Command::new("cmd");
+    command.args([
+        "/c",
+        "start",
+        "",
+        "/b",
+        "ping",
+        "-n",
+        "30",
+        "127.0.0.1",
+        "&",
+        "ping",
+        "-n",
+        "30",
+        "127.0.0.1",
+    ]);
+    let child = super::spawn_preparer(command, Some(&lock), None, true).unwrap();
+    let job = child
+        .preparer_job()
+        .expect("a piped preparer runs in a job of its own");
+    let owned = OWN.track_preparer(child);
+    let active = || job.accounting().unwrap().ActiveProcesses;
+    let waiting = Instant::now();
+    while active() < 3 && waiting.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(active() >= 3, "the leader and both pings run in its job");
+    OWN.stop_all();
+    let waiting = Instant::now();
+    while active() != 0 && waiting.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(active(), 0, "the quit ended the whole job");
+    drop(owned);
 }

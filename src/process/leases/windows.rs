@@ -267,8 +267,8 @@ impl WindowsChild {
                         std::thread::sleep(std::time::Duration::from_millis(10));
                     }
                 }
-                // Ended once the leader has: the run that started it ends the rest of the job,
-                // and closing the job's handle ends it too.
+                // Ended once the leader has: the run that started it ends the rest of the job
+                // when it must. Closing the job's handle doesn't end it (no kill-on-close).
                 JobKind::Preparer => {}
             }
         }
