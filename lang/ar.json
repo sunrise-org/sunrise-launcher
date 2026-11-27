@@ -1895,5 +1895,17 @@
   "Removing…": "جارٍ الإزالة…",
   "Replacement archive": "الأرشيف البديل",
   "Report for game build: {build}": "تقرير إصدار اللعبة: {build}",
-  "Repository unavailable. It may be private, moved or deleted.": "المستودع غير متاح. قد يكون خاصًا أو منقولًا أو محذوفًا."
+  "Repository unavailable. It may be private, moved or deleted.": "المستودع غير متاح. قد يكون خاصًا أو منقولًا أو محذوفًا.",
+  "Retry download": "إعادة التنزيل",
+  "Review changes…": "مراجعة التغييرات…",
+  "Review the update before building.": "راجع التحديث قبل البناء.",
+  "Running a server needs your agreement to the Minecraft EULA (https://aka.ms/MinecraftEULA). Accept it to continue.": "يتطلب تشغيل خادم موافقتك على اتفاقية Minecraft (https://aka.ms/MinecraftEULA). وافق للمتابعة.",
+  "Save log": "حفظ السجل",
+  "Save report": "حفظ التقرير",
+  "Saved the report to {file}.": "تم حفظ التقرير في {file}.",
+  "Search": "بحث",
+  "Search…": "بحث…",
+  "Server port unavailable": "منفذ الخادم غير متاح",
+  "Server status unavailable": "حالة الخادم غير متاحة",
+  "Show all": "عرض الكل"
 }

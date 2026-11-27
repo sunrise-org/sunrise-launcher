@@ -2390,5 +2390,17 @@
   "Mojang's {component} manifest: {error}": "manifest ของ {component} จาก Mojang: {error}",
   "Downloading Minecraft's Java {name} from Mojang ({count} files)": "กำลังดาวน์โหลด Java {name} สำหรับ Minecraft จาก Mojang ({count} ไฟล์)",
   "is {actual} bytes, not the {expected} Mojang lists": "มีขนาด {actual} ไบต์ ไม่ใช่ {expected} ไบต์ตามที่ Mojang ระบุ",
-  "is not the one Sunrise pins (sha1 {actual})": "ไม่ใช่ไฟล์ที่ Sunrise ล็อกไว้ (sha1 {actual})"
+  "is not the one Sunrise pins (sha1 {actual})": "ไม่ใช่ไฟล์ที่ Sunrise ล็อกไว้ (sha1 {actual})",
+  "{done} of {total} files": "{done} จาก {total} ไฟล์",
+  "{failed} of {total} files failed, the first: {error}": "ล้มเหลว {failed} จาก {total} ไฟล์ ข้อผิดพลาดแรก: {error}",
+  "PE machine 0x{machine}": "เครื่อง PE 0x{machine}",
+  "Build completed.": "บิลด์เสร็จแล้ว",
+  "The build failed: {error}": "บิลด์ล้มเหลว: {error}",
+  "GitHub doesn't know {repo} commit {revision}.": "GitHub ไม่รู้จักคอมมิต {revision} ของ {repo}",
+  "Duplicate native mod id {id}.": "ID ม็อดเนทีฟ {id} ซ้ำกัน",
+  "Planning the build": "กำลังวางแผนบิลด์",
+  "Checking the prebuilt game": "กำลังตรวจสอบเกมที่บิลด์ไว้ล่วงหน้า",
+  "Checking the Rust toolchain": "กำลังตรวจสอบ toolchain ของ Rust",
+  "Keeping the mods' libraries for the next build": "กำลังเก็บไลบรารีของม็อดไว้สำหรับบิลด์ถัดไป",
+  "The built game: {error}": "เกมที่บิลด์แล้ว: {error}"
 }
