@@ -2195,5 +2195,19 @@
   "{key} is damaged. Remove it and {file} and sign in again.": "تلف {key}. أزله مع {file} وسجّل الدخول مجددًا.",
   "Account operation failed. Restart the launcher.": "فشلت عملية الحساب. أعد تشغيل المشغّل.",
   "Could not create the account lock.": "تعذّر إنشاء قفل الحساب.",
-  "Could not open the account lock.": "تعذّر فتح قفل الحساب."
+  "Could not open the account lock.": "تعذّر فتح قفل الحساب.",
+  "Could not lock account operations.": "تعذّر قفل عمليات الحساب.",
+  "Could not read the keychain. Unlock it and retry.": "تعذّرت قراءة مخزن المفاتيح. ألغِ قفله وحاول مجددًا.",
+  "Your Microsoft sign-in expired. Sign in again.": "انتهت صلاحية تسجيل دخول Microsoft. سجّل الدخول مجددًا.",
+  "This account doesn't own Minecraft: Java Edition.": "لا يملك هذا الحساب Minecraft: Java Edition.",
+  "This account has no Minecraft profile yet. Create one at minecraft.net, then sign in again.": "لا يحتوي هذا الحساب على ملف Minecraft بعد. أنشئ واحدًا في minecraft.net ثم سجّل الدخول مجددًا.",
+  "The Microsoft account now has another Minecraft profile. Sign in again.": "أصبح لحساب Microsoft ملف Minecraft آخر. سجّل الدخول مجددًا.",
+  "No keychain available: you are signed in until the launcher closes, then you will have to sign in again.": "لا يتوفر مخزن مفاتيح: ستبقى مسجّلًا حتى إغلاق المشغّل، وبعدها عليك تسجيل الدخول مجددًا.",
+  "The keychain didn't answer earlier: sign in again to keep this account.": "لم يستجب مخزن المفاتيح سابقًا: سجّل الدخول مجددًا للاحتفاظ بهذا الحساب.",
+  "Add a Microsoft account": "إضافة حساب Microsoft",
+  "Xbox Live": "Xbox Live",
+  "the Minecraft services": "خدمات Minecraft",
+  "Minecraft's services": "خدمات Minecraft",
+  "No Sunrise release is tagged {tag}.": "لا يحمل أي إصدار Sunrise الوسم {tag}.",
+  "No release is published yet.": "لم يُنشر أي إصدار بعد."
 }

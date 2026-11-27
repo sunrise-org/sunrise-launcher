@@ -2294,5 +2294,19 @@
   "Source data roots overlap; only a build folder inside/equal to launcher is supported": "Le radici dei dati sorgente si sovrappongono; è supportata solo una cartella di build dentro o uguale a quella del launcher",
   "Use an absolute path without '..': {path}": "Usa un percorso assoluto senza '..': {path}",
   "Copy verification failed for {path}": "Verifica della copia non riuscita per {path}",
-  "Source changed during copying: {path}; stop all writers and retry": "La fonte è cambiata durante la copia: {path}; arresta tutti i processi di scrittura e riprova"
+  "Source changed during copying: {path}; stop all writers and retry": "La fonte è cambiata durante la copia: {path}; arresta tutti i processi di scrittura e riprova",
+  "Unsupported special file: {path}": "File speciale non supportato: {path}",
+  "Cannot preserve access permissions on {path}: {error}": "Impossibile conservare i permessi di accesso su {path}: {error}",
+  "{name} is not a pack: it has no pack.mcmeta.": "{name} non è un pacchetto: manca pack.mcmeta.",
+  "{name} is not a data pack the game reads.": "{name} non è un datapack leggibile dal gioco.",
+  "{name} has no data folder: it is a resource pack, not a data pack.": "{name} non contiene una cartella dati: è un pacchetto di risorse, non un datapack.",
+  "{file} is not a data pack the game reads": "{file} non è un datapack leggibile dal gioco",
+  "No data pack {query} in {folder}": "Nessun datapack {query} in {folder}",
+  "Nothing in it runs in Sunrise yet.": "Nessun elemento al suo interno funziona ancora in Sunrise.",
+  "Runs its {counts}.": "Esegue i suoi {counts}.",
+  "{runs} Not read yet: {unread}.": "{runs} Non ancora letti: {unread}.",
+  "{kinds} and 1 other kind": "{kinds} e un altro tipo",
+  "{kinds} and {n} other kinds": "{kinds} e altri {n} tipi",
+  "Nothing to move": "Niente da spostare",
+  "it panicked": "si è verificato un panic"
 }
