@@ -71,6 +71,8 @@ impl Launcher {
                 })
                 .cursor_pointer()
                 .when(on, |d| d.bg(rgb(palette().selected)))
+                // The others light up under the pointer, as every menu row does.
+                .when(!on, |d| d.hover(|d| d.bg(rgb(palette().hover))))
                 .child(
                     div()
                         .flex_1()

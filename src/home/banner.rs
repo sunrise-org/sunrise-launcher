@@ -205,7 +205,6 @@ impl Launcher {
             .gap(px(8.))
             .h(px(28.))
             .px(px(8.))
-            .ml(px(-8.))
             .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
             .cursor_pointer()
             .text_size(px(tokens::LABEL))
