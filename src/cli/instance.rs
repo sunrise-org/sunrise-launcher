@@ -2,6 +2,13 @@
 use super::*;
 use sunrise_launcher::launch;
 
+/// Which way `instance move` sends a profile.
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub(super) enum Way {
+    Up,
+    Down,
+}
+
 #[derive(Subcommand)]
 pub(super) enum InstanceCmd {
     /// The profiles, each with its game folder (* = the one Play starts)
@@ -28,6 +35,13 @@ pub(super) enum InstanceCmd {
     Group {
         instance: String,
         group: Option<String>,
+    },
+    /// Move a profile up or down in the sidebar, among the profiles of its group. Sunrise's
+    /// own profile stays first
+    Move {
+        instance: String,
+        #[arg(value_enum)]
+        direction: Way,
     },
     /// Make Play start this profile
     Select { instance: String },
@@ -116,6 +130,13 @@ pub(super) fn instance(action: InstanceCmd, as_json: bool) -> Result<(), Error> 
         }
         InstanceCmd::Group { instance, group } => {
             changed(instances::edit(&instance, |m| m.group = group)?)
+        }
+        InstanceCmd::Move {
+            instance,
+            direction,
+        } => {
+            instances::move_profile(&instance, matches!(direction, Way::Up))?;
+            changed(instances::find(&instance)?)
         }
         InstanceCmd::Select { instance } => changed(instances::select(&instance)?),
         InstanceCmd::Launch(args) => launch(args, as_json)?,

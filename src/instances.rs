@@ -22,6 +22,7 @@ mod deletion_recovery;
 mod edit;
 pub(crate) mod lifecycle;
 mod list;
+mod order;
 mod play;
 use crate::managed_play::{Profile as ManagedProfile, ReferencePublication};
 use crate::profile_txn::{durable, Identity, NameGate};
@@ -31,6 +32,7 @@ pub use deletion_recovery::{interrupted_deletions, InterruptedDeletion};
 pub use edit::*;
 use lifecycle::{initial_choices, GATES, INITIAL, RETIRED};
 pub use list::*;
+pub use order::move_profile;
 pub use play::*;
 
 /// The default instance's id: the game's home itself.

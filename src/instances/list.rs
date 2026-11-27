@@ -178,11 +178,12 @@ fn list_snapshot(
             eprintln!("Sunrise: instances.json is not saved: {error}");
         }
     }
-    let mut out: Vec<Instance> = found
+    let mut out: Vec<(Option<u32>, Instance)> = found
         .into_iter()
         .map(|(id, name, kind, work, home)| {
             let meta = store.instances.get(&id).cloned().unwrap_or_default();
-            Instance {
+            let order = meta.order;
+            let instance = Instance {
                 name: meta.name.unwrap_or(name),
                 icon: meta.icon,
                 group: meta.group,
@@ -203,11 +204,21 @@ fn list_snapshot(
                     .flatten(),
                 work,
                 home,
-            }
+            };
+            (order, instance)
         })
         .collect();
-    out[1..].sort_by_key(|i| (i.group.clone(), i.name.to_lowercase()));
-    out
+    // The default profile stays first; the rest go by group, then the player's own order (the
+    // ones never moved come after, by name).
+    out[1..].sort_by_key(|(order, i)| {
+        (
+            i.group.clone(),
+            order.is_none(),
+            order.unwrap_or(0),
+            i.name.to_lowercase(),
+        )
+    });
+    out.into_iter().map(|(_, i)| i).collect()
 }
 
 /// The instance an id, a name (any case) or a pack's folder name names.

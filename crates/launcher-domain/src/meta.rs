@@ -18,6 +18,14 @@ pub struct Meta {
     pub icon: Option<Icon>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
+    /// Where the player put it among its group's profiles in the sidebar (smaller is higher).
+    /// Missing, or unreadable: after the ordered ones, by name.
+    #[serde(
+        default,
+        deserialize_with = "saved_order",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub order: Option<u32>,
     /// The Sunrise version this instance plays, kept when newer ones are installed. None: the
     /// launcher's own version, which follows updates.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -85,6 +93,10 @@ fn is_zero(n: &u64) -> bool {
 fn saved_channel<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<Channel>, D::Error> {
+    Ok(serde_json::from_value(serde_json::Value::deserialize(deserializer)?).ok())
+}
+
+fn saved_order<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<u32>, D::Error> {
     Ok(serde_json::from_value(serde_json::Value::deserialize(deserializer)?).ok())
 }
 

@@ -479,6 +479,17 @@ Put a profile in a sidebar group, or take it out with no group.
 
 MCP: `instance_group`.
 
+## `sunrise-launcher instance move`
+
+Move a profile up or down in the sidebar, among the profiles of its group. Sunrise's own profile stays first.
+
+    sunrise-launcher instance move <INSTANCE> <DIRECTION>
+
+- `INSTANCE`
+- `DIRECTION`
+
+MCP: `instance_move`.
+
 ## `sunrise-launcher instance select`
 
 Make Play start this profile.

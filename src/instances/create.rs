@@ -83,6 +83,11 @@ impl CopyPreview {
     pub fn base(&self) -> Option<&str> {
         self.base.as_deref()
     }
+
+    /// The profile it would copy.
+    pub fn source(&self) -> &Instance {
+        &self.instance
+    }
 }
 
 #[derive(Clone, Copy)]

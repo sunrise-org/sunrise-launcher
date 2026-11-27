@@ -10,6 +10,8 @@ use crate::{
 use gpui::{rgb, Global, MouseButton, MouseDownEvent};
 use instances::{DeleteError, Instance};
 
+mod menu;
+
 /// A native close or Quit must not abandon a folder in the middle of the move.
 #[derive(Default)]
 struct MoveInFlight {
@@ -225,123 +227,6 @@ impl Launcher {
             cx,
             Self::close_profile_action,
         ))
-    }
-
-    fn profile_actions_menu(
-        &self,
-        target: &Instance,
-        top: f32,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let p = palette();
-        let at = tokens::FRAME_INSET + crate::rail::rail_width(self.rail_open()) + 8.;
-        let name = target.name.clone();
-        let item = |id: &'static str, icon: &'static str, label: &'static str, ink: u32| {
-            div()
-                .id(id)
-                .reach()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .h(px(tokens::CONTROL))
-                .px(px(8.))
-                .rounded(tokens::r(tokens::R_SMALL))
-                .cursor_pointer()
-                .text_size(px(tokens::LABEL))
-                .text_color(rgb(ink))
-                .hover(|s| s.bg(rgb(p.hover)))
-                .child(crate::glass_ui::icon(
-                    icon,
-                    16.,
-                    crate::widgets::focus::c(ink),
-                ))
-                .child(label)
-        };
-        let edited = target.clone();
-        let edit = item(
-            "profile-menu-edit",
-            "pencil-edit-02",
-            tr("Edit profile…"),
-            p.text,
-        )
-        .on_click(cx.listener(move |this, _, _, cx| {
-            this.close_profile_action();
-            this.edit_profile(&edited, cx);
-        }));
-        let target = target.clone();
-        let delete = item(
-            "profile-menu-delete",
-            "delete-02",
-            tr("Delete profile…"),
-            p.danger,
-        )
-        .on_click(cx.listener(move |this, _, _, cx| {
-            this.confirm_profile_delete(&target);
-            cx.notify();
-        }));
-        // Two rows, the title (26), a divider (9), 8 padding each side and the 1 px border.
-        let action_height = 2. * tokens::CONTROL + 26. + 9. + 18.;
-        div()
-            .id("profile-menu")
-            .absolute()
-            .inset_0()
-            .occlude()
-            .on_scroll(|_, _, cx| cx.stop_propagation())
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.close_profile_action();
-                    cx.notify();
-                }),
-            )
-            // This layer covers the profiles: a right-click on another one closes this menu
-            // and opens that profile's, and anywhere else it only closes this one.
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(|this, ev: &MouseDownEvent, _, cx| {
-                    let under = this
-                        .ui
-                        .profile_rows
-                        .borrow()
-                        .iter()
-                        .find(|(bounds, _)| bounds.contains(&ev.position))
-                        .map(|(_, profile)| profile.clone());
-                    this.close_profile_action();
-                    if let Some(profile) = under {
-                        this.open_profile_menu(&profile, f32::from(ev.position.y));
-                    }
-                    cx.notify();
-                }),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .left(px(at))
-                    .top(px(top.min(self.window_height - action_height - 8.)))
-                    .w(px(236.))
-                    .p(px(8.))
-                    .rounded(tokens::r(tokens::R_CARD))
-                    .border_1()
-                    .border_color(rgb(p.line))
-                    .bg(rgb(p.raised))
-                    .text_color(rgb(p.text))
-                    .shadow_lg()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        div()
-                            .h(px(26.))
-                            .px(px(8.))
-                            .truncate()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_size(px(tokens::SMALL))
-                            .text_color(rgb(p.muted))
-                            .child(name),
-                    )
-                    .child(edit)
-                    .child(div().h(px(1.)).my(px(4.)).bg(rgb(p.divider)))
-                    .child(delete),
-            )
     }
 }
 

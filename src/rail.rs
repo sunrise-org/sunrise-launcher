@@ -304,13 +304,13 @@ mod tests {
             });
             cx.run_until_parked();
         };
-        // The button opens the profile's settings (its edit dialog).
+        // The button opens the profile's menu.
         let menu = |cx: &mut gpui::VisualTestContext| {
             launcher.read_with(cx, |l, _| {
-                l.instances
-                    .dialog
-                    .as_ref()
-                    .is_some_and(|d| d.editing.is_some())
+                matches!(
+                    l.ui.sheets.profile_action,
+                    Some(crate::profile_delete::Action::Menu { .. })
+                )
             })
         };
         for open in [0., 1.] {
@@ -321,7 +321,7 @@ mod tests {
             cx.simulate_click(button.center(), gpui::Modifiers::none());
             assert!(
                 menu(cx),
-                "at {open} a press on the button opens its settings"
+                "at {open} a press on the button opens its menu"
             );
         }
         for open in [0.05, 0.15, 0.25] {

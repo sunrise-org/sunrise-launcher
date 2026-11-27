@@ -68,6 +68,7 @@ pub mod glass_icons {
         "arrow-down-01",
         "arrow-left-01",
         "arrow-right-01",
+        "arrow-up-01",
         "book",
         "chat",
         "compass-01",

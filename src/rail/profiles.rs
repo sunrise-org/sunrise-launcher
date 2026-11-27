@@ -5,6 +5,7 @@ use crate::widgets::button::{icon_button, Style};
 use crate::widgets::focus::Reach;
 use gpui::{rgb, MouseButton, MouseDownEvent};
 use instances::{Icon, Instance, Kind};
+use std::{cell::Cell, rc::Rc};
 
 /// What the profiles are drawn with: how open the sidebar is, why profiles are locked (if they
 /// are), and whether the page is Home, where the selected profile is shown as selected.
@@ -103,10 +104,12 @@ fn profile_button(id: ElementId, name: String, on: bool, look: Look) -> Stateful
 }
 
 /// The actions button of the selected profile: under its mark while the sidebar is closed, and
-/// beside its name once open. It opens the profile's menu where it is.
+/// beside its name once open. It opens the profile's menu under it.
 fn profile_actions(i: &Instance, open: f32, cx: &mut Context<Launcher>) -> Option<Stateful<Div>> {
     let at = actions_at(open)?;
     let p = palette();
+    let bottom = Rc::new(Cell::new(0.));
+    let read_bottom = bottom.clone();
     let i = i.clone();
     Some(
         div()
@@ -127,16 +130,24 @@ fn profile_actions(i: &Instance, open: f32, cx: &mut Context<Launcher>) -> Optio
             .cursor_pointer()
             .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
             .hover(|d| d.bg(rgb(p.hover)))
-            .tooltip(crate::glass_ui::tip(tr("Profile settings")))
+            .tooltip(crate::glass_ui::tip(tr("Profile actions")))
             .child(
                 div().flex().gap(px(2.)).children(
                     (0..3).map(|_| div().size(px(3.)).rounded_full().bg(rgb(p.chrome_text))),
                 ),
             )
-            // The profile's settings (its edit dialog); right-clicking the row still opens its
-            // menu, with Delete.
+            .child(
+                gpui::canvas(
+                    move |bounds, _, _| bottom.set(f32::from(bounds.bottom())),
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
+            // The profile's menu (settings, duplicate, folder, order, Delete) under the button;
+            // right-clicking the row opens the same one.
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.edit_profile(&i, cx);
+                this.open_profile_menu(&i, read_bottom.get());
                 cx.notify();
             })),
     )
@@ -358,9 +369,9 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Div {
         let current = selected == Some(i.id.as_str());
-        // Every profile has its settings button (the default one too) while the sidebar is open;
-        // closed, only the selected one keeps it, under its mark. Its menu (Delete) stays the
-        // player's own profiles' right-click.
+        // Every profile has its actions button (the default one too) while the sidebar is open;
+        // closed, only the selected one keeps it, under its mark. Right-clicking opens the same
+        // menu on the player's own profiles.
         let more = (current || look.open > 0.) && !self.location_unavailable;
         let face = self.profile_face(n, &i, current, more, look, cx);
         let actions = if more {

@@ -176,8 +176,12 @@ impl Launcher {
     }
 
     pub(super) fn profile_copy_lock(&self) -> Option<&'static str> {
-        let selected = self.selected_instance()?;
-        (self.client_home.as_ref() == Some(&selected.home) && self.client.is_some())
+        self.copy_lock_for(self.selected_instance()?)
+    }
+
+    /// Why `profile` can't be copied now: the game is running from its folder.
+    pub(super) fn copy_lock_for(&self, profile: &Instance) -> Option<&'static str> {
+        (self.client_home.as_ref() == Some(&profile.home) && self.client.is_some())
             .then(|| tr("Stop the game before copying the profile it is using."))
     }
 
@@ -209,8 +213,14 @@ impl Launcher {
                 return;
             }
         };
-        if let Some(why) = self.profile_copy_lock() {
-            if let Some(d) = self.instances.dialog.as_mut().filter(|d| d.copy.is_some()) {
+        let source = self
+            .instances
+            .dialog
+            .as_ref()
+            .and_then(|d| d.copy.as_ref())
+            .map(|copy| copy.source().clone());
+        if let Some(why) = source.as_ref().and_then(|s| self.copy_lock_for(s)) {
+            if let Some(d) = self.instances.dialog.as_mut() {
                 d.error = Some(why.into());
                 return;
             }
