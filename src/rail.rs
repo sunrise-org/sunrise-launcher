@@ -160,7 +160,10 @@ impl Launcher {
             .w(px(rail_width(open)))
             .min_h_0()
             .flex_none()
-            .p(px(RAIL_PAD))
+            // No padding on top: the first row's icon sits one row's step under the title bar's
+            // sidebar toggle, as each row sits under the one before it.
+            .px(px(RAIL_PAD))
+            .pb(px(RAIL_PAD))
             .bg(rgb(p.chrome))
             .text_color(rgb(p.chrome_text))
             .child(self.nav_section(open, cx))

@@ -96,6 +96,8 @@ impl Launcher {
             .flex_col()
             .flex_none()
             .gap(px(4.))
+            // The toggle's centre is 24 px down the 48 px bar; this row's is 40 px under it.
+            .mt(px(-2.))
             .child(discover)
             .child(servers)
             .child(skins)

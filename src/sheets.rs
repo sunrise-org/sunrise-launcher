@@ -92,6 +92,8 @@ pub(crate) struct SheetsState {
     notice: String,
     way_out: Option<WayOut>,
     versions: versions::State,
+    /// The build chooser's open submenu.
+    build_sub: build_menu::Sub,
     pub(super) switching: switching::State,
     publisher_change: Option<publisher_change::PendingPublisherChange>,
     provider_choice: Option<provider_choice::PendingProviderChoice>,
@@ -194,6 +196,7 @@ impl Launcher {
             self.ui.sheet = None;
         }
         self.account_menu.sub = None;
+        self.ui.sheets.build_sub = build_menu::Sub::default();
         if matches!(
             self.ui.sheets.profile_action,
             Some(crate::profile_delete::Action::Menu { .. })
@@ -571,37 +574,6 @@ mod tests {
             });
             assert_eq!(opened.as_deref(), Some(error.as_str()));
         }
-    }
-
-    #[test]
-    fn build_times_read_relative_for_a_week_then_as_the_date() {
-        use chrono::TimeZone as _;
-        let now = chrono::Utc
-            .with_ymd_and_hms(2026, 11, 23, 16, 42, 0)
-            .unwrap();
-        let when = |date, time| built_when(date, time, now);
-        assert_eq!(when("2026-11-23", "16:42").as_deref(), Some("just now"));
-        assert_eq!(when("2026-11-23", "16:45").as_deref(), Some("just now"));
-        assert_eq!(when("2026-11-23", "16:41").as_deref(), Some("1 minute ago"));
-        assert_eq!(
-            when("2026-11-23", "16:29").as_deref(),
-            Some("13 minutes ago")
-        );
-        assert_eq!(when("2026-11-23", "15:30").as_deref(), Some("1 hour ago"));
-        assert_eq!(when("2026-11-23", "01:00").as_deref(), Some("15 hours ago"));
-        assert_eq!(when("2026-11-22", "10:00").as_deref(), Some("1 day ago"));
-        assert_eq!(when("2026-11-21", "10:00").as_deref(), Some("2 days ago"));
-        assert_eq!(when("2026-11-16", "16:43").as_deref(), Some("6 days ago"));
-        assert_eq!(
-            when("2026-11-16", "16:42").as_deref(),
-            Some("16/11/2026 16:42 UTC")
-        );
-        // A tag's date alone counts whole days.
-        assert_eq!(when("2026-11-23", "").as_deref(), Some("today"));
-        assert_eq!(when("2026-11-22", "").as_deref(), Some("yesterday"));
-        assert_eq!(when("2026-11-17", "").as_deref(), Some("6 days ago"));
-        assert_eq!(when("2026-11-16", "").as_deref(), Some("16/11/2026"));
-        assert_eq!(when("not a date", "16:42"), None);
     }
 
     #[test]

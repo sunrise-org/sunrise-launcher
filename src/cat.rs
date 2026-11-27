@@ -381,9 +381,14 @@ fn speech_bubble(
                 .child(text.to_string()),
         )
         .child(
+            // Exactly the tail's width, so its tip sits at `tail_x + TAIL / 2`: a column child
+            // would otherwise stretch to the bubble's right edge and centre the steps in that.
             div()
                 .ml(px(tail_x))
                 .mt(px(-1.))
+                .w(px(TAIL))
+                .flex_none()
+                .self_start()
                 .flex()
                 .flex_col()
                 .items_center()
