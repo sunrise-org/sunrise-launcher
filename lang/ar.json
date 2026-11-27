@@ -2019,5 +2019,15 @@
   "Tracked branch or release unavailable.": "الفرع أو الإصدار المتتبّع غير متاح.",
   "Tracked branch/release unavailable": "الفرع/الإصدار المتتبّع غير متاح",
   "Try a different search or clear your category filter.": "جرّب بحثًا مختلفًا أو امسح عامل تصفية الفئة.",
-  "Try a different search, or turn on Show all to see mods for other Sunrise builds.": "جرّب بحثًا مختلفًا أو فعّل «عرض الكل» لرؤية إضافات إصدارات Sunrise الأخرى."
+  "Try a different search, or turn on Show all to see mods for other Sunrise builds.": "جرّب بحثًا مختلفًا أو فعّل «عرض الكل» لرؤية إضافات إصدارات Sunrise الأخرى.",
+  "Trying again…": "جارٍ إعادة المحاولة…",
+  "Turn on scenery to see how the backdrop shows through panels.": "فعّل الخلفية لرؤية ما يظهر من المشهد عبر اللوحات.",
+  "Turned on {count}.": "تم تفعيل {count}.",
+  "Turning on mods…": "جارٍ تفعيل الإضافات…",
+  "Unsigned developer build": "بناء تطويري غير موقّع",
+  "Unsigned import": "استيراد غير موقّع",
+  "Update available: {version}": "يتوفر تحديث: {version}",
+  "Update {name}?": "هل تريد تحديث {name}؟",
+  "Update: {mods}.": "تحديث: {mods}.",
+  "Updated {mod} from {from} to {to}": "تم تحديث {mod} من {from} إلى {to}"
 }

@@ -2514,5 +2514,15 @@
   "Build unreviewed source code?": "บิลด์ซอร์สโค้ดที่ยังไม่ได้ตรวจสอบหรือไม่?",
   "Built from source · {repo} @ {sha}": "บิลด์จากซอร์ส · {repo} @ {sha}",
   "Doesn't fit this build. {detail}": "ไม่รองรับบิลด์นี้ {detail}",
-  "Find dependency": "ค้นหาสิ่งที่ต้องใช้"
+  "Find dependency": "ค้นหาสิ่งที่ต้องใช้",
+  "Loading the Nightly list…": "กำลังโหลดรายการ Nightly…",
+  "Name A–Z": "ชื่อตามลำดับ A–Z",
+  "Nightly list unavailable offline": "รายการ Nightly ใช้งานไม่ได้ขณะออฟไลน์",
+  "No Nightly mods match your search.": "ไม่มีม็อด Nightly ที่ตรงกับการค้นหาของคุณ",
+  "Profile: {build}": "โปรไฟล์: {build}",
+  "Search source projects": "ค้นหาโปรเจกต์ซอร์ส",
+  "Show more": "แสดงเพิ่มเติม",
+  "You're offline · showing the saved list from {date}": "คุณออฟไลน์ · กำลังแสดงรายการที่บันทึกไว้เมื่อ {date}",
+  "{count} source projects": "โปรเจกต์ซอร์ส {count} รายการ",
+  "Address to share": "ที่อยู่สำหรับแชร์"
 }

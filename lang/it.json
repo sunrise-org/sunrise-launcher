@@ -2118,5 +2118,15 @@
   "{time} played": "{time} di gioco",
   "{total} mods total · {fit} fit {target} · {other} for other builds": "{total} mod totali · {fit} compatibili con {target} · {other} per altre build",
   "{track} @ {commit}": "{track} @ {commit}",
-  "{value}: say {one} or {other}": "{value}: pronuncia {one} o {other}"
+  "{value}: say {one} or {other}": "{value}: pronuncia {one} o {other}",
+  "{version} · {size}": "{version} · {size}",
+  "{warning} Try again in Settings → Storage.": "{warning} Riprova in Impostazioni → Archiviazione.",
+  "↑ ↓ to move · Enter to open · Esc to close": "↑ ↓ per spostarti · Invio per aprire · Esc per chiudere",
+  "Custom background": "Sfondo personalizzato",
+  "Your picture, behind every page.": "La tua immagine, dietro ogni pagina.",
+  "The theme's picture, behind every page.": "L’immagine del tema, dietro ogni pagina.",
+  "The theme, its accent and what is behind the pages.": "Il tema, il suo colore principale e lo sfondo delle pagine.",
+  "Download stopped.": "Download interrotto.",
+  "Installing {build}": "Installazione di {build}",
+  "Starting the game": "Avvio del gioco"
 }
