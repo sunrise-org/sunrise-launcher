@@ -2470,5 +2470,15 @@
   "{name} is already on the desktop, and isn't this profile's shortcut.": "{name} è già sul desktop e non è il collegamento di questo profilo.",
   "This computer has no desktop folder.": "Questo computer non ha una cartella Desktop.",
   "{tag} is not a Sunrise release.": "{tag} non è una release Sunrise.",
-  "{file} is not the {version} release Sunrise was made for": "{file} non è la release {version} prevista per Sunrise"
+  "{file} is not the {version} release Sunrise was made for": "{file} non è la release {version} prevista per Sunrise",
+  "{file} is here but not the game itself: play {version} once in that launcher to download it": "{file} è presente, ma non è il gioco: avvia {version} una volta in quel launcher per scaricarlo",
+  "no Minecraft {version} client jar": "jar client di Minecraft {version} mancante",
+  "Minecraft {version} was not found. Sunrise looked in:": "Minecraft {version} non è stato trovato. Sunrise ha cercato in:",
+  "\nTo fix it:\n  • ": "\nPer risolvere:\n  • ",
+  "Using Minecraft {version} from {name} ({folder})": "Uso di Minecraft {version} da {name} ({folder})",
+  "Downloading the {version} version file from Mojang": "Download del file versione {version} da Mojang",
+  "Mojang's {version} version file {error}": "File versione {version} di Mojang: {error}",
+  "{path}: not a file path": "{path}: non è un percorso di file",
+  "Tailscale is switched off.": "Tailscale è disattivato.",
+  "Tailscale is {state}.": "Tailscale è {state}."
 }

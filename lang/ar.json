@@ -2371,5 +2371,15 @@
   "Mojang has no Java {name}. Known: {known}.": "لا يتوفر لدى Mojang إصدار Java ‏{name}. الإصدارات المعروفة: {known}.",
   "{word}: write it as NAME=value": "{word}: اكتبه بصيغة NAME=value",
   "{key}: a variable's name is letters, digits and _, not starting with a digit": "{key}: يتكون اسم المتغير من أحرف وأرقام و_، ولا يبدأ برقم",
-  "The pre-launch command didn't run: {error}": "لم يُشغّل الأمر قبل بدء اللعبة: {error}"
+  "The pre-launch command didn't run: {error}": "لم يُشغّل الأمر قبل بدء اللعبة: {error}",
+  "The pre-launch command failed (exit {code}), so the game did not start.\n{output}": "فشل الأمر قبل بدء التشغيل (رمز الخروج {code})، لذا لم تبدأ اللعبة.\n{output}",
+  "Checking Java and your Minecraft install": "جارٍ التحقق من Java وتثبيت Minecraft",
+  "The app has no folder.": "ليس للتطبيق مجلد.",
+  "Could not stage the new app: {error}": "تعذّر تجهيز التطبيق الجديد: {error}",
+  "Could not copy the new app next to {path}.": "تعذّر نسخ التطبيق الجديد بجوار {path}.",
+  "The downloaded app's signature doesn't hold; the launcher stays as it is.": "توقيع التطبيق المنزّل غير صالح؛ سيبقى المشغّل كما هو.",
+  "Could not move {path} aside: {error}": "تعذّر نقل {path} جانبًا: {error}",
+  "Could not put the new app at {path}: {error}": "تعذّر وضع التطبيق الجديد في {path}: {error}",
+  "The new app's signature doesn't hold at {path}; the launcher stays as it was.": "توقيع التطبيق الجديد في {path} غير صالح؛ سيبقى المشغّل كما كان.",
+  "Downloading Minecraft {version} from Mojang: the game and {libraries} libraries": "جارٍ تنزيل Minecraft ‏{version} من Mojang: اللعبة و{libraries} مكتبة"
 }
