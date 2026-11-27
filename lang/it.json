@@ -2138,5 +2138,15 @@
   "Preparing the game": "Preparazione del gioco",
   "Downloading the build": "Download della build",
   "Downloading build tools": "Download degli strumenti di build",
-  "Show less": "Mostra meno"
+  "Show less": "Mostra meno",
+  "{count} more": "altre {count}",
+  "{what} · {step}": "{what} · {step}",
+  "Setting up the server": "Configurazione del server",
+  "Removing mods from {profile}": "Rimozione delle mod da {profile}",
+  "Updating mods in {profile}": "Aggiornamento delle mod in {profile}",
+  "Installing mods in {profile}": "Installazione delle mod in {profile}",
+  "Switched to {build}.": "Passato a {build}.",
+  "ETA: {duration}": "Tempo stimato: {duration}",
+  "a few seconds": "pochi secondi",
+  "{seconds} sec": "{seconds} sec"
 }

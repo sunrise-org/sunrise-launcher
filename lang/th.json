@@ -2534,5 +2534,15 @@
   "Refresh public IP": "รีเฟรช IP สาธารณะ",
   "Detect public IP": "ตรวจหา IP สาธารณะ",
   "Local connections only": "การเชื่อมต่อภายในเครื่องเท่านั้น",
-  "Public IPv4 unavailable for this listener": "IPv4 สาธารณะไม่พร้อมใช้งานสำหรับตัวรับการเชื่อมต่อนี้"
+  "Public IPv4 unavailable for this listener": "IPv4 สาธารณะไม่พร้อมใช้งานสำหรับตัวรับการเชื่อมต่อนี้",
+  "A Horizon community server": "เซิร์ฟเวอร์ชุมชน Horizon",
+  "Added · builds when you play": "เพิ่มแล้ว · บิลด์เมื่อคุณเล่น",
+  "Address coming soon": "ที่อยู่จะพร้อมเร็วๆ นี้",
+  "Another installed mod uses this ID.": "มีม็อดที่ติดตั้งอีกตัวใช้ ID นี้อยู่",
+  "Coming soon": "เร็วๆ นี้",
+  "Continue playing lists one world a row.": "เล่นต่อจะแสดงโลกหนึ่งรายการต่อแถว",
+  "Continue playing shows the worlds' pictures side by side, as many as fit across; the rest wrap under them.": "เล่นต่อจะแสดงภาพโลกเรียงเคียงกันเท่าที่พอดีในแถว ส่วนที่เหลือจะขึ้นแถวถัดไป",
+  "Discard": "ละทิ้ง",
+  "Discard your changes?": "ละทิ้งการเปลี่ยนแปลงหรือไม่?",
+  "Every AI feature in the launcher and the game is hidden and turned off: agent control of the launcher and the game, sunrise-ctl and the MCP servers.": "ซ่อนและปิดฟีเจอร์ AI ทั้งหมดใน launcher และเกม: การควบคุม launcher และเกมโดยเอเจนต์ sunrise-ctl และเซิร์ฟเวอร์ MCP"
 }

@@ -2039,5 +2039,15 @@
   "Versions that fit {target}": "الإصدارات المتوافقة مع {target}",
   "View build log": "عرض سجل البناء",
   "View source": "عرض المصدر",
-  "Wait for the current operation to finish before changing profiles.": "انتظر انتهاء العملية الحالية قبل تغيير الملفات الشخصية."
+  "Wait for the current operation to finish before changing profiles.": "انتظر انتهاء العملية الحالية قبل تغيير الملفات الشخصية.",
+  "Wait for the game to start before changing accounts.": "انتظر بدء اللعبة قبل تغيير الحسابات.",
+  "Waiting to install…": "في انتظار التثبيت…",
+  "Works on": "يعمل على",
+  "World {world} changed while copying. Close the game and try again.": "تغيّر العالم {world} أثناء النسخ. أغلق اللعبة وحاول مجددًا.",
+  "Worlds on Home": "العوالم في الرئيسية",
+  "You may lose blocks and items from the affected mods when you open 1 saved world without their definitions.": "قد تفقد كتلًا وعناصر من الإضافات المتأثرة عند فتح عالم محفوظ واحد دون تعريفاتها.",
+  "You may lose blocks and items from the affected mods when you open {count} saved worlds without their definitions.": "قد تفقد كتلًا وعناصر من الإضافات المتأثرة عند فتح {count} من العوالم المحفوظة دون تعريفاتها.",
+  "You're offline. Connect and try again.": "أنت غير متصل. اتصل وحاول مجددًا.",
+  "You're offline. Connect to check the source.": "أنت غير متصل. اتصل للتحقق من المصدر.",
+  "Your world {worlds} uses them. Opening it without them removes their blocks and what they hold, for good.": "يستخدم عالمك {worlds} هذه الإضافات. فتحه بدونها يزيل كتلها وما تحتويه نهائيًا."
 }
