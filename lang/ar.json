@@ -2381,5 +2381,15 @@
   "Could not move {path} aside: {error}": "تعذّر نقل {path} جانبًا: {error}",
   "Could not put the new app at {path}: {error}": "تعذّر وضع التطبيق الجديد في {path}: {error}",
   "The new app's signature doesn't hold at {path}; the launcher stays as it was.": "توقيع التطبيق الجديد في {path} غير صالح؛ سيبقى المشغّل كما كان.",
-  "Downloading Minecraft {version} from Mojang: the game and {libraries} libraries": "جارٍ تنزيل Minecraft ‏{version} من Mojang: اللعبة و{libraries} مكتبة"
+  "Downloading Minecraft {version} from Mojang: the game and {libraries} libraries": "جارٍ تنزيل Minecraft ‏{version} من Mojang: اللعبة و{libraries} مكتبة",
+  "Downloading the sounds ({count} files)": "جارٍ تنزيل الأصوات ({count} ملفًا)",
+  "The sounds could not all be downloaded: {error}": "تعذّر تنزيل جميع الأصوات: {error}",
+  "Mojang has no Java for this system": "لا يتوفر لدى Mojang إصدار Java لهذا النظام",
+  "Mojang's Java index: {error}": "فهرس Java من Mojang: ‏{error}",
+  "Mojang has no {component} for {platform}": "لا يتوفر لدى Mojang ‏{component} لـ {platform}",
+  "Mojang's {component} manifest: {error}": "بيان {component} من Mojang: ‏{error}",
+  "Downloading Minecraft's Java {name} from Mojang ({count} files)": "جارٍ تنزيل Java ‏{name} الخاصة بـ Minecraft من Mojang ({count} ملفًا)",
+  "is {actual} bytes, not the {expected} Mojang lists": "حجمه {actual} بايت، وليس {expected} كما يسرد Mojang",
+  "is not the one Sunrise pins (sha1 {actual})": "ليس الملف الذي يثبته Sunrise (sha1 ‏{actual})",
+  "{done} of {total} files": "{done} من {total} ملفًا"
 }

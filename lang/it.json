@@ -2480,5 +2480,15 @@
   "Mojang's {version} version file {error}": "File versione {version} di Mojang: {error}",
   "{path}: not a file path": "{path}: non è un percorso di file",
   "Tailscale is switched off.": "Tailscale è disattivato.",
-  "Tailscale is {state}.": "Tailscale è {state}."
+  "Tailscale is {state}.": "Tailscale è {state}.",
+  "Run `{command}` in a terminal and open the link it prints.": "Esegui `{command}` in un terminale e apri il link visualizzato.",
+  "Tailscale's app didn't open: start it from your applications.": "L’app Tailscale non si è aperta: avviala dalle applicazioni.",
+  "1 item waiting to be sent, exactly as they will leave (compressed):": "1 elemento in attesa di invio, esattamente come verrà trasmesso (compresso):",
+  "{count} items waiting to be sent, exactly as they will leave (compressed):": "{count} elementi in attesa di invio, esattamente come verranno trasmessi (compressi):",
+  "Nothing is waiting. One example of each kind, from this machine; the game fills in the GPU and screen it uses where these say example (a benchmark upload is the report itself, see docs/benchmark-report.md):": "Non c’è nulla in attesa. Un esempio di ogni tipo da questo computer; il gioco inserirà GPU e schermo effettivi al posto di quelli indicati come esempio (il caricamento del benchmark è il rapporto stesso, vedi docs/benchmark-report.md):",
+  "Nothing was ever sent from here.": "Non è mai stato inviato nulla da qui.",
+  "Sending is turned off here (SUNRISE_TELEMETRY_URL=off), so the server was not asked.": "L’invio è disattivato qui (SUNRISE_TELEMETRY_URL=off), quindi non è stato contattato il server.",
+  "The server could not be reached ({error}). Try again later.": "Impossibile raggiungere il server ({error}). Riprova più tardi.",
+  "The server deleted everything sent from here.": "Il server ha eliminato tutto ciò che è stato inviato da qui.",
+  "{remote} Nothing is waiting, and this install has a new ID.": "{remote} Non c’è nulla in attesa e questa installazione ha un nuovo ID."
 }
