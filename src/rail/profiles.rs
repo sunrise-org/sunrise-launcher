@@ -43,10 +43,10 @@ fn profile_heading(open: f32, group: String) -> Div {
         .when(labelled, |d| d.child(group))
 }
 
-/// A profile row's height open (its name over its channel), and closed, where it is a nav row's
-/// 36 px highlight around the mark.
+/// A profile row's height open (its name over its channel), and closed, where it is a square
+/// highlight as wide as the folded sidebar's rows, around the mark.
 const PROFILE_ROW: f32 = 48.;
-const PROFILE_ROW_CLOSED: f32 = 36.;
+const PROFILE_ROW_CLOSED: f32 = 30.;
 
 /// The row's height `open` of the way: it grows from the closed highlight to the open row with
 /// the sidebar, so the fill never jumps.
@@ -55,7 +55,7 @@ fn row_height(open: f32) -> f32 {
 }
 
 /// A profile's mark when the sidebar is open, and folded. Folded, the mark sits in the nav
-/// rows' 30 by 36 highlight with 4 px of it showing at each side, as a nav row's icon does.
+/// square 30 px highlight with 4 px of it showing at each side.
 const MARK_OPEN: f32 = 28.;
 const MARK_CLOSED: f32 = 22.;
 
@@ -65,7 +65,7 @@ fn mark_size(open: f32) -> f32 {
 }
 
 /// The height of the dots that grow under a folded profile's mark when the pointer is on it.
-const DOTS_HEIGHT: f32 = 16.;
+const DOTS_HEIGHT: f32 = 22.;
 
 /// Whether a profile's fill and dots are the entry's: the sidebar is folded and profiles can be
 /// picked.

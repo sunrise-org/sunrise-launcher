@@ -4,7 +4,7 @@ use crate::widgets::button::secondary;
 use crate::widgets::feedback::{banner, Tone};
 
 impl Launcher {
-    fn remove_account(&mut self, uuid: &str) {
+    pub(crate) fn remove_account(&mut self, uuid: &str) {
         if self.account_locked() {
             self.say_account_locked();
             return;
