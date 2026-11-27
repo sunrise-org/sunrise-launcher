@@ -2491,5 +2491,13 @@
   "The server could not be reached ({error}). Try again later.": "تعذّر الوصول إلى الخادم ({error}). حاول لاحقًا.",
   "The server deleted everything sent from here.": "حذف الخادم كل ما أُرسل من هنا.",
   "{remote} Nothing is waiting, and this install has a new ID.": "{remote} لا يوجد شيء بانتظار الإرسال، ولهذا التثبيت معرّف جديد.",
-  "{name} are off: turn them on in Settings → Data collection first.": "{name} متوقفة: فعّلها أولًا من الإعدادات ← جمع البيانات."
+  "{name} are off: turn them on in Settings → Data collection first.": "{name} متوقفة: فعّلها أولًا من الإعدادات ← جمع البيانات.",
+  "Today's limit for these is reached; try again tomorrow.": "تم بلوغ الحد اليومي لهذه العناصر؛ حاول غدًا.",
+  "Sent. Thank you.": "تم الإرسال. شكرًا لك.",
+  "Kept; sending is turned off here (SUNRISE_TELEMETRY_URL=off).": "تم الاحتفاظ بها؛ الإرسال متوقف هنا (SUNRISE_TELEMETRY_URL=off).",
+  "Kept; it will be sent the next time the launcher starts.": "تم الاحتفاظ بها؛ ستُرسل عند تشغيل المشغّل في المرة القادمة.",
+  "{path}: not a JSON report ({error})": "{path}: ليس تقرير JSON ({error})",
+  "{name}: one of performance, crashes, bugs, benchmarks, all": "{name}: اختر performance أو crashes أو bugs أو benchmarks أو all",
+  "{name}: a colour name or a hue in degrees": "{name}: اسم لون أو درجة لونية بالدرجات",
+  "Could not start {path}: {error}": "تعذّر بدء {path}: {error}"
 }

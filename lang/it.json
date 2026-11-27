@@ -2590,5 +2590,15 @@
   "teal, 176 or #2563eb": "teal, 176 o #2563eb",
   "{mod} stays off. Fit could not be verified.": "{mod} resta disattivata. Compatibilità non verificata.",
   "{mod} stays off. Needs an update from its author.": "{mod} resta disattivata. Richiede un aggiornamento dell’autore.",
-  "{mod} was turned off. Fit could not be verified.": "{mod} è stata disattivata. Compatibilità non verificata."
+  "{mod} was turned off. Fit could not be verified.": "{mod} è stata disattivata. Compatibilità non verificata.",
+  "{mod} was turned off. Needs an update from its author.": "{mod} è stata disattivata. Richiede un aggiornamento dell’autore.",
+  "A short report when the game crashes, so the crash can be fixed.": "Un breve rapporto sugli arresti anomali del gioco per poterli correggere.",
+  "Backing up": "Backup in corso",
+  "Changing operators": "Modifica degli operatori",
+  "Copying the game files": "Copia dei file di gioco",
+  "Core shaders": "Shader principali",
+  "Game builds kept for running servers: downloaded again when needed.": "Build di gioco conservate per i server in esecuzione: verranno scaricate di nuovo quando necessario.",
+  "How smoothly Sunrise runs on your computer, so slowdowns can be found and fixed.": "La fluidità di Sunrise sul tuo computer, per individuare e risolvere i rallentamenti.",
+  "Iris-format pack: most work, some effects may not": "Pacchetto formato Iris: la maggior parte funziona, alcuni effetti potrebbero non riuscire",
+  "Java": "Java"
 }
