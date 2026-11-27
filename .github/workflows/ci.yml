@@ -415,7 +415,7 @@ jobs:
 
   # A dispatch for a fork's pull request: posts `build` on its head. It runs none of that code, so it alone holds the write permission, and only for commit statuses.
   pr-status:
-    needs: [route, format, check, windows-native-build]
+    needs: [route, format, check, windows-native-build, macos-native-build]
     if: always() && github.event_name == 'workflow_dispatch' && inputs.pr != '' && needs.route.outputs.sha != '' && needs.route.outputs.trusted == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -428,11 +428,12 @@ jobs:
           FORMAT: ${{ needs.format.result }}
           CHECK: ${{ needs.check.result }}
           WINDOWS_BUILD: ${{ needs.windows-native-build.result }}
+          MACOS_BUILD: ${{ needs.macos-native-build.result }}
           RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           state=failure
-          if [[ "$FORMAT" == success && "$CHECK" == success && "$WINDOWS_BUILD" == success ]]; then state=success
-          elif [[ "$FORMAT" == cancelled || "$CHECK" == cancelled || "$WINDOWS_BUILD" == cancelled ]]; then state=error; fi
+          if [[ "$FORMAT" == success && "$CHECK" == success && "$WINDOWS_BUILD" == success && "$MACOS_BUILD" == success ]]; then state=success
+          elif [[ "$FORMAT" == cancelled || "$CHECK" == cancelled || "$WINDOWS_BUILD" == cancelled || "$MACOS_BUILD" == cancelled ]]; then state=error; fi
           gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state="$state" -f context=build \
-            -f description="Full checks dispatched on this head: format $FORMAT, systems $CHECK, Windows build $WINDOWS_BUILD" -f target_url="$RUN" > /dev/null
+            -f description="Full checks dispatched on this head: format $FORMAT, systems $CHECK, Windows build $WINDOWS_BUILD, macOS build $MACOS_BUILD" -f target_url="$RUN" > /dev/null
           echo "build=$state on $SHA"
