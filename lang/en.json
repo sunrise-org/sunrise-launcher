@@ -2108,7 +2108,6 @@
   "{size} · {detail}": "{size} · {detail}",
   "{tag} is not a full Dev tag (dev-<date>-<commit>).": "{tag} is not a full Dev tag (dev-<date>-<commit>).",
   "{tag} is not installed.": "{tag} is not installed.",
-  "{time} played": "{time} played",
   "{total} mods total · {fit} fit {target} · {other} for other builds": "{total} mods total · {fit} fit {target} · {other} for other builds",
   "{track} @ {commit}": "{track} @ {commit}",
   "{value}: say {one} or {other}": "{value}: say {one} or {other}",
@@ -2669,5 +2668,6 @@
   "Light": "Light",
   "System follows your computer's light or dark mode.": "System follows your computer's light or dark mode.",
   "This theme has only a dark look.": "This theme has only a dark look.",
-  "{value}: say dark, light or system": "{value}: say dark, light or system"
+  "{value}: say dark, light or system": "{value}: say dark, light or system",
+  "Time played {time}": "Time played {time}"
 }

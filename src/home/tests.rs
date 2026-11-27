@@ -7,16 +7,6 @@ fn a_fact_starts_with_a_capital() {
 }
 
 #[test]
-fn a_profile_says_its_play_time_only_once_it_was_played() {
-    assert_eq!(played_line(Duration::from_secs(600), None), None);
-    let now = std::time::SystemTime::now();
-    assert_eq!(
-        played_line(Duration::from_secs(3 * 3600 + 300), Some(now)),
-        Some(("3 h 05 min played".into(), "Last played today".into()))
-    );
-}
-
-#[test]
 fn a_long_list_builds_the_rows_near_the_view() {
     // 100 rows 56 apart, the page showing the list's first 400 points.
     assert_eq!(near(100, 1, 56., (0., 400.)), 0..11);

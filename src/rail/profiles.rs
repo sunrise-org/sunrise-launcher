@@ -358,9 +358,10 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Div {
         let current = selected == Some(i.id.as_str());
-        // Every selected profile has settings (the default one too); only its menu (Delete)
-        // is for the player's own.
-        let more = current && !self.location_unavailable;
+        // Every profile has its settings button (the default one too) while the sidebar is open;
+        // closed, only the selected one keeps it, under its mark. Its menu (Delete) stays the
+        // player's own profiles' right-click.
+        let more = (current || look.open > 0.) && !self.location_unavailable;
         let face = self.profile_face(n, &i, current, more, look, cx);
         let actions = if more {
             profile_actions(&i, look.open, cx)
@@ -376,7 +377,7 @@ impl Launcher {
             .children(actions)
             // The room the closed button took under the mark eases away with the width, so the
             // profiles below don't jump as it leaves the row.
-            .when(more && look.open > 0., |d| {
+            .when(current && more && look.open > 0., |d| {
                 d.child(div().flex_none().h(px(actions_room(look.open))))
             })
     }

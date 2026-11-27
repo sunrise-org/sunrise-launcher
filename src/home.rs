@@ -184,19 +184,6 @@ pub(crate) fn sentence(text: &str) -> String {
     }
 }
 
-/// How long a profile was played and when last, as the line under its name. None until it
-/// was played.
-pub(crate) fn played_line(
-    played: Duration,
-    last: Option<std::time::SystemTime>,
-) -> Option<(String, String)> {
-    let last = last?;
-    Some((
-        trf("{time} played", &[("time", &instances::play_time(played))]),
-        trf("Last played {when}", &[("when", &worlds_page::ago(last))]),
-    ))
-}
-
 pub(crate) fn card() -> Div {
     div()
         .bg(palette().card())
