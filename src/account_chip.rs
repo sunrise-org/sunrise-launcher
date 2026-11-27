@@ -275,7 +275,7 @@ impl Launcher {
             }
             Action::Settings => self.navigate(Page::Settings),
             Action::SignInAgain(uuid) => self.re_sign_in(&uuid),
-            Action::CopyUuid(_) => crate::toast::say(tr("Copied")),
+            Action::CopyUuid(uuid) => crate::toast::copied(&uuid),
             Action::ManageSkin(uuid) => {
                 if self.accounts.selected.as_deref() != Some(uuid.as_str()) {
                     self.play_as(&uuid);

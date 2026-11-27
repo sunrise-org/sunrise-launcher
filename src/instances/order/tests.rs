@@ -77,3 +77,35 @@ fn an_unreadable_order_is_read_as_none() {
     let meta: Meta = serde_json::from_str(r#"{"order": 3}"#).expect("a number");
     assert_eq!(meta.order, Some(3));
 }
+
+#[test]
+fn only_the_moves_that_are_possible_are_offered() {
+    let (_root, home, data) = with_profiles("options", &["Attic", "Barn", "Cabin"]);
+    let list = list_in(&home, &data);
+    let options = |name: &str| {
+        let target = list.iter().find(|i| i.name == name).expect("listed");
+        move_options(&list, target)
+    };
+    assert_eq!(options("Sunrise"), (false, false));
+    assert_eq!(options("Attic"), (false, true));
+    assert_eq!(options("Barn"), (true, true));
+    assert_eq!(options("Cabin"), (true, false));
+    // A profile alone in its group, and one alone after the default, has nowhere to go.
+    edit_in(&home, &data, "attic", |m| m.group = Some("Farm".into())).expect("grouped");
+    let list = list_in(&home, &data);
+    let attic = list.iter().find(|i| i.name == "Attic").expect("listed");
+    assert_eq!(move_options(&list, attic), (false, false));
+    let (_root, home, data) = with_profiles("alone", &["s"]);
+    let list = list_in(&home, &data);
+    assert_eq!(move_options(&list, &list[1]), (false, false));
+}
+
+#[test]
+fn a_move_at_an_edge_changes_nothing_on_disk() {
+    let (_root, home, data) = with_profiles("edge", &["s"]);
+    move_profile_in(&home, &data, "s", true).expect("nothing above the default");
+    move_profile_in(&home, &data, "s", false).expect("nothing below");
+    assert_eq!(names(&home, &data), ["Sunrise", "s"]);
+    let saved = fs::read_to_string(data.join(FILE)).expect("the saved choices");
+    assert!(!saved.contains("order"));
+}

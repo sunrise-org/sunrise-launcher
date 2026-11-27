@@ -68,26 +68,6 @@ impl Row {
 }
 
 impl Launcher {
-    /// Whether `target` can go up and down among the profiles of its group. The default profile
-    /// stays first and moves nowhere.
-    fn can_move(&self, target: &Instance) -> (bool, bool) {
-        if target.kind == instances::Kind::Default {
-            return (false, false);
-        }
-        let group: Vec<&Instance> = self
-            .instances
-            .list
-            .iter()
-            .skip(1)
-            .filter(|i| i.group == target.group)
-            .collect();
-        let at = group.iter().position(|i| i.id == target.id);
-        (
-            at.is_some_and(|n| n > 0),
-            at.is_some_and(|n| n + 1 < group.len()),
-        )
-    }
-
     /// The menu's rows for `target` down to Open folder and the moves.
     fn profile_menu_rows(&self, target: &Instance, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let p = palette();
@@ -135,7 +115,7 @@ impl Launcher {
             })),
         );
         if target.kind != instances::Kind::Default {
-            let (up, down) = self.can_move(target);
+            let (up, down) = instances::move_options(&self.instances.list, target);
             for (id, icon, label, way, on) in [
                 ("profile-menu-up", "arrow-up-01", tr("Move up"), true, up),
                 (
@@ -146,16 +126,17 @@ impl Launcher {
                     down,
                 ),
             ] {
+                if !on {
+                    continue;
+                }
                 let moved = target.id.clone();
-                rows.push(
-                    Row::new(id, icon, label, p.text)
-                        .unless(!on, "")
-                        .draw(cx.listener(move |this, _, _, cx| {
-                            this.close_profile_action();
-                            this.move_profile(&moved, way);
-                            cx.notify();
-                        })),
-                );
+                rows.push(Row::new(id, icon, label, p.text).draw(cx.listener(
+                    move |this, _, _, cx| {
+                        this.close_profile_action();
+                        this.move_profile(&moved, way);
+                        cx.notify();
+                    },
+                )));
             }
         }
         rows

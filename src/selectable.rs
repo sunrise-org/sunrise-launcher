@@ -410,8 +410,8 @@ impl Element for Selectable {
                             if copy_preview {
                                 clipboard::copy_to_clipboard(cx, item);
                             } else {
-                                clipboard::copy_quietly(cx, item);
-                                crate::toast::say(crate::i18n::tr("Copied"));
+                                clipboard::copy_quietly(cx, item.clone());
+                                crate::toast::copied(&item.text().unwrap_or_default());
                             }
                         }
                     }

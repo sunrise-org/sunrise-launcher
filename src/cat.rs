@@ -155,6 +155,8 @@ impl Launcher {
             }
         };
         let tall = H as f32 * SIZE;
+        // The cat's highest opaque row in this very picture, for the bubble to sit above.
+        let top = outing_bubble.map(|_| top_row(&image, scale));
         if let Some(up) = view.perch {
             // A window above Play's top edge, as tall as the cat: it climbs into it from below,
             // its feet on the edge, and nothing of it is ever drawn over the button. Keep it
@@ -216,6 +218,7 @@ impl Launcher {
                 self.ui.cat.lane.get(),
                 alpha,
                 tall,
+                top.unwrap_or(0) as f32 * SIZE,
             ))
         });
         (lane_box(beside, lane, bubble), None)
@@ -259,9 +262,25 @@ impl Launcher {
 }
 
 /// Where the cat's head is in its sprite, facing right, in sprite pixels from the left: the
-/// head's middle when it sits (see `layout` in drawing.rs), and the top of its ears from the top.
+/// head's middle when it sits (see `layout` in drawing.rs).
 const HEAD_AT: f32 = 32.;
-const HEAD_TOP: f32 = 14.;
+
+/// How far the bubble's tail tip stays above the cat's highest pixel, in px.
+const TIP_GAP: f32 = 4.;
+
+/// The first sprite row, from the top, that has anything drawn in it, in a picture `scale` times
+/// the sprite's size (BGRA, so the alpha is the fourth byte). A bubble over the cat sits above it,
+/// whether the cat sits, stands or has its tail up.
+fn top_row(image: &RenderImage, scale: usize) -> usize {
+    let Some(bytes) = image.as_bytes(0) else {
+        return 0;
+    };
+    let row = W * scale * 4;
+    bytes
+        .chunks_exact(row)
+        .position(|r| r.as_chunks::<4>().0.iter().any(|px| px[3] > 0))
+        .map_or(0, |y| y / scale)
+}
 
 /// The lane's box: as wide as the bar's gap leaves, as tall as the cat. It does not cut what is
 /// drawn in it; `clipped` (the cat's own lane, filling it) does that, and `bubble` sits above.
@@ -279,8 +298,9 @@ fn lane_box(beside: bool, clipped: Div, bubble: Option<Div>) -> Div {
 
 /// A speech bubble over the cat, whose head is `head` px from the lane's left edge (`lane`
 /// wide): a small pixel box in the page's colours, its tail pointing down at the cat. It is kept
-/// inside the lane, so the banner never cuts it, and the tail still points at the cat.
-fn speech_bubble(text: &str, head: f32, lane: f32, alpha: f32, tall: f32) -> Div {
+/// inside the lane, so the banner never cuts it, and the tail still points at the cat. `above`
+/// is how far down the lane's box the cat's highest pixel is: the tail's tip stops `TIP_GAP` short of it.
+fn speech_bubble(text: &str, head: f32, lane: f32, alpha: f32, tall: f32, above: f32) -> Div {
     use crate::tokens::{r, R_SMALL, SMALL};
     const MAX: f32 = 220.;
     const PAD: f32 = 8.;
@@ -312,7 +332,7 @@ fn speech_bubble(text: &str, head: f32, lane: f32, alpha: f32, tall: f32) -> Div
     div()
         .absolute()
         .left(px(left))
-        .bottom(px(tall - HEAD_TOP * SIZE + 1.))
+        .bottom(px(tall - above + TIP_GAP))
         .w(px(wide))
         .opacity(alpha)
         .flex()

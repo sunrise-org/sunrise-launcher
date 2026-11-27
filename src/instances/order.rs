@@ -8,6 +8,24 @@ pub fn move_profile(query: &str, up: bool) -> Result<(), String> {
     move_profile_in(&backend::game_home(), &backend::data_dir(), query, up)
 }
 
+/// Whether `target` has a place above and below it among the profiles of its group in `list`, the
+/// order the sidebar shows. The default profile is pinned first, so it moves nowhere and nothing
+/// moves above it; a profile alone in its group has nowhere to go.
+pub fn move_options(list: &[Instance], target: &Instance) -> (bool, bool) {
+    if target.kind == Kind::Default {
+        return (false, false);
+    }
+    let group: Vec<&Instance> = list
+        .iter()
+        .filter(|i| i.kind != Kind::Default && i.group == target.group)
+        .collect();
+    let at = group.iter().position(|i| i.id == target.id);
+    (
+        at.is_some_and(|n| n > 0),
+        at.is_some_and(|n| n + 1 < group.len()),
+    )
+}
+
 pub(super) fn move_profile_in(
     game_home: &Path,
     data: &Path,

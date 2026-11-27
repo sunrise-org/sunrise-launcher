@@ -34,7 +34,7 @@ pub use deletion_recovery::{interrupted_deletions, InterruptedDeletion};
 pub use edit::*;
 use lifecycle::{initial_choices, GATES, INITIAL, RETIRED};
 pub use list::*;
-pub use order::move_profile;
+pub use order::{move_options, move_profile};
 pub use play::*;
 
 /// The default instance's id: the game's home itself.

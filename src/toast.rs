@@ -97,6 +97,35 @@ pub(super) fn say_with(en: &str, value: &str) {
     say_parts(parts_with(tr(en), value));
 }
 
+/// The longest start of a copy the toast shows, in characters, ellipsis included.
+const COPIED_SHOWN: usize = 40;
+
+/// Says what was copied: "Copied" and the start of `text` in mono.
+pub(super) fn copied(text: &str) {
+    say_with("Copied {text}", &copied_preview(text));
+}
+
+/// The start of a copied `text` for the toast: its first line, a path with `~` for home, cut
+/// on a character boundary to about 40 characters, with an ellipsis where something was left out.
+fn copied_preview(text: &str) -> String {
+    let text = text.trim();
+    let first = text.lines().next().unwrap_or("").trim_end();
+    let more = text.lines().nth(1).is_some();
+    let first = if first.starts_with('/') && !first.contains(char::is_whitespace) {
+        tilde(Path::new(first))
+    } else {
+        first.to_string()
+    };
+    if first.chars().nth(COPIED_SHOWN).is_none() {
+        return if more { format!("{first}…") } else { first };
+    }
+    let end = first
+        .char_indices()
+        .nth(COPIED_SHOWN - 1)
+        .map_or(first.len(), |(i, _)| i);
+    format!("{}…", first[..end].trim_end())
+}
+
 /// `said`'s one `{hole}` filled with `value` in mono.
 fn parts_with(said: &str, value: &str) -> Parts {
     match (said.find('{'), said.find('}')) {
@@ -320,5 +349,23 @@ mod tests {
                 (" now".to_string(), false)
             ]
         );
+    }
+
+    #[test]
+    fn a_copy_shows_its_first_line_cut_to_forty_characters() {
+        assert_eq!(copied_preview("AB12-CD\n"), "AB12-CD");
+        assert_eq!(
+            copied_preview(&"x".repeat(200)),
+            format!("{}…", "x".repeat(39))
+        );
+        assert_eq!(copied_preview(&"é".repeat(40)), "é".repeat(40));
+        assert_eq!(
+            copied_preview(&"é".repeat(41)),
+            format!("{}…", "é".repeat(39))
+        );
+        assert_eq!(copied_preview("error: one\n  two\nthree\n"), "error: one…");
+        assert_eq!(copied_preview("\n\nerror\n"), "error");
+        assert_eq!(copied_preview(""), "");
+        assert_eq!(copied_preview("/srv/a b/c"), "/srv/a b/c");
     }
 }
