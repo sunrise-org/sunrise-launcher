@@ -2499,5 +2499,13 @@
   "{path}: not a JSON report ({error})": "{path}: ليس تقرير JSON ({error})",
   "{name}: one of performance, crashes, bugs, benchmarks, all": "{name}: اختر performance أو crashes أو bugs أو benchmarks أو all",
   "{name}: a colour name or a hue in degrees": "{name}: اسم لون أو درجة لونية بالدرجات",
-  "Could not start {path}: {error}": "تعذّر بدء {path}: {error}"
+  "Could not start {path}: {error}": "تعذّر بدء {path}: {error}",
+  "The reviewed world directory changed": "تغيّر مجلد العالم الذي تمت مراجعته",
+  "World evidence exceeds the save size limit": "تتجاوز أدلة العالم الحد الأقصى لحجم الحفظ",
+  "{mod} isn't ready for your game version yet. Its author needs to update it for this build.": "{mod} غير جاهزة لإصدار لعبتك بعد. يحتاج مؤلفها إلى تحديثها لهذا البناء.",
+  "{mod} can't be added together with the mods this profile has.": "لا يمكن إضافة {mod} مع الإضافات الموجودة في هذا الملف الشخصي.",
+  "The profile or its game build changed while {mod} was being checked. Nothing was changed; try again.": "تغيّر الملف الشخصي أو إصدار لعبته أثناء التحقق من {mod}. لم يتغير شيء؛ حاول مجددًا.",
+  "Sunrise couldn't download the tools it needs to build {mod}. Check your connection and try again.": "تعذّر على Sunrise تنزيل الأدوات اللازمة لبناء {mod}. تحقق من الاتصال وحاول مجددًا.",
+  "{mod} couldn't be built on this computer.": "تعذّر بناء {mod} على هذا الكمبيوتر.",
+  "{mod} couldn't be read from GitHub.": "تعذّرت قراءة {mod} من GitHub."
 }

@@ -2600,5 +2600,15 @@
   "Game builds kept for running servers: downloaded again when needed.": "Build di gioco conservate per i server in esecuzione: verranno scaricate di nuovo quando necessario.",
   "How smoothly Sunrise runs on your computer, so slowdowns can be found and fixed.": "La fluidità di Sunrise sul tuo computer, per individuare e risolvere i rallentamenti.",
   "Iris-format pack: most work, some effects may not": "Pacchetto formato Iris: la maggior parte funziona, alcuni effetti potrebbero non riuscire",
-  "Java": "Java"
+  "Java": "Java",
+  "Moving server to trash": "Spostamento del server nel Cestino",
+  "Only the bug reports you write and send yourself.": "Solo le segnalazioni di bug che scrivi e invii personalmente.",
+  "Other downloads kept to make the launcher faster.": "Altri download conservati per velocizzare il launcher.",
+  "Restoring": "Ripristino in corso",
+  "Rows": "Righe",
+  "Semi-realistic": "Semirealistico",
+  "Setting it to run in the background": "Imposta l’esecuzione in background",
+  "Tells Sunrise, anonymously, that you're playing, so the launcher can show how many people play right now.": "Comunica anonimamente a Sunrise che stai giocando, così il launcher può mostrare quanti utenti stanno giocando in questo momento.",
+  "The compiler that builds native mods: downloaded again the next time one is built.": "Il compilatore per le mod native: viene scaricato di nuovo al prossimo avvio di una compilazione.",
+  "The game packages native mods are built against: downloaded again when needed.": "I pacchetti di gioco usati per compilare le mod native: scaricati di nuovo quando necessario."
 }
