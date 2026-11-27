@@ -12,9 +12,35 @@ use gpui::rgb;
 const BANNER_HEIGHT: f32 = 208.;
 /// Play's width (Figma).
 const PLAY_WIDTH: f32 = 196.;
-/// How far above the banner's bottom the cat's feet stand: on the dark ground strip along
-/// the art's bottom edge.
-const GROUND: f32 = 10.;
+/// The art's size, and the dark strip along its bottom (`assets/media/banner.svg`, the path
+/// `M0 193.818L1036 187.2V208H0Z`): the darkest band, under the trees, which the page's colour
+/// fades into on the left. Its top edge runs from `GROUND_TOP_LEFT` at the left to
+/// `GROUND_TOP_RIGHT` at the right; the trees stand above it, their feet at 176 to 189.
+const ART_WIDTH: f32 = 1036.;
+const GROUND_TOP_LEFT: f32 = 193.818;
+const GROUND_TOP_RIGHT: f32 = 187.2;
+
+/// How far above the banner's bottom the cat's feet stand, with `x` px from the banner's left:
+/// the vertical middle of the dark strip, which is where the feet are, and the shadow
+/// (`BELOW_FEET` under them) stays inside it while the strip is that deep.
+///
+/// The art is drawn to cover the banner, centred, so it is scaled by `max(width / 1036, 1)` and
+/// the overflow is cropped evenly on every side. The strip is only about 14 to 21 px deep in the
+/// art, and a wide banner crops its bottom part away (at 1190 px wide, 12 px of the art's 208
+/// are gone from the bottom, leaving a strip of 5 to 11 px), so its depth is worked out for the
+/// banner's width rather than fixed. It follows the strip's slope at `x`. A banner taller than
+/// 208 (a build under way, a notice) scales the art further and is not accounted for.
+fn ground_height(banner_width: f32, x: f32) -> f32 {
+    let scale = (banner_width / ART_WIDTH).max(1.);
+    let art_x = ((x + (ART_WIDTH * scale - banner_width) / 2.) / scale).clamp(0., ART_WIDTH);
+    let along = art_x / ART_WIDTH;
+    let top_in_art = GROUND_TOP_LEFT + (GROUND_TOP_RIGHT - GROUND_TOP_LEFT) * along;
+    let crop = (BANNER_HEIGHT * scale - BANNER_HEIGHT) / 2.;
+    let strip = BANNER_HEIGHT - (top_in_art * scale - crop);
+    // The feet in the strip's middle. The lane drops below the banner's edge when the strip is
+    // shallower than the shadow (the banner clips it); the paws stay on the banner.
+    (strip / 2.).max(1.)
+}
 
 impl Launcher {
     /// The selected profile's top: the banner, then the state the profile is in.
@@ -63,15 +89,34 @@ impl Launcher {
             .items_start()
             .gap(px(8.))
             .child(controls)
-            .child(self.change_build(build, tag, cx));
+            // The build picker is centred under Play while it fits there. Auto margins rather than
+            // centring, so a longer label starts at Play's left edge instead of overhanging it.
+            .child(
+                div()
+                    .flex()
+                    .w(px(if compact { 132. } else { PLAY_WIDTH }))
+                    .child(
+                        div()
+                            .flex_none()
+                            .mx_auto()
+                            .child(self.change_build(build, tag, cx)),
+                    ),
+            );
         // The cat walks the ground along the art's bottom edge, right of the buttons.
         let (lane, _) = self.cat(true, false, window, cx);
         let pad = if compact { 16. } else { 24. };
+        let lane_left = pad + PLAY_WIDTH + 8. + tokens::PLAY + 16.;
+        let banner_width = self.window_width
+            - crate::rail::rail_width(self.rail_open())
+            - 2. * tokens::FRAME_INSET;
+        // The lane's middle: the strip's depth hardly changes along it.
+        let middle = (lane_left + banner_width - pad) / 2.;
+        let feet = ground_height(banner_width, middle);
         let ground = div()
             .absolute()
-            .left(px(pad + PLAY_WIDTH + 8. + tokens::PLAY + 16.))
+            .left(px(lane_left))
             .right(px(pad))
-            .bottom(px(GROUND - crate::cat::BELOW_FEET))
+            .bottom(px(feet - crate::cat::BELOW_FEET))
             .flex()
             .child(lane);
         let art = self.ui.home.art.take();
@@ -158,6 +203,11 @@ impl Launcher {
             .as_deref()
             .filter(|t| native_mods::is_native(t))
             .and_then(crate::profile_builds::native_base);
+        // The same test the chooser uses (`build_sheet`): an unpinned Stable profile with no
+        // Stable build yet.
+        let waits_for_stable = instance.version.is_none()
+            && instance.channel == instances::Channel::Stable
+            && !self.stable_available();
         let build: String = version.as_ref().map_or_else(
             // Dev never falls back to another channel, so say why it has nothing to play: the
             // build list is still on its way or didn't load, else the channel has no build yet
@@ -166,6 +216,14 @@ impl Launcher {
                 (instances::Channel::Dev, Load::Loading) => tr("Dev · finding builds…").into(),
                 (instances::Channel::Dev, Load::Failed(_)) => tr("Dev · builds didn't load").into(),
                 (instances::Channel::Dev, Load::Ready(_)) => tr("Dev · no build yet").into(),
+                // A Stable profile with no Stable build plays Nightly, as the chooser says.
+                (instances::Channel::Stable, _) if waits_for_stable => trf(
+                    "{channel} build",
+                    &[(
+                        "channel",
+                        crate::sheets::channel_name(instances::Channel::Nightly),
+                    )],
+                ),
                 _ => tr("Sunrise").into(),
             },
             |tag| {
@@ -182,6 +240,16 @@ impl Launcher {
                 }
             },
         );
+        // Say why it isn't Stable, with the chooser's own words; the build's tag follows.
+        let version = if waits_for_stable {
+            let hint = tr("No Stable build yet. Plays Nightly until there is one.");
+            Some(match version {
+                Some(tag) => format!("{hint}\n{tag}"),
+                None => hint.into(),
+            })
+        } else {
+            version
+        };
         (build, version)
     }
 
@@ -257,8 +325,19 @@ impl Launcher {
         );
         let look = Look::new(Style::Primary, Size::Medium).disabled(!view.enabled);
         // Figma: the play glyph before the label, while Play (or Sign in & play) is what it does.
-        let look = if idle { look.icon("play") } else { look };
-        let play = button("alt-play", view.main.label(), look)
+        // Signed out, the button is the account chip's "Sign in" and does what that does.
+        let signing_in = view.main == Main::SignIn;
+        let look = match (idle, signing_in) {
+            (_, true) => look.icon("user"),
+            (true, false) => look.icon("play"),
+            (false, false) => look,
+        };
+        let label: SharedString = if signing_in {
+            tr("Sign in").into()
+        } else {
+            view.main.label()
+        };
+        let play = button("alt-play", label, look)
             .h(px(tokens::PLAY))
             .min_w(px(if compact { 132. } else { PLAY_WIDTH }))
             .px(px(if compact { 12. } else { 20. }))
@@ -269,9 +348,13 @@ impl Launcher {
                 d.tooltip(crate::glass_ui::tip(text))
             });
         if view.enabled {
-            play.on_click(cx.listener(|this, _, _, cx| {
+            play.on_click(cx.listener(move |this, _, _, cx| {
                 this.cat_off_play();
-                this.press_play();
+                if signing_in {
+                    this.account_action(crate::account_chip::Action::Add);
+                } else {
+                    this.press_play();
+                }
                 cx.notify();
             }))
         } else {

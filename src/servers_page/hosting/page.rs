@@ -2,7 +2,7 @@
 use super::widgets::*;
 use super::*;
 use crate::widgets::button::secondary;
-use crate::widgets::feedback::empty_state;
+use crate::widgets::feedback::empty_state_icon;
 use crate::widgets::{chip, nav};
 use gpui::SharedString;
 
@@ -191,7 +191,8 @@ impl Launcher {
             .flex_col()
             .gap(px(14.))
             .children(problem)
-            .child(empty_state(
+            .child(empty_state_icon(
+                Some("server-stack"),
                 tr("No server yet.").trim_end_matches('.'),
                 tr("Host a world for your friends on this computer. Create a server, press Start, and give them the address."),
                 Some(actions),

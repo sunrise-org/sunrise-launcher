@@ -154,34 +154,33 @@ impl Launcher {
                 };
                 // Join and Host as underline sub-tabs, matching Mods and Packs.
                 let this = cx.entity();
-                let tabs = div().px(px(24.)).pt(px(20.)).child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .border_b_1()
-                        .border_color(palette().rule())
-                        .child(
-                            crate::widgets::nav::tabs(
-                                "servers-tabs",
-                                &[
-                                    (Page::Join, tr("Join").into()),
-                                    (Page::Hosting, tr("Host").into()),
-                                ],
-                                if page == Page::Join {
-                                    Page::Join
-                                } else {
-                                    Page::Hosting
-                                },
-                                move |page, _, cx| {
-                                    this.update(cx, |view, cx| {
-                                        view.navigate(page);
-                                        cx.notify();
-                                    });
-                                },
-                            )
-                            .seen(),
-                        ),
-                );
+                let strip = crate::widgets::nav::tabs(
+                    "servers-tabs",
+                    &[
+                        (Page::Join, tr("Join").into()),
+                        (Page::Hosting, tr("Host").into()),
+                    ],
+                    if page == Page::Join {
+                        Page::Join
+                    } else {
+                        Page::Hosting
+                    },
+                    move |page, _, cx| {
+                        this.update(cx, |view, cx| {
+                            view.navigate(page);
+                            cx.notify();
+                        });
+                    },
+                )
+                .seen();
+                let tabs = div()
+                    .px(px(24.))
+                    .pt(px(20.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(crate::widgets::nav::page_head(tr("Servers"), None))
+                    .child(crate::widgets::nav::tab_row(strip, None));
                 div()
                     .flex()
                     .flex_col()

@@ -5,8 +5,7 @@ use super::*;
 use crate::paint::palette;
 use crate::widgets::button::{primary, secondary};
 use crate::widgets::check::switch;
-use crate::widgets::choice::choices;
-use crate::widgets::feedback::empty_state;
+use crate::widgets::feedback::empty_state_icon;
 use gpui::ExternalPaths;
 use gpui::SharedString;
 use std::path::Path;
@@ -30,7 +29,7 @@ impl Launcher {
             .have_focus
             .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
             .clone();
-        let header = self.mods_header(true, &focus, window, cx);
+        let header = self.mods_header(&focus, window, cx);
         let kind = self.mods_state.shelf.kind();
         let home = self.mods_home();
         let list = match kind {
@@ -48,7 +47,6 @@ impl Launcher {
             .text_color(c(palette().text))
             .child(header)
             .children(self.strip(cx))
-            .child(self.collection_tabs(cx))
             .child(list)
             // A file dropped on the page joins the collection shown; a data pack needs a world.
             .when_some(kind, |page, kind| {
@@ -65,6 +63,7 @@ impl Launcher {
             .into_any_element()
     }
 
+    /// The pack kinds as the shared underline tabs.
     pub(super) fn collection_tabs(&self, cx: &mut Context<Self>) -> Div {
         let chosen = self.mods_state.shelf;
         let tabs: Vec<(Shelf, SharedString)> = [
@@ -76,11 +75,8 @@ impl Launcher {
         .map(|(kind, label)| (kind, label.into()))
         .collect();
         let this = cx.entity();
-        div().flex().child(choices(
-            "alt-collection",
-            &tabs,
-            chosen,
-            move |kind, _, cx| {
+        crate::widgets::nav::tab_row(
+            crate::widgets::nav::tabs("alt-collection-tabs", &tabs, chosen, move |kind, _, cx| {
                 this.update(cx, |this, cx| {
                     if this.mods_state.shelf != kind {
                         this.mods_state.shelf = kind;
@@ -90,8 +86,10 @@ impl Launcher {
                     }
                     cx.notify();
                 })
-            },
-        ))
+            })
+            .seen(),
+            None,
+        )
     }
 
     fn can_edit_packs(&self, home: &Path, kind: Kind) -> bool {
@@ -412,7 +410,8 @@ impl Launcher {
                 Kind::Resource => (tr("No resource packs yet"), tr("Find resource packs")),
                 Kind::Shader => (tr("No shader packs yet"), tr("Find shader packs")),
             };
-            empty_state(
+            empty_state_icon(
+                Some("package-01"),
                 none,
                 empty,
                 Some(

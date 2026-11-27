@@ -16,7 +16,6 @@ const SWATCH: f32 = 30.;
 /// What [`Accent::ALL`]'s swatches are called, in their order.
 const ACCENT_NAMES: [&str; 7] = ["Violet", "Blue", "Teal", "Green", "Amber", "Red", "Pink"];
 
-/// A theme's preview: its page, a panel on it with both inks, and Play in its own fill.
 /// The least width of a theme's card, and the room between cards.
 const CARD_MIN: f32 = 168.;
 const GAP: f32 = 12.;
@@ -31,86 +30,93 @@ pub(super) fn theme_columns(width: f32) -> u16 {
     (((width + GAP) / (CARD_MIN + GAP)).floor() as u16).max(1)
 }
 
+/// A theme's preview: a miniature of the launcher in its own palette: the sidebar with one
+/// row selected, the Home banner with Play in the theme's fill, and the tabs below.
 fn preview(p: &Palette) -> Div {
     let bar = |w: f32, color: u32| {
         div()
             .h(px(4.))
             .w(px(w))
+            .flex_none()
             .rounded(crate::tokens::r(crate::tokens::R_BAR))
             .bg(rgb(color))
     };
+    // A sidebar row: the selected one sits on the selection colour.
+    let side = |on: bool| {
+        div()
+            .h(px(10.))
+            .w_full()
+            .px(px(4.))
+            .flex()
+            .items_center()
+            .rounded(crate::tokens::r(crate::tokens::R_BAR))
+            .when(on, |d| d.bg(rgb(p.chrome_raised)))
+            .child(bar(
+                if on { 14. } else { 12. },
+                if on { p.chrome_text } else { p.chrome_muted },
+            ))
+    };
     div()
         .h(px(92.))
-        .p(px(10.))
         .bg(rgb(p.background))
         .flex()
-        .gap(px(6.))
         .child(
             div()
-                .w(px(14.))
+                .w(px(34.))
                 .h_full()
-                .rounded(crate::tokens::r(crate::tokens::R_SMALL))
+                .flex_none()
                 .bg(rgb(p.chrome))
-                .border_1()
+                .border_r_1()
                 .border_color(rgb(p.chrome_line))
+                .p(px(4.))
                 .flex()
                 .flex_col()
-                .items_center()
-                .gap(px(4.))
-                .pt(px(6.))
-                .child(bar(6., p.chrome_text))
-                .child(bar(6., p.chrome_muted)),
+                .gap(px(3.))
+                .child(side(true))
+                .child(side(false))
+                .child(side(false)),
         )
         .child(
             div()
                 .flex_1()
                 .min_w_0()
                 .h_full()
-                .rounded(crate::tokens::r(crate::tokens::R_SMALL))
-                .bg(rgb(p.card_color))
-                .border_1()
-                .border_color(rgb(p.divider))
                 .p(px(8.))
                 .flex()
                 .flex_col()
-                .justify_between()
+                .gap(px(6.))
                 .child(
                     div()
+                        .flex_1()
+                        .min_h_0()
+                        .rounded(crate::tokens::r(crate::tokens::R_SMALL))
+                        .bg(rgb(p.card_color))
+                        .border_1()
+                        .border_color(rgb(p.divider))
+                        .p(px(6.))
                         .flex()
                         .flex_col()
-                        .gap(px(2.))
+                        .justify_between()
+                        .child(bar(26., p.text))
                         .child(
-                            div()
-                                .text_size(px(tokens::LABEL))
-                                .font_weight(FontWeight::BOLD)
-                                .text_color(rgb(p.text))
-                                .truncate()
-                                .child(tr("Selected profile")),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(tokens::CAPTION))
-                                .text_color(rgb(p.muted))
-                                .truncate()
-                                .child(tr("Not played yet")),
+                            div().flex().child(
+                                div()
+                                    .w(px(24.))
+                                    .h(px(10.))
+                                    .rounded(crate::tokens::r(crate::tokens::R_BAR))
+                                    .border_1()
+                                    .border_color(p.input_edge())
+                                    .bg(p.play_gradient()),
+                            ),
                         ),
                 )
                 .child(
-                    div().flex().child(
-                        div()
-                            .px(px(10.))
-                            .h(px(20.))
-                            .flex()
-                            .items_center()
-                            .rounded(crate::tokens::r(crate::tokens::R_SMALL))
-                            .border_1()
-                            .border_color(p.input_edge())
-                            .bg(p.play_gradient())
-                            .text_size(px(tokens::CAPTION))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(p.accent_on))
-                            .child(tr("Play")),
-                    ),
+                    div()
+                        .flex()
+                        .gap(px(6.))
+                        .child(bar(14., p.accent))
+                        .child(bar(14., p.muted))
+                        .child(bar(14., p.muted)),
                 ),
         )
 }
@@ -274,11 +280,11 @@ impl Launcher {
                 .children(gone)
                 .child(cards),
         );
-        let mut rows = vec![theme];
+        // The mode comes first: it applies to whichever theme is chosen below.
+        let mut rows = vec![self.appearance_row(cx), theme];
         if !bad.is_empty() {
             rows.push(div().flex().flex_col().gap(px(10.)).children(bad));
         }
-        rows.push(self.appearance_row(cx));
         rows.push(self.accent_row(missing, window, cx));
         rows.push(self.background_row(cx));
         rows.push(self.scenery_row(cx));

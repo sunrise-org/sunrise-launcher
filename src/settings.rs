@@ -6,7 +6,7 @@ use crate::paint::palette;
 use crate::widgets::check::switch;
 use crate::widgets::choice::choices;
 use crate::widgets::feedback::{banner, Tone};
-use crate::widgets::nav::{nav_row, sun_fits};
+use crate::widgets::nav::nav_row;
 use gpui::rgb;
 use storage::Category;
 use sunrise_launcher::telemetry;
@@ -37,16 +37,6 @@ const NAV_WIDTH: f32 = 180.;
 const COLUMN_GAP: f32 = 28.;
 const PANE_WIDTH: f32 = 760.;
 const COLUMNS: f32 = NAV_WIDTH + COLUMN_GAP + PANE_WIDTH;
-/// What a section row has for its label and the sun: the row's width less its padding (12 px a
-/// side), its icon (20 px) and the gap after the icon (10 px).
-const NAV_LABEL_ROOM: f32 = NAV_WIDTH - 24. - 20. - 10.;
-
-/// A section label's width at full length, roughly: Geist at the label size is about 0.6 em a
-/// character, which errs wide, so the sun is not drawn over a label that is close to the edge.
-fn nav_label_width(label: &str) -> f32 {
-    label.chars().count() as f32 * tokens::LABEL * 0.6
-}
-
 /// The Settings section the window opens on, when what the last start left needs one: a data
 /// folder that did not open or a move that failed or finished (Storage has its recoveries).
 pub(super) fn startup_section(location_error: bool, location_note: bool) -> Option<Section> {
@@ -262,12 +252,6 @@ impl Launcher {
     }
 }
 
-/// For a box that scrolls inside the page: the wheel over it scrolls only the box. The box has
-/// scrolled by the time this runs (an element's own scrolling hears the wheel first).
-fn own_wheel(_: &gpui::ScrollEvent, _: &mut Window, cx: &mut App) {
-    cx.stop_propagation();
-}
-
 pub(crate) fn off(b: Stateful<Div>) -> Stateful<Div> {
     b.opacity(0.4).cursor_default().tab_stop(false)
 }
@@ -293,13 +277,6 @@ impl Launcher {
             .gap(px(16.))
             .w(px(NAV_WIDTH))
             .flex_none()
-            .child(
-                div()
-                    .px(px(12.))
-                    .text_size(px(tokens::DISPLAY))
-                    .font_weight(FontWeight::BOLD)
-                    .child(tr("Settings")),
-            )
             .child(self.settings_nav(section, cx));
         let body = match section {
             Section::Account => self.settings_account(cx),
@@ -373,7 +350,7 @@ impl Launcher {
                     .gap(px(2.))
                     .child(
                         div()
-                            .text_size(px(tokens::HEADING))
+                            .text_size(px(tokens::TITLE))
                             .font_weight(FontWeight::BOLD)
                             .child(crate::selectable::selectable(tr(section.label()))),
                     )
@@ -387,16 +364,15 @@ impl Launcher {
             .child(body)
     }
 
-    /// The section list: one row per section, the open one filled and marked with the pixel sun
-    /// when its label and the sun fit the row.
+    /// The section list: one row per section, the open one filled. The pixel sun stays on the
+    /// sidebar's Settings row.
     fn settings_nav(&self, section: Section, cx: &mut Context<Self>) -> Div {
         let mut nav = div().flex().flex_col().gap(px(2.));
         for (n, s) in Section::ALL.into_iter().enumerate() {
             let on = s == section;
             let label = tr(s.label());
-            let sun = on && sun_fits(nav_label_width(label), NAV_LABEL_ROOM);
             nav = nav.child(
-                nav_row(format!("alt-settings-nav-{n}"), s.icon(), label, on, sun).on_click(
+                nav_row(format!("alt-settings-nav-{n}"), s.icon(), label, on, false).on_click(
                     cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.settings_open(s);
                         cx.notify();

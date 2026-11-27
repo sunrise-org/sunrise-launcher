@@ -197,3 +197,96 @@ fn every_action_ends_where_its_state_rests() {
         );
     }
 }
+
+mod talk {
+    use super::super::talk::*;
+
+    fn click(talk: Talk, now: f32, roll: f32) -> (Said, Talk) {
+        next_line(talk, now, roll)
+    }
+
+    #[test]
+    fn a_first_click_gets_a_random_line_and_never_the_same_one_twice_in_a_row() {
+        let mut talk = Talk::default();
+        let mut last = "";
+        // Clicks far apart, so none escalates, with every roll there is.
+        for i in 0..400 {
+            let roll = (i % 20) as f32 / 20.;
+            let (said, next) = click(talk, i as f32 * 10_000., roll);
+            assert!(LINES.contains(&said.line) && !said.leaves);
+            assert_ne!(said.line, last);
+            last = said.line;
+            talk = next;
+        }
+    }
+
+    #[test]
+    fn every_random_line_can_come_up() {
+        let mut seen = std::collections::HashSet::new();
+        for i in 0..20 {
+            let (said, _) = click(Talk::default(), 0., i as f32 / 20.);
+            seen.insert(said.line);
+        }
+        assert_eq!(seen.len(), LINES.len());
+    }
+
+    #[test]
+    fn quick_clicks_run_the_escalation_in_order_and_the_last_one_leaves() {
+        let (first, mut talk) = click(Talk::default(), 0., 0.3);
+        assert!(LINES.contains(&first.line));
+        for (i, want) in ESCALATION.iter().enumerate() {
+            let (said, next) = click(talk, 1000. * (i + 1) as f32, 0.5);
+            assert_eq!(said.line, *want);
+            assert_eq!(said.leaves, i == ESCALATION.len() - 1);
+            talk = next;
+        }
+        // It left: the next click, however soon, starts over with a random line.
+        let (said, _) = click(talk, 5500., 0.5);
+        assert!(LINES.contains(&said.line));
+    }
+
+    #[test]
+    fn a_pause_resets_the_escalation() {
+        let (_, talk) = click(Talk::default(), 0., 0.1);
+        let (said, talk) = click(talk, 1000., 0.1);
+        assert_eq!(said.line, ESCALATION[0]);
+        let (said, talk) = click(talk, 2000., 0.1);
+        assert_eq!(said.line, ESCALATION[1]);
+        // More than four seconds of peace.
+        let (said, talk) = click(talk, 7000., 0.1);
+        assert!(LINES.contains(&said.line));
+        let (said, _) = click(talk, 8000., 0.1);
+        assert_eq!(said.line, ESCALATION[0]);
+    }
+
+    #[test]
+    fn the_bubble_fades_in_holds_fades_out_and_is_plain_when_motion_is_reduced() {
+        assert_eq!(bubble_alpha(0., false), Some(0.));
+        assert_eq!(bubble_alpha(1500., false), Some(1.));
+        assert!(bubble_alpha(SHOWN - 100., false).is_some_and(|a| a > 0. && a < 1.));
+        assert_eq!(bubble_alpha(SHOWN, false), None);
+        assert_eq!(bubble_alpha(10., true), Some(1.));
+        assert_eq!(bubble_alpha(SHOWN + 1., true), None);
+    }
+
+    #[test]
+    fn clicking_out_the_escalation_sends_the_cat_home_for_a_while() {
+        use super::super::*;
+        let mut outing = Outing::new(&TABBY_WAYS, 5, 0.);
+        outing.scene = Scene::Visit {
+            at: 200.,
+            until: 1e9,
+        };
+        for i in 0..5 {
+            outing.speak(i as f32 * 1000.);
+        }
+        assert!(outing.bubble.is_some());
+        let mut now = 5000.;
+        while !matches!(outing.scene, Scene::Away { .. }) {
+            now += 40.;
+            assert!(now < 60_000., "it walked off");
+            outing.step(now, 400., false);
+        }
+        assert!(matches!(outing.scene, Scene::Away { until } if until - now >= 19_000.));
+    }
+}

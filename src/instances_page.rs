@@ -28,6 +28,17 @@ pub(super) struct InstanceDialog {
     pub(super) channel: instances::Channel,
     /// The sheet was closed with edits not saved: asking whether to drop them.
     pub(super) discarding: bool,
+    /// The dropdown open under one of its fields.
+    pub(super) menu: Option<DialogMenu>,
+    /// The version list under Game build is showing.
+    pub(super) pinning: bool,
+}
+
+/// The dropdowns of the profile dialog.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum DialogMenu {
+    Build,
+    Start,
 }
 
 /// The instances and their icons as images, kept between frames.
@@ -173,10 +184,6 @@ impl Launcher {
             }
             None => false,
         }
-    }
-
-    pub(super) fn profile_copy_lock(&self) -> Option<&'static str> {
-        self.copy_lock_for(self.selected_instance()?)
     }
 
     /// Why `profile` can't be copied now: the game is running from its folder.

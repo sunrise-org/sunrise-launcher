@@ -53,32 +53,13 @@ fn divider(p: &crate::paint::Palette) -> Div {
     div().flex_none().h(px(1.)).my(px(8.)).bg(rgb(p.divider))
 }
 
-/// Where the selected profile's actions button is.
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum ActionsAt {
-    /// In the row under the mark, the sidebar closed.
-    Under,
-    /// Beside the name, fading in with it.
-    Beside,
-}
-
-/// Where the actions button is built `open` of the way, if at all. Closed, it is under the mark.
-/// Opening, it leaves the row for its place beside the name, which it takes once it fades in,
-/// when it is already clear of the mark: until then it would sit, unseen, over the mark, where a
-/// press on the mark could open the profile's menu, so it isn't built.
-fn actions_at(open: f32) -> Option<ActionsAt> {
-    if open <= 0. {
-        Some(ActionsAt::Under)
-    } else if label_opacity(open) > 0. {
-        Some(ActionsAt::Beside)
-    } else {
-        None
-    }
-}
-
-/// The room under the mark the closed actions button took (28 px), `open` of the way.
-fn actions_room(open: f32) -> f32 {
-    28. * (1. - open).clamp(0., 1.)
+/// Whether the selected profile's actions button is built `open` of the way. It sits beside the
+/// name, so it exists once the name starts to show: before that, a closed sidebar's profile is
+/// just its mark in a highlight like a nav row's, and the menu is on a right-click. Opening, the
+/// button is already clear of the mark by the time it fades in; until then it would sit, unseen,
+/// over the mark, where a press on the mark could open the profile's menu, so it isn't built.
+fn actions_shown(open: f32) -> bool {
+    label_opacity(open) > 0.
 }
 
 fn profile_lock_reason(
@@ -194,49 +175,29 @@ mod tests {
     use crate::launch_state::Facts;
 
     #[test]
-    fn the_actions_button_is_under_the_mark_closed_beside_the_name_open_and_absent_between() {
-        // Both settled layouts have it.
-        assert_eq!(actions_at(0.), Some(ActionsAt::Under));
-        assert_eq!(actions_at(1.), Some(ActionsAt::Beside));
-        let (mut hidden, mut beside) = (0, false);
+    fn the_actions_button_is_beside_the_name_open_and_absent_before_it_shows() {
+        assert!(!actions_shown(0.));
+        assert!(actions_shown(1.));
+        let (mut hidden, mut shown) = (0, false);
         for step in 1..=1000 {
             let open = step as f32 / 1000.;
-            // Inside the rail's padding: the button sits 5 px from the row's right edge, which
+            // Inside the rail's padding: the button sits 6 px from the row's right edge, which
             // is the rail's inner edge, and is 28 wide. The mark is centred in its column, which
             // doesn't move as the sidebar opens.
-            let button_left = rail_width(open) - RAIL_PAD - 5. - 28.;
+            let button_left = rail_width(open) - RAIL_PAD - 6. - 28.;
             let mark_right = RAIL_PAD + (CLOSED_ROW - 28.) / 2. + 28.;
-            match actions_at(open) {
-                Some(ActionsAt::Under) => panic!("at {open} the button is back under the mark"),
-                Some(ActionsAt::Beside) => {
-                    beside = true;
-                    assert!(
-                        button_left >= mark_right,
-                        "at {open} the button ({button_left}) is over the mark ({mark_right})"
-                    );
-                    assert!(label_opacity(open) > 0., "at {open} it is built unseen");
-                }
-                None => {
-                    assert!(!beside, "at {open} it went away again after showing");
-                    hidden += 1;
-                }
-            }
-            if button_left < mark_right {
-                assert_eq!(
-                    actions_at(open),
-                    None,
-                    "at {open} it would be over the mark"
+            if actions_shown(open) {
+                shown = true;
+                assert!(
+                    button_left >= mark_right,
+                    "at {open} the button ({button_left}) is over the mark ({mark_right})"
                 );
+            } else {
+                assert!(!shown, "at {open} it went away again after showing");
+                hidden += 1;
             }
         }
         assert!(hidden > 0, "the start of opening leaves it out");
-        // Closed, the button is in the row under the mark; the room it took eases away.
-        assert_eq!(actions_room(0.), 28.);
-        assert_eq!(actions_room(1.), 0.);
-        assert!(
-            (actions_room(0.001) - 28.).abs() < 0.1,
-            "no jump as opening begins"
-        );
     }
 
     #[cfg(debug_assertions)]
@@ -313,15 +274,13 @@ mod tests {
                 )
             })
         };
-        for open in [0., 1.] {
-            draw(cx, open);
-            let button = cx
-                .debug_bounds("selected-profile-actions")
-                .unwrap_or_else(|| panic!("at {open} the button is drawn"));
-            cx.simulate_click(button.center(), gpui::Modifiers::none());
-            assert!(menu(cx), "at {open} a press on the button opens its menu");
-        }
-        for open in [0.05, 0.15, 0.25] {
+        draw(cx, 1.);
+        let button = cx
+            .debug_bounds("selected-profile-actions")
+            .expect("open, the button is drawn");
+        cx.simulate_click(button.center(), gpui::Modifiers::none());
+        assert!(menu(cx), "a press on the button opens its menu");
+        for open in [0., 0.05, 0.15, 0.25] {
             draw(cx, open);
             // Not drawn, so nothing to hit and no Tab stop.
             assert_eq!(

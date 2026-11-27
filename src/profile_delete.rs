@@ -31,7 +31,12 @@ pub(super) fn defer_shutdown(cx: &mut App) -> bool {
 pub(super) enum Action {
     Menu {
         target: Instance,
+        /// Where its top edge goes: the pointer's height for a right-click, or just under the
+        /// actions button.
         top: f32,
+        /// Opened from the actions button: its left edge and top (the menu goes above it when
+        /// there is no room below). A right-click has none and uses the rail's edge.
+        button: Option<(f32, f32)>,
     },
     Confirm(Instance),
     Deleting(String),
@@ -50,6 +55,20 @@ impl Launcher {
         self.ui.sheets.profile_action = Some(Action::Menu {
             target: target.clone(),
             top,
+            button: None,
+        });
+    }
+
+    /// The menu hung from the actions button at `button` (window coordinates).
+    pub(super) fn open_profile_menu_under(
+        &mut self,
+        target: &Instance,
+        button: gpui::Bounds<gpui::Pixels>,
+    ) {
+        self.ui.sheets.profile_action = Some(Action::Menu {
+            target: target.clone(),
+            top: f32::from(button.bottom()) + 4.,
+            button: Some((f32::from(button.left()), f32::from(button.top()))),
         });
     }
 
@@ -161,7 +180,11 @@ impl Launcher {
             }))
         };
         let body = match action {
-            Action::Menu { target, top } => return Some(self.profile_actions_menu(target, *top, cx)),
+            Action::Menu {
+                target,
+                top,
+                button,
+            } => return Some(self.profile_actions_menu(target, *top, *button, cx)),
             Action::Confirm(target) => body
                 .child(title(trf("Delete {name}?", &[("name", &target.name)])))
                 .child(
@@ -343,7 +366,7 @@ mod tests {
         };
         let menu = |cx: &mut gpui::VisualTestContext| {
             launcher.read_with(cx, |l, _| match &l.ui.sheets.profile_action {
-                Some(Action::Menu { target, top }) => Some((target.id.clone(), *top)),
+                Some(Action::Menu { target, top, .. }) => Some((target.id.clone(), *top)),
                 _ => None,
             })
         };

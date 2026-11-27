@@ -433,6 +433,14 @@ Make a profile: empty but for your options and name, or a copy of another one's 
 
 - `NAME`
 - `--copy`: The profile to copy (its name or id)
+- `--keep-play-time`: Keep the copied profile's play time and when it last played
+- `--no-worlds`: Leave out the worlds
+- `--no-options`: Leave out the game options (options.txt)
+- `--no-resource-packs`: Leave out the resource packs
+- `--no-screenshots`: Leave out the screenshots
+- `--no-shader-packs`: Leave out the shader packs
+- `--no-servers`: Leave out the server list
+- `--no-mods`: Leave out the mods
 
 MCP: `instance_create`.
 

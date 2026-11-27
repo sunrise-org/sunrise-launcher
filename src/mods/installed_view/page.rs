@@ -6,7 +6,7 @@ use crate::widgets::button::{primary, secondary};
 use crate::widgets::check::{checkbox, Tick};
 use crate::widgets::chip;
 use crate::widgets::choice::choices;
-use crate::widgets::feedback::empty_state;
+use crate::widgets::feedback::empty_state_icon;
 use gpui::SharedString;
 
 impl Launcher {
@@ -24,7 +24,7 @@ impl Launcher {
         focus: &FocusHandle,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let header = self.mods_header(true, focus, window, cx);
+        let header = self.mods_header(focus, window, cx);
         let mut page = div()
             .size_full()
             .flex()
@@ -109,7 +109,8 @@ impl Launcher {
         let model::FilterCounts { shows, kinds } = self.mods_state.installed_filters(&rows);
         if rows.is_empty() {
             return page
-                .child(empty_state(
+                .child(empty_state_icon(
+                    Some("puzzle"),
                     tr("No mods yet"),
                     tr("Mods you add to this profile show up here."),
                     Some(

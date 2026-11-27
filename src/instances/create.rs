@@ -54,11 +54,26 @@ pub fn create(name: &str, from: Option<&str>) -> Result<Instance, String> {
     )
 }
 
+/// [`create`] copying `from` (a name or id) with only the parts `options` keep.
+pub fn create_copying(name: &str, from: &str, options: CopyOptions) -> Result<Instance, String> {
+    let from = find(from)?;
+    create_with_publish(
+        &backend::game_home(),
+        &backend::data_dir(),
+        name,
+        Some(CopyFrom::Selected(&from, options)),
+        None,
+        |_| {},
+        |_| {},
+    )
+}
+
 /// The directory and build the creation picker told the player it would duplicate.
 #[derive(Clone)]
 pub struct CopyPreview {
     instance: Instance,
     base: Option<String>,
+    options: CopyOptions,
 }
 
 impl CopyPreview {
@@ -77,7 +92,17 @@ impl CopyPreview {
         Ok(Self {
             instance: instance.clone(),
             base,
+            options: CopyOptions::everything(),
         })
+    }
+
+    /// What the copy brings along: everything, play time too, until [`Self::set_options`].
+    pub fn options(&self) -> CopyOptions {
+        self.options
+    }
+
+    pub fn set_options(&mut self, options: CopyOptions) {
+        self.options = options;
     }
 
     pub fn base(&self) -> Option<&str> {
@@ -92,15 +117,22 @@ impl CopyPreview {
 
 #[derive(Clone, Copy)]
 pub(super) enum CopyFrom<'a> {
-    Selected(&'a Instance),
+    Selected(&'a Instance, CopyOptions),
     Preview(&'a CopyPreview),
 }
 
 impl<'a> CopyFrom<'a> {
     fn instance(self) -> &'a Instance {
         match self {
-            Self::Selected(selected) => selected,
+            Self::Selected(selected, _) => selected,
             Self::Preview(preview) => &preview.instance,
+        }
+    }
+
+    fn options(self) -> CopyOptions {
+        match self {
+            Self::Selected(_, options) => options,
+            Self::Preview(preview) => preview.options,
         }
     }
 }
@@ -146,7 +178,7 @@ pub(super) fn create_whole_in(
         game_home,
         data,
         name,
-        from.map(CopyFrom::Selected),
+        from.map(|from| CopyFrom::Selected(from, CopyOptions::default())),
         picture,
         choose,
         |_| {},
@@ -167,6 +199,7 @@ pub(super) fn create_with_publish(
         return Err(crate::i18n::tr("A profile needs a name.").into());
     }
     let from = copy.map(CopyFrom::instance);
+    let options = copy.map(CopyFrom::options).unwrap_or_default();
     if let Some(from) = from.filter(|f| f.kind == Kind::Pack) {
         return Err(crate::i18n::trf(
             "{name} plays its pack's mods: import the pack again for a second copy.",
@@ -207,6 +240,7 @@ pub(super) fn create_with_publish(
     Store::read(data)?;
     let stage = tempfile::tempdir_in(&staging).map_err(create_error)?;
     let contents = stage.path().join("home");
+    let mut kept_build: Option<String> = None;
     let source = from
         .map(|from| ManagedProfile::open_instance(game_home, data, from).map_err(String::from))
         .transpose()?;
@@ -219,10 +253,16 @@ pub(super) fn create_with_publish(
             }
         }
         let worlds = crate::worlds::SavedWorlds::claim(&source.home().join("saves"))?;
-        copy_home(source.home(), &contents, &worlds).map_err(create_error)?;
-        active
-            .map(|active| source.stage_copy(active, &contents))
-            .transpose()?
+        copy_home_with(source.home(), &contents, &worlds, &options).map_err(create_error)?;
+        // Without the mods the copy doesn't match the build's record of them, so it starts
+        // without one (the pinned build below still follows) and prepares on its first play.
+        match active {
+            Some(active) if options.mods => Some(source.stage_copy(active, &contents)?),
+            other => {
+                kept_build = other.as_ref().map(|a| a.base().to_owned());
+                None
+            }
+        }
     } else {
         fs::create_dir(&contents).map_err(create_error)?;
         for f in PLAYER_FILES {
@@ -247,6 +287,17 @@ pub(super) fn create_with_publish(
     choose(&mut choices);
     if let Some(active) = &active {
         choices.version = Some(active.base().to_owned());
+    } else if let Some(base) = kept_build {
+        choices.version = Some(base);
+    }
+    if options.play_time {
+        if let Some(from) = from {
+            choices.played_secs = from.played.as_secs();
+            choices.last_played = from
+                .last_played
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_secs());
+        }
     }
     let bytes = serde_json::to_vec(&choices).map_err(|e| e.to_string())?;
     fs::write(contents.join(INITIAL), bytes).map_err(create_error)?;
@@ -352,11 +403,23 @@ pub(crate) fn publish_new_folder(from: &Path, to: &Path) -> std::io::Result<()> 
     }
 }
 
+#[cfg(test)]
 pub(super) fn copy_home(
     from: &Path,
     to: &Path,
     worlds: &crate::worlds::SavedWorlds,
 ) -> std::io::Result<()> {
+    copy_home_with(from, to, worlds, &CopyOptions::default())
+}
+
+/// [`copy_home`], leaving out what `options` don't keep.
+pub(super) fn copy_home_with(
+    from: &Path,
+    to: &Path,
+    worlds: &crate::worlds::SavedWorlds,
+    options: &CopyOptions,
+) -> std::io::Result<()> {
+    let skipped = options.skipped();
     let saves = from.join("saves");
     let mut pending = vec![(from.to_owned(), to.to_owned())];
     while let Some((source, target)) = pending.pop() {
@@ -367,7 +430,8 @@ pub(super) fn copy_home(
         for entry in fs::read_dir(&source)? {
             let entry = entry?;
             let name = entry.file_name();
-            if (source == from && NOT_COPIED.iter().any(|n| name == *n))
+            if (source == from
+                && (NOT_COPIED.iter().any(|n| name == *n) || skipped.iter().any(|n| name == *n)))
                 || (source.parent() == Some(&saves) && name == crate::worlds::LOCK)
             {
                 continue;
@@ -388,6 +452,9 @@ pub(super) fn copy_home(
     }
     // Preserve chosen-versions.json pins while keeping caches inside mod-browser/ out of copies.
     let chosen_dir = from.join("mod-browser");
+    if !options.mods {
+        return worlds.verify_all();
+    }
     if let Ok(dir_meta) = chosen_dir.symlink_metadata() {
         if dir_meta.is_dir() && !crate::native_cache::linked(&dir_meta) {
             let chosen = chosen_dir.join("chosen-versions.json");

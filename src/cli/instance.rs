@@ -9,6 +9,51 @@ pub(super) enum Way {
     Down,
 }
 
+/// What `create --copy` brings along or leaves out; with none of these it copies everything but
+/// the play time.
+#[derive(clap::Args)]
+pub(super) struct CopyFlags {
+    /// Keep the copied profile's play time and when it last played
+    #[arg(long, requires = "copy")]
+    keep_play_time: bool,
+    /// Leave out the worlds
+    #[arg(long, requires = "copy")]
+    no_worlds: bool,
+    /// Leave out the game options (options.txt)
+    #[arg(long, requires = "copy")]
+    no_options: bool,
+    /// Leave out the resource packs
+    #[arg(long, requires = "copy")]
+    no_resource_packs: bool,
+    /// Leave out the screenshots
+    #[arg(long, requires = "copy")]
+    no_screenshots: bool,
+    /// Leave out the shader packs
+    #[arg(long, requires = "copy")]
+    no_shader_packs: bool,
+    /// Leave out the server list
+    #[arg(long, requires = "copy")]
+    no_servers: bool,
+    /// Leave out the mods
+    #[arg(long, requires = "copy")]
+    no_mods: bool,
+}
+
+impl CopyFlags {
+    fn options(&self) -> instances::CopyOptions {
+        instances::CopyOptions {
+            play_time: self.keep_play_time,
+            worlds: !self.no_worlds,
+            options: !self.no_options,
+            resource_packs: !self.no_resource_packs,
+            screenshots: !self.no_screenshots,
+            shader_packs: !self.no_shader_packs,
+            servers: !self.no_servers,
+            mods: !self.no_mods,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 pub(super) enum InstanceCmd {
     /// The profiles, each with its game folder (* = the one Play starts)
@@ -22,6 +67,8 @@ pub(super) enum InstanceCmd {
         /// The profile to copy (its name or id)
         #[arg(long)]
         copy: Option<String>,
+        #[command(flatten)]
+        leave: CopyFlags,
     },
     /// Rename a profile (its folder stays)
     Rename { instance: String, name: String },
@@ -113,7 +160,10 @@ pub(super) fn instance(action: InstanceCmd, as_json: bool) -> Result<(), Error> 
     match action {
         InstanceCmd::List => list(as_json)?,
         InstanceCmd::Show { profile } => show(profile, as_json)?,
-        InstanceCmd::Create { name, copy } => changed(instances::create(&name, copy.as_deref())?),
+        InstanceCmd::Create { name, copy, leave } => changed(match copy {
+            Some(from) => instances::create_copying(&name, &from, leave.options())?,
+            None => instances::create(&name, None)?,
+        }),
         InstanceCmd::Delete { instance } => {
             let gone = instances::delete(&instance)?;
             match as_json {

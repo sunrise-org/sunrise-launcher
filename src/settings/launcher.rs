@@ -1,117 +1,62 @@
 //! Settings › Launcher: language, network and this version.
 use super::*;
 use crate::widgets::button::{primary, secondary};
+use crate::widgets::dropdown::{Dropdown, Item};
 use crate::widgets::feedback::{banner, Tone};
-use crate::widgets::field::select_button;
 
 impl Launcher {
     pub(super) fn settings_launcher(&mut self, cx: &mut Context<Self>) -> Div {
         let picking = self.ui.settings.languages;
         let chosen = self.settings.language;
         let system = i18n::Language::system().name();
-        let now: SharedString = match chosen {
-            Some(l) => l.name().into(),
-            None => tr("Same as the system").into(),
-        };
-        // One button with the language on it; a press opens the list under it, as Discover's
-        // menus do. 87 languages don't fit on a page as buttons.
-        let opener = select_button("alt-language", now, picking)
-            .w(px(220.))
-            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.ui.settings.languages = !this.ui.settings.languages;
-                cx.notify();
-            }));
-        let menu = picking.then(|| {
-            let options = std::iter::once(None)
-                .chain(i18n::Language::ALL.map(Some))
-                .enumerate()
-                .map(|(i, choice)| {
-                    let on = choice == chosen;
-                    let label: SharedString = match choice {
-                        Some(l) => l.name().into(),
-                        None => tr("Same as the system").into(),
-                    };
-                    div()
-                        .id(("alt-language-option", i))
-                        .reach()
-                        .flex()
-                        .items_center()
-                        .gap(px(10.))
-                        .px(px(10.))
-                        .py(px(7.))
-                        .rounded(tokens::r(tokens::R_SMALL))
-                        .text_size(px(tokens::LABEL))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(rgb(palette().hover)))
-                        .when(on, |d| d.font_weight(FontWeight::SEMIBOLD))
-                        .child(div().flex_1().min_w_0().truncate().child(label))
-                        // The system's own language, beside the choice that follows it.
-                        .when(choice.is_none(), |d| {
-                            d.child(
-                                div()
-                                    .flex_none()
-                                    .text_color(rgb(palette().muted))
-                                    .child(system),
-                            )
-                        })
-                        .when(on, |d| {
-                            d.child(crate::blocks::icon(
-                                "check",
-                                13.,
-                                rgb(palette().text).into(),
-                            ))
-                        })
-                        // The first choice stands apart from the languages under it.
-                        .when(choice.is_none(), |d| {
-                            d.mb(px(4.)).border_b_1().border_color(rgb(palette().line))
-                        })
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.settings.language = choice;
-                            i18n::set(this.settings.language());
-                            this.save_settings();
-                            this.ui.settings.languages = false;
-                            cx.notify();
-                        }))
-                });
-            let list = div()
-                .id("alt-language-menu")
-                .w(px(260.))
-                .max_h(px(320.))
-                .overflow_y_scroll()
-                .p(px(6.))
-                .rounded(tokens::r(tokens::R_CONTROL))
-                .border_1()
-                .border_color(palette().input_edge())
-                .bg(rgb(palette().raised))
-                .shadow_lg()
-                .occlude()
-                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_scroll(own_wheel)
-                .flex()
-                .flex_col()
-                .children(options);
-            // Under the button, right-aligned to it, and kept inside the window: at 800×600 the
-            // whole list, edge included, moves up rather than running off the bottom.
-            gpui::deferred(
-                div()
-                    .absolute()
-                    .top(px(tokens::FIELD + 6.))
-                    .right_0()
-                    .child(
-                        gpui::anchored()
-                            .anchor(gpui::Anchor::TopRight)
-                            .snap_to_window_with_margin(px(8.))
-                            .child(list),
-                    ),
-            )
-            .with_priority(10)
-        });
-        let language = row(
-            tr("Language"),
-            "",
-            div().relative().child(opener).children(menu),
-        );
+        // One dropdown with the language on it; 87 languages don't fit on a page as buttons.
+        let items: Vec<Item> = std::iter::once(None)
+            .chain(i18n::Language::ALL.map(Some))
+            .map(|choice| match choice {
+                // The first choice stands apart from the languages under it, and says which
+                // language it follows.
+                None => Item::new(tr("Same as the system"))
+                    .sub(system)
+                    .current(chosen.is_none())
+                    .rule_after(),
+                Some(l) => Item::new(l.name()).current(chosen == Some(l)),
+            })
+            .collect();
+        let dropdown = Dropdown::new("alt-language", items, picking)
+            .on_toggle({
+                let this = cx.entity();
+                move |_, cx| {
+                    this.update(cx, |this, cx| {
+                        this.ui.settings.languages = !this.ui.settings.languages;
+                        cx.notify();
+                    })
+                }
+            })
+            .on_close({
+                let this = cx.entity();
+                move |_, cx| {
+                    this.update(cx, |this, cx| {
+                        this.ui.settings.languages = false;
+                        cx.notify();
+                    })
+                }
+            })
+            .on_pick({
+                let this = cx.entity();
+                move |n, _, cx| {
+                    this.update(cx, |this, cx| {
+                        this.settings.language = match n {
+                            0 => None,
+                            n => i18n::Language::ALL.get(n - 1).copied(),
+                        };
+                        i18n::set(this.settings.language());
+                        this.save_settings();
+                        cx.notify();
+                    })
+                }
+            })
+            .build();
+        let language = row(tr("Language"), "", dropdown);
         fit_field(&mut self.proxy_input, self.window_width);
         let refused = (!self.proxy_focused)
             .then(|| sunrise_launcher::proxy::refuse(self.proxy_input.text()))
@@ -129,7 +74,7 @@ impl Launcher {
         let proxy = self.wide_row(
             tr("Proxy"),
             tr("Downloads, sign-ins and updates go through it. Empty means none; HTTPS_PROXY then applies if the launcher was started with one."),
-            field.w(px(260.)),
+            field.w(px(340.)),
         );
         let proxy = match refused {
             Some(why) => div()

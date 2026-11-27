@@ -1,17 +1,20 @@
-//! The profile's Logs tab: the game's output of this run as it comes, or the end of the profile's
-//! `latest.log` when this session has no run. A search, Follow (keep the newest line in view),
-//! Copy, Share log (`share`) and Open logs folder.
+//! The profile's Logs tab: a source (`sources`: the game's output of this run as it comes, its
+//! `latest.log`, crash reports, the launcher's diagnostics, the native build log) and its lines.
+//! A search, Follow (keep the newest line in view), Copy, Share log (`share`), Open file and
+//! Open logs folder.
 use super::*;
 use crate::line_edit::{self, Key, LineEdit};
 use crate::widgets::button::{button, primary, secondary, Look, Size, Style};
 use crate::widgets::check::switch;
-use crate::widgets::feedback::{banner, empty_state, Tone};
+use crate::widgets::feedback::{banner, empty_state, empty_state_icon, Tone};
 use crate::widgets::focus::c;
 use crate::widgets::motion_bits::copy_button;
+use sources::{nothing_here, Source};
 use sunrise_launcher::game_log::{self, Shared};
 use tail::{FileLog, Tail};
 
 mod share;
+mod sources;
 mod tail;
 #[cfg(test)]
 mod tests;
@@ -24,7 +27,16 @@ pub(super) struct Logs {
     focus: Option<FocusHandle>,
     follow: bool,
     level: Level,
-    /// The last run's `latest.log`, shown while this session has no lines.
+    source: Source,
+    /// The file of a list source (crash report, launcher log) the player picked.
+    chosen: Option<std::path::PathBuf>,
+    /// The files of a list source, newest first, and whether they were read yet.
+    files: Vec<std::path::PathBuf>,
+    listed: bool,
+    list_checked: Option<std::time::Instant>,
+    /// The folder is being listed off the UI thread.
+    listing: bool,
+    /// The file of the source, shown while this session has no run lines.
     file: Option<FileLog>,
     /// A read of `file` is running off the UI thread.
     reading: bool,
@@ -44,6 +56,12 @@ impl Default for Logs {
             focus: None,
             follow: true,
             level: Level::All,
+            source: Source::default(),
+            chosen: None,
+            files: Vec::new(),
+            listed: false,
+            list_checked: None,
+            listing: false,
             file: None,
             reading: false,
             checked: None,
@@ -134,14 +152,15 @@ struct LogBox {
 }
 
 impl Launcher {
-    /// Whether the lines to show are this session's run of the profile (else its `latest.log`).
+    /// Whether the lines to show are this session's run of the profile (else a file).
     fn log_is_run(&self, home: &std::path::Path) -> bool {
-        (!self.prepare_log.is_empty() || self.client.is_some())
+        self.ui.home.tabs.logs.source == Source::Game
+            && (!self.prepare_log.is_empty() || self.client.is_some())
             && self.client_home.as_deref().is_none_or(|run| run == home)
     }
 
     /// Reads the end of `latest` off the UI thread, and again only when it changed.
-    fn read_latest(&mut self, latest: std::path::PathBuf, cx: &mut Context<Self>) {
+    fn read_file(&mut self, latest: std::path::PathBuf, cx: &mut Context<Self>) {
         let logs = &mut self.ui.home.tabs.logs;
         if logs.file.as_ref().is_none_or(|f| f.path != latest) {
             logs.file = Some(FileLog {
@@ -194,9 +213,10 @@ impl Launcher {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let folder = instance.home.join("logs");
+        let source = self.ui.home.tabs.logs.source;
+        let folder = source.folder(&instance.home);
         if !self.log_is_run(&instance.home) {
-            self.read_latest(folder.join("latest.log"), cx);
+            self.follow_source(&instance.home, &folder, cx);
         }
         let focus = self
             .ui
@@ -215,8 +235,14 @@ impl Launcher {
             let folder = folder.clone();
             folder_button("home-logs-folder").on_click(move |_, _, cx| open_logs(cx, &folder))
         };
-        let latest = folder.join("latest.log");
-        let open_file = latest.is_file().then(|| {
+        let latest = self
+            .ui
+            .home
+            .tabs
+            .logs
+            .target(&instance.home)
+            .filter(|path| path.is_file());
+        let open_file = latest.map(|latest| {
             secondary("home-logs-open-file", tr("Open file"))
                 .on_click(move |_, _, cx| crate::toast::open(cx, &latest))
         });
@@ -248,6 +274,7 @@ impl Launcher {
                             .child(open),
                     ),
             )
+            .child(self.source_row(cx))
             .children(toolbar)
             .children(self.share_panel(&instance.home, cx))
             .child(body)
@@ -424,7 +451,10 @@ impl Launcher {
                 ),
                 Some((Tail::Absent, _)) => (vec![], 0, Some(Nothing::NoLog)),
                 Some((Tail::Failed(e), _)) => (vec![], 0, Some(Nothing::Failed(e.clone()))),
-                Some((Tail::Loading, _)) | None => (vec![], 0, Some(Nothing::Loading)),
+                Some((Tail::Loading, _)) => (vec![], 0, Some(Nothing::Loading)),
+                // A list with no file is empty, once it has been read.
+                None if logs.source.is_list() && logs.listed => (vec![], 0, Some(Nothing::NoLog)),
+                None => (vec![], 0, Some(Nothing::Loading)),
             }
         };
         let nothing = nothing.or_else(|| all.is_empty().then_some(Nothing::NoLog));
@@ -536,13 +566,9 @@ impl Launcher {
             .into_any_element();
         match nothing {
             Nothing::Loading => div().flex_1(),
-            Nothing::NoLog => empty_state(
-                tr("No game log yet"),
-                tr("The game's output shows here once it starts."),
-                Some(open),
-            ),
+            Nothing::NoLog => nothing_here(self.ui.home.tabs.logs.source, open),
             Nothing::Failed(error) => empty_state(
-                tr("Could not read the last game log"),
+                tr("Could not read this log"),
                 error,
                 Some(
                     secondary("home-logs-retry", tr("Retry"))

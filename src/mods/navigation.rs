@@ -130,13 +130,12 @@ impl Launcher {
         self.choose_view(Page::Discover);
     }
 
-    /// The Mods tab: where the player last was this session, else Installed.
+    /// The sidebar's Discover: Mods › Discover. Installed is reached from Home's Manage buttons
+    /// and Discover's own Installed button, not by being remembered here.
     pub(crate) fn open_mods(&mut self) {
         self.leave_section(false);
-        self.ui.page = self.mods_state.last_mods.unwrap_or_else(|| {
-            self.mods_refresh();
-            Page::Installed
-        });
+        self.mods_state.last_mods = Some(Page::Discover);
+        self.ui.page = Page::Discover;
     }
 
     /// The Packs tab: where the player last was this session, else Installed.

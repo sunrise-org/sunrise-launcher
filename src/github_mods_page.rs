@@ -562,7 +562,7 @@ impl Launcher {
         button(
             "add-from-source",
             tr("Add from source"),
-            Look::new(Style::Secondary, Size::Medium).icon("plus"),
+            Look::new(Style::Secondary, Size::Medium).icon("plus-sign"),
         )
         .seen()
         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {

@@ -16,7 +16,7 @@ use super::*;
 use crate::paint::palette;
 use crate::widgets::button::{primary, secondary};
 use crate::widgets::check::{checkbox, Tick};
-use crate::widgets::feedback::empty_state;
+use crate::widgets::feedback::empty_state_icon;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use sunrise_launcher::browser::{self, Project};
@@ -501,7 +501,8 @@ impl Launcher {
             groups = groups.child(group);
         }
         if worlds.is_empty() {
-            groups = groups.child(empty_state(
+            groups = groups.child(empty_state_icon(
+                Some("earth"),
                 tr("No worlds yet"),
                 tr("A data pack goes into a world. Make one in the game first."),
                 None,

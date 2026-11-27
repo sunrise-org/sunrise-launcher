@@ -1,4 +1,5 @@
 //! The play bar's scene: where the cat goes, how it gets there, and whether it may come out.
+use super::talk::{next_line, Bubble, Talk, SHOWN};
 use super::*;
 
 /// The bar is this wide before the cat has room beside Play, and the window this tall.
@@ -76,6 +77,11 @@ pub(super) struct Outing {
     been_out: bool,
     /// Its next time out is a sleep on Play, when Play is free.
     pub(super) perch_next: bool,
+    /// How the cat answers clicks, and the bubble it is saying one in.
+    talk: Talk,
+    pub(super) bubble: Option<Bubble>,
+    /// It is leaving for good (the last of its lines): how long it stays away, in ms.
+    away_for: Option<[f32; 2]>,
 }
 
 fn ease(k: f32) -> f32 {
@@ -90,6 +96,9 @@ impl Outing {
             scene: Scene::Away { until: first },
             been_out: false,
             perch_next: false,
+            talk: Talk::default(),
+            bubble: None,
+            away_for: None,
         }
     }
 
@@ -121,15 +130,66 @@ impl Outing {
     }
 
     pub(super) fn hide(&mut self, now: f32) {
+        let away = self.away_for.take().unwrap_or([60000., 200000.]);
+        self.bubble = None;
         self.scene = Scene::Away {
-            until: now + self.cat.random.span([60000., 200000.]),
+            until: now + self.cat.random.span(away),
         };
+    }
+
+    /// A click on the cat at `now`: it stops where it is, sits and says a line. The last line of
+    /// the escalation sends it home, and it stays away a good while.
+    pub(super) fn speak(&mut self, now: f32) {
+        if self.away_for.is_some() {
+            return;
+        }
+        let at = match self.scene {
+            Scene::Walk { from, to, since } => {
+                let gone = ((now - since) * SPEED).min((to - from).abs());
+                from + gone * (to - from).signum()
+            }
+            Scene::Visit { at, .. } => at,
+            _ => return,
+        };
+        let roll = self.cat.random.next();
+        let (said, talk) = next_line(self.talk, now, roll);
+        self.talk = talk;
+        self.bubble = Some(Bubble {
+            line: said.line,
+            since: now,
+        });
+        self.cat.state = State::Sit;
+        self.cat.playing = None;
+        self.cat.pet(now);
+        self.cat.next_at = now + SHOWN + 400.;
+        let until = if said.leaves {
+            self.away_for = Some([20000., 40000.]);
+            now + 1500.
+        } else {
+            now + SHOWN + 1000.
+        };
+        let until = match self.scene {
+            Scene::Visit { until: old, .. } if !said.leaves => old.max(until),
+            _ => until,
+        };
+        self.scene = Scene::Visit {
+            at: (at / SIZE).round() * SIZE,
+            until,
+        };
+    }
+
+    /// Clears a bubble that has run its time.
+    fn expire_bubble(&mut self, now: f32) {
+        if self.bubble.is_some_and(|b| now - b.since >= SHOWN) {
+            self.bubble = None;
+        }
     }
 
     /// Moves the scene on to `now` (ms). `room` is the empty width beside Play, in pixels: the
     /// cat never goes further out than that, and stays hidden when there is none. `free` says
     /// Play is idle and the bar has nothing to say, so the cat may sleep on the button.
     pub(super) fn step(&mut self, now: f32, room: f32, free: bool) {
+        self.expire_bubble(now);
         match self.scene {
             Scene::Perch { .. } if !free => self.leave_play(now),
             Scene::Perch { until, .. } if now >= until + CURL + CLIMB => self.hide(now),
@@ -250,7 +310,7 @@ impl Outing {
                         &[(WALK, t * STRIDE), (TAIL_SWAY, (t * STRIDE * 0.5).sin())],
                     ),
                     left: to > from,
-                    pettable: false,
+                    pettable: self.away_for.is_none(),
                     perch: None,
                 })
             }
@@ -258,7 +318,7 @@ impl Outing {
                 out: at,
                 pose: self.cat.pose(now),
                 left: true,
-                pettable: true,
+                pettable: self.away_for.is_none(),
                 perch: None,
             }),
         }
@@ -267,7 +327,7 @@ impl Outing {
     /// How long until the cat next needs a look.
     pub(super) fn next_change(&self, now: f32) -> Duration {
         let until = |at: f32| Duration::from_secs_f32((at - now).max(0.) / 1000.);
-        match self.scene {
+        let change = match self.scene {
             Scene::Away { until: at } => until(at),
             Scene::Peek { .. } | Scene::Walk { .. } | Scene::Drop { .. } => STEP_FRAME,
             // Asleep it is one still picture: the next look is when it wakes.
@@ -282,6 +342,12 @@ impl Outing {
                 .cat
                 .next_change()
                 .map_or(FRAME, |change| until(change.min(at.max(now + 500.)))),
+        };
+        // A bubble fading in or out wants a frame at the walking pace.
+        if self.bubble.is_some() {
+            change.min(STEP_FRAME)
+        } else {
+            change
         }
     }
 }

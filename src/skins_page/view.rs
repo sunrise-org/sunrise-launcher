@@ -3,7 +3,7 @@
 use super::*;
 use crate::widgets::button::{primary, secondary};
 use crate::widgets::choice::choices;
-use crate::widgets::feedback::{banner, empty_state, progress, Tone};
+use crate::widgets::feedback::{banner, empty_state_icon, progress, Tone};
 use crate::widgets::focus::c;
 use sunrise_launcher::account::capes::Cape;
 
@@ -31,7 +31,8 @@ impl Launcher {
             .flex_col()
             .p(px(24.))
             .gap(px(20.))
-            .overflow_y_scroll();
+            .overflow_y_scroll()
+            .child(crate::widgets::nav::page_head(tr("Skins"), None));
         let offline = self.skins_offline();
         let account = self.look_account();
         // Another account plays now (switched in the account menu while the page is open), or
@@ -86,6 +87,24 @@ impl Launcher {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
+        // Signed out there is no look to show: the empty state, centred in the page.
+        if !offline {
+            return empty_state_icon(
+                Some("t-shirt"),
+                tr("Sign in to choose your skin"),
+                tr(
+                    "Sign in with the Microsoft account that owns Minecraft: Java Edition to choose its skin and cape.",
+                ),
+                Some(
+                    secondary("skins-sign-in", tr("Sign in with Microsoft"))
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.sign_in_to_play();
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                ),
+            );
+        }
         // In the offline developer view, the game's offline look: the account's default skin
         // (Steve's with no account). Nothing the page knows from online is shown.
         let (uuid, skin, slim) = match account.as_ref().filter(|_| offline) {
@@ -101,26 +120,9 @@ impl Launcher {
             .skin_resources()
             .is_some()
             .then(|| self.look_preview(&uuid, (&skin, slim, None), window, cx));
-        let beside = if offline {
-            crate::settings::hint(tr(
-                "Offline developer session: skins and capes can't be changed here.",
-            ))
-        } else {
-            empty_state(
-                tr("Sign in to choose your skin"),
-                tr(
-                    "Sign in with the Microsoft account that owns Minecraft: Java Edition to choose its skin and cape.",
-                ),
-                Some(
-                    secondary("skins-sign-in", tr("Sign in with Microsoft"))
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.sign_in_to_play();
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                ),
-            )
-        };
+        let beside = crate::settings::hint(tr(
+            "Offline developer session: skins and capes can't be changed here.",
+        ));
         skins_columns(
             skins_side(preview, None),
             div().flex_1().min_w(px(320.)).child(beside),
@@ -770,7 +772,7 @@ impl Launcher {
     }
 }
 
-/// The left column: the title, then the preview and what goes under it.
+/// The left column: the preview and what goes under it.
 fn skins_side(preview: Option<Div>, under: Option<Div>) -> Div {
     div()
         .flex_none()
@@ -778,12 +780,6 @@ fn skins_side(preview: Option<Div>, under: Option<Div>) -> Div {
         .flex()
         .flex_col()
         .gap(px(16.))
-        .child(
-            div()
-                .text_size(px(tokens::TITLE))
-                .font_weight(FontWeight::BOLD)
-                .child(tr("Skins")),
-        )
         .children(preview)
         .children(under)
 }

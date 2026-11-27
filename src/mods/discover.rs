@@ -9,8 +9,8 @@ use crate::paint::palette;
 use crate::widgets::button::{primary, secondary};
 use crate::widgets::check::switch;
 use crate::widgets::chip::{self, tag};
-use crate::widgets::feedback::empty_state;
-use gpui::{deferred, MouseButton};
+use crate::widgets::feedback::empty_state_icon;
+use gpui::MouseButton;
 use sunrise_launcher::browser::details::category_label;
 use sunrise_launcher::browser::images;
 
@@ -22,7 +22,7 @@ mod results;
 pub(super) use cards::install_fact;
 use cards::{fit_pill, unfit_pill};
 use filters::summary_count_line;
-pub(super) use filters::KindTab;
+pub(super) use filters::{menu_parts, KindTab};
 
 /// How many cards are drawn before "Show more".
 const PAGE: usize = 36;

@@ -37,6 +37,20 @@ pub(crate) fn modal_frame(
     cx: &mut Context<Launcher>,
     close: fn(&mut Launcher),
 ) -> Stateful<Div> {
+    modal_plate(id, width, body, cx, close, PLATE_PAD, palette().raised)
+}
+
+/// [`modal_frame`] with its own padding and fill, for a dialog that lays out its panes edge to
+/// edge (`pad` 0) and draws the gap between its parts itself.
+pub(crate) fn modal_plate(
+    id: &'static str,
+    width: f32,
+    body: Div,
+    cx: &mut Context<Launcher>,
+    close: fn(&mut Launcher),
+    pad: f32,
+    fill: u32,
+) -> Stateful<Div> {
     div()
         .id(id)
         .absolute()
@@ -79,12 +93,12 @@ pub(crate) fn modal_frame(
                         .max_h_full()
                         .overflow_y_scroll()
                         .track_scroll(&crate::frame::scrolls("sheet"))
-                        .p(px(PLATE_PAD))
-                        .gap(px(16.))
+                        .p(px(pad))
+                        .when(pad > 0., |d| d.gap(px(16.)))
                         .rounded(crate::tokens::r(crate::tokens::R_PANEL))
                         .border_1()
                         .border_color(rgb(palette().line))
-                        .bg(rgb(palette().raised))
+                        .bg(rgb(fill))
                         .shadow(plate_shadow())
                         .text_color(rgb(palette().text))
                         .on_mouse_down(MouseButton::Left, |_: &MouseDownEvent, _, cx| {

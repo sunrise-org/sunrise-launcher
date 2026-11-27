@@ -7,6 +7,7 @@ pub(crate) mod check;
 pub(crate) mod chip;
 pub(crate) mod choice;
 pub(crate) mod copies;
+pub(crate) mod dropdown;
 pub(crate) mod feedback;
 pub(crate) mod field;
 pub(crate) mod focus;

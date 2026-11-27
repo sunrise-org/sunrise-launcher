@@ -12,7 +12,7 @@
 //! **Nothing else changes.** Installing never turns a pack on, starts the game or edits options;
 //! it stays blocked while the game or another change runs, and holds Play and setup changes
 //! through the shared busy flag (`mutating`).
-use super::discover::{KindTab, MenuOption};
+use super::discover::{menu_parts, KindTab, MenuOption};
 use super::state::Menu;
 use super::ui::{added_mark, browse_card, c, card, columns, dim, muted};
 use super::*;
@@ -226,7 +226,7 @@ impl Launcher {
 
     /// The filter row, the one Mods › Discover draws: a category of the scope, Show all, sort.
     /// Each choice searches again.
-    fn pack_filter_bar(&self, cx: &mut Context<Self>) -> Div {
+    fn pack_filter_bar(&self, search: Stateful<Div>, cx: &mut Context<Self>) -> Div {
         let p = &self.mods_state.packs;
         let f = p.filters.clone();
         let categories = match &p.categories {
@@ -274,9 +274,27 @@ impl Launcher {
                 })
                 .collect()
         };
-        let sort_menu = self.discover_menu(tr(sort_now.label()), Menu::Sort, sort_options, cx);
+        let (sort_items, sort_picks) = menu_parts(sort_options());
+        let sort_menu = self.discover_menu(
+            "alt-sort-menu",
+            Menu::Sort,
+            sort_items,
+            sort_picks,
+            None,
+            cx,
+        );
+        let (category_items, category_picks) = menu_parts(category_options());
+        let category_menu = self.discover_menu(
+            "alt-category-menu",
+            Menu::Category,
+            category_items,
+            category_picks,
+            Some(220.),
+            cx,
+        );
         self.filter_bar(
-            category_options(),
+            search,
+            category_menu,
             f.show_all,
             |this| {
                 let filters = &mut this.mods_state.packs.filters;
@@ -453,11 +471,11 @@ impl Launcher {
         if scope == Scope::Data {
             self.data_list(cx);
         }
-        let filters = self.pack_filter_bar(cx);
+        let search = self.discover_search(KindTab::from_scope(scope), focus, window, cx);
         let page = self
-            .discover_shell(KindTab::from_scope(scope), window, focus, cx)
+            .discover_shell(KindTab::from_scope(scope), cx)
             .child(from)
-            .child(filters);
+            .child(self.pack_filter_bar(search, cx));
         let added: HashSet<(SourceId, String)> = self
             .mods_state
             .snapshot
@@ -472,7 +490,10 @@ impl Launcher {
         let working = self.mods_state.busy.is_some();
         let results = self.mods_state.packs.results.clone();
         let body: AnyElement = match &self.mods_state.packs.status {
-            Status::Searching | Status::Idle => muted(tr("Searching…")).into_any_element(),
+            Status::Searching | Status::Idle => crate::widgets::feedback::skeleton_cards(
+                (columns(self.content_width()).max(1) as usize).min(3),
+                4,
+            ),
             Status::Failed(e) => card()
                 .p(px(20.))
                 .flex()

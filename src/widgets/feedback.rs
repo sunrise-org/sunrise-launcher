@@ -6,7 +6,7 @@ use super::focus::{c, mix};
 use crate::glass_ui::icon;
 use crate::motion;
 use crate::paint::{palette, Palette};
-use crate::tokens::{r, BODY, HEADING, LABEL, R_CARD, R_CONTROL};
+use crate::tokens::{r, BODY, HEADING, LABEL, R_CARD, R_CONTROL, R_SMALL};
 use gpui::{Animation, AnimationExt, FontWeight, Hsla};
 use std::time::Duration;
 
@@ -162,6 +162,17 @@ pub(crate) fn empty_state(
     body: impl Into<SharedString>,
     action: Option<AnyElement>,
 ) -> Div {
+    empty_state_icon(None, title, body, action)
+}
+
+/// [`empty_state`] with an icon (a file under `crates/theme/icons/glass/`) over its title: the
+/// layout every page's empty state shares.
+pub(crate) fn empty_state_icon(
+    glyph: Option<&'static str>,
+    title: impl Into<SharedString>,
+    body: impl Into<SharedString>,
+    action: Option<AnyElement>,
+) -> Div {
     let p = palette();
     div()
         .flex_1()
@@ -173,6 +184,7 @@ pub(crate) fn empty_state(
         .gap(px(8.))
         .px(px(24.))
         .py(px(32.))
+        .children(glyph.map(|name| div().mb(px(4.)).child(icon(name, 32., c(p.muted)))))
         .child(
             div()
                 .text_size(px(HEADING))
@@ -189,6 +201,86 @@ pub(crate) fn empty_state(
                 .child(label_line(body.into())),
         )
         .children(action.map(|a| div().mt(px(4.)).child(a)))
+}
+
+/// One pulse of the skeleton's breathing.
+const BREATH: Duration = Duration::from_millis(1500);
+
+/// A grey block of a placeholder card.
+fn bone(width: impl Into<gpui::Length>, height: f32) -> Div {
+    div()
+        .flex_none()
+        .w(width.into())
+        .h(px(height))
+        .rounded(r(R_SMALL))
+        .bg(c(palette().divider))
+}
+
+/// A placeholder in the shape of a result card: artwork, a name, a summary line, two tags and
+/// the action at the end.
+fn skeleton_card() -> Div {
+    let p = palette();
+    div()
+        .flex()
+        .items_center()
+        .gap(px(14.))
+        .min_w_0()
+        .h(px(112.))
+        .px(px(14.))
+        .rounded(r(R_CARD))
+        .border_1()
+        .border_color(c(p.line))
+        .bg(c(p.card_color))
+        .child(bone(px(72.), 72.).rounded(r(R_CONTROL)))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .child(bone(relative(0.4), 16.))
+                .child(bone(relative(0.75), 12.))
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(8.))
+                        .child(bone(px(64.), 20.))
+                        .child(bone(px(80.), 20.)),
+                ),
+        )
+        .child(bone(px(72.), 32.).rounded(r(R_CONTROL)))
+}
+
+/// Placeholder cards for a result list that is still loading: `rows` rows of `columns` cards,
+/// breathing gently together. They hold still under reduced motion.
+pub(crate) fn skeleton_cards(columns: usize, rows: usize) -> AnyElement {
+    let columns = columns.max(1);
+    let list = div()
+        .flex()
+        .flex_col()
+        .gap(px(10.))
+        .w_full()
+        .children((0..rows).map(|_| {
+            let mut row = div().grid().grid_cols(columns as u16).gap(px(10.));
+            for _ in 0..columns {
+                row = row.child(skeleton_card());
+            }
+            row
+        }));
+    if motion::still() {
+        return list.opacity(0.7).into_any_element();
+    }
+    list.with_animation(
+        "feedback-skeleton",
+        motion::endless(
+            Animation::new(BREATH)
+                .repeat()
+                .with_easing(|t| 0.55 + 0.35 * (0.5 - 0.5 * (t * std::f32::consts::TAU).cos())),
+        ),
+        |d, opacity| d.opacity(opacity),
+    )
+    .into_any_element()
 }
 
 /// The card a toast draws its line on: 320 to 420 px wide, a tone icon, the content beside it.
@@ -214,6 +306,35 @@ pub(crate) fn toast_card(tone: Tone, content: AnyElement) -> Div {
         .text_size(px(LABEL))
         .child(icon(tone.icon(), 18., ink))
         .child(div().flex_1().min_w_0().child(content))
+}
+
+/// The toast's countdown: a 2 px bar along the card's bottom edge, in the tone's colour, `left`
+/// of its width (1 is full). With `running` (an animation id and how long is left) it shrinks to
+/// nothing over that time; without it, it stands still (the toast is held). It sits inside the
+/// card's rounded corners and shows only while the card is positioned (`relative`).
+pub(crate) fn toast_timer(
+    tone: Tone,
+    left: f32,
+    running: Option<(gpui::ElementId, Duration)>,
+) -> Div {
+    let ink: Hsla = c(tone.colour(&palette())).opacity(0.55);
+    let fill = div().h_full().rounded_full().bg(ink);
+    let fill = match running {
+        Some((id, length)) => fill
+            .w(gpui::relative(left))
+            .with_animation(id, Animation::new(length), move |d, t| {
+                d.w(gpui::relative(left * (1. - t)))
+            })
+            .into_any_element(),
+        None => fill.w(gpui::relative(left)).into_any_element(),
+    };
+    div()
+        .absolute()
+        .left(px(R_CARD))
+        .right(px(R_CARD))
+        .bottom(px(0.))
+        .h(px(2.))
+        .child(fill)
 }
 
 #[cfg(test)]

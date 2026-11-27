@@ -16,7 +16,13 @@ impl Launcher {
                 .collect::<Vec<_>>()
                 .join("\n")
                 + "\n"),
-            false => Err(home.join("logs/latest.log")),
+            false => Err(self
+                .ui
+                .home
+                .tabs
+                .logs
+                .target(&home)
+                .unwrap_or_else(|| home.join("logs/latest.log"))),
         };
         let logs = &mut self.ui.home.tabs.logs;
         logs.confirm = false;

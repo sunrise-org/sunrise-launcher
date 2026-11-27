@@ -12,6 +12,7 @@ mod art;
 mod behaviour;
 mod drawing;
 mod outing;
+mod talk;
 #[cfg(test)]
 mod tests;
 
@@ -25,6 +26,7 @@ use art::*;
 use behaviour::*;
 use drawing::*;
 pub(crate) use outing::*;
+use talk::bubble_alpha;
 
 impl Launcher {
     /// The empty stretch of the play bar between its text and Play, and the cat when it is out.
@@ -43,29 +45,23 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> (Div, Option<Div>) {
         let measured = self.ui.cat.lane.clone();
-        let lane = div()
-            .flex_1()
-            .min_w_0()
-            .h(px(H as f32 * SIZE))
-            .relative()
-            .overflow_hidden()
-            // Over the bar's gap and a little under Play.
-            .when(beside, |d| d.mr(px(-(14. + UNDER))))
-            .child(
-                gpui::canvas(
-                    move |bounds, _, _| measured.set(f32::from(bounds.size.width)),
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            );
+        // The lane's box is `lane_box`; this is the part of it that cuts the cat off at its edges,
+        // so the speech bubble over the cat's head can be drawn beside it, uncut.
+        let lane = div().absolute().size_full().overflow_hidden().child(
+            gpui::canvas(
+                move |bounds, _, _| measured.set(f32::from(bounds.size.width)),
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_full(),
+        );
         // Switched off, or the player asked for less motion: the cat stays away. Nothing of it
         // is kept and no wake is scheduled, so an idle window draws nothing for it.
         if !cat_out(self.settings.show_cat(), crate::motion::still()) {
             if let Some(image) = self.ui.cat.switch_off() {
                 let _ = window.drop_image(image);
             }
-            return (lane, None);
+            return (lane_box(beside, lane, None), None);
         }
         let roomy = beside && self.window_width >= ROOM.0 && self.window_height >= ROOM.1;
         let room = if roomy {
@@ -111,6 +107,7 @@ impl Launcher {
             outing.step(now, room, free);
         }
         let after = outing.next_change(now);
+        let outing_bubble = outing.bubble;
         let coat = outing.cat.ways.coat;
         let view = outing
             .view(now)
@@ -119,7 +116,7 @@ impl Launcher {
             self.cat_wake(after, cx);
         }
         let Some(view) = view else {
-            return (lane, None);
+            return (lane_box(beside, lane, None), None);
         };
         let scale = (SIZE * self.scale).round().max(1.) as usize;
         let image = match &self.ui.cat.shown {
@@ -180,7 +177,7 @@ impl Launcher {
                         .w(px(WIDTH))
                         .h(px(tall)),
                 );
-            return (lane, Some(perch));
+            return (lane_box(beside, lane, None), Some(perch));
         }
         // Whole cat pixels, so the picture stays crisp as it moves.
         let out = (view.out / SIZE).round() * SIZE;
@@ -195,14 +192,26 @@ impl Launcher {
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     let now = this.ui.cat.clock;
                     if let Some(outing) = &mut this.ui.cat.cat {
-                        outing.cat.pet(now);
+                        outing.speak(now);
                     }
                     cx.notify();
                 }))
         } else {
             cat
         });
-        (lane, None)
+        let bubble = outing_bubble.and_then(|b| {
+            let alpha = bubble_alpha(now - b.since, crate::motion::still())?;
+            // The cat's middle, from the lane's left edge.
+            let middle = self.ui.cat.lane.get() - out - UNDER + WIDTH / 2.;
+            Some(speech_bubble(
+                tr(b.line),
+                middle,
+                self.ui.cat.lane.get(),
+                alpha,
+                tall,
+            ))
+        });
+        (lane_box(beside, lane, bubble), None)
     }
 
     /// Play was pressed: a cat asleep on it hops off.
@@ -240,4 +249,81 @@ impl Launcher {
         })
         .detach();
     }
+}
+
+/// The lane's box: as wide as the bar's gap leaves, as tall as the cat. It does not cut what is
+/// drawn in it; `clipped` (the cat's own lane, filling it) does that, and `bubble` sits above.
+fn lane_box(beside: bool, clipped: Div, bubble: Option<Div>) -> Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .h(px(H as f32 * SIZE))
+        .relative()
+        // Over the bar's gap and a little under Play.
+        .when(beside, |d| d.mr(px(-(14. + UNDER))))
+        .child(clipped)
+        .children(bubble)
+}
+
+/// A speech bubble over the cat, whose middle is `middle` px from the lane's left edge (`lane`
+/// wide): a small pixel box in the page's colours, its tail pointing down at the cat. It is kept
+/// inside the lane, so the banner never cuts it, and the tail still points at the cat.
+fn speech_bubble(text: &str, middle: f32, lane: f32, alpha: f32, tall: f32) -> Div {
+    use crate::tokens::{r, R_SMALL, SMALL};
+    const MAX: f32 = 220.;
+    const PAD: f32 = 8.;
+    const TAIL: f32 = 10.;
+    let p = crate::paint::palette();
+    // A guess at the text's width, so the box hugs a short line and wraps a long one at MAX.
+    let wide = (text.chars().count() as f32 * SMALL * 0.56 + 2. * PAD + 4.).clamp(48., MAX);
+    let left = (middle - wide / 2.).min(lane - wide).max(0.);
+    let tail_x = (middle - left - TAIL / 2.).clamp(PAD, (wide - PAD - TAIL).max(PAD));
+    let line = gpui::rgb(p.line);
+    let fill = gpui::rgb(p.raised);
+    // The tail in three steps, 10, 6 and 2 px wide, each 2 px tall: a pixel arrow.
+    let step = |w: f32, solid: bool| {
+        div()
+            .w(px(w))
+            .h(px(2.))
+            .bg(line)
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .w(px(if solid { 0. } else { w - 4. }))
+                    .h(px(2.))
+                    .bg(fill),
+            )
+    };
+    div()
+        .absolute()
+        .left(px(left))
+        .bottom(px(tall + 2.))
+        .w(px(wide))
+        .opacity(alpha)
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .px(px(PAD))
+                .py(px(5.))
+                .rounded(r(R_SMALL))
+                .bg(fill)
+                .border_1()
+                .border_color(line)
+                .text_color(gpui::rgb(p.text))
+                .text_size(px(SMALL))
+                .child(text.to_string()),
+        )
+        .child(
+            div()
+                .ml(px(tail_x))
+                .mt(px(-1.))
+                .flex()
+                .flex_col()
+                .items_center()
+                .child(step(TAIL, false))
+                .child(step(6., false))
+                .child(step(2., true)),
+        )
 }

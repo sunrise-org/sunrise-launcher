@@ -9,7 +9,7 @@ impl Launcher {
         focus: &FocusHandle,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let page = self.discover_shell(KindTab::Mods, window, focus, cx);
+        let page = self.discover_shell(KindTab::Mods, cx);
         if let V2Catalog::Failed(error) = &self.mods_state.v2_catalog {
             let error = error.to_string();
             return page
@@ -17,22 +17,19 @@ impl Launcher {
                 .into_any_element();
         }
         if matches!(self.mods_state.v2_catalog, V2Catalog::Ready { .. }) {
-            return self.discover_ready(page, cx).into_any_element();
+            let search = self.discover_search(KindTab::Mods, focus, window, cx);
+            return self.discover_ready(page, search, cx).into_any_element();
         }
         page.child(self.registry_loading()).into_any_element()
     }
 
-    /// The registry is still being read: what is being checked, for which profile.
+    /// The registry is still being read: placeholder cards in the list's shape, breathing.
     fn registry_loading(&self) -> Div {
-        let target = self.adding_to_name();
-        empty_state(
-            tr("Loading the registry…"),
-            trf(
-                "Checking which mods fit {target}",
-                &[("target", target.as_str())],
-            ),
-            None,
-        )
+        div()
+            .flex_1()
+            .min_h_0()
+            .overflow_hidden()
+            .child(crate::widgets::feedback::skeleton_cards(1, 6))
     }
 
     /// The registry can't be read and nothing saved is shown: why, and Try again.
@@ -43,7 +40,8 @@ impl Launcher {
                 cx.notify();
             },
         ));
-        empty_state(
+        empty_state_icon(
+            Some("alert-02"),
             tr("The Sunrise registry can't be reached"),
             error.to_owned(),
             Some(retry.into_any_element()),
@@ -51,7 +49,7 @@ impl Launcher {
     }
 
     /// The registry is read: the notices, the filter row, the list and its empty states.
-    fn discover_ready(&mut self, page: Div, cx: &mut Context<Self>) -> Div {
+    fn discover_ready(&mut self, page: Div, search: Stateful<Div>, cx: &mut Context<Self>) -> Div {
         let (cards, collections, categories) = match &self.mods_state.v2_catalog {
             V2Catalog::Ready {
                 cards,
@@ -81,15 +79,28 @@ impl Launcher {
             .as_deref()
             .map(crate::sheets::build_name);
 
-        let category_menu = category_options(&categories, f.category.as_ref());
+        let (category_items, category_picks) =
+            menu_parts(category_options(&categories, f.category.as_ref()));
+        let category_menu = self.discover_menu(
+            "alt-category-menu",
+            Menu::Category,
+            category_items,
+            category_picks,
+            Some(220.),
+            cx,
+        );
         let sort_now = f.sort;
+        let (sort_items, sort_picks) = menu_parts(sort_options(sort_now));
         let sort_menu = self.discover_menu(
-            sort_now.label(),
+            "alt-sort-menu",
             Menu::Sort,
-            move || sort_options(sort_now),
+            sort_items,
+            sort_picks,
+            None,
             cx,
         );
         let mut page = page.child(self.filter_bar(
+            search,
             category_menu,
             f.show_all,
             |this| {
@@ -425,8 +436,13 @@ impl Launcher {
                 tr("Try a different search, or turn on Show all to see mods for other Sunrise builds.")
                     .to_owned()
             };
-            return empty_state(title, line, Some(show_all(cx).into_any_element()))
-                .into_any_element();
+            return empty_state_icon(
+                Some("search-01"),
+                title,
+                line,
+                Some(show_all(cx).into_any_element()),
+            )
+            .into_any_element();
         }
         let has_filters = !f.text.trim().is_empty() || f.category.is_some();
         if !has_any_cards && !has_filters {
@@ -442,7 +458,7 @@ impl Launcher {
                     tr("Mods show up here once the registry lists releases for this build."),
                 )
             };
-            return empty_state(title, line, None).into_any_element();
+            return empty_state_icon(Some("puzzle"), title, line, None).into_any_element();
         }
         let action = has_filters.then(|| {
             secondary("alt-discover-clear", tr("Clear filters")).on_click(cx.listener(
@@ -455,7 +471,8 @@ impl Launcher {
                 },
             ))
         });
-        empty_state(
+        empty_state_icon(
+            Some("search-01"),
             tr("No matching mods"),
             tr("Try a different search or clear your category filter."),
             action.map(|action| action.into_any_element()),

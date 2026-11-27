@@ -43,10 +43,18 @@ fn profile_heading(open: f32, group: String) -> Div {
         .when(labelled, |d| d.child(group))
 }
 
-/// A profile's name, fading in as the sidebar opens.
-/// A profile row's height: its name over its channel.
+/// A profile row's height open (its name over its channel), and closed, where it is a nav row's
+/// 36 px highlight around the mark.
 const PROFILE_ROW: f32 = 48.;
+const PROFILE_ROW_CLOSED: f32 = 36.;
 
+/// The row's height `open` of the way: it grows from the closed highlight to the open row with
+/// the sidebar, so the fill never jumps.
+fn row_height(open: f32) -> f32 {
+    PROFILE_ROW_CLOSED + (PROFILE_ROW - PROFILE_ROW_CLOSED) * open.clamp(0., 1.)
+}
+
+/// A profile's name, fading in as the sidebar opens.
 fn label_text(open: f32, name: String, under: Option<&'static str>) -> Div {
     let line = |text: String| {
         div()
@@ -80,7 +88,7 @@ fn profile_button(id: ElementId, name: String, on: bool, look: Look) -> Stateful
     div()
         .id(id)
         .reach_edge()
-        .h(px(PROFILE_ROW))
+        .h(px(row_height(look.open)))
         .flex_none()
         .w_full()
         // Open, the selected fill reaches a little past the mark on its left.
@@ -103,26 +111,27 @@ fn profile_button(id: ElementId, name: String, on: bool, look: Look) -> Stateful
         })
 }
 
-/// The actions button of the selected profile: under its mark while the sidebar is closed, and
-/// beside its name once open. It opens the profile's menu under it.
+/// The actions button of a profile, beside its name once the sidebar is open enough to show it,
+/// fading out as it folds. Folded, the row is the mark alone and the menu is on a right-click.
+/// It opens the profile's menu under it.
 fn profile_actions(i: &Instance, open: f32, cx: &mut Context<Launcher>) -> Option<Stateful<Div>> {
-    let at = actions_at(open)?;
+    if !actions_shown(open) {
+        return None;
+    }
     let p = palette();
-    let bottom = Rc::new(Cell::new(0.));
-    let read_bottom = bottom.clone();
+    let button = Rc::new(Cell::new(gpui::Bounds::<gpui::Pixels>::default()));
+    let read_button = button.clone();
     let i = i.clone();
     Some(
         div()
             .id(SharedString::from(format!("profile-actions-{}", i.id)))
             .debug_selector(|| "selected-profile-actions".into())
             .reach()
-            .when(at == ActionsAt::Beside, |d| {
-                d.absolute()
-                    .top(px((PROFILE_ROW - 28.) / 2.))
-                    .right(px(6.))
-                    .w(px(28.))
-                    .opacity(label_opacity(open))
-            })
+            .absolute()
+            .top(px((row_height(open) - 28.) / 2.))
+            .right(px(6.))
+            .w(px(28.))
+            .opacity(label_opacity(open))
             .h(px(28.))
             .flex()
             .items_center()
@@ -137,17 +146,14 @@ fn profile_actions(i: &Instance, open: f32, cx: &mut Context<Launcher>) -> Optio
                 ),
             )
             .child(
-                gpui::canvas(
-                    move |bounds, _, _| bottom.set(f32::from(bounds.bottom())),
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .inset_0(),
+                gpui::canvas(move |bounds, _, _| button.set(bounds), |_, _, _, _| {})
+                    .absolute()
+                    .inset_0(),
             )
             // The profile's menu (settings, duplicate, folder, order, Delete) under the button;
             // right-clicking the row opens the same one.
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.open_profile_menu(&i, read_bottom.get());
+                this.open_profile_menu_under(&i, read_button.get());
                 cx.notify();
             })),
     )
@@ -369,9 +375,8 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Div {
         let current = selected == Some(i.id.as_str());
-        // Every profile has its actions button (the default one too) while the sidebar is open;
-        // closed, only the selected one keeps it, under its mark. Right-clicking opens the same
-        // menu on the player's own profiles.
+        // Every profile has its actions button (the default one too) while the sidebar is open.
+        // Folded, a profile is its mark alone, and right-clicking opens the same menu.
         let more = (current || look.open > 0.) && !self.location_unavailable;
         let face = self.profile_face(n, &i, current, more, look, cx);
         let actions = if more {
@@ -386,11 +391,6 @@ impl Launcher {
             .flex_none()
             .child(face)
             .children(actions)
-            // The room the closed button took under the mark eases away with the width, so the
-            // profiles below don't jump as it leaves the row.
-            .when(current && more && look.open > 0., |d| {
-                d.child(div().flex_none().h(px(actions_room(look.open))))
-            })
     }
 
     /// A profile's button: its mark and its name (the selected one's more button sits over its
@@ -429,7 +429,7 @@ impl Launcher {
         if labelled && more {
             button = button.pr(px(36.));
         }
-        if i.kind == Kind::Own && !self.location_unavailable {
+        if (i.kind == Kind::Own || more) && !self.location_unavailable {
             button = menu_target(button, i, self.ui.profile_rows.clone(), cx);
         }
         if look.lock.is_none() {

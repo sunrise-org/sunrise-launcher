@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+mod copy_options;
 mod create;
 mod delete;
 mod deletion_recovery;
@@ -26,6 +27,7 @@ mod order;
 mod play;
 use crate::managed_play::{Profile as ManagedProfile, ReferencePublication};
 use crate::profile_txn::{durable, Identity, NameGate};
+pub use copy_options::CopyOptions;
 pub use create::*;
 pub use delete::*;
 pub use deletion_recovery::{interrupted_deletions, InterruptedDeletion};

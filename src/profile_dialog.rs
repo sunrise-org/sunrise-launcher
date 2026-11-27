@@ -2,9 +2,16 @@
 //! instance creation/copy transaction as the launcher; the dialog doesn't write game files.
 use super::*;
 use crate::widgets::button::{primary, secondary};
-use crate::{frame::Reach, instances_page::InstanceDialog, paint::palette, servers_page::Field};
+use crate::{instances_page::InstanceDialog, paint::palette, servers_page::Field};
 use gpui::rgb;
-use instances::{Channel, Icon, Instance};
+use instances::{Channel, Instance};
+
+mod copy_box;
+mod menus;
+mod side;
+
+/// The new-profile dialog's height with the copy box open.
+const STEADY_HEIGHT: f32 = 590.;
 
 impl Launcher {
     pub(super) fn new_profile(&mut self, cx: &mut Context<Self>) {
@@ -27,6 +34,8 @@ impl Launcher {
                 Channel::Nightly
             },
             discarding: false,
+            menu: None,
+            pinning: false,
         });
         cx.notify();
     }
@@ -53,6 +62,8 @@ impl Launcher {
             pin: target.version.clone(),
             channel: target.channel,
             discarding: false,
+            menu: None,
+            pinning: false,
         });
         cx.notify();
     }
@@ -63,377 +74,97 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Option<Stateful<Div>> {
         let d = self.instances.dialog.as_ref()?;
-        let bound = d
-            .copy
-            .as_ref()
-            .and_then(instances::CopyPreview::base)
-            .map(|tag| self.version_label(tag));
-        let (busy, copy, icon, channel, pin, error) = (
-            d.busy,
-            d.copy.is_some(),
-            d.icon.clone(),
-            d.channel,
-            d.pin.clone(),
-            d.error.clone(),
-        );
-        let editing = d.editing.is_some();
-        let discarding = d.discarding;
-        let picture_focus = d.picture_focus.clone();
-        let picture_focused = picture_focus.is_focused(window);
-        let picture = d
-            .picture
-            .as_ref()
-            .and_then(Option::as_ref)
-            .map(|c| c.preview.clone());
-        if discarding {
+        if d.discarding {
             return Some(self.discard_profile_sheet(cx));
         }
+        let (busy, copying, editing, error) = (
+            d.busy,
+            d.copy.is_some(),
+            d.editing.is_some(),
+            d.error.clone(),
+        );
         let p = palette();
         let name = self.servers.value(Field::InstanceName).trim().to_owned();
-        let tags = self.profile_build_choices(channel);
         // An edit saves only once something in it changed, as its Save says.
         let ready = !name.is_empty() && !busy && (!editing || self.sheet_changed());
-        let current = bound
-            .clone()
-            .or_else(|| {
-                self.target_version(pin.as_ref(), channel)
-                    .map(|tag| self.version_label(tag))
-            })
-            .unwrap_or_else(|| {
-                match channel {
-                    Channel::Stable => tr("Latest stable"),
-                    Channel::Nightly => tr("Latest nightly"),
-                    Channel::Dev => tr("Latest Dev"),
-                }
-                .into()
-            });
-        let preview = div()
-            .id("new-picture-preview")
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .w(px(156.))
-            .flex_none()
-            .p(px(14.))
-            .gap(px(12.))
-            .rounded(crate::tokens::r(crate::tokens::R_CARD))
-            .border_1()
-            .border_color(p.input_edge())
-            .bg(p.card())
-            .when(!busy, |d| {
-                d.group("new-picture-preview")
-                    .track_focus(&picture_focus)
-                    .cursor_pointer()
-                    .hover(|s| s.bg(rgb(p.hover)).border_color(rgb(p.line)))
-                    .focus_visible(|s| s.border_color(rgb(p.focus)))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.choose_profile_picture(cx);
-                        cx.notify();
-                    }))
-            })
-            .child(if let Some(image) = picture {
-                div()
-                    .size(px(64.))
-                    .rounded(crate::tokens::r(14.))
-                    .overflow_hidden()
-                    .child(
-                        gpui::img(image)
-                            .size_full()
-                            .object_fit(gpui::ObjectFit::Contain),
-                    )
-            } else {
-                match icon.as_ref() {
-                    Some(Icon::Colour(c)) => {
-                        let colour =
-                            u32::from_str_radix(c.trim_start_matches('#'), 16).unwrap_or(p.accent);
-                        let ink = if sunrise_launcher_theme::contrast(colour, p.text)
-                            > sunrise_launcher_theme::contrast(colour, p.background)
-                        {
-                            p.text
-                        } else {
-                            p.background
-                        };
-                        div()
-                            .size(px(64.))
-                            .rounded(crate::tokens::r(14.))
-                            .bg(rgb(colour))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_color(rgb(ink))
-                            .font_weight(FontWeight::BOLD)
-                            .text_size(px(64. * 0.54))
-                            .child(
-                                name.chars()
-                                    .next()
-                                    .unwrap_or('S')
-                                    .to_uppercase()
-                                    .to_string(),
-                            )
-                    }
-                    _ => crate::mark(64.),
-                }
-            })
-            .child(
-                div()
-                    .max_w_full()
-                    .truncate()
-                    .text_size(px(tokens::HEADING))
-                    .font_weight(FontWeight::BOLD)
-                    .child(if name.is_empty() {
-                        tr("New profile").into()
-                    } else {
-                        name
-                    }),
-            )
-            .child(
-                div()
-                    .text_size(px(tokens::SMALL))
-                    .text_color(rgb(p.muted))
-                    .child(current),
-            )
-            .child(
-                div()
-                    .text_size(px(tokens::SMALL))
-                    .text_color(rgb(p.accent_ink))
-                    .opacity(if picture_focused && !busy { 1. } else { 0. })
-                    .group_hover("new-picture-preview", |s| s.opacity(1.))
-                    .child(tr("Change picture")),
-            );
-        let row = || div().flex().items_center().gap(px(8.));
-        let mut form = div()
-            .flex()
-            .flex_col()
-            .min_w_0()
-            .flex_1()
-            .gap(px(10.))
-            .child(tr("Name and group"))
-            .child(
-                row()
-                    .child(
-                        self.field(Field::InstanceName, tr("Profile name"), 190., cx)
-                            .flex_1()
-                            .min_w_0(),
-                    )
-                    .child(
-                        self.field(Field::InstanceGroup, tr("No group"), 148., cx)
-                            .flex_1()
-                            .min_w_0(),
-                    ),
-            );
-        if editing {
-            // The build is Home's picker's to change; this dialog keeps the saved one.
-        } else if let Some(build) = bound.as_deref() {
-            form = form
-                .child(tr("Game build"))
-                .child(div().text_color(rgb(p.muted)).child(trf(
-                    "This copy keeps {build} from the selected profile.",
-                    &[("build", build)],
-                )));
+        let title = if editing {
+            tr("Edit profile")
+        } else if copying {
+            tr("Duplicate profile")
         } else {
-            let view = cx.entity();
-            let options: Vec<(Channel, SharedString)> = [
-                (Channel::Stable, tr("Stable")),
-                (Channel::Nightly, tr("Nightly")),
-                (Channel::Dev, tr("Dev")),
-            ]
-            .into_iter()
-            // A channel with no build to follow can't be chosen, so it is not offered.
-            .filter(|(c, _)| match c {
-                Channel::Stable => self.stable_available(),
-                Channel::Dev => !self.profile_build_choices(Channel::Dev).is_empty(),
-                Channel::Nightly => true,
-            })
-            .map(|(c, label)| (c, label.into()))
-            .collect();
-            let channels = crate::widgets::choice::choices(
-                "new-channel",
-                &options,
-                channel,
-                move |c: Channel, _, cx: &mut App| {
-                    view.update(cx, |this, cx| {
-                        if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
-                            d.channel = c;
-                            d.pin = None;
-                        }
-                        cx.notify();
-                    });
-                },
-            );
-            let hint = match channel {
-                Channel::Stable if !self.stable_available() => Some(tr("No Stable build yet.")),
-                Channel::Dev if tags.is_empty() => Some(tr("No Dev build yet.")),
-                _ => None,
-            };
-            let mut versions = div()
-                .id("new-versions")
-                .max_h(px(94.))
-                .flex()
-                .flex_col()
-                .gap(px(3.))
-                .overflow_y_scroll()
-                .track_scroll(&crate::frame::scrolls("new-versions"));
-            for (idx, tag) in std::iter::once(None)
-                .chain(tags.into_iter().map(Some))
-                .enumerate()
-            {
-                let label = tag
-                    .as_deref()
-                    .map(|t| {
-                        let name = self.version_label(t);
-                        if channel == Channel::Dev {
-                            trf(
-                                "{build} · {commit}",
-                                &[
-                                    ("build", &name),
-                                    (
-                                        "commit",
-                                        &sunrise_launcher::nightly::short_commit(
-                                            t.rsplit_once('-').map_or(t, |(_, sha)| sha),
-                                        ),
-                                    ),
-                                ],
-                            )
-                        } else {
-                            name
-                        }
-                    })
-                    .unwrap_or_else(|| tr("Follow latest").into());
-                versions = versions.child(
-                    secondary(format!("new-version-{}", idx), label)
-                        .justify_start()
-                        .when(pin == tag, |d| {
-                            d.bg(rgb(p.selected)).border_color(rgb(p.accent_ink))
-                        })
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
-                                d.pin = tag.clone();
-                            }
-                            cx.notify();
-                        })),
-                );
-            }
-            form = form
-                .child(channels)
-                .children(hint.map(|hint| {
-                    div()
-                        .text_size(px(tokens::SMALL))
-                        .text_color(rgb(p.muted))
-                        .child(hint)
-                }))
-                .child(versions);
-        }
-        let mut start = row().when(editing, |d| d.hidden());
-        let copy_lock = self.profile_copy_lock();
-        for (id, duplicate, label) in [
-            ("new-empty", false, tr("Start empty")),
-            ("new-copy", true, tr("Copy selected profile")),
-        ] {
-            let option = secondary(id, label).when(copy == duplicate, |d| {
-                d.bg(rgb(p.selected)).border_color(rgb(p.accent_ink))
-            });
-            start = start.child(match copy_lock.filter(|_| duplicate) {
-                Some(why) => option
-                    .opacity(0.45)
-                    .tab_stop(false)
-                    .cursor_default()
-                    .tooltip(crate::glass_ui::tip(why)),
-                None => option.on_click(cx.listener(move |this, _, _, cx| {
-                    let preview = if duplicate {
-                        this.selected_instance()
-                            .ok_or_else(|| tr("Select a Sunrise profile first.").to_string())
-                            .and_then(instances::CopyPreview::read)
-                            .map(Some)
-                    } else {
-                        Ok(None)
-                    };
-                    if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
-                        match preview {
-                            Ok(copy) => {
-                                d.copy = copy;
-                                d.error = None;
-                            }
-                            Err(error) => d.error = Some(error),
-                        }
-                    }
-                    cx.notify();
-                })),
-            });
-        }
-        let mut icons = row().flex_wrap().child(
-            secondary("new-mark", tr("Sunrise"))
-                .when(icon.is_none(), |d| d.border_color(rgb(p.accent_ink)))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
-                        d.icon = None;
-                        // An explicit Sunrise mark displaces even a picture inherited by a copy.
-                        d.picture = Some(None);
-                    }
-                    cx.notify();
-                })),
-        );
-        for (idx, a) in sunrise_launcher::themes::Accent::ALL.iter().enumerate() {
-            let colour = a.rgb();
-            let choice = Icon::Colour(format!("#{colour:06x}"));
-            let selected = icon.as_ref() == Some(&choice);
-            icons = icons.child(
-                div()
-                    .id(ElementId::named_usize("new-colour", idx))
-                    .reach_edge()
-                    // Round, and as tall as the Sunrise and Picture buttons on either side: one row, one
-                    // height.
-                    .size(px(tokens::CONTROL))
-                    .rounded_full()
-                    .cursor_pointer()
-                    .bg(rgb(colour))
-                    .border_1()
-                    .border_color(p.input_edge())
-                    .hover(|s| s.border_color(rgb(p.text)))
-                    .when(selected, |d| d.border_2().border_color(rgb(p.text)))
-                    .tooltip(crate::glass_ui::tip(a.name()))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
-                            d.icon = Some(choice.clone());
-                            d.picture = Some(None);
-                        }
-                        cx.notify();
-                    })),
-            );
-        }
-        let body = div()
+            tr("New profile")
+        };
+        let side = self.profile_side(window, &name, cx);
+        let mut body = div()
             .flex()
             .flex_col()
-            .child(crate::sheets::title(
-                if editing {
-                    tr("Edit profile")
-                } else {
-                    tr("New profile")
-                }
-                .into(),
-            ))
-            .child(div().text_color(rgb(p.muted)).child(if editing {
-                tr("Rename it, move it to a group or pick another icon.")
-            } else if bound.is_some() {
-                tr("Name the copy and pick an icon.")
-            } else {
-                tr("Name it, pick what it plays, then an icon.")
-            }))
+            .gap(px(16.))
+            .px(px(24.))
+            .child(self.profile_name_row(cx));
+        if !editing {
+            body = body.child(self.profile_build_row(cx));
+            body = body.child(self.profile_start_row(cx));
+            body = body.children(self.copy_box(cx));
+        }
+        // A new profile or a copy keeps one height whatever is chosen: tall enough for the copy
+        // box, so the dialog doesn't jump as the choices change. The footer stays at the bottom.
+        let right = div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .when(!editing, |d| d.min_h(px(STEADY_HEIGHT)))
             .child(
-                row()
-                    .items_stretch()
-                    .child(preview)
-                    .child(form.child(start).child(icons)),
+                div()
+                    .p(px(24.))
+                    .pb(px(16.))
+                    .text_size(px(tokens::HEADING))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(title),
             )
-            .children(error.map(|e| div().text_color(rgb(p.danger)).child(e)))
+            .child(body)
+            .children(error.map(|e| {
+                div()
+                    .px(px(24.))
+                    .pt(px(12.))
+                    .text_color(rgb(p.danger))
+                    .child(e)
+            }))
+            .child(div().flex_1())
             .child(self.profile_dialog_foot(editing, busy, ready, cx));
-        Some(crate::sheets::modal_frame(
+        let plate = div().flex().child(side).child(right);
+        Some(crate::sheets::modal_plate(
             "new-profile",
-            680.,
-            body,
+            720.,
+            plate,
             cx,
             Launcher::close_instance_dialog,
+            0.,
+            p.background,
         ))
+    }
+
+    /// Name over Group, side by side: three parts to two.
+    fn profile_name_row(&mut self, cx: &mut Context<Self>) -> Div {
+        let part = |label: SharedString, field: Stateful<Div>, grow: f32| {
+            let mut column = div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .min_w_0()
+                .flex_1()
+                .child(menus::small_label(label))
+                .child(field.w_full().min_w_0());
+            column.style().flex_grow = Some(grow);
+            column
+        };
+        let name = self.field(Field::InstanceName, tr("Profile name"), 300., cx);
+        let group = self.field(Field::InstanceGroup, tr("No group"), 200., cx);
+        div()
+            .flex()
+            .gap(px(12.))
+            .child(part(tr("Name").into(), name, 3.))
+            .child(part(tr("Group").into(), group, 2.))
     }
 
     /// The question a close asks once it found edits not saved: Keep editing goes back to the
@@ -484,7 +215,7 @@ impl Launcher {
         )
     }
 
-    /// Cancel and Create (or Save).
+    /// A rule, then Cancel and Create (or Save).
     fn profile_dialog_foot(
         &self,
         editing: bool,
@@ -492,7 +223,16 @@ impl Launcher {
         ready: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let row = div().flex().items_center().justify_end().gap(px(8.));
+        let row = div()
+            .flex()
+            .items_center()
+            .justify_end()
+            .gap(px(8.))
+            .mt(px(20.))
+            .px(px(24.))
+            .py(px(14.))
+            .border_t_1()
+            .border_color(rgb(palette().divider));
         row.child(
             secondary("new-cancel", tr("Cancel")).on_click(cx.listener(|this, _, _, cx| {
                 this.close_instance_dialog();
@@ -506,7 +246,7 @@ impl Launcher {
                     (true, true) => tr("Saving…"),
                     (true, false) => tr("Save"),
                     (false, true) => tr("Creating…"),
-                    (false, false) => tr("Create"),
+                    (false, false) => tr("Create profile"),
                 },
             )
             .when(!ready, |d| d.opacity(0.45).tab_stop(false))

@@ -220,6 +220,44 @@ fn sweep(key: &str, slide: usize, on: bool, rightward: bool) -> AnyElement {
         .into_any_element()
 }
 
+/// A page's head: its title on the left, the page's own compact actions on the right. Every page
+/// reached from the sidebar opens with one (Figma: Discover, Servers, Skins); tabs, then the
+/// toolbar, follow it.
+pub(crate) fn page_head(title: impl Into<SharedString>, actions: Option<AnyElement>) -> Div {
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_between()
+        .gap(px(16.))
+        .min_h(px(40.))
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .text_size(px(tokens::TITLE))
+                .font_weight(FontWeight::BOLD)
+                .text_color(c(palette().text))
+                .child(title.into()),
+        )
+        .children(actions.map(|a| div().flex_none().child(a)))
+}
+
+/// A page's tab row: the [`tabs`] strip over a hairline, with an optional compact action at the
+/// far end.
+pub(crate) fn tab_row(strip: Stateful<Div>, trailing: Option<AnyElement>) -> Div {
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_between()
+        .gap(px(12.))
+        .border_b_1()
+        .border_color(palette().rule())
+        .child(strip)
+        .children(trailing.map(|a| div().flex_none().child(a)))
+}
+
 /// A sidebar nav row: its icon and label, 36 px tall. Not selected, it has no fill and lights
 /// `hover` (at 60 %) as the pointer comes to it; selected, it is filled `selected` in full text
 /// colour, with the pixel sun at its end when `show_sun`. The caller adds the click handler and

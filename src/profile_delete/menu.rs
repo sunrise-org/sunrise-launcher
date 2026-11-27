@@ -185,10 +185,12 @@ impl Launcher {
         &self,
         target: &Instance,
         top: f32,
+        button: Option<(f32, f32)>,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let p = palette();
-        let at = tokens::FRAME_INSET + crate::rail::rail_width(self.rail_open()) + 8.;
+        const WIDTH: f32 = 236.;
+        const EDGE: f32 = 8.;
         let name = target.name.clone();
         let mut rows = self.profile_menu_rows(target, cx);
         // Delete is for the player's own profiles, after a divider.
@@ -219,6 +221,25 @@ impl Launcher {
         }
         // The rows, the title (26), the divider (9), 8 padding each side and the 1 px border.
         let action_height = count as f32 * tokens::CONTROL + 26. + if own { 9. } else { 0. } + 18.;
+        let (at, top) = match button {
+            // Hung from the actions button: its left edge, below it, or above it when the
+            // window ends first.
+            Some((left, button_top)) => {
+                let fits = top + action_height + EDGE <= self.window_height;
+                (
+                    left.min(self.window_width - WIDTH - EDGE).max(EDGE),
+                    if fits {
+                        top
+                    } else {
+                        (button_top - 4. - action_height).max(EDGE)
+                    },
+                )
+            }
+            None => (
+                tokens::FRAME_INSET + crate::rail::rail_width(self.rail_open()) + 8.,
+                top.min(self.window_height - action_height - EDGE),
+            ),
+        };
         div()
             .id("profile-menu")
             .absolute()
@@ -255,8 +276,8 @@ impl Launcher {
                 div()
                     .absolute()
                     .left(px(at))
-                    .top(px(top.min(self.window_height - action_height - 8.)))
-                    .w(px(236.))
+                    .top(px(top))
+                    .w(px(WIDTH))
                     .p(px(8.))
                     .rounded(tokens::r(tokens::R_CARD))
                     .border_1()
