@@ -489,13 +489,24 @@ impl Launcher {
     }
 
     pub(super) fn launch_activity(&self) -> Facts {
+        let play_detail = if self.installing.is_some() {
+            self.install_detail.clone()
+        } else if self.preparing {
+            self.prepare_detail.clone()
+        } else if self.native_step.is_some() {
+            None
+        } else if self.starting_client.is_some() || self.play_admission.is_some() {
+            self.play_detail.clone()
+        } else {
+            None
+        };
         Facts {
             installing: self.installing.as_ref().map(|(_, progress)| *progress),
             preparing: self.preparing,
             building: self.native_step.is_some(),
             starting: self.starting_client.is_some() || self.play_admission.is_some(),
             step: self.play_step,
-            play_detail: self.play_detail.clone(),
+            play_detail,
             mutating: self.mutating() || self.switch_busy(),
             registry: self.registry_stage(),
             registry_accepts_play: self.registry_accepts_play(),
@@ -592,8 +603,13 @@ impl Launcher {
             }
             Msg::PlayDetail(detail) => {
                 // A switch's steps come as SwitchDetail, from its own operation.
-                if self.starting_client.is_some() || self.preparing || self.installing.is_some() {
+                if self.starting_client.is_some() {
                     self.play_detail = Some(detail);
+                }
+            }
+            Msg::PrepareDetail(detail) => {
+                if self.preparing {
+                    self.prepare_detail = Some(detail);
                 }
             }
             Msg::PlayStep(step) => {

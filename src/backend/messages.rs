@@ -15,6 +15,8 @@ pub enum Msg {
     Releases(Result<Vec<Release>, String>),
     Links(Links),
     Progress(String, InstallPhase),
+    /// Live detail line for a standalone game build install (`(tag, text)`).
+    InstallDetail(String, String),
     Installed(String, Result<InstallOutcome, String>),
     NightlyReceiptRetried(Arc<NightlyReceiptWarning>, Result<(), String>),
     /// A Storage removal finished; any failed removal names its build.
@@ -88,6 +90,8 @@ pub enum Msg {
     PlayDownload(f32),
     /// Live detail line under "Preparing…" while Play is working (e.g. file counts).
     PlayDetail(String),
+    /// Live detail line for a standalone preparation (`prepare_version_cancellable`).
+    PrepareDetail(String),
     ManagedBuild {
         instance: String,
         profile: String,

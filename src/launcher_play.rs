@@ -197,10 +197,19 @@ impl Launcher {
                 };
                 let key = crate::eta::install_stage_key;
                 if key((*current).into()) != key(phase.into()) {
-                    self.play_detail = None;
+                    self.install_detail = None;
                 }
                 *current = phase;
                 self.switch_download_progress(&tag, phase);
+            }
+            Msg::InstallDetail(tag, detail) => {
+                if self
+                    .installing
+                    .as_ref()
+                    .is_some_and(|(active, _)| *active == tag)
+                {
+                    self.install_detail = Some(detail);
+                }
             }
             Msg::Installed(tag, result) => {
                 if self
@@ -210,9 +219,7 @@ impl Launcher {
                 {
                     return;
                 }
-                if self.starting_client.is_none() && !self.preparing {
-                    self.play_detail = None;
-                }
+                self.install_detail = None;
                 let stopped = (self.install_stop.take()).is_some_and(|stop| stop.is_stopped());
                 self.refresh_installed();
                 if let Some(warning) = self.record_nightly_receipt_outcome(&tag, &result) {
@@ -319,14 +326,15 @@ impl Launcher {
         self.install_stop = Some(stop.clone());
         self.installing = Some((tag.clone(), backend::InstallPhase::Checking));
         self.install_started = Some(Instant::now());
-        self.play_detail = None;
+        self.install_detail = None;
         self.install_error = None;
         // The steps after the download say what they do, and their counts (#607): into a
         // switch's own log and dialog when the install is a switch's, else to Home's line.
         let op = self.switch_operation(&tag).unwrap_or_else(|| {
             let tx = tx.clone();
+            let tag = tag.clone();
             sunrise_launcher::launcher_log::Operation::new(move |text| {
-                let _ = tx.send(Msg::PlayDetail(text));
+                let _ = tx.send(Msg::InstallDetail(tag.clone(), text));
             })
         });
         std::thread::spawn(move || {
@@ -359,6 +367,7 @@ impl Launcher {
         sunrise_launcher::mojang::CANCEL.store(false, Ordering::Relaxed);
         self.prepare_log.clear();
         self.prepare_error = None;
+        self.prepare_detail = None;
         self.prepare_log
             .push_back(crate::i18n::tr("Checking Java and your Minecraft install").into());
         let tx = self.tx.clone();
@@ -368,7 +377,7 @@ impl Launcher {
             let tx = self.tx.clone();
             Some(sunrise_launcher::launcher_log::Operation::new(
                 move |text| {
-                    let _ = tx.send(Msg::PlayDetail(text));
+                    let _ = tx.send(Msg::PrepareDetail(text));
                 },
             ))
         });

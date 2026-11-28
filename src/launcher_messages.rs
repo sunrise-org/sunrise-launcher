@@ -170,12 +170,14 @@ impl Launcher {
                 | Msg::Links(_)
                 | Msg::Reused(_)
                 | Msg::Progress(_, _)
+                | Msg::InstallDetail(_, _)
                 | Msg::Installed(_, _)
                 | Msg::ConfirmUnreviewed(_, _) => self.on_install_message(msg),
                 Msg::Playing(_)
                 | Msg::PlayStep(_)
                 | Msg::PlayDownload(_)
                 | Msg::PlayDetail(_)
+                | Msg::PrepareDetail(_)
                 | Msg::ManagedBuild { .. }
                 | Msg::ManagedBuildLog(_)
                 | Msg::ManagedClient { .. }

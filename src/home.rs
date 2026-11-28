@@ -707,11 +707,10 @@ impl Launcher {
     /// there only then, so it moves what is under it down by one line rather than holding a
     /// gap open.
     fn play_status_line(&self, scenery: bool) -> Option<Div> {
-        let line = self
-            .switch_line()
-            .or_else(|| self.launch_facts().view().play_detail)
-            .or_else(|| {
-                self.preparing.then(|| {
+        let line = self.switch_line().or_else(|| {
+            let view = self.launch_facts().view();
+            view.play_detail.or_else(|| {
+                matches!(view.main, Main::Preparing).then(|| {
                     crate::mods_page::install::stage_label(
                         sunrise_launcher::browser::sunrise::InstallProgress::Minecraft(
                             backend::prepare_step(),
@@ -719,7 +718,8 @@ impl Launcher {
                         ),
                     )
                 })
-            })?;
+            })
+        })?;
         let p = palette();
         let line = div()
             .mt(px(8.))

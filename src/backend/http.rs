@@ -51,56 +51,14 @@ fn redact_url(raw: &str) -> String {
     }
 }
 
-fn redact_urls_in_text(text: &str) -> String {
-    const SCHEMES: [&str; 6] = [
-        "https://",
-        "http://",
-        "socks5h://",
-        "socks5://",
-        "socks4a://",
-        "socks4://",
-    ];
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some((pos, scheme)) = SCHEMES
-        .iter()
-        .filter_map(|&scheme| rest.find(scheme).map(|pos| (pos, scheme)))
-        .min_by_key(|&(pos, _)| pos)
-    {
-        out.push_str(&rest[..pos]);
-        let tail = &rest[pos..];
-        let mut end = scheme.len();
-        let mut in_query_or_frag = false;
-        let bytes = tail.as_bytes();
-        while end < bytes.len() {
-            let b = bytes[end];
-            if b == b'?' || b == b'#' {
-                in_query_or_frag = true;
-            }
-            if b.is_ascii_whitespace()
-                || matches!(b, b'"' | b'\'' | b'<' | b'>')
-                || (!in_query_or_frag && matches!(b, b')' | b']'))
-                || (b == b':' && bytes.get(end + 1) == Some(&b' '))
-            {
-                break;
-            }
-            end += 1;
-        }
-        out.push_str(&redact_url(&tail[..end]));
-        rest = &tail[end..];
-    }
-    out.push_str(rest);
-    out
-}
-
 fn redact_transport(url: &str, transport: &ureq::Transport) -> String {
-    let mut rendered = transport.to_string();
-    for candidate in [Some(url), transport.url().map(url::Url::as_str)] {
-        if let Some(raw) = candidate.filter(|raw| !raw.is_empty()) {
-            rendered = rendered.replace(raw, &redact_url(raw));
-        }
+    let request = redact_url(url);
+    let kind = transport.kind();
+    match transport.url().map(|target| redact_url(target.as_str())) {
+        Some(target) if target != request => format!("{request} -> {target}: {kind}"),
+        Some(target) => format!("{target}: {kind}"),
+        None => format!("{request}: {kind}"),
     }
-    redact_urls_in_text(&rendered)
 }
 
 /// A file's body, from the network as the launcher reaches it.
@@ -222,22 +180,6 @@ mod tests {
             redact_url("http://token-only@example.invalid/file?sig=abc"),
             "http://example.invalid/file"
         );
-        assert_eq!(
-            redact_urls_in_text(
-                "https://alice:s3cr3t@example.invalid/sdk/v1?token=tok123#frag: Connection Failed via socks5h://bob:pw@127.0.0.1:1080"
-            ),
-            "https://example.invalid/sdk/v1: Connection Failed via socks5h://127.0.0.1:1080"
-        );
-        assert_eq!(
-            redact_urls_in_text("(https://alice:pw@example.invalid/path)"),
-            "(https://example.invalid/path)"
-        );
-        assert_eq!(
-            redact_urls_in_text(
-                "https://example.invalid/signed?sig=abc)s3cr3t_tail: Connection Failed"
-            ),
-            "https://example.invalid/signed: Connection Failed"
-        );
 
         // Live loopback checks for 404 (`get`), 403 (`get_unless_missing`, non-retried),
         // refused transport (`get_unless_missing`), and a failed redirect to a credential-bearing
@@ -331,6 +273,45 @@ mod tests {
                 !err_paren_query.contains(secret),
                 "{secret} leaked in {err_paren_query}"
             );
+        }
+    }
+
+    #[test]
+    fn malformed_scheme_relative_redirect_redacts_query() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let response = "HTTP/1.1 302 Found\r\nLocation: //127.0.0.1:badport/path?sig=s3cr3t_query#frag3\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        let server = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            for _ in 0..=crate::download_retry::WAITS.len() {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    let _ = stream.write_all(response.as_bytes());
+                }
+            }
+        });
+        let err = get_unless_missing(&format!(
+            "http://alice:req_pw@{addr}/download?token=req_secret#req_frag"
+        ))
+        .expect_err("malformed scheme-relative redirect must fail");
+        server.join().unwrap();
+        assert!(err.starts_with("No connection: "), "{err}");
+        assert!(
+            err.contains(&format!("http://{addr}/download")),
+            "expected safe request origin/path in {err}"
+        );
+        for secret in [
+            "alice",
+            "req_pw",
+            "req_secret",
+            "req_frag",
+            "badport",
+            "sig=",
+            "s3cr3t_query",
+            "frag3",
+        ] {
+            assert!(!err.contains(secret), "{secret} leaked in {err}");
         }
     }
 }

@@ -501,7 +501,7 @@ mod tests {
             const TAG: &str = "26.3-0.1.1";
             use backend::InstallPhase;
             launcher.installing = Some((TAG.into(), InstallPhase::Downloading(0.25)));
-            launcher.play_detail = Some("Transfer detail".into());
+            launcher.install_detail = Some("Transfer detail".into());
             launcher
                 .tx
                 .send(Msg::Progress("other".into(), InstallPhase::Finishing))
@@ -524,7 +524,7 @@ mod tests {
                 .send(Msg::Progress(TAG.into(), InstallPhase::Downloading(0.50)))
                 .unwrap();
             launcher.drain(window, cx);
-            assert_eq!(launcher.play_detail.as_deref(), Some("Transfer detail"));
+            assert_eq!(launcher.install_detail.as_deref(), Some("Transfer detail"));
             launcher
                 .tx
                 .send(Msg::Progress(TAG.into(), InstallPhase::Finishing))
@@ -534,7 +534,7 @@ mod tests {
                 launcher.installing,
                 Some((TAG.into(), InstallPhase::Finishing))
             );
-            assert!(launcher.play_detail.is_none());
+            assert!(launcher.install_detail.is_none());
             launcher
                 .tx
                 .send(Msg::Installed(
@@ -572,15 +572,25 @@ mod tests {
 
         launcher.update(cx, |launcher, cx| {
             const TAG: &str = "26.3-0.1.1";
-            // Idle: PlayDetail is dropped.
+            // Idle: details from all jobs are dropped.
             launcher.on_play_message(Msg::PlayDetail("Ignored while idle".into()), cx);
+            launcher.on_play_message(Msg::PrepareDetail("Ignored while idle".into()), cx);
+            launcher
+                .on_install_message(Msg::InstallDetail(TAG.into(), "Ignored while idle".into()));
             assert_eq!(launcher.play_detail, None);
+            assert_eq!(launcher.install_detail, None);
+            assert_eq!(launcher.prepare_detail, None);
 
             // Standalone Install routes detail to Home and clears it on completion.
             launcher.installing = Some((TAG.into(), backend::InstallPhase::Downloading(0.25)));
-            launcher.on_play_message(Msg::PlayDetail("Downloading build: 25%".into()), cx);
+            launcher.on_install_message(Msg::InstallDetail("other".into(), "Wrong tag".into()));
+            assert_eq!(launcher.install_detail, None);
+            launcher.on_install_message(Msg::InstallDetail(
+                TAG.into(),
+                "Downloading build: 25%".into(),
+            ));
             assert_eq!(
-                launcher.play_detail.as_deref(),
+                launcher.install_detail.as_deref(),
                 Some("Downloading build: 25%")
             );
             assert_eq!(
@@ -592,16 +602,17 @@ mod tests {
                 Ok(backend::InstallOutcome::Installed(None)),
             ));
             assert!(launcher.installing.is_none());
-            assert_eq!(launcher.play_detail, None);
+            assert_eq!(launcher.install_detail, None);
+            assert_eq!(launcher.launch_facts().view().play_detail, None);
 
             // Standalone Prepare routes detail to Home and clears it on completion.
             launcher.preparing = true;
             launcher.on_play_message(
-                Msg::PlayDetail("Downloading Minecraft's files: 10 of 40".into()),
+                Msg::PrepareDetail("Downloading Minecraft's files: 10 of 40".into()),
                 cx,
             );
             assert_eq!(
-                launcher.play_detail.as_deref(),
+                launcher.prepare_detail.as_deref(),
                 Some("Downloading Minecraft's files: 10 of 40")
             );
             assert_eq!(
@@ -610,7 +621,73 @@ mod tests {
             );
             launcher.on_game_exit_message(Msg::Exit(Job::Prepare, Ok(())), cx);
             assert!(!launcher.preparing);
-            assert_eq!(launcher.play_detail, None);
+            assert_eq!(launcher.prepare_detail, None);
+            assert_eq!(launcher.launch_facts().view().play_detail, None);
+
+            // Overlapping Install + Prepare: Home shows whichever job wins, and each job's
+            // completion clears only its own detail.
+            launcher.installing = Some((TAG.into(), backend::InstallPhase::Downloading(0.50)));
+            launcher.preparing = true;
+            launcher.on_install_message(Msg::InstallDetail(
+                TAG.into(),
+                "Downloading build: 50%".into(),
+            ));
+            launcher.on_play_message(
+                Msg::PrepareDetail("Downloading Minecraft's files: 20 of 40".into()),
+                cx,
+            );
+            assert_eq!(
+                launcher.launch_facts().view().play_detail.as_deref(),
+                Some("Downloading build: 50%")
+            );
+            launcher.on_install_message(Msg::Installed(
+                TAG.into(),
+                Ok(backend::InstallOutcome::Installed(None)),
+            ));
+            assert!(launcher.installing.is_none());
+            assert_eq!(launcher.install_detail, None);
+            assert_eq!(
+                launcher.prepare_detail.as_deref(),
+                Some("Downloading Minecraft's files: 20 of 40")
+            );
+            assert_eq!(
+                launcher.launch_facts().view().play_detail.as_deref(),
+                Some("Downloading Minecraft's files: 20 of 40")
+            );
+            launcher.on_game_exit_message(Msg::Exit(Job::Prepare, Ok(())), cx);
+            assert!(!launcher.preparing);
+            assert_eq!(launcher.prepare_detail, None);
+            assert_eq!(launcher.launch_facts().view().play_detail, None);
+
+            // Reverse completion order: Prepare finishes while Install is still active.
+            launcher.installing = Some((TAG.into(), backend::InstallPhase::Downloading(0.75)));
+            launcher.preparing = true;
+            launcher.on_install_message(Msg::InstallDetail(
+                TAG.into(),
+                "Downloading build: 75%".into(),
+            ));
+            launcher.on_play_message(
+                Msg::PrepareDetail("Downloading Minecraft's files: 30 of 40".into()),
+                cx,
+            );
+            launcher.on_game_exit_message(Msg::Exit(Job::Prepare, Ok(())), cx);
+            assert!(!launcher.preparing);
+            assert_eq!(launcher.prepare_detail, None);
+            assert_eq!(
+                launcher.install_detail.as_deref(),
+                Some("Downloading build: 75%")
+            );
+            assert_eq!(
+                launcher.launch_facts().view().play_detail.as_deref(),
+                Some("Downloading build: 75%")
+            );
+            launcher.on_install_message(Msg::Installed(
+                TAG.into(),
+                Ok(backend::InstallOutcome::Installed(None)),
+            ));
+            assert!(launcher.installing.is_none());
+            assert_eq!(launcher.install_detail, None);
+            assert_eq!(launcher.launch_facts().view().play_detail, None);
         });
     }
 

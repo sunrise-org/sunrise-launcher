@@ -187,6 +187,8 @@ impl Launcher {
             play_step: None,
             play_download: None,
             play_detail: None,
+            install_detail: None,
+            prepare_detail: None,
             starting_play: None,
             play_when_prepared: None,
             friend_code: line_edit::LineEdit::new(String::new(), 256, 32),

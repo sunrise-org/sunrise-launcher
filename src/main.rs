@@ -328,6 +328,10 @@ struct Launcher {
     play_download: Option<f32>,
     /// Live counted detail shown beside/under "Preparing…" while Play is working.
     play_detail: Option<String>,
+    /// Live counted detail for a standalone game build install.
+    install_detail: Option<String>,
+    /// Live counted detail for a standalone preparation.
+    prepare_detail: Option<String>,
     /// The accepted Play the session worker is answering.
     starting_play: Option<launcher_play::PlayIntent>,
     /// Play was pressed on a version not prepared yet: it starts once this preparation ends well.

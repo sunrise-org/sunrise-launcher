@@ -25,7 +25,7 @@ gh pr create -R sunrise-org/sunrise-launcher \
   --body "Promote main to release for vX.Y.Z."
 ```
 
-Wait for CI to pass and merge the PR.
+Wait for CI to pass and merge the PR with a **merge commit** (`gh pr merge --merge`, never squash or rebase—squashing or rebasing drops the original PR commits that `tools/release_notes.py` filters for).
 
 ### 2. Build the unsigned draft
 
@@ -48,20 +48,23 @@ When it completes, it creates an unsigned draft GitHub release `vX.Y.Z` with all
 
 ### 3. Test the draft end to end
 
-Download the draft artifact for your platform (`gh release download vX.Y.Z -R sunrise-org/sunrise-launcher -p '<pattern>'`) and verify a fresh install before publishing:
+Download the draft artifact for your platform (`gh release download vX.Y.Z -R sunrise-org/sunrise-launcher -p '<pattern>'`) and verify a fresh install before publishing. A fresh Linux install test with sign-in and Mojang preparation is required before every release:
 
 - The installer or archive launches cleanly on a fresh home/profile.
-- Sign-in (or offline startup) completes without unexpected prompts or errors.
-- Downloading and starting the game works.
+- Microsoft sign-in completes without unexpected prompts or errors.
+- Downloading a game build, running Mojang preparation, and starting the game all succeed.
 - Settings / About displays version `X.Y.Z`, and the updater check runs without errors.
 
 ### 4. Sign and publish via `launcher-bridge.yml`
 
-Run the bridge workflow in `sunrise-org/sunrise`, pointing `source_ref` at `refs/heads/release`:
+Run the bridge workflow in `sunrise-org/sunrise` from `main`, passing the required `version`, `source_ref=refs/heads/release`, and `dry_run=false` (the workflow defaults to a dry run). The first cut from `refs/heads/release` depends on `sunrise-org/sunrise#7139`:
 
 ```sh
 gh workflow run launcher-bridge.yml -R sunrise-org/sunrise \
-  -f source_ref=refs/heads/release
+  --ref main \
+  -f source_ref=refs/heads/release \
+  -f version=X.Y.Z \
+  -f dry_run=false
 ```
 
 Watch the bridge run (`gh run watch -R sunrise-org/sunrise <run-id>`), which signs `SHA256SUMS` into `SHA256SUMS.sig` and publishes the release. Once it finishes, confirm both the signature attachment and the `Latest` badge:
