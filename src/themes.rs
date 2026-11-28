@@ -11,10 +11,12 @@ use sunrise_launcher_theme::night::{Land, Mood, Night, SkyArt};
 use sunrise_launcher_theme::{contrast, Blocks};
 
 mod builtin;
+mod gallery;
 pub mod hsv;
 pub mod library;
 pub mod share;
 pub use builtin::*;
+pub use gallery::*;
 
 /// An accent: a hue in degrees, or none for Sunrise's violet, whose tokens are the palette's own
 /// and stay untouched; and for a colour typed as hex, that colour (the glass look wears it as
@@ -90,10 +92,17 @@ impl Theme {
 pub const TWILIGHT_NAME: &str = crate::i18n::tr_key("Twilight");
 pub const TWILIGHT_DESCRIPTION: &str = crate::i18n::tr_key("Indigo night and violet");
 
-/// The launcher themes past Sunrise's own sky: the featured families first, then the older ones.
-pub const THEMES: [Theme; 11] = [
+/// Every built-in theme that resolves: the gallery's (see [`GALLERY`]) first, then the older
+/// ones a player may have saved, which the gallery no longer shows.
+pub const THEMES: [Theme; 17] = [
     DAWN_THEME,
     DAWN_LIGHT_THEME,
+    MIDNIGHT,
+    GROVE,
+    AMETHYST,
+    EMBER,
+    GRAPHITE,
+    PARCHMENT,
     HYPR_NEON,
     DEEP_OCEAN,
     AUTUMN_FOREST,
@@ -122,10 +131,10 @@ pub fn accent_key(id: Option<&str>) -> &str {
     }
 }
 
-/// Whether the theme saved as `id` is the light one: what the launcher paints light is decided
-/// by this choice alone.
+/// Whether the theme saved as `id` is a light one (Daybreak or Parchment): what the launcher
+/// paints light is decided by this choice alone.
 pub fn is_light(id: Option<&str>) -> bool {
-    id == Some(DAWN_LIGHT_THEME.id)
+    theme(id).is_some_and(Theme::is_light)
 }
 
 /// The accent a theme brings, before any the player picked under it.

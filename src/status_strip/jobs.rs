@@ -80,6 +80,8 @@ pub(crate) enum JobAct {
     /// Stops Play on its way to the game (its download, preparation and mod build).
     StopStart,
     StopLauncherUpdate,
+    /// Stops copying another launcher's profile into a new one.
+    StopImport,
     StopRegistryInstall,
     StopSourceBuild,
     StopNativeBuild,
@@ -312,6 +314,23 @@ impl Launcher {
                 }
             }
         }
+        if let Some(import) = &self.instances.importing {
+            let stopping = import.cancel.is_stopped();
+            let job = Job::new(
+                "import-profile",
+                trf("Importing {name}", &[("name", &import.name)]),
+            )
+            .step(if stopping {
+                tr("Stopping…")
+            } else {
+                tr("Copying")
+            });
+            let job = match import.progress.fraction() {
+                Some(fraction) => job.measured(fraction),
+                None => job,
+            };
+            jobs.push(job.stop(JobAct::StopImport, stopping));
+        }
         for tag in &self.removing {
             jobs.push(
                 Job::new(
@@ -354,6 +373,11 @@ impl Launcher {
             JobAct::StopLauncherUpdate => {
                 if let Some(stop) = &self.update_stop {
                     stop.stop();
+                }
+            }
+            JobAct::StopImport => {
+                if let Some(job) = &self.instances.importing {
+                    job.cancel.stop();
                 }
             }
             JobAct::StopRegistryInstall => self.stop_registry_install(),

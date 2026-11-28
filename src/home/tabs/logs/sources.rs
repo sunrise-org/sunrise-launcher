@@ -4,9 +4,6 @@
 use super::*;
 use std::path::{Path, PathBuf};
 
-/// The most files of a list shown as choices; older ones stay in the folder.
-const MAX_FILES: usize = 6;
-
 /// How often a folder's list of logs is read again.
 const RELIST: std::time::Duration = std::time::Duration::from_secs(3);
 
@@ -39,9 +36,9 @@ impl Source {
         matches!(self, Self::Crashes | Self::Launcher)
     }
 
-    fn label(self) -> SharedString {
+    pub(super) fn label(self) -> SharedString {
         match self {
-            Self::Game => tr("Game").into(),
+            Self::Game => tr("Game output").into(),
             Self::Latest => "latest.log".into(),
             Self::Crashes => tr("Crash reports").into(),
             Self::Launcher => tr("Launcher").into(),
@@ -93,7 +90,7 @@ pub(super) fn pick_index(files: &[PathBuf], chosen: Option<&Path>) -> Option<usi
 
 /// What a file of a list is called on its choice: a crash report by its date, else by its place
 /// in the list (the newest is 1).
-fn file_label(source: Source, index: usize, path: &Path) -> String {
+pub(super) fn file_label(source: Source, index: usize, path: &Path) -> String {
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
@@ -117,6 +114,8 @@ impl Logs {
         self.source = source;
         self.chosen = None;
         self.files.clear();
+        self.times.clear();
+        self.menu = None;
         self.listed = false;
         self.list_checked = None;
         self.file = None;
@@ -160,16 +159,22 @@ impl Launcher {
         }
         logs.listing = true;
         logs.list_checked = Some(std::time::Instant::now());
-        let task = cx
-            .background_executor()
-            .spawn(async move { list_files(&folder, source) });
+        let task = cx.background_executor().spawn(async move {
+            let files = list_files(&folder, source);
+            let times = files
+                .iter()
+                .map(|file| std::fs::metadata(file).and_then(|m| m.modified()).ok())
+                .collect::<Vec<_>>();
+            (files, times)
+        });
         cx.spawn(async move |this, cx| {
-            let files = task.await;
+            let (files, times) = task.await;
             let _ = this.update(cx, |this, cx| {
                 let logs = &mut this.ui.home.tabs.logs;
                 logs.listing = false;
                 if logs.source == source {
                     logs.listed = true;
+                    logs.times = times;
                     if logs.files != files {
                         logs.files = files;
                     } else {
@@ -180,66 +185,6 @@ impl Launcher {
             });
         })
         .detach();
-    }
-
-    /// The source choices, and under a list the files in it, newest first.
-    pub(super) fn source_row(&self, cx: &mut Context<Self>) -> Div {
-        let logs = &self.ui.home.tabs.logs;
-        let this = cx.entity().downgrade();
-        let options: Vec<(Source, SharedString)> =
-            Source::ALL.iter().map(|s| (*s, s.label())).collect();
-        let sources = crate::widgets::choice::choices("home-logs-source", &options, logs.source, {
-            let this = this.clone();
-            move |source, _, cx| {
-                let _ = this.update(cx, |this, cx| {
-                    this.ui.home.tabs.logs.switch(source);
-                    cx.notify();
-                });
-            }
-        });
-        let files = (logs.source.is_list() && !logs.files.is_empty()).then(|| {
-            let current = pick_index(&logs.files, logs.chosen.as_deref()).unwrap_or(0);
-            let labelled: Vec<(usize, SharedString)> = logs
-                .files
-                .iter()
-                .take(MAX_FILES)
-                .enumerate()
-                .map(|(i, path)| (i, file_label(logs.source, i, path).into()))
-                .collect();
-            let picks = crate::widgets::choice::choices(
-                "home-logs-file",
-                &labelled,
-                current,
-                move |index, _, cx| {
-                    let _ = this.update(cx, |this, cx| {
-                        let logs = &mut this.ui.home.tabs.logs;
-                        logs.chosen = logs.files.get(index).cloned();
-                        logs.seen.set((u64::MAX, 0));
-                        cx.notify();
-                    });
-                },
-            );
-            let older = logs.files.len().saturating_sub(MAX_FILES);
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .child(picks)
-                .children((older > 0).then(|| {
-                    muted(trf(
-                        "{n} older ones are in the folder",
-                        &[("n", &older.to_string())],
-                    ))
-                }))
-        });
-        div()
-            .flex()
-            .flex_none()
-            .flex_wrap()
-            .items_center()
-            .gap(px(12.))
-            .child(sources)
-            .children(files)
     }
 }
 
@@ -264,7 +209,9 @@ pub(super) fn nothing_here(source: Source, open: AnyElement) -> Div {
         Source::Launcher => (
             "information-circle",
             tr("No launcher diagnostics"),
-            tr("The launcher writes one here when it cannot start the game. Nothing has gone wrong yet."),
+            tr(
+                "The launcher writes one here when it cannot start the game. Nothing has gone wrong yet.",
+            ),
         ),
         Source::Build => (
             "hammer",

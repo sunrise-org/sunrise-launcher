@@ -12,6 +12,7 @@ pub(crate) mod dropdown;
 pub(crate) mod feedback;
 pub(crate) mod field;
 pub(crate) mod focus;
+pub(crate) mod glide;
 pub(crate) mod label;
 pub(crate) mod menu;
 pub(crate) mod motion_bits;

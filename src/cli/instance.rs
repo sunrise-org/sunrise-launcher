@@ -54,6 +54,49 @@ impl CopyFlags {
     }
 }
 
+/// What `import-from` leaves out; with none of these it brings everything the other launcher
+/// has that exists, play time included. Mods never come.
+#[derive(clap::Args)]
+pub(super) struct ImportFlags {
+    /// Leave out the worlds
+    #[arg(long)]
+    no_worlds: bool,
+    /// Leave out the game options and keys (options.txt)
+    #[arg(long)]
+    no_options: bool,
+    /// Leave out the resource packs
+    #[arg(long)]
+    no_resource_packs: bool,
+    /// Leave out the shader packs
+    #[arg(long)]
+    no_shaders: bool,
+    /// Leave out the screenshots
+    #[arg(long)]
+    no_screenshots: bool,
+    /// Leave out the server list
+    #[arg(long)]
+    no_servers: bool,
+    /// Leave out the play time and when it was last played
+    #[arg(long)]
+    no_play_time: bool,
+}
+
+impl ImportFlags {
+    /// What the profile offers, less what was left out.
+    fn options(&self, offered: instances::CopyOptions) -> instances::CopyOptions {
+        instances::CopyOptions {
+            play_time: offered.play_time && !self.no_play_time,
+            worlds: offered.worlds && !self.no_worlds,
+            options: offered.options && !self.no_options,
+            resource_packs: offered.resource_packs && !self.no_resource_packs,
+            screenshots: offered.screenshots && !self.no_screenshots,
+            shader_packs: offered.shader_packs && !self.no_shaders,
+            servers: offered.servers && !self.no_servers,
+            mods: false,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 pub(super) enum InstanceCmd {
     /// The profiles, each with its game folder (* = the one Play starts)
@@ -69,6 +112,23 @@ pub(super) enum InstanceCmd {
         copy: Option<String>,
         #[command(flatten)]
         leave: CopyFlags,
+    },
+    /// Make a profile from one of another launcher (Prism Launcher, MultiMC, the Modrinth App,
+    /// ATLauncher, GDLauncher, CurseForge, the official launcher): its worlds, options and keys,
+    /// packs, screenshots, server list and play time, never its mods. Another launcher's folder
+    /// is only read
+    ImportFrom {
+        /// The profile as --list writes it (launcher/name), or a game folder
+        #[arg(required_unless_present = "list")]
+        source: Option<String>,
+        /// List the profiles found instead
+        #[arg(long)]
+        list: bool,
+        /// The new profile's name (default: the one it has there)
+        #[arg(long, requires = "source")]
+        name: Option<String>,
+        #[command(flatten)]
+        leave: ImportFlags,
     },
     /// Rename a profile (its folder stays)
     Rename { instance: String, name: String },
@@ -192,6 +252,15 @@ pub(super) fn instance(action: InstanceCmd, as_json: bool) -> Result<(), Error> 
             Some(from) => instances::create_copying(&name, &from, leave.options())?,
             None => instances::create(&name, None)?,
         }),
+        InstanceCmd::ImportFrom {
+            source,
+            list,
+            name,
+            leave,
+        } => match source.filter(|_| !list) {
+            None => list_imports(as_json),
+            Some(source) => changed(import_from(&source, name, &leave)?),
+        },
         InstanceCmd::Delete { instance } => {
             let gone = instances::delete(&instance)?;
             match as_json {
@@ -405,6 +474,76 @@ fn line(i: &instances::Instance, selected: bool) {
         i.id,
         i.home.display()
     );
+}
+
+/// The profiles of other launchers `import-from` can take, with what each has to bring.
+fn list_imports(as_json: bool) {
+    let all = instances::import_sources();
+    if as_json {
+        json(
+            all.iter()
+                .map(|f| {
+                    let mut value = serde_json::to_value(f).unwrap_or_default();
+                    value["key"] = f.key().into();
+                    value
+                })
+                .collect(),
+        );
+        return;
+    }
+    if all.is_empty() {
+        println!("No other launchers found on this computer.");
+    }
+    for f in &all {
+        let c = &f.contents;
+        let played = f
+            .played_secs
+            .map(|s| {
+                format!(
+                    ", {} played",
+                    instances::play_time(std::time::Duration::from_secs(s))
+                )
+            })
+            .unwrap_or_default();
+        println!(
+            "{}  {}\n    {} worlds, {} resource packs, {} shader packs, {} screenshots{}{}{played}\n    {}",
+            f.key(),
+            f.version.as_deref().unwrap_or(""),
+            c.worlds,
+            c.resource_packs,
+            c.shader_packs,
+            c.screenshots,
+            if c.options { ", options" } else { "" },
+            if c.servers { ", servers" } else { "" },
+            f.folder.display()
+        );
+    }
+}
+
+/// Makes a profile from `source`: a profile of another launcher (as `--list` writes it) or a
+/// game folder.
+fn import_from(
+    source: &str,
+    name: Option<String>,
+    leave: &ImportFlags,
+) -> Result<instances::Instance, Error> {
+    let from = if std::path::Path::new(source).is_dir() {
+        instances::read_import_folder(std::path::Path::new(source))?
+    } else {
+        let all = instances::import_sources();
+        instances::find_import(&all, source)?.clone()
+    };
+    let name = name.unwrap_or_else(|| from.name.clone());
+    let options = leave.options(from.offered());
+    Ok(instances::create_importing(
+        &name,
+        &from,
+        options,
+        &sunrise_launcher::native_mods::Cancellation::default(),
+        &instances::ImportProgress::default(),
+        None,
+        |_| {},
+    )?)
 }
 
 fn list(as_json: bool) -> Result<(), Error> {

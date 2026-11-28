@@ -1,5 +1,5 @@
-//! Settings › Appearance: the page itself (the look and colours, then what is behind Home, the
-//! layout and the cat) and the rows that are not about colours.
+//! Settings › Appearance: the page itself (the theme gallery and the current theme's bar, then
+//! what is behind Home, the layout and the cat) and the rows that are not about colours.
 use super::*;
 use crate::widgets::button::secondary;
 use crate::widgets::check::switch;
@@ -16,12 +16,7 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Div {
         let missing = appearance::missing(&self.settings);
-        let mut rows = vec![
-            self.look_row(cx),
-            self.colours_row(window, cx),
-            self.library_row(cx),
-        ];
-        rows.extend(self.unusable_themes());
+        let mut rows: Vec<Div> = self.unusable_themes().into_iter().collect();
         rows.push(self.folder_row(cx));
         rows.push(self.background_row(cx));
         rows.push(self.scenery_row(cx));
@@ -45,8 +40,11 @@ impl Launcher {
         div()
             .flex()
             .flex_col()
-            .gap(px(10.))
+            .gap(px(24.))
             .children(gone)
+            .child(self.themes_section(cx))
+            .child(self.your_themes_section(cx))
+            .child(self.current_card(window, cx))
             .child(group(rows))
             .children(said)
     }
@@ -164,7 +162,7 @@ impl Launcher {
     /// The themes folder: opening it, and reading it again.
     fn folder_row(&mut self, cx: &mut Context<Self>) -> Div {
         self.wide_row(
-                tr("Your themes"),
+                tr("Themes folder"),
                 tr("A theme is a folder with a theme.toml: up to nine colours and one picture. Reload reads the folder again."),
                 div()
                     .child(

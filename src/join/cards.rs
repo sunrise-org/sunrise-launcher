@@ -135,6 +135,43 @@ pub(crate) fn server_row(id: SharedString, parts: RowParts) -> Stateful<Div> {
         )
 }
 
+/// The card of a server just removed, as it folds shut and fades (`glides`): what its card
+/// showed, without the tick box's column filled or any buttons. None when it doesn't match the
+/// search, or when nothing animates.
+pub(crate) fn ghost_card(ghost: &glides::Ghost, query: &str) -> Option<AnyElement> {
+    let seen = &ghost.seen;
+    if !crate::home::tabs::matches_query(query, &[seen.name.as_str(), seen.address.as_str()]) {
+        return None;
+    }
+    let picture = server_picture(
+        seen.icon.clone(),
+        featured_at(&seen.address).map(|f| f.badge),
+        (&seen.address, &seen.name),
+        ICON,
+    );
+    let card = server_row(
+        format!("join-ghost:{}", ghost.key).into(),
+        RowParts {
+            check: no_tick(),
+            picture,
+            name: crate::widgets::label::name_over(
+                seen.name.clone(),
+                tokens::LABEL,
+                Some((seen.address.clone().into(), palette().muted)),
+            ),
+            note: None,
+            buttons: Vec::new(),
+        },
+    );
+    crate::widgets::glide::leave(
+        card,
+        "server-glide",
+        &ghost.key,
+        ghost.gone(),
+        (ROW, crate::home::tabs::GAP),
+    )
+}
+
 /// A group of cards under a small muted heading, as the sidebar heads its groups.
 pub(crate) fn section(heading: impl Into<SharedString>, body: impl IntoElement) -> Div {
     div()

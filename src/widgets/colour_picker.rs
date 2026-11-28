@@ -87,6 +87,141 @@ pub(crate) type OnDrag = Rc<dyn Fn(&gpui::MouseMoveEvent, &mut Window, &mut App)
 /// A plain event: the button let go, or the picker closed.
 pub(crate) type OnEvent = Rc<dyn Fn(&mut Window, &mut App)>;
 
+/// What a caller keeps for one picker: the colour as [`Hsv`], where the square and bar were
+/// drawn, the part being dragged, whether the popover is open and where the keyboard is. The
+/// caller keeps the colour itself (a setting) and is handed it by the methods that change it.
+pub(crate) struct PickerState {
+    pub(crate) hsv: Hsv,
+    /// The colour when the popover opened.
+    pub(crate) before: u32,
+    pub(crate) areas: Areas,
+    pub(crate) dragging: Option<Part>,
+    pub(crate) open: bool,
+    focus: Option<FocusHandle>,
+}
+
+impl Default for PickerState {
+    fn default() -> Self {
+        PickerState {
+            hsv: Hsv::from_rgb(0),
+            before: 0,
+            areas: Areas::default(),
+            dragging: None,
+            open: false,
+            focus: None,
+        }
+    }
+}
+
+impl PickerState {
+    /// Opens the popover on `rgb` and gives it the keyboard, so Escape reaches it.
+    pub(crate) fn open_on(&mut self, rgb: u32, window: &mut Window, cx: &mut App) {
+        self.open = true;
+        self.hsv = Hsv::from_rgb(rgb);
+        self.before = rgb;
+        self.dragging = None;
+        let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
+        window.focus(&focus, cx);
+    }
+
+    /// Closes the popover.
+    pub(crate) fn close(&mut self) {
+        self.open = false;
+        self.dragging = None;
+    }
+
+    /// Reads `shown` again when something other than the picker changed the colour; a colour
+    /// the picker made keeps its hue, and the grey it may be on.
+    pub(crate) fn sync(&mut self, shown: u32) {
+        if self.hsv.to_rgb() != shown {
+            self.hsv = Hsv::from_rgb(shown);
+        }
+    }
+
+    /// What [`Spec`] needs while the popover is open: its colour, the colour it was, where its
+    /// parts were drawn and where the keyboard is.
+    pub(crate) fn view(&mut self, cx: &mut App) -> (Hsv, u32, Areas, FocusHandle) {
+        let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
+        (self.hsv, self.before, self.areas.clone(), focus)
+    }
+
+    /// A press on `part` at `at`: the colour it picks.
+    pub(crate) fn press(&mut self, part: Part, at: gpui::Point<gpui::Pixels>) -> Option<u32> {
+        self.dragging = Some(part);
+        self.pick(at)
+    }
+
+    /// The pointer moved: the colour it picks while the left button holds a part, else none
+    /// (and a drag whose button was let go outside the window ends).
+    pub(crate) fn drag(&mut self, ev: &gpui::MouseMoveEvent) -> Option<u32> {
+        if ev.pressed_button == Some(gpui::MouseButton::Left) {
+            self.pick(ev.position)
+        } else {
+            self.dragging = None;
+            None
+        }
+    }
+
+    /// The button was let go.
+    pub(crate) fn release(&mut self) {
+        self.dragging = None;
+    }
+
+    fn pick(&mut self, at: gpui::Point<gpui::Pixels>) -> Option<u32> {
+        let part = self.dragging?;
+        self.hsv = self.areas.pick(part, self.hsv, at);
+        Some(self.hsv.to_rgb())
+    }
+}
+
+/// The popover's [`Handlers`] for a picker kept in a view `V`: `state` finds its
+/// [`PickerState`], and `set` is told each colour the pointer picks.
+pub(crate) fn handlers<V: 'static>(
+    this: gpui::Entity<V>,
+    state: fn(&mut V) -> &mut PickerState,
+    set: fn(&mut V, u32, &mut gpui::Context<V>),
+) -> Handlers {
+    Handlers {
+        press: Rc::new({
+            let this = this.clone();
+            move |part: Part, at: gpui::Point<gpui::Pixels>, _: &mut Window, cx: &mut App| {
+                this.update(cx, |v, cx| {
+                    if let Some(rgb) = state(v).press(part, at) {
+                        set(v, rgb, cx);
+                    }
+                    cx.notify();
+                })
+            }
+        }),
+        drag: Rc::new({
+            let this = this.clone();
+            move |ev: &gpui::MouseMoveEvent, _: &mut Window, cx: &mut App| {
+                this.update(cx, |v, cx| {
+                    if let Some(rgb) = state(v).drag(ev) {
+                        set(v, rgb, cx);
+                    }
+                    cx.notify();
+                })
+            }
+        }),
+        release: Rc::new({
+            let this = this.clone();
+            move |_: &mut Window, cx: &mut App| {
+                this.update(cx, |v, cx| {
+                    state(v).release();
+                    cx.notify();
+                })
+            }
+        }),
+        close: Rc::new(move |_: &mut Window, cx: &mut App| {
+            this.update(cx, |v, cx| {
+                state(v).close();
+                cx.notify();
+            })
+        }),
+    }
+}
+
 /// What a popover shows and where it hangs.
 pub(crate) struct Spec<'a> {
     pub(crate) id: &'static str,

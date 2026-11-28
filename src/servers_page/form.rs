@@ -27,7 +27,10 @@ impl Launcher {
         // Home's Add server line is in the glass look already; the other fields follow with
         // their pages.
         // The dark appearance draws every field in the glass look.
-        let profile_field = matches!(f, Field::InstanceName | Field::InstanceGroup);
+        let profile_field = matches!(
+            f,
+            Field::InstanceName | Field::InstanceGroup | Field::ImportSearch
+        );
         let glass = t.glass;
         let base = if profile_field {
             crate::widgets::field::field_box(focused, invalid)
@@ -102,7 +105,10 @@ impl Launcher {
         let focused = self.servers.focused == Some(f);
         let selected = focused && self.servers.selected == Some(f);
         self.servers.text(f).show(((width - 24.) / 7.5) as usize);
-        let profile_field = matches!(f, Field::InstanceName | Field::InstanceGroup);
+        let profile_field = matches!(
+            f,
+            Field::InstanceName | Field::InstanceGroup | Field::ImportSearch
+        );
         let line_theme = if profile_field {
             crate::mods::field_theme(t)
         } else {
@@ -193,8 +199,11 @@ impl Launcher {
             Field::Token => self.save_token(),
             Field::Email => self.invite_friend(),
             Field::NewGroup => self.commit_new_group(),
-            Field::InstanceName | Field::InstanceGroup | Field::DeleteServer | Field::AccentHex => {
-            }
+            Field::InstanceName
+            | Field::InstanceGroup
+            | Field::ImportSearch
+            | Field::DeleteServer
+            | Field::AccentHex => {}
             Field::PreLaunch | Field::Wrapper | Field::LaunchEnv | Field::PostExit => {
                 self.save_launch()
             }

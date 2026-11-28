@@ -3,7 +3,6 @@ use super::*;
 use crate::instances_page::DialogMenu;
 use crate::sheets::channel_name;
 use crate::widgets::dropdown::{self, Close, Face};
-use crate::widgets::focus::Reach;
 use std::rc::Rc;
 
 /// The small muted label over a field.
@@ -67,6 +66,8 @@ fn dialog_close(cx: &mut Context<Launcher>) -> Close {
     let this = cx.entity();
     Rc::new(move |_: &mut Window, cx: &mut App| {
         this.update(cx, |this, cx| {
+            // Also the build chooser's open submenu.
+            this.close_menus();
             if let Some(d) = this.instances.dialog.as_mut() {
                 d.menu = None;
             }
@@ -85,30 +86,16 @@ fn with_menu_keys(
     let this = cx.entity();
     let toggle: Close = Rc::new(move |_: &mut Window, cx: &mut App| {
         this.update(cx, |this, cx| {
+            let was = this.instances.dialog.as_ref().and_then(|d| d.menu);
+            // One menu at a time, and an open build chooser's submenu goes with it.
+            this.close_menus();
             if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
-                d.menu = (d.menu != Some(which)).then_some(which);
-                d.pinning = false;
+                d.menu = (was != Some(which)).then_some(which);
             }
             cx.notify();
         })
     });
     dropdown::with_keys(field, open, toggle, dialog_close(cx))
-}
-
-fn divider() -> AnyElement {
-    div()
-        .h(px(1.))
-        .my(px(3.))
-        .bg(rgb(palette().divider))
-        .into_any_element()
-}
-
-fn describe(channel: Channel) -> &'static str {
-    match channel {
-        Channel::Stable => tr("Tested releases, updated less often"),
-        Channel::Nightly => tr("The newest build, every night"),
-        Channel::Dev => tr("Builds of work in progress"),
-    }
 }
 
 impl Launcher {
@@ -117,12 +104,7 @@ impl Launcher {
         let Some(d) = self.instances.dialog.as_ref() else {
             return div();
         };
-        let (channel, pin, open, pinning) = (
-            d.channel,
-            d.pin.clone(),
-            d.menu == Some(DialogMenu::Build),
-            d.pinning,
-        );
+        let (channel, pin, open) = (d.channel, d.pin.clone(), d.menu == Some(DialogMenu::Build));
         let bound = d
             .copy
             .as_ref()
@@ -165,89 +147,24 @@ impl Launcher {
             );
         }
         let field = with_menu_keys(field, DialogMenu::Build, open, cx);
+        // The same chooser as Home's build button (`sheets/build_menu.rs`); picking only sets
+        // this dialog's build.
         let mut wrap = div()
             .relative()
             .child(field.on_click(cx.listener(|this, _, _, cx| {
+                let was = this
+                    .instances
+                    .dialog
+                    .as_ref()
+                    .is_some_and(|d| d.menu == Some(DialogMenu::Build));
+                this.close_menus();
                 if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
-                    d.menu = (d.menu != Some(DialogMenu::Build)).then_some(DialogMenu::Build);
-                    d.pinning = false;
+                    d.menu = (!was).then_some(DialogMenu::Build);
                 }
                 cx.notify();
             })));
-        if open && pinning {
-            let rows = self.profile_versions(channel, pin.clone(), cx);
-            // The two rows before the versions are the way back and a rule, then Follow latest.
-            let current = match &pin {
-                None => 2,
-                Some(tag) => {
-                    3 + self
-                        .profile_build_choices(channel)
-                        .iter()
-                        .position(|t| t == tag)
-                        .unwrap_or(0)
-                }
-            };
-            wrap = wrap.children(menu_under("new-build", rows, Some(current), cx));
-        } else if open {
-            let mut rows: Vec<AnyElement> = Vec::new();
-            for (id, option) in [
-                ("new-build-stable", Channel::Stable),
-                ("new-build-nightly", Channel::Nightly),
-                ("new-build-dev", Channel::Dev),
-            ] {
-                let unavailable = match option {
-                    Channel::Stable => !self.stable_available(),
-                    Channel::Dev => self.profile_build_choices(Channel::Dev).is_empty(),
-                    Channel::Nightly => false,
-                };
-                let sub = match (option, unavailable) {
-                    (Channel::Stable, true) => tr("None yet: plays Nightly until there is one"),
-                    (Channel::Dev, true) => tr("No Dev build yet."),
-                    _ => describe(option),
-                };
-                // A channel with no build yet can't be picked: Stable and Dev rows are dimmed.
-                let row = dropdown::row_when(
-                    id,
-                    follows(option),
-                    Some(SharedString::from(sub)),
-                    pin.is_none() && channel == option,
-                    !unavailable,
-                );
-                rows.push(
-                    (if unavailable {
-                        row
-                    } else {
-                        row.on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
-                                d.channel = option;
-                                d.pin = None;
-                                d.pinning = false;
-                                d.menu = None;
-                            }
-                            cx.notify();
-                        }))
-                    })
-                    .into_any_element(),
-                );
-            }
-            rows.push(divider());
-            rows.push(
-                menu_row(
-                    "new-build-pin",
-                    tr("Pin a specific version…").into(),
-                    None,
-                    pin.is_some(),
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    // The same menu turns to the channel's versions.
-                    if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
-                        d.pinning = true;
-                    }
-                    cx.notify();
-                }))
-                .into_any_element(),
-            );
-            wrap = wrap.children(menu_under("new-build", rows, None, cx));
+        if open {
+            wrap = wrap.children(self.dialog_build_menu(dialog_close(cx), cx));
         } else {
             dropdown::forget("new-build");
         }
@@ -263,88 +180,6 @@ impl Launcher {
         row
     }
 
-    /// The build menu's second page: back to the channels, Follow latest, and each version of
-    /// the channel to keep.
-    fn profile_versions(
-        &self,
-        channel: Channel,
-        pin: Option<String>,
-        cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
-        let p = palette();
-        let back = div()
-            .id("new-versions-back")
-            .reach()
-            .flex()
-            .items_center()
-            .gap(px(6.))
-            .px(px(8.))
-            .py(px(6.))
-            .rounded(tokens::r(tokens::R_SMALL))
-            .cursor_pointer()
-            .text_size(px(tokens::SMALL))
-            .text_color(rgb(p.muted))
-            .hover(|s| s.bg(rgb(p.hover)))
-            .child(crate::glass_ui::icon(
-                "arrow-left-01",
-                14.,
-                rgb(p.muted).into(),
-            ))
-            .child(channel_name(channel))
-            .on_click(cx.listener(|this, _, _, cx| {
-                if let Some(d) = this.instances.dialog.as_mut() {
-                    d.pinning = false;
-                }
-                cx.notify();
-            }));
-        let mut rows = vec![back.into_any_element(), divider()];
-        for (idx, tag) in std::iter::once(None)
-            .chain(self.profile_build_choices(channel).into_iter().map(Some))
-            .enumerate()
-        {
-            let (head, sub) = match tag.as_deref() {
-                None => (
-                    tr("Follow latest").to_owned(),
-                    Some(describe(channel).to_owned()),
-                ),
-                Some(t) => {
-                    let name = self.version_label(t);
-                    let head = if channel == Channel::Dev {
-                        trf(
-                            "{build} · {commit}",
-                            &[
-                                ("build", &name),
-                                (
-                                    "commit",
-                                    &sunrise_launcher::nightly::short_commit(
-                                        t.rsplit_once('-').map_or(t, |(_, sha)| sha),
-                                    ),
-                                ),
-                            ],
-                        )
-                    } else {
-                        name
-                    };
-                    (head, self.build_age(t))
-                }
-            };
-            let on = pin == tag;
-            rows.push(
-                menu_row(ElementId::named_usize("new-version", idx), head, sub, on)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
-                            d.pin = tag.clone();
-                            d.pinning = false;
-                            d.menu = None;
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            );
-        }
-        rows
-    }
-
     /// "Start from": an empty profile, or a copy of one that exists.
     pub(super) fn profile_start_row(&mut self, cx: &mut Context<Self>) -> Div {
         let Some(d) = self.instances.dialog.as_ref() else {
@@ -352,8 +187,10 @@ impl Launcher {
         };
         let open = d.menu == Some(DialogMenu::Start);
         let source = d.copy.as_ref().map(|c| c.source().id.clone());
+        let importing = d.import.is_some();
         let shown = match d.copy.as_ref() {
             Some(copy) => trf("Copy “{name}”", &[("name", &copy.source().name)]),
+            None if importing => tr("Another launcher…").to_owned(),
             None => tr("Empty profile").to_owned(),
         };
         let field = dropdown_field("new-start", open, None, shown, None, true).on_click(
@@ -371,17 +208,31 @@ impl Launcher {
                 "new-start-empty",
                 tr("Empty profile").into(),
                 Some(tr("No mods, packs or worlds").into()),
-                source.is_none(),
+                source.is_none() && !importing,
             )
             .on_click(cx.listener(|this, _, _, cx| {
                 if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
                     d.copy = None;
+                    d.import = None;
                     d.error = None;
                     d.menu = None;
                 }
                 cx.notify();
             }))
             .into_any_element()];
+            rows.push(
+                menu_row(
+                    "new-start-import",
+                    tr("Another launcher…").into(),
+                    Some(tr("Worlds, options and packs from Prism, Modrinth and others").into()),
+                    importing,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.import_start(cx);
+                    cx.notify();
+                }))
+                .into_any_element(),
+            );
             let profiles: Vec<Instance> = self
                 .instances
                 .list
@@ -391,8 +242,9 @@ impl Launcher {
                 .collect();
             // The row to show on open: Empty profile is first, the copies follow it.
             let current = Some(match source.as_deref() {
+                None if importing => 1,
                 None => 0,
-                Some(id) => 1 + profiles.iter().position(|p| p.id == id).unwrap_or(0),
+                Some(id) => 2 + profiles.iter().position(|p| p.id == id).unwrap_or(0),
             });
             for (idx, profile) in profiles.into_iter().enumerate() {
                 let sub = match profile.last_played {
@@ -415,6 +267,7 @@ impl Launcher {
                                 match preview {
                                     Ok(copy) => {
                                         d.copy = Some(copy);
+                                        d.import = None;
                                         d.error = None;
                                     }
                                     Err(error) => d.error = Some(error),

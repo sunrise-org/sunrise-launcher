@@ -329,7 +329,7 @@ impl Launcher {
     }
 
     /// The "…" menu of a saved server (Join, Edit, Copy address, Refresh status, Move up and
-    /// down, Remove) or of a featured one (Join, Add to my servers, Copy address, Refresh
+    /// down, Remove) or of a featured one (Join, Copy address, Refresh
     /// status), its groups set apart by hairlines.
     fn server_menu_sheet(
         &self,
@@ -360,36 +360,14 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Option<(Vec<AnyElement>, usize)> {
         let server = featured().into_iter().nth(index)?;
-        let (address, name) = (server.address?, server.name);
-        let added = self
-            .multiplayer
-            .list
-            .iter()
-            .any(|(saved, _)| featured_at(&saved.ip).as_ref() == Some(&server));
-        let add = if added {
-            menu::row(
-                Row::new("server-menu-add", "tick-02", tr("In your servers"))
-                    .divided()
-                    .off(Some(SharedString::default())),
-                |_, _, _| {},
-            )
-        } else {
-            menu::row(
-                Row::new("server-menu-add", "plus-sign", tr("Add to my servers")).divided(),
-                cx.listener(move |this, _, _, cx| {
-                    this.multiplayer.menu = None;
-                    this.edit_servers(|list| list.add(tr(name), address));
-                    cx.notify();
-                }),
-            )
-        };
+        let address = server.address?;
+        // A featured server stays under Featured: there is no adding it to the saved list.
         let rows = vec![
             self.join_row(address.to_string(), cx),
-            add,
             self.copy_address_row(address.to_string(), true, cx),
             self.refresh_row(address.to_string(), false, cx),
         ];
-        Some((rows, 2))
+        Some((rows, 1))
     }
 
     /// The rows of the saved server's menu at `index`, and how many hairlines they hold.
@@ -399,7 +377,12 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Option<(Vec<AnyElement>, usize)> {
         let (server, _) = self.multiplayer.list.get(index)?;
-        let (name, last) = (server.name.clone(), self.multiplayer.list.len() - 1);
+        let name = server.name.clone();
+        // Move up and down step through the listed servers, never past a featured one's entry.
+        let places = self.listed_places();
+        let at = places.iter().position(|place| *place == index)?;
+        let up = at.checked_sub(1).map(|n| places[n]);
+        let down = places.get(at + 1).copied();
         let rows = vec![
             self.join_row(server.ip.clone(), cx),
             menu::row(
@@ -414,19 +397,23 @@ impl Launcher {
             menu::row(
                 Row::new("server-menu-up", "arrow-up-01", tr("Move up"))
                     .divided()
-                    .off((index == 0).then(SharedString::default)),
+                    .off(up.is_none().then(SharedString::default)),
                 cx.listener(move |this, _, _, cx| {
                     this.multiplayer.menu = None;
-                    this.move_server(index, false);
+                    if let Some(other) = up {
+                        this.edit_servers(|list| list.swap(index, other));
+                    }
                     cx.notify();
                 }),
             ),
             menu::row(
                 Row::new("server-menu-down", "arrow-down-01", tr("Move down"))
-                    .off((index >= last).then(SharedString::default)),
+                    .off(down.is_none().then(SharedString::default)),
                 cx.listener(move |this, _, _, cx| {
                     this.multiplayer.menu = None;
-                    this.move_server(index, true);
+                    if let Some(other) = down {
+                        this.edit_servers(|list| list.swap(index, other));
+                    }
                     cx.notify();
                 }),
             ),

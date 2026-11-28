@@ -609,28 +609,31 @@ impl Launcher {
         }))
     }
 
-    /// The button that forgets saved skin `id`: shown on its tile's hover, and on keyboard focus,
-    /// where it is a Tab stop of its own.
-    fn forget_button(id: &str, group: SharedString, cx: &mut Context<Self>) -> Stateful<Div> {
+    /// The button that forgets saved skin `id`, always in its tile's corner (GPUI's group hover
+    /// isn't always drawn again in this window, so it doesn't wait for one): a raised square
+    /// with the delete glyph, turning the danger colour under the pointer.
+    fn forget_button(id: &str, _group: SharedString, cx: &mut Context<Self>) -> Stateful<Div> {
         let p = palette();
         let target = id.to_owned();
         div()
             .id(SharedString::from(format!("skin-forget-{id}")))
             .reach()
             .absolute()
-            .top(px(4.))
-            .right(px(4.))
-            .size(px(22.))
+            .top(px(6.))
+            .right(px(6.))
+            .size(px(26.))
             .flex()
             .items_center()
             .justify_center()
             .rounded(crate::tokens::r(crate::tokens::R_SMALL))
-            .bg(rgb(p.field))
-            .opacity(0.)
-            .group_hover(group, |s| s.opacity(1.))
-            .focus_visible(|s| s.opacity(1.))
-            .hover(|s| s.bg(rgb(p.hover)))
-            .child(crate::glass_ui::icon("close", 12., c(p.muted)))
+            .bg(rgb(p.raised))
+            .border_1()
+            .border_color(rgb(p.line))
+            .shadow_sm()
+            .cursor_pointer()
+            .hover(|s| s.bg(c(p.danger).opacity(0.18)).border_color(c(p.danger)))
+            .tooltip(crate::glass_ui::tip(tr("Remove")))
+            .child(crate::glass_ui::icon("delete-02", 14., c(p.text)))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();
                 this.skin_forget(&target);
@@ -788,7 +791,9 @@ impl Launcher {
             .bg(rgb(palette().field))
             .map(|d| match face {
                 Some(face) => d.child(face),
-                None if none => d.child(crate::glass_ui::icon("close", 22., c(palette().muted))),
+                None if none => {
+                    d.child(crate::glass_ui::icon("cancel-01", 22., c(palette().muted)))
+                }
                 None => d,
             })
             .into_any_element()

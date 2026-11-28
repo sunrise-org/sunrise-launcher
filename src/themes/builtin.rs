@@ -191,11 +191,12 @@ pub const DAWN_THEME: Theme = Theme {
     light_palette: Some(&DAWN_LIGHT),
 };
 
-/// Sunrise Light: Sunrise's day, as a card of its own in the theme grid. Choosing it is what
-/// makes the launcher light; every other theme is dark (`appearance::select_theme`).
+/// Daybreak: Sunrise's day, as a tile of its own in the gallery. Choosing it makes the launcher
+/// light, as Parchment does; the rest are dark (`appearance::select_theme`). Its id is
+/// `dawn_light`, as it was saved before it took the name.
 pub const DAWN_LIGHT_THEME: Theme = Theme {
     id: "dawn_light",
-    name: "Sunrise Light",
+    name: crate::i18n::tr_key("Daybreak"),
     description: "Cream and orange",
     sky: DAWN_LIGHT.sky,
     accent: ThemeAccent::Colour(0xc2552d),

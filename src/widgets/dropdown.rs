@@ -25,7 +25,7 @@ const MENU_MAX: f32 = 300.;
 /// The least a menu is allowed when the window has little room.
 const MENU_MIN: f32 = 96.;
 /// The gap between the field and its menu.
-const GAP: f32 = 4.;
+pub(crate) const GAP: f32 = 4.;
 /// A menu with more rows than this can be filtered by typing.
 const FILTER_OVER: usize = 6;
 /// The most that can be typed into the filter.

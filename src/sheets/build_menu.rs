@@ -17,6 +17,55 @@ const LEAVE_DELAY: Duration = Duration::from_millis(200);
 /// How far the submenu slides while it fades in.
 const SLIDE: f32 = 4.;
 
+/// The channels, top to bottom, with their row ids.
+const CHANNELS: [(&str, instances::Channel); 3] = [
+    ("alt-build-stable", instances::Channel::Stable),
+    ("alt-build-nightly", instances::Channel::Nightly),
+    ("alt-build-dev", instances::Channel::Dev),
+];
+
+/// What the chooser chooses the build of: Home's selected profile, or the New and Edit profile
+/// dialog's pending choice.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Chooses {
+    Profile,
+    Dialog,
+}
+
+/// What a row of the chooser was picked for.
+enum Pick {
+    /// Follow the channel's newest build.
+    Follow(instances::Channel),
+    /// Keep one build.
+    Keep(String),
+}
+
+/// What the chooser shows about the choice it is for.
+struct Facts {
+    /// The build kept, if any.
+    pinned: Option<String>,
+    /// The channel followed (its Newest is ticked while nothing is pinned).
+    channel: instances::Channel,
+    /// The row with the filled radio.
+    marked: Option<instances::Channel>,
+    /// The channel of the build in use, whose row needs no press.
+    current: Option<instances::Channel>,
+    /// The build that plays now, shown on the current row.
+    playing_target: Option<String>,
+    /// A pack plays its own mods: nothing is chosen.
+    locked: bool,
+}
+
+/// Where the menu is, and how much room the submenu has. In Home it is in window coordinates,
+/// with the window's size to keep the submenu inside; in the dialog it is relative to the field's
+/// parent, and the submenu always opens to the right.
+struct Place {
+    left: f32,
+    top: f32,
+    width: f32,
+    window: Option<(f32, f32)>,
+}
+
 /// Which channel's submenu is open, and where the pointer is.
 #[derive(Default)]
 pub(super) struct Sub {
@@ -75,12 +124,9 @@ impl Launcher {
         self.choose_build(target, BuildChoice::Follow(channel));
     }
 
-    pub(super) fn build_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        use instances::Channel;
-        let Some(instance) = self.selected_instance() else {
-            return div().id("alt-build");
-        };
-        let p = palette();
+    /// The chooser's own state: which profile it chooses for, and what that profile has now.
+    fn profile_facts(&self) -> Option<Facts> {
+        let instance = self.selected_instance()?;
         let pinned = instance.version.clone();
         let plays = self.version_of(instance).cloned();
         let playing_target = self.profile_target(instance);
@@ -98,131 +144,246 @@ impl Launcher {
         let follows = pinned
             .is_none()
             .then_some(following_now(instance.channel, waits_for_stable));
-        let is_pack = instance.kind == instances::Kind::Pack;
+        Some(Facts {
+            marked: if pinned.is_some() {
+                pinned_channel
+            } else {
+                follows
+            },
+            current: active_channel.filter(|_| plays.is_some()),
+            channel: instance.channel,
+            pinned,
+            playing_target,
+            locked: instance.kind == instances::Kind::Pack,
+        })
+    }
+
+    /// The same facts for the New and Edit profile dialog's pending choice, which has no build
+    /// in use yet.
+    fn dialog_facts(&self) -> Option<Facts> {
+        let d = self.instances.dialog.as_ref()?;
+        let waits_for_stable = d.channel == instances::Channel::Stable && !self.stable_available();
+        let pinned_channel = d.pin.as_deref().and_then(instances::Channel::of_build);
+        Some(Facts {
+            marked: if d.pin.is_some() {
+                pinned_channel
+            } else {
+                Some(following_now(d.channel, waits_for_stable))
+            },
+            current: None,
+            channel: d.channel,
+            pinned: d.pin.clone(),
+            playing_target: None,
+            locked: false,
+        })
+    }
+
+    /// A pick in the chooser. Home's profile records it (and Play offers to install the build);
+    /// the dialog only sets its own pending choice: nothing switches and nothing downloads.
+    fn build_picked(&mut self, chooses: Chooses, pick: Pick) {
+        match (chooses, pick) {
+            (Chooses::Profile, Pick::Follow(channel)) => self.choose_channel(channel),
+            (Chooses::Profile, Pick::Keep(tag)) => {
+                self.choose_build(tag, sunrise_launcher::browser::sunrise::BuildChoice::Keep)
+            }
+            (Chooses::Dialog, pick) => {
+                if let Some(d) = self.instances.dialog.as_mut().filter(|d| !d.busy) {
+                    match pick {
+                        Pick::Follow(channel) => {
+                            d.channel = channel;
+                            d.pin = None;
+                        }
+                        Pick::Keep(tag) => d.pin = Some(tag),
+                    }
+                    d.menu = None;
+                }
+                self.close_menus();
+            }
+        }
+    }
+
+    /// The dialog's open build menu: the channels, each with its builds in a submenu, hung
+    /// under the field `new-build` (whose parent is `relative`) with the shared dropdown's
+    /// backdrop, keys and fade. `close` is the dialog's way of closing its menu.
+    pub(crate) fn dialog_build_menu(
+        &mut self,
+        close: crate::widgets::dropdown::Close,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let Some(facts) = self.dialog_facts() else {
+            return Vec::new();
+        };
+        let open = self.ui.sheets.build_sub.open;
+        let rows: Vec<AnyElement> = CHANNELS
+            .iter()
+            .map(|&(id, channel)| {
+                self.build_row(Chooses::Dialog, &facts, id, channel, open, cx)
+                    .into_any_element()
+            })
+            .collect();
+        let count = rows.len();
+        let mut layers: Vec<AnyElement> = crate::widgets::dropdown::layer(
+            &SharedString::from("new-build"),
+            rows,
+            count,
+            None,
+            Some(MENU_WIDTH),
+            close,
+        )
+        .into_iter()
+        .map(IntoElement::into_any_element)
+        .collect();
+        let submenu = open.and_then(|channel| {
+            let index = CHANNELS.iter().position(|&(_, c)| c == channel)?;
+            let place = Place {
+                left: 0.,
+                top: crate::tokens::FIELD + crate::widgets::dropdown::GAP,
+                width: MENU_WIDTH,
+                window: None,
+            };
+            self.build_submenu(Chooses::Dialog, &facts, channel, index, place, cx)
+        });
+        // Above the menu's own layer.
+        layers.extend(submenu.map(|sub| gpui::deferred(sub).with_priority(11).into_any_element()));
+        layers
+    }
+
+    /// One channel's row: its radio, name and build, the arrow when it has builds to pick from.
+    fn build_row(
+        &self,
+        chooses: Chooses,
+        facts: &Facts,
+        id: &'static str,
+        channel: instances::Channel,
+        open: Option<instances::Channel>,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let p = palette();
+        // The row of the build in use is the one marked: the channel it follows, or the
+        // channel of the build it is pinned to.
+        let selected = facts.marked == Some(channel);
+        let pinned_here = selected && facts.pinned.is_some();
+        // Updating a channel already in use is the job of Update game, not this row.
+        let current = selected && !pinned_here && facts.current == Some(channel);
+        let target = self.channel_switch_target(channel);
+        let tag = if current {
+            facts.playing_target.as_ref()
+        } else {
+            target
+        };
+        let age: String = match (&facts.pinned, pinned_here) {
+            (Some(pin), true) => self.version_label(pin),
+            _ => match tag {
+                Some(tag) => self
+                    .build_age(tag)
+                    .or_else(|| channel_build(tag).map(|(_, version)| version))
+                    .unwrap_or_default(),
+                None => tr("none yet").into(),
+            },
+        };
+        let unavailable = facts.locked || target.is_none();
+        let has_choices = !facts.locked && !self.profile_build_choices(channel).is_empty();
+        div()
+            .id(id)
+            .reach()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .h(px(ROW_HEIGHT))
+            .px(px(8.))
+            .rounded(crate::tokens::r(crate::tokens::R_SMALL))
+            .cursor_pointer()
+            .text_size(px(tokens::LABEL))
+            .text_color(rgb(p.text))
+            .hover(move |d| d.bg(rgb(p.hover)))
+            .when(open == Some(channel), |d| d.bg(rgb(p.hover)))
+            .child(
+                div()
+                    .flex_none()
+                    .size(px(14.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .border_1()
+                    .border_color(rgb(if selected { p.accent } else { p.muted }))
+                    .when(selected, |d| {
+                        d.bg(rgb(p.accent))
+                            .child(div().size(px(6.)).rounded_full().bg(rgb(p.accent_ink)))
+                    }),
+            )
+            .child(div().flex_none().child(channel_name(channel)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(tokens::SMALL))
+                    .text_color(rgb(p.muted))
+                    .child(age),
+            )
+            .children(pinned_here.then(|| {
+                div()
+                    .flex_none()
+                    .text_size(px(tokens::SMALL))
+                    .text_color(rgb(p.muted))
+                    .child(tr("Pinned"))
+            }))
+            .children(has_choices.then(|| {
+                crate::glass_ui::icon(
+                    "arrow-right-01",
+                    14.,
+                    rgb(if open == Some(channel) {
+                        p.text
+                    } else {
+                        p.muted
+                    })
+                    .into(),
+                )
+            }))
+            .when(unavailable, |d| d.opacity(0.5))
+            .when(unavailable || current, |d| {
+                d.cursor_default().tab_stop(false)
+            })
+            .when(!unavailable && !current, |d| {
+                d.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.build_picked(chooses, Pick::Follow(channel));
+                    cx.notify();
+                }))
+            })
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                if !*hovered {
+                    this.build_sub_row_left(channel, cx);
+                } else if has_choices {
+                    this.build_sub_enter(channel, cx);
+                } else {
+                    this.build_sub_close_now(channel, cx);
+                }
+            }))
+    }
+
+    pub(super) fn build_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let Some(facts) = self.profile_facts() else {
+            return div().id("alt-build");
+        };
         let (left, top) = self.ui.home.chooser_at();
         let width = MENU_WIDTH.min(self.window_width - 24.);
         let left = left.min(self.window_width - width - 12.).max(12.);
         let open = self.ui.sheets.build_sub.open;
-        let channels = [
-            ("alt-build-stable", Channel::Stable),
-            ("alt-build-nightly", Channel::Nightly),
-            ("alt-build-dev", Channel::Dev),
-        ];
         let mut rows = div().flex().flex_col().gap(px(1.));
-        for (id, channel) in channels {
-            // The row of the build in use is the one marked: the channel it follows, or the
-            // channel of the build it is pinned to.
-            let selected = if pinned.is_some() {
-                pinned_channel == Some(channel)
-            } else {
-                follows == Some(channel)
-            };
-            let pinned_here = selected && pinned.is_some();
-            // Updating a channel already in use is the job of Update game, not this row.
-            let current =
-                selected && !pinned_here && active_channel == Some(channel) && plays.is_some();
-            let target = self.channel_switch_target(channel);
-            let tag = if current {
-                playing_target.as_ref()
-            } else {
-                target
-            };
-            let age: String = match (&pinned, pinned_here) {
-                (Some(pin), true) => self.version_label(pin),
-                _ => match tag {
-                    Some(tag) => self
-                        .build_age(tag)
-                        .or_else(|| channel_build(tag).map(|(_, version)| version))
-                        .unwrap_or_default(),
-                    None => tr("none yet").into(),
-                },
-            };
-            let unavailable = is_pack || target.is_none();
-            let has_choices = !is_pack && !self.profile_build_choices(channel).is_empty();
-            rows = rows.child(
-                div()
-                    .id(id)
-                    .reach()
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .h(px(ROW_HEIGHT))
-                    .px(px(8.))
-                    .rounded(crate::tokens::r(crate::tokens::R_SMALL))
-                    .cursor_pointer()
-                    .text_size(px(tokens::LABEL))
-                    .text_color(rgb(p.text))
-                    .hover(move |d| d.bg(rgb(p.hover)))
-                    .when(open == Some(channel), |d| d.bg(rgb(p.hover)))
-                    .child(
-                        div()
-                            .flex_none()
-                            .size(px(14.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded_full()
-                            .border_1()
-                            .border_color(rgb(if selected { p.accent } else { p.muted }))
-                            .when(selected, |d| {
-                                d.bg(rgb(p.accent))
-                                    .child(div().size(px(6.)).rounded_full().bg(rgb(p.accent_ink)))
-                            }),
-                    )
-                    .child(div().flex_none().child(channel_name(channel)))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(tokens::SMALL))
-                            .text_color(rgb(p.muted))
-                            .child(age),
-                    )
-                    .children(pinned_here.then(|| {
-                        div()
-                            .flex_none()
-                            .text_size(px(tokens::SMALL))
-                            .text_color(rgb(p.muted))
-                            .child(tr("Pinned"))
-                    }))
-                    .children(has_choices.then(|| {
-                        crate::glass_ui::icon(
-                            "arrow-right-01",
-                            14.,
-                            rgb(if open == Some(channel) {
-                                p.text
-                            } else {
-                                p.muted
-                            })
-                            .into(),
-                        )
-                    }))
-                    .when(unavailable, |d| d.opacity(0.5))
-                    .when(unavailable || current, |d| {
-                        d.cursor_default().tab_stop(false)
-                    })
-                    .when(!unavailable && !current, |d| {
-                        d.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.choose_channel(channel);
-                            cx.notify();
-                        }))
-                    })
-                    .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                        if !*hovered {
-                            this.build_sub_row_left(channel, cx);
-                        } else if has_choices {
-                            this.build_sub_enter(channel, cx);
-                        } else {
-                            this.build_sub_close_now(channel, cx);
-                        }
-                    })),
-            );
+        for (id, channel) in CHANNELS {
+            rows = rows.child(self.build_row(Chooses::Profile, &facts, id, channel, open, cx));
         }
         let submenu = open.and_then(|channel| {
-            let index = channels.iter().position(|(_, c)| *c == channel)?;
-            self.build_submenu(channel, index, (left, top), width, cx)
+            let index = CHANNELS.iter().position(|&(_, c)| c == channel)?;
+            let place = Place {
+                left,
+                top,
+                width,
+                window: Some((self.window_width, self.window_height)),
+            };
+            self.build_submenu(Chooses::Profile, &facts, channel, index, place, cx)
         });
         let body = menu_card()
             .id("alt-build-body")
@@ -327,31 +488,39 @@ impl Launcher {
     /// opens from, to its right, or to its left when there is no room.
     fn build_submenu(
         &self,
+        chooses: Chooses,
+        facts: &Facts,
         channel: instances::Channel,
         index: usize,
-        (left, top): (f32, f32),
-        width: f32,
+        place: Place,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        use sunrise_launcher::browser::sunrise::BuildChoice;
         let p = palette();
-        let instance = self.selected_instance()?;
-        let pinned = instance.version.clone();
+        let pinned = facts.pinned.clone();
         // "Newest" heads the list: it follows the channel, so a long list never has to be read.
-        let follows_this = pinned.is_none() && instance.channel == channel;
+        let follows_this = pinned.is_none() && facts.channel == channel;
         let tags = self.profile_build_choices(channel);
         if tags.is_empty() {
             return None;
         }
         let high = ((tags.len() + 1) as f32 * (ROW_HEIGHT + 1.) + 15.).min(SUB_MAX);
-        // The card's border and padding sit above its first row.
-        let row_top = top + 5. + index as f32 * (ROW_HEIGHT + 1.);
-        let at = (row_top - 5.).min(self.window_height - high - 12.).max(12.);
-        let beside = left + width + SUB_GAP;
-        let (at_left, slide) = if beside + SUB_WIDTH <= self.window_width - 8. {
-            (beside, -SLIDE)
-        } else {
-            ((left - SUB_GAP - SUB_WIDTH).max(8.), SLIDE)
+        let (at, at_left, slide) = match place.window {
+            Some((window_width, window_height)) => {
+                // The card's border and padding sit above its first row.
+                let row_top = place.top + 5. + index as f32 * (ROW_HEIGHT + 1.);
+                let at = (row_top - 5.).min(window_height - high - 12.).max(12.);
+                let beside = place.left + place.width + SUB_GAP;
+                if beside + SUB_WIDTH <= window_width - 8. {
+                    (at, beside, -SLIDE)
+                } else {
+                    (at, (place.left - SUB_GAP - SUB_WIDTH).max(8.), SLIDE)
+                }
+            }
+            None => (
+                place.top + index as f32 * (ROW_HEIGHT + 1.),
+                place.left + place.width + SUB_GAP,
+                -SLIDE,
+            ),
         };
         let mut list = div()
             .id("alt-build-sub-list")
@@ -391,7 +560,7 @@ impl Launcher {
                             .then(|| crate::glass_ui::icon("tick-02", 16., rgb(p.accent).into())),
                     )
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.choose_channel(channel);
+                        this.build_picked(chooses, Pick::Follow(channel));
                         cx.notify();
                     })),
             )
@@ -440,7 +609,7 @@ impl Launcher {
                         on.then(|| crate::glass_ui::icon("tick-02", 16., rgb(p.accent).into())),
                     )
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.choose_build(pick.clone(), BuildChoice::Keep);
+                        this.build_picked(chooses, Pick::Keep(pick.clone()));
                         cx.notify();
                     })),
             );

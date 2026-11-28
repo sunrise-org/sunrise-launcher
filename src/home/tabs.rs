@@ -90,8 +90,8 @@ const WORLDS_PICK: usize = 3;
 impl Tab {
     /// In the order the profile's tabs stand under its banner.
     const ALL: [Self; 6] = [
-        Self::Mods,
         Self::Worlds,
+        Self::Mods,
         Self::Packs,
         Self::Shaders,
         Self::Servers,
@@ -297,7 +297,11 @@ impl Launcher {
         let check = active
             .collection()
             .filter(|_| searchable)
-            .map(|collection| self.update_check_button(collection, cx));
+            .map(|collection| self.update_check_button(collection, cx))
+            // On Servers, the same place holds Refresh.
+            .or_else(|| {
+                (searchable && active == Tab::Servers).then(|| self.servers_refresh_button(cx))
+            });
         let bar = self.ui.home.tabs.bar.take();
         let menu = self.home_item_menu(active, cx);
         let view = &self.ui.home.tabs.views[active.index()];

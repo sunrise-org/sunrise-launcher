@@ -19,7 +19,7 @@ const LABELS: [&str; 8] = [
 ];
 
 /// Option `n` of [`LABELS`].
-fn slot(options: &mut CopyOptions, n: usize) -> &mut bool {
+pub(super) fn slot(options: &mut CopyOptions, n: usize) -> &mut bool {
     match n {
         0 => &mut options.play_time,
         1 => &mut options.worlds,
@@ -32,7 +32,7 @@ fn slot(options: &mut CopyOptions, n: usize) -> &mut bool {
     }
 }
 
-fn is_on(options: CopyOptions, n: usize) -> bool {
+pub(super) fn is_on(options: CopyOptions, n: usize) -> bool {
     let mut options = options;
     *slot(&mut options, n)
 }

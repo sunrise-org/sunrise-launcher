@@ -1,33 +1,9 @@
-//! Settings › Appearance: how a theme's colours are shown outside the editor: a thin strip in
-//! the library's rows, and in the import and export sheets a small mock of a window in them
-//! over all nine colours as swatches.
+//! Settings › Appearance: how a theme's colours are shown outside the editor: in the import and
+//! export sheets a small mock of a window in them over all nine colours as swatches, and the
+//! swatches alone in the current theme's bar.
 use super::*;
 use sunrise_launcher::theme_files::Roles;
 use sunrise_launcher::themes::library::{self, SLOTS};
-
-/// A theme's colours side by side: the page, the sidebar, the cards, the text, the accent and
-/// the danger colour.
-pub(super) fn strip(roles: &Roles) -> Div {
-    let band = |colour: u32| div().w(px(14.)).h(px(22.)).bg(rgb(colour));
-    div()
-        .flex()
-        .flex_none()
-        .overflow_hidden()
-        .rounded(tokens::r(tokens::R_SMALL))
-        .border_1()
-        .border_color(rgb(palette().line))
-        .children(
-            [
-                roles.background,
-                roles.chrome,
-                roles.card,
-                roles.text,
-                roles.accent,
-                roles.danger,
-            ]
-            .map(band),
-        )
-}
 
 /// A theme as a small window in its own colours: the sidebar, a card with a name, a muted line
 /// and a button in the accent, a line of success and danger.
@@ -90,7 +66,7 @@ fn mock(roles: &Roles) -> Div {
 }
 
 /// The nine colours as swatches in the editor's order, each named by its tooltip.
-fn swatches(id: SharedString, roles: &Roles) -> Div {
+pub(super) fn swatches(id: SharedString, roles: &Roles) -> Div {
     let mut row = div().flex().flex_wrap().gap(px(4.));
     for (i, slot) in SLOTS.iter().enumerate() {
         let colour = (slot.get)(roles);

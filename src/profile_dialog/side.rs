@@ -3,11 +3,13 @@
 use super::*;
 use crate::sheets::channel_name;
 use crate::widgets::button::{button, Look, Size, Style};
+use crate::widgets::colour_picker::{self, Spec};
 use crate::widgets::focus::Reach;
 use instances::Icon;
 
-/// The swatches' size: four of them and three 8 px gaps across the pane's 180 px of room.
-const SWATCH: f32 = 39.;
+/// The swatches' size: three of them and two 8 px gaps across the pane's 180 px of room, in
+/// three rows: the Sunrise mark, the seven colours and the custom colour.
+const SWATCH: f32 = 54.;
 
 impl Launcher {
     pub(super) fn profile_side(&mut self, name: &str, cx: &mut Context<Self>) -> Div {
@@ -156,6 +158,7 @@ impl Launcher {
                     })),
             );
         }
+        swatches = swatches.child(self.custom_swatch(icon.as_ref(), cx));
         let picture_button = button(
             "new-picture",
             tr("Use a picture…"),
@@ -216,4 +219,114 @@ impl Launcher {
             )
             .child(content)
     }
+
+    /// The ninth swatch: a rainbow that opens the colour picker, or, while the profile's colour
+    /// is none of the presets, that colour (selected). The popover hangs under it.
+    fn custom_swatch(&mut self, icon: Option<&Icon>, cx: &mut Context<Self>) -> Div {
+        let p = palette();
+        let preset = |c: &str| {
+            sunrise_launcher::themes::Accent::ALL
+                .iter()
+                .any(|a| c.eq_ignore_ascii_case(&format!("#{:06x}", a.rgb())))
+        };
+        let own = match icon {
+            Some(Icon::Colour(c)) if !preset(c) => parse_colour(c),
+            _ => None,
+        };
+        let state = &mut self.instances.picker;
+        let open = state.open;
+        let shown = match icon {
+            Some(Icon::Colour(c)) => parse_colour(c).unwrap_or(p.accent),
+            _ => p.accent,
+        };
+        let swatch = div()
+            .id("new-colour-custom")
+            .reach_edge()
+            .size(px(SWATCH))
+            .rounded(tokens::r(8.))
+            .overflow_hidden()
+            .cursor_pointer()
+            .border_1()
+            .border_color(p.input_edge())
+            .hover(|s| s.border_color(rgb(p.text)))
+            .when(own.is_some() || open, |d| {
+                d.border_2().border_color(rgb(p.text))
+            })
+            .tooltip(crate::glass_ui::tip(tr("Custom colour")))
+            .child(match own {
+                Some(colour) => div().size_full().bg(rgb(colour)),
+                None => rainbow(),
+            })
+            .on_click(cx.listener(|this, _, window, cx| {
+                let start = match this.instances.dialog.as_ref().map(|d| &d.icon) {
+                    Some(Some(Icon::Colour(c))) => parse_colour(c),
+                    _ => None,
+                };
+                if this.instances.dialog.as_ref().is_some_and(|d| !d.busy) {
+                    this.instances
+                        .picker
+                        .open_on(start.unwrap_or(palette().accent), window, cx);
+                }
+                cx.notify();
+            }));
+        let anchor = div().relative().flex_none().size(px(SWATCH)).child(swatch);
+        if !open {
+            return anchor;
+        }
+        state.sync(shown);
+        let (now, before, areas, focus) = state.view(cx);
+        let hex = div()
+            .id("new-colour-hex")
+            .flex()
+            .items_center()
+            .h(px(tokens::CONTROL))
+            .px(px(8.))
+            .rounded(tokens::r(tokens::R_SMALL))
+            .border_1()
+            .border_color(rgb(p.line))
+            .font_family(crate::theme::MONO)
+            .text_size(px(tokens::LABEL))
+            .text_color(rgb(p.muted))
+            .child(format!("#{:06x}", now.to_rgb()));
+        let handlers = colour_picker::handlers(
+            cx.entity(),
+            |this: &mut Launcher| &mut this.instances.picker,
+            |this: &mut Launcher, rgb: u32, _| {
+                if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
+                    d.icon = Some(Icon::Colour(format!("#{rgb:06x}")));
+                    d.picture = Some(None);
+                }
+            },
+        );
+        anchor.children(colour_picker::popover(
+            Spec {
+                id: "new-colour-picker",
+                now,
+                before,
+                drop: SWATCH + 6.,
+                areas: &areas,
+                focus: &focus,
+            },
+            hex,
+            &handlers,
+        ))
+    }
+}
+
+/// `#rrggbb` as `0xRRGGBB`.
+fn parse_colour(text: &str) -> Option<u32> {
+    u32::from_str_radix(text.trim_start_matches('#'), 16).ok()
+}
+
+/// The hue bar's rainbow, filling its parent: six gradients side by side.
+fn rainbow() -> Div {
+    let segment = |k: u32| {
+        let (from, to) = (k as f32 * 60., (k + 1) as f32 * 60.);
+        div().flex_1().h_full().bg(gpui::linear_gradient(
+            90.,
+            gpui::linear_color_stop(rgb(sunrise_launcher::themes::hsv::Hsv::pure(from)), 0.),
+            gpui::linear_color_stop(rgb(sunrise_launcher::themes::hsv::Hsv::pure(to)), 1.),
+        ))
+    };
+    div().size_full().flex().children((0..6).map(segment))
 }

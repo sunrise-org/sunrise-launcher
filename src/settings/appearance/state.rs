@@ -59,6 +59,12 @@ pub(crate) struct State {
     pub(super) dialog_focus: bool,
     /// The library's themes ticked for export, by folder.
     pub(super) ticked: BTreeSet<String>,
+    /// Whether the colour editor is open under the current theme's bar, and when that last
+    /// changed (for the open and close glide).
+    pub(super) colours_open: bool,
+    pub(super) colours_since: Option<std::time::Instant>,
+    /// The built-in theme the colours being edited started from: what Reset goes back to.
+    pub(super) origin: Option<&'static str>,
     /// The folder whose "…" menu is open, and whether Home header's menu is.
     pub(super) more: Option<String>,
     pub(super) header_open: bool,
@@ -109,6 +115,9 @@ impl Default for State {
             dialog_error: None,
             dialog_focus: false,
             ticked: BTreeSet::new(),
+            colours_open: false,
+            colours_since: None,
+            origin: None,
             more: None,
             header_open: false,
             worlds_focus: None,

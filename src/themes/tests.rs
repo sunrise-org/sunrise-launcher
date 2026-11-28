@@ -359,17 +359,116 @@ fn only_a_bounded_still_picture_is_kept_or_shown() {
 }
 
 #[test]
-fn the_light_theme_is_the_only_light_choice() {
-    assert!(is_light(Some("dawn_light")));
-    for id in [None, Some("dawn"), Some("nord"), Some("twilight")] {
+fn daybreak_and_parchment_are_the_only_light_choices() {
+    for id in ["dawn_light", "parchment"] {
+        assert!(is_light(Some(id)), "{id}");
+    }
+    for id in [
+        None,
+        Some("dawn"),
+        Some("nord"),
+        Some("twilight"),
+        Some("midnight"),
+    ] {
         assert!(!is_light(id), "{id:?}");
     }
     for t in THEMES.iter() {
-        assert_eq!(t.is_light(), t.id == "dawn_light", "{}", t.id);
+        let light = t.id == "dawn_light" || t.id == "parchment";
+        assert_eq!(t.is_light(), light, "{}", t.id);
         assert_eq!(t.is_sunrise(), t.id.starts_with("dawn"), "{}", t.id);
     }
     assert_eq!(accent_key(Some("dawn_light")), "dawn_light");
     assert_eq!(own_accent(Some("dawn_light")).rgb(), 0xc2552d);
+}
+
+/// The gallery shows these eight, in this order, under these saved ids.
+#[test]
+fn the_gallery_lists_eight_themes_in_order() {
+    let shown: Vec<(&str, &str)> = GALLERY.iter().map(|t| (t.id, t.name)).collect();
+    assert_eq!(
+        shown,
+        [
+            ("dawn", "Sunrise"),
+            ("midnight", "Midnight"),
+            ("grove", "Grove"),
+            ("amethyst", "Amethyst"),
+            ("ember", "Ember"),
+            ("graphite", "Graphite"),
+            ("parchment", "Parchment"),
+            ("dawn_light", "Daybreak"),
+        ]
+    );
+    for t in GALLERY {
+        assert!(THEMES.iter().any(|known| known.id == t.id), "{}", t.id);
+    }
+    // Sunrise and Daybreak are the palettes they always were.
+    assert_eq!(DAWN_THEME.palette.map(|p| p.page), Some(0x2b2324));
+    assert_eq!(DAWN_LIGHT_THEME.palette.map(|p| p.page), Some(0xf7f1ee));
+}
+
+/// Each new built-in resolves to a palette with its own text, cards and accent (the hexes its
+/// tile is drawn in), and is not one of a player's own-colour themes.
+#[test]
+fn the_new_built_ins_resolve_to_their_colours() {
+    // id, background, sidebar, cards, text, accent
+    let colours = [
+        ("midnight", 0x141a2b, 0x0f1422, 0x1c2438, 0xe8ecf6, 0x6c8cff),
+        ("grove", 0x1a221d, 0x141a16, 0x212b25, 0xe6efe8, 0x6fbf73),
+        ("amethyst", 0x1e1a2b, 0x171421, 0x262137, 0xefeaf8, 0xb18cff),
+        ("ember", 0x1f1715, 0x18110f, 0x2a1e1b, 0xf5e9e3, 0xff7a3d),
+        ("graphite", 0x1c1c1e, 0x141416, 0x252527, 0xededee, 0xd4d4d8),
+        (
+            "parchment",
+            0xfbf7f0,
+            0xf1ebe0,
+            0xffffff,
+            0x2b2824,
+            0x8a5a2b,
+        ),
+    ];
+    for (id, page, side, card, ink, accent) in colours {
+        let Resolved::Builtin(t) = resolve(Some(id)) else {
+            panic!("{id} is not a built-in");
+        };
+        assert_eq!(t.id, id);
+        let p = t.palette.expect("a palette");
+        assert_eq!((p.page, p.side, p.card), (page, side, card), "{id}");
+        assert_eq!(p.ink, ink, "{id}");
+        assert_eq!(p.accent, accent, "{id}");
+        assert_eq!(p.dark, id != "parchment", "{id}");
+        assert_eq!(own_accent(Some(id)).rgb(), accent, "{id}");
+    }
+}
+
+/// A theme saved before the gallery still paints, and the new Midnight is not Midnight Aurora.
+#[test]
+fn the_older_built_ins_still_resolve() {
+    for id in [
+        "twilight",
+        "nord",
+        "taiga",
+        "hypr_neon",
+        "deep_ocean",
+        "autumn_forest",
+        "cherry_blossom",
+        "midnight_aurora",
+        "overworld",
+        "first_light",
+    ] {
+        match resolve(Some(id)) {
+            Resolved::Twilight => assert_eq!(id, "twilight"),
+            Resolved::Builtin(t) => assert_eq!(t.id, id),
+            _ => panic!("{id} no longer resolves"),
+        }
+        if id != "twilight" {
+            assert!(
+                !GALLERY.iter().any(|t| t.id == id),
+                "{id} is in the gallery"
+            );
+        }
+    }
+    let (new, old) = (theme(Some("midnight")), theme(Some("midnight_aurora")));
+    assert_ne!(new.map(|t| t.id), old.map(|t| t.id));
 }
 
 #[test]

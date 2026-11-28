@@ -692,6 +692,7 @@ mod tests {
             include_str!("settings/appearance/rows.rs"),
             include_str!("settings/appearance/colours.rs"),
             include_str!("settings/appearance/theme_library.rs"),
+            include_str!("settings/appearance/tiles.rs"),
             include_str!("settings/game.rs"),
             include_str!("settings/launcher.rs"),
             include_str!("settings/privacy.rs"),

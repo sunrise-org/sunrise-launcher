@@ -3,7 +3,7 @@
 use super::*;
 use crate::widgets::button::{icon_button, Style};
 use crate::widgets::focus::Reach;
-use gpui::{rgb, AnimationExt, AnyElement, App, MouseButton, MouseDownEvent, Window};
+use gpui::{rgb, AnyElement, App, MouseButton, MouseDownEvent, Window};
 use instances::{Icon, Instance, Kind};
 use std::{
     cell::{Cell, RefCell},
@@ -619,21 +619,13 @@ impl Glides {
     /// (a profile moved up or down), those two rows start a glide from where they were, `step` px
     /// per place. Any other change (a profile made, renamed, deleted) snaps, as before.
     fn note(&mut self, ids: &[String], step: f32) {
-        let changed: Vec<usize> = (0..ids.len().min(self.order.len()))
-            .filter(|n| ids[*n] != self.order[*n])
-            .collect();
-        let swapped = ids.len() == self.order.len()
-            && changed.len() == 2
-            && changed[1] == changed[0] + 1
-            && ids[changed[0]] == self.order[changed[1]]
-            && ids[changed[1]] == self.order[changed[0]];
-        if swapped {
+        let swapped = crate::widgets::glide::swapped(&self.order, ids);
+        if let Some((first, second)) = swapped {
             self.moves += 1;
             // The one now above was below, so it starts `step` lower; the other the reverse.
+            self.started.insert(ids[first].clone(), (self.moves, step));
             self.started
-                .insert(ids[changed[0]].clone(), (self.moves, step));
-            self.started
-                .insert(ids[changed[1]].clone(), (self.moves, -step));
+                .insert(ids[second].clone(), (self.moves, -step));
         }
         if self.order != ids {
             self.order = ids.to_vec();
@@ -651,17 +643,11 @@ impl Glides {
         step: f32,
         head: f32,
     ) -> bool {
-        let changed: Vec<usize> = (0..order.len().min(self.groups.len()))
-            .filter(|n| order[*n] != self.groups[*n])
-            .collect();
-        let swapped = order.len() == self.groups.len()
-            && changed.len() == 2
-            && changed[1] == changed[0] + 1
-            && order[changed[0]] == self.groups[changed[1]]
-            && order[changed[1]] == self.groups[changed[0]];
-        if swapped {
+        let swapped = crate::widgets::glide::swapped(&self.groups, order);
+        let moved = swapped.is_some();
+        if let Some((first, second)) = swapped {
             self.moves += 1;
-            let (upper, lower) = (&order[changed[0]], &order[changed[1]]);
+            let (upper, lower) = (&order[first], &order[second]);
             let extent =
                 |group: &String| shown.get(group).map_or(0, |(rows, _)| *rows) as f32 * step + head;
             // The one now above was below, so it starts lower by the other's extent.
@@ -676,25 +662,13 @@ impl Glides {
         if self.groups != order {
             self.groups = order.to_vec();
         }
-        swapped
+        moved
     }
 }
 
-/// `entry` held `from` px off its place at the start of a glide, easing to it; at once under
-/// reduced motion. Layout moves with it, so the row stays clickable and its hover goes along.
-fn glide(entry: Stateful<Div>, id: &str, (moved, from): (usize, f32)) -> AnyElement {
-    let row = div().flex_none().relative().child(entry);
-    // A row that never moved is simply there: an animation on every row would keep the window
-    // drawing frames (and a benchmark counting them) for nothing.
-    if moved == 0 || from == 0. || !crate::motion::arrivals() {
-        return row.into_any_element();
-    }
-    row.with_animation(
-        ElementId::named_usize(SharedString::from(format!("profile-glide-{id}")), moved),
-        crate::motion::eased(sunrise_launcher_theme::MOVE),
-        move |d, progress| d.top(px(from * (1. - progress))),
-    )
-    .into_any_element()
+/// `entry` held `from` px off its place at the start of a glide (`widgets::glide`).
+fn glide(entry: Stateful<Div>, id: &str, started: (usize, f32)) -> AnyElement {
+    crate::widgets::glide::glide(entry, "profile-glide", id, started)
 }
 
 /// A group's rows while the list is built, until its last one is known.

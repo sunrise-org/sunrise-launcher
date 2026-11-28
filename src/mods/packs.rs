@@ -295,8 +295,8 @@ impl Launcher {
                 let (order, file) = (order.clone(), pack.file.clone());
                 div()
                     .flex_none()
-                    .opacity(if ticked.is_empty() { 0. } else { 1. })
-                    .group_hover("alt-pack-row", |s| s.opacity(1.))
+                    // Faint at rest, as Home's cards show theirs, so it can be found.
+                    .opacity(if ticked.is_empty() { 0.45 } else { 1. })
                     .child(
                         checkbox(
                             ElementId::named_usize("alt-pack-check", index),

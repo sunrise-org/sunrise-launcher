@@ -165,6 +165,17 @@ pub fn known_folders(os: Os, f: &Folders) -> Vec<(&'static str, PathBuf)> {
     list
 }
 
+/// Folders of launchers whose profiles can be imported but whose files are no source of the
+/// game itself, so they are searched for nothing else: CurseForge keeps each profile's game
+/// folder under `Instances/`. It has no Linux version.
+pub fn import_only_folders(os: Os, f: &Folders) -> Vec<(&'static str, PathBuf)> {
+    match os {
+        Os::Windows => vec![("CurseForge", f.home.join("curseforge/minecraft"))],
+        Os::MacOs => vec![("CurseForge", f.home.join("Documents/curseforge/minecraft"))],
+        Os::Linux => Vec::new(),
+    }
+}
+
 /// Folders that hold only a launcher's Java runtimes, not a game directory: searched for
 /// Java and nowhere else (never the default game folder or an import source). The Microsoft
 /// Store's Minecraft Launcher keeps its runtimes under its package's local cache.

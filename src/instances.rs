@@ -21,6 +21,7 @@ mod create;
 mod delete;
 mod deletion_recovery;
 mod edit;
+mod foreign;
 mod groups;
 pub(crate) mod lifecycle;
 mod list;
@@ -33,6 +34,10 @@ pub use create::*;
 pub use delete::*;
 pub use deletion_recovery::{interrupted_deletions, InterruptedDeletion};
 pub use edit::*;
+pub use foreign::{
+    create_importing, find_import, import_sources, import_sources_in, read_import_folder,
+    Contents as ImportContents, Foreign, Progress as ImportProgress,
+};
 pub use groups::{
     collapse_group, fold_profiles, group_choices, group_names, move_group, move_group_options,
     rename_group, ungroup_group, GroupChoices,

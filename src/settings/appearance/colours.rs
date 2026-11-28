@@ -1,46 +1,31 @@
-//! Settings › Appearance: the look (Sunrise or Light), the colour editor and Home's header.
+//! Settings › Appearance: the current theme's bar, the colour editor it opens and Home's header.
 //!
 //! Every colour of a theme is one row of the editor: its swatch and its hex. Pressing the row
 //! opens a colour picker under the swatch (`widgets::colour_picker`), and a change is painted as
 //! soon as it is made, dragged or typed. What a row does comes from the table of colours,
 //! `themes::library::SLOTS`.
 use super::inputs::HEX;
+use super::preview::swatches;
 use super::*;
 use crate::widgets::button::secondary;
-use crate::widgets::choice::choices;
 use crate::widgets::colour_picker::{self, Handlers, Part, Spec};
 use crate::widgets::dropdown::{Dropdown, Item};
+use crate::widgets::focus::c;
 use gpui::SharedString;
 use std::rc::Rc;
-use sunrise_launcher::theme_files;
+use sunrise_launcher::appearance;
 use sunrise_launcher::themes::hsv::Hsv;
 use sunrise_launcher::themes::library::SLOTS;
+use sunrise_launcher::themes::{self, library, Resolved};
 
 /// A colour's swatch in the editor.
 const CHIP: f32 = 22.;
+/// A pane narrower than this has its colours in one column, and its tiles two across.
+const NARROW: f32 = 640.;
 /// How far under a swatch its picker starts.
 const DROP: f32 = CHIP + 6.;
 
 impl Launcher {
-    /// Sunrise's night or its day: the two looks every theme starts from.
-    pub(super) fn look_row(&mut self, cx: &mut Context<Self>) -> Div {
-        let light = self.editor_roles().light;
-        let options: Vec<(bool, SharedString)> =
-            vec![(false, tr("Sunrise").into()), (true, tr("Light").into())];
-        let this = cx.entity();
-        let pick = choices("alt-look", &options, light, move |light, window, cx| {
-            this.update(cx, |this, cx| {
-                this.look_pick(light, window);
-                cx.notify();
-            })
-        });
-        row(
-            tr("Look"),
-            tr("Sunrise's night or its day. Choosing one puts the colours below back to its own."),
-            div().child(pick),
-        )
-    }
-
     /// Where Home's header stands over the banner.
     pub(super) fn header_row(&mut self, cx: &mut Context<Self>) -> Div {
         use sunrise_launcher::backend::HeaderAlign;
@@ -93,9 +78,21 @@ impl Launcher {
         )
     }
 
-    /// The colour editor: a row per colour of a theme, the accent's presets under its row, and
-    /// the way back to Sunrise's own colours.
-    pub(super) fn colours_row(&mut self, window: &Window, cx: &mut Context<Self>) -> Div {
+    /// What the current theme is called: a built-in's name, a saved theme's, or "Custom" for the
+    /// working copy the editor paints.
+    pub(super) fn current_name(&self) -> String {
+        match themes::resolve(self.settings.theme.as_deref()) {
+            Resolved::Twilight => tr(themes::TWILIGHT_NAME).to_string(),
+            Resolved::Builtin(theme) => tr(theme.name).to_string(),
+            Resolved::Local(local) if local.slug == library::WORKING => tr("Custom").to_string(),
+            Resolved::Local(local) => local.name,
+            Resolved::Missing => tr(themes::DAWN_THEME.name).to_string(),
+        }
+    }
+
+    /// The current theme's bar: its nine colours, its name, Share and Customize colours, and
+    /// under them, while it is open, the colour editor.
+    pub(super) fn current_card(&mut self, window: &Window, cx: &mut Context<Self>) -> Div {
         // Leaving the hex field takes what was typed in it; the picker stays open.
         let state = &mut self.ui.settings.appearance;
         let focus = state
@@ -108,45 +105,181 @@ impl Launcher {
             self.hex_apply(window);
             cx.notify();
         }
+        let open = self.ui.settings.appearance.colours_open;
         let roles = self.editor_roles();
-        let mut lines = div().flex().flex_col().gap(px(8.));
-        for (i, slot) in SLOTS.iter().enumerate() {
-            let shown = (slot.get)(&roles);
-            lines = lines.child(self.colour_line(i, slot.label, shown, window, cx));
-        }
-        let custom = self
-            .settings
-            .theme
-            .as_deref()
-            .is_some_and(|id| id.starts_with(theme_files::PREFIX));
-        let label = if roles.light {
-            tr("Reset to Light")
-        } else {
-            tr("Reset to Sunrise")
-        };
-        let reset = secondary("alt-colours-reset", label);
-        let reset = if custom {
-            reset.on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                let light = this.editor_roles().light;
-                this.look_pick(light, window);
+        let share = secondary("alt-current-share", tr("Share")).on_click(cx.listener(
+            |this, _: &ClickEvent, _, cx| {
+                this.share_current();
                 cx.notify();
-            }))
-        } else {
-            off(reset)
-        };
-        let head = self.wide_row(
-            tr("Colours"),
-            tr("Click a colour to pick it or type its hex. Every change is painted as you make it."),
-            div().child(reset),
+            },
+        ));
+        let chevron = crate::widgets::motion_bits::chevron(
+            "alt-colours-chevron",
+            open,
+            14.,
+            c(palette().text),
         );
+        let customize = secondary("alt-colours-customize", tr("Customize colours"))
+            .gap(px(6.))
+            .child(chevron)
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.colours_toggle(window);
+                cx.notify();
+            }));
+        let words = div()
+            .flex_1()
+            .min_w(px(240.))
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(self.current_name()),
+                    )
+                    .child(hint(tr("Changing a colour makes it your own copy."))),
+            )
+            .child(swatches(SharedString::from("alt-current-swatch"), &roles));
+        let head = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_x(px(16.))
+            .gap_y(px(10.))
+            .child(words)
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(share)
+                    .child(customize),
+            );
+        let panel = self.colours_panel(window, cx);
         div()
             .flex()
             .flex_col()
             .gap(px(12.))
+            .p(px(16.))
+            .rounded(crate::tokens::r(crate::tokens::R_CARD))
+            .border_1()
+            .border_color(palette().rule())
+            .bg(palette().card())
             .child(head)
-            .child(lines)
+            .children(panel)
     }
 
+    /// Opens or closes the colour editor; a picker left open closes with it.
+    fn colours_toggle(&mut self, window: &Window) {
+        self.colour_commit(window);
+        let state = &mut self.ui.settings.appearance;
+        state.colours_open = !state.colours_open;
+        state.colours_since = Some(std::time::Instant::now());
+    }
+
+    /// Back to the built-in theme the colours being edited came from (Sunrise's night or day
+    /// when it isn't known). Dead until the colours are the player's own copy.
+    fn reset_button(
+        &mut self,
+        light: bool,
+        origin: Option<&'static str>,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let working = self.settings.theme.as_deref() == Some(library::WORKING_ID);
+        let target = origin.unwrap_or(if light {
+            themes::DAWN_LIGHT_THEME.id
+        } else {
+            themes::DAWN_THEME.id
+        });
+        let named = themes::theme(Some(target)).map_or(themes::DAWN_THEME.name, |t| t.name);
+        let label = trf("Reset to {name}", &[("name", tr(named))]);
+        let reset = secondary("alt-colours-reset", label);
+        if working {
+            reset.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.appearance_change(|s| appearance::select_theme(s, target), window);
+                cx.notify();
+            }))
+        } else {
+            off(reset)
+        }
+    }
+
+    /// The colour editor: a row per colour in a grid (one column when the pane is narrow), and
+    /// the way back to the built-in theme the colours came from. It opens and closes by its
+    /// height, at once under reduced motion.
+    fn colours_panel(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        use gpui::AnimationExt as _;
+        let quick = sunrise_launcher_theme::QUICK;
+        let state = &self.ui.settings.appearance;
+        let open = state.colours_open;
+        let glide = state
+            .colours_since
+            .filter(|since| !crate::motion::still() && since.elapsed() < quick.duration());
+        if !open && glide.is_none() {
+            return None;
+        }
+        let origin = state.origin;
+        let cols: u16 = if self.settings_pane_width() < NARROW {
+            1
+        } else {
+            3
+        };
+        let roles = self.editor_roles();
+        let mut lines = div().grid().grid_cols(cols).gap_x(px(24.)).gap_y(px(4.));
+        for (i, slot) in SLOTS.iter().enumerate() {
+            lines = lines.child(self.colour_line(i, slot.label, (slot.get)(&roles), window, cx));
+        }
+        let reset = self.reset_button(roles.light, origin, cx);
+        let head = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .justify_between()
+            .gap(px(10.))
+            .child(hint(tr(
+                "Click a colour to pick it or type its hex. Every change is painted as you make it.",
+            )))
+            .child(reset);
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .pt(px(12.))
+            .border_t_1()
+            .border_color(palette().rule())
+            .child(head)
+            .child(lines);
+        let Some(since) = glide else {
+            return Some(body.into_any_element());
+        };
+        // The height the editor comes to, near enough: its head and the rows of colours.
+        let rows = (SLOTS.len() as f32 / f32::from(cols)).ceil();
+        let full = 90. + rows * 30. + (rows - 1.) * 4.;
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        let start = *START.get_or_init(std::time::Instant::now);
+        let key = since.saturating_duration_since(start).as_micros() as usize;
+        Some(
+            body.with_animation(
+                ElementId::named_usize("alt-colours-glide", key),
+                crate::motion::eased(quick),
+                move |d, p| {
+                    let shown = if open { p } else { 1. - p };
+                    if open && p >= 1. {
+                        d
+                    } else {
+                        d.overflow_hidden().max_h(px(full * shown)).opacity(shown)
+                    }
+                },
+            )
+            .into_any_element(),
+        )
+    }
     /// One colour: its swatch, its name and its hex. Pressing the row opens its picker.
     fn colour_line(
         &mut self,
@@ -177,7 +310,7 @@ impl Launcher {
             );
         let hex = div()
             .flex_none()
-            .w(px(130.))
+            .w(px(66.))
             .font_family(theme::MONO)
             .text_size(px(tokens::LABEL))
             .text_color(rgb(palette().muted))
@@ -187,6 +320,8 @@ impl Launcher {
             .flex()
             .items_center()
             .gap(px(12.))
+            .min_w_0()
+            .py(px(4.))
             .cursor_pointer()
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.colour_start(i, window, cx);

@@ -43,7 +43,7 @@ fn every_built_in_theme_can_be_chosen_and_brings_its_own_accent() {
         assert_eq!(effective_id(&settings), theme.id);
         assert_eq!(settings.accent, theme.accent.accent(), "{}", theme.id);
     }
-    assert_eq!(themes::THEMES.len(), 11);
+    assert_eq!(themes::THEMES.len(), 17);
     // Twilight is the violet one, and an id from another launcher falls to it.
     select_theme(&mut settings, "twilight").unwrap();
     assert_eq!(
@@ -81,7 +81,20 @@ fn a_choice_that_is_not_there_changes_nothing_and_lists_what_is() {
     ] {
         let said = select_theme(&mut settings, wrong).unwrap_err();
         assert_eq!(saved(&settings), before, "{wrong}");
-        for id in ["twilight", "dawn", "nord", "taiga", "local:tidepool"] {
+        for id in [
+            "twilight",
+            "dawn",
+            "dawn_light",
+            "midnight",
+            "grove",
+            "amethyst",
+            "ember",
+            "graphite",
+            "parchment",
+            "nord",
+            "taiga",
+            "local:tidepool",
+        ] {
             assert!(said.contains(id), "{wrong}: {said}");
         }
         assert!(

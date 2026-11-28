@@ -65,6 +65,8 @@ pub(super) enum Field {
     InstanceGroup,
     /// The new-profile dialog's "New group" popup.
     NewGroup,
+    /// The new-profile dialog's search over the profiles of other launchers.
+    ImportSearch,
     /// The Launch panel's (`launch_page.rs`).
     PreLaunch,
     Wrapper,

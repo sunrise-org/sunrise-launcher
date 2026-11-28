@@ -6,6 +6,7 @@ use crate::{instances_page::InstanceDialog, paint::palette, servers_page::Field}
 use gpui::rgb;
 use instances::{Channel, Instance};
 
+pub(crate) mod another_launcher;
 mod copy_box;
 mod menus;
 mod side;
@@ -22,6 +23,7 @@ impl Launcher {
         self.instances.dialog = Some(InstanceDialog {
             editing: None,
             copy: None,
+            import: None,
             icon: None,
             picture: None,
             error: None,
@@ -34,7 +36,6 @@ impl Launcher {
             },
             discarding: false,
             menu: None,
-            pinning: false,
             naming_group: false,
         });
         cx.notify();
@@ -54,6 +55,7 @@ impl Launcher {
         self.instances.dialog = Some(InstanceDialog {
             editing: Some(target.id.clone()),
             copy: None,
+            import: None,
             icon: target.icon.clone(),
             picture: None,
             error: None,
@@ -62,7 +64,6 @@ impl Launcher {
             channel: target.channel,
             discarding: false,
             menu: None,
-            pinning: false,
             naming_group: false,
         });
         cx.notify();
@@ -82,7 +83,8 @@ impl Launcher {
         let p = palette();
         let name = self.servers.value(Field::InstanceName).trim().to_owned();
         // An edit saves only once something in it changed, as its Save says.
-        let ready = !name.is_empty() && !busy && (!editing || self.sheet_changed());
+        let picked = d.import.as_ref().is_none_or(|i| i.picked.is_some());
+        let ready = !name.is_empty() && !busy && picked && (!editing || self.sheet_changed());
         let title = if editing {
             tr("Edit profile")
         } else if copying {
@@ -107,6 +109,7 @@ impl Launcher {
                     .child(self.profile_start_row(cx).flex_1().min_w_0()),
             );
             body = body.children(self.copy_box(cx));
+            body = body.children(self.import_body(cx));
         }
         // A new profile or a copy keeps one height whatever is chosen: tall enough for the copy
         // box, so the dialog doesn't jump as the choices change. The footer stays at the bottom.

@@ -16,6 +16,8 @@ pub(super) struct InstanceDialog {
     pub(super) editing: Option<String>,
     /// The selected source and build shown when copying its worlds, options and packs.
     pub(super) copy: Option<instances::CopyPreview>,
+    /// Starting from another launcher's profile instead (`profile_dialog/another_launcher.rs`).
+    pub(super) import: Option<crate::profile_dialog::another_launcher::ImportState>,
     pub(super) icon: Option<Icon>,
     /// A picture chosen since it opened (None in it: the instance's is removed on Save).
     pub(super) picture: Option<Option<instance_icons::Chosen>>,
@@ -29,8 +31,6 @@ pub(super) struct InstanceDialog {
     pub(super) discarding: bool,
     /// The dropdown open under one of its fields.
     pub(super) menu: Option<DialogMenu>,
-    /// The version list under Game build is showing.
-    pub(super) pinning: bool,
     /// The "New group" popup is open over the dialog.
     pub(super) naming_group: bool,
 }
@@ -48,6 +48,10 @@ pub(super) enum DialogMenu {
 pub(super) struct Instances {
     pub(super) list: Vec<Instance>,
     pub(super) dialog: Option<InstanceDialog>,
+    /// The profile dialog's custom colour picker.
+    pub(super) picker: crate::widgets::colour_picker::PickerState,
+    /// A profile being made from another launcher's, while it copies (the status strip shows it).
+    pub(super) importing: Option<crate::profile_dialog::another_launcher::Importing>,
     /// Textures, pictures and marks as images, by name and size in device pixels.
     pub(super) icons: HashMap<(String, u32), Option<Arc<RenderImage>>>,
 }
@@ -204,6 +208,9 @@ impl Launcher {
     pub(super) fn save_instance(&mut self, cx: &mut Context<Self>) {
         // The rename-a-group box shares the group field; its Enter lands here.
         if self.commit_group_name(cx) {
+            return;
+        }
+        if self.save_import(cx) {
             return;
         }
         let edited_id = self

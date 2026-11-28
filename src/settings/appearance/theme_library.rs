@@ -1,15 +1,10 @@
-//! Settings › Appearance: the theme library: the themes a player saved or imported, as compact
-//! rows. Saving, renaming, importing and exporting open a sheet (`dialogs`), and Delete needs no
-//! asking: the theme's folder goes to the system's trash.
-use super::preview::strip;
-use super::state::Dialog;
+//! Settings › Appearance: the "…" menu of a saved theme's tile: Rename…, Duplicate, Share… and
+//! Delete. Renaming and sharing open a sheet (`dialogs`), and Delete needs no asking: the
+//! theme's folder goes to the system's trash.
 use super::*;
-use crate::widgets::button::{icon_button_opening, secondary, Style};
-use crate::widgets::check::{checkbox, Tick};
+use crate::widgets::button::{icon_button_opening, Style};
 use crate::widgets::focus::c;
 use gpui::SharedString;
-use sunrise_launcher::theme_files::{self, Local};
-use sunrise_launcher::themes::library;
 
 /// The "…" menu's width, and how far under its button it starts.
 const MENU_WIDTH: f32 = 180.;
@@ -31,7 +26,7 @@ const MENU: [(&str, &str, &str); 4] = [
     (
         "alt-theme-export",
         "upload-04",
-        crate::i18n::tr_key("Export…"),
+        crate::i18n::tr_key("Share…"),
     ),
     (
         "alt-theme-delete",
@@ -41,117 +36,15 @@ const MENU: [(&str, &str, &str); 4] = [
 ];
 
 impl Launcher {
-    /// The library: its buttons and a row per saved theme.
-    pub(super) fn library_row(&mut self, cx: &mut Context<Self>) -> Div {
-        let saved = library::listed(&theme_files::loaded());
-        let painted = library::current(&self.settings);
-        let ticked: Vec<String> = saved
-            .iter()
-            .filter(|local| self.ui.settings.appearance.ticked.contains(&local.slug))
-            .map(|local| local.slug.clone())
-            .collect();
-        let save = secondary("alt-library-save", tr("Save as theme…")).on_click(cx.listener(
-            |this, _: &ClickEvent, _, cx| {
-                this.dialog_open(Dialog::Save);
-                cx.notify();
-            },
-        ));
-        let import = secondary("alt-library-import", tr("Import…")).on_click(cx.listener(
-            |this, _: &ClickEvent, _, cx| {
-                this.dialog_open(Dialog::Import);
-                cx.notify();
-            },
-        ));
-        let export = secondary("alt-library-export", tr("Export ticked…"));
-        let export = if ticked.is_empty() {
-            off(export)
-        } else {
-            export.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.export_open(&ticked);
-                cx.notify();
-            }))
-        };
-        let head = self.wide_row(
-            tr("Theme library"),
-            tr("Colours you saved or imported. Apply loads a theme's colours into the editor above. Tick several to share them in one code."),
-            div().child(save).child(import).child(export),
-        );
-        let mut list = div().flex().flex_col();
-        if saved.is_empty() {
-            list = list.child(hint(tr(
-                "No saved themes yet. Save the colours above, or import a code.",
-            )));
-        }
-        for (n, local) in saved.iter().enumerate() {
-            list = list.child(self.library_item(n, local, local.roles == painted, cx));
-        }
-        div().flex().flex_col().gap(px(10.)).child(head).child(list)
-    }
-
-    /// One saved theme: a tick, its colours, its name, Apply and the "…" menu.
-    fn library_item(
-        &mut self,
-        n: usize,
-        local: &Local,
-        in_use: bool,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let slug = local.slug.clone();
-        let state = &self.ui.settings.appearance;
-        let ticked = state.ticked.contains(&slug);
-        let open = state.more.as_deref() == Some(slug.as_str());
-        let tick = checkbox(
-            ("alt-theme-tick", n),
-            if ticked { Tick::On } else { Tick::Off },
-        )
-        .on_click({
-            let slug = slug.clone();
-            cx.listener(move |this, _: &ClickEvent, _, cx| {
-                let ticked = &mut this.ui.settings.appearance.ticked;
-                if !ticked.remove(&slug) {
-                    ticked.insert(slug.clone());
-                }
-                cx.notify();
-            })
-        });
-        let apply = secondary(("alt-theme-apply", n), tr("Apply")).on_click({
-            let slug = slug.clone();
-            cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.theme_apply(&slug, window);
-                cx.notify();
-            })
-        });
-        let name = div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .items_center()
-            .gap(px(6.))
-            .child(
-                div()
-                    .truncate()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_size(px(tokens::LABEL))
-                    .child(local.name.clone()),
-            )
-            .children(in_use.then(|| blocks::icon("check", 13., rgb(palette().text).into())));
-        div()
-            .id(("alt-theme-row", n))
-            .flex()
-            .items_center()
-            .gap(px(10.))
-            .py(px(8.))
-            .when(n > 0, |d| d.border_t_1().border_color(palette().rule()))
-            .child(tick)
-            .child(strip(&local.roles))
-            .child(name)
-            .child(apply)
-            .child(self.theme_menu(n, slug, open, cx))
-    }
-
     /// The "…" button of the theme in `slug`, as Home's cards have it, and under it, while it
     /// is open, the menu: Rename…, Duplicate, Export…, Delete.
-    fn theme_menu(&mut self, n: usize, slug: String, open: bool, cx: &mut Context<Self>) -> Div {
+    pub(super) fn theme_menu(
+        &mut self,
+        n: usize,
+        slug: String,
+        open: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let button = icon_button_opening(
             SharedString::from(format!("alt-theme-more-{n}")),
             "more-horizontal",
@@ -162,6 +55,7 @@ impl Launcher {
         .on_click({
             let slug = slug.clone();
             cx.listener(move |this, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
                 let was = this.ui.settings.appearance.more.as_deref() == Some(slug.as_str());
                 this.close_menus();
                 let state = &mut this.ui.settings.appearance;
@@ -232,6 +126,7 @@ impl Launcher {
                     .child(crate::glass_ui::icon(icon, 16., c(ink)))
                     .child(tr(label))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        cx.stop_propagation();
                         this.theme_menu_pick(slug.clone(), pick, window);
                         cx.notify();
                     })),

@@ -79,6 +79,8 @@ fn a_colour_set_in_the_editor_is_painted_and_kept_in_a_theme_file() {
     assert!(text.contains("accent = \"#123456\""), "{text}");
     launcher.read_with(cx, |l, _| {
         assert_eq!(l.editor_roles().accent, 0x123456);
+        // Sunrise was the theme edited: Reset goes back to it.
+        assert_eq!(l.ui.settings.appearance.origin, Some("dawn"));
     });
 }
 

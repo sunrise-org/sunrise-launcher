@@ -1,24 +1,26 @@
 //! The profile's Logs tab: a source (`sources`: the game's output of this run as it comes, its
 //! `latest.log`, crash reports, the launcher's diagnostics, the native build log) and its lines.
-//! A search, Follow (keep the newest line in view), Copy, Share log (`share`), Open file and
-//! Open logs folder.
+//! The row under the tabs (`menus`) picks the source and its file, searches, filters by level,
+//! follows the newest line and holds Copy all, Share log (`share`), Open file and Open logs
+//! folder; the lines are in a card (`view`), or an empty state in the page when there are none.
 use super::*;
 use crate::line_edit::{self, Key, LineEdit};
 use crate::widgets::button::{button, primary, secondary, Look, Size, Style};
-use crate::widgets::check::switch;
 use crate::widgets::feedback::{banner, empty_state, empty_state_icon, Tone};
-use crate::widgets::focus::c;
-use crate::widgets::motion_bits::copy_button;
+use menus::Menu;
 use sources::nothing_here;
 pub(crate) use sources::Source;
 use sunrise_launcher::game_log::{self, Shared};
 use tail::{FileLog, Tail};
+use view::severity;
 
+mod menus;
 mod share;
 mod sources;
 mod tail;
 #[cfg(test)]
 mod tests;
+mod view;
 
 /// The log an error on Home came from, if it left one: what its "View logs" opens. Mirrors the
 /// order `Facts::view` picks the problem it says in.
@@ -62,9 +64,6 @@ impl Launcher {
     }
 }
 
-/// A line of the log. Fixed, so a long log builds only the lines near the view.
-const LINE: f32 = 20.;
-
 pub(super) struct Logs {
     search: LineEdit,
     focus: Option<FocusHandle>,
@@ -75,6 +74,8 @@ pub(super) struct Logs {
     chosen: Option<std::path::PathBuf>,
     /// The files of a list source, newest first, and whether they were read yet.
     files: Vec<std::path::PathBuf>,
+    /// When each of `files` was last written, for their names in the picker.
+    times: Vec<Option<std::time::SystemTime>>,
     listed: bool,
     list_checked: Option<std::time::Instant>,
     /// The folder is being listed off the UI thread.
@@ -90,6 +91,8 @@ pub(super) struct Logs {
     confirm: bool,
     sharing: bool,
     shared: Option<Result<Shared, String>>,
+    /// Which of the row's menus is open.
+    menu: Option<Menu>,
 }
 
 impl Default for Logs {
@@ -102,6 +105,7 @@ impl Default for Logs {
             source: Source::default(),
             chosen: None,
             files: Vec::new(),
+            times: Vec::new(),
             listed: false,
             list_checked: None,
             listing: false,
@@ -112,75 +116,9 @@ impl Default for Logs {
             confirm: false,
             sharing: false,
             shared: None,
+            menu: None,
         }
     }
-}
-
-/// How bad a log line is: 0 for information, 1 for a warning, 2 for an error.
-fn severity(line: &str) -> u8 {
-    if line.contains("/ERROR]") || line.contains("ERROR:") || line.contains(" ERROR ") {
-        2
-    } else if line.contains("/WARN]") || line.contains(" WARN ") || line.contains("WARN:") {
-        1
-    } else {
-        0
-    }
-}
-
-/// The lines drawn now as one block of selectable text, each line coloured by how bad it is, so
-/// a drag selects across lines and copies as any text does. Tabs (stack traces) become spaces;
-/// a line too long for the box is cut, not wrapped, so every line keeps its `LINE` height.
-fn log_lines(lines: &[&str]) -> Div {
-    let p = palette();
-    let mut text = String::new();
-    let mut runs = Vec::new();
-    for (n, line) in lines.iter().enumerate() {
-        if n > 0 {
-            text.push('\n');
-        }
-        let ink = match severity(line) {
-            2 => p.danger,
-            1 => p.warning,
-            _ => p.muted,
-        };
-        let start = text.len();
-        text.push_str(&line.replace('\t', "    "));
-        runs.push((
-            start..text.len(),
-            gpui::HighlightStyle {
-                color: Some(c(ink)),
-                ..Default::default()
-            },
-        ));
-    }
-    let styled = gpui::StyledText::new(text).with_highlights(runs);
-    div()
-        .flex_none()
-        .min_w_0()
-        .overflow_hidden()
-        .whitespace_nowrap()
-        .line_height(px(LINE))
-        .text_color(c(p.muted))
-        .child(
-            crate::selectable::Selectable::styled("home-logs-text", styled).without_copy_preview(),
-        )
-}
-
-/// Moves the log by a key: the arrows, Page Up and Down, Home and End. Whether the key was one.
-fn scroll_key(scroll: &ScrollHandle, key: &str) -> bool {
-    let (old, max) = (scroll.offset(), scroll.max_offset().y);
-    let page = (scroll.bounds().size.height - px(LINE)).max(px(LINE));
-    let y = match key {
-        "pageup" => old.y + page,
-        "pagedown" => old.y - page,
-        "up" => old.y + px(LINE),
-        "down" => old.y - px(LINE),
-        "home" => px(0.),
-        "end" => -max,
-        _ => return false,
-    };
-    scroll.set_offset(gpui::point(old.x, y.clamp(-max, px(0.))));
-    true
 }
 
 /// Which lines show: every one, warnings and errors, or errors only.
@@ -192,6 +130,16 @@ enum Level {
 }
 
 impl Level {
+    const ALL: [Self; 3] = [Self::All, Self::Warnings, Self::Errors];
+
+    fn label(self) -> SharedString {
+        match self {
+            Self::All => tr("All").into(),
+            Self::Warnings => tr("Warnings").into(),
+            Self::Errors => tr("Errors").into(),
+        }
+    }
+
     /// The least `severity` a line has to have.
     fn floor(self) -> u8 {
         match self {
@@ -209,11 +157,20 @@ enum Nothing {
     Failed(String),
 }
 
-/// The log area, the text to copy and whether there are lines.
+/// The log area and whether there are lines.
 struct LogBox {
     body: Div,
-    copy: String,
     has_lines: bool,
+}
+
+/// The lines the source has, those the level and search leave, and why there are none.
+struct Shown<'a> {
+    /// Each line with its place in the log, for the numbers in the gutter.
+    lines: Vec<(usize, &'a str)>,
+    revision: u64,
+    nothing: Option<Nothing>,
+    /// How many lines the source has, before the level and search.
+    total: usize,
 }
 
 impl Launcher {
@@ -268,8 +225,8 @@ impl Launcher {
         .detach();
     }
 
-    /// The Logs tab, in the panel the other tabs stand in: the tabs and Open logs folder, the
-    /// toolbar, and the log under it.
+    /// The Logs tab, in the panel the other tabs stand in: the tabs, the row under them, and the
+    /// log (or why there is none) below.
     pub(super) fn home_logs(
         &mut self,
         strip: Stateful<Div>,
@@ -291,217 +248,29 @@ impl Launcher {
             .focus
             .get_or_insert_with(|| cx.focus_handle().tab_stop(true))
             .clone();
-        let LogBox {
-            body,
-            copy,
-            has_lines,
-        } = self.log_box(&instance.home, &folder, cx);
-        let open = {
-            let folder = folder.clone();
-            folder_button("home-logs-folder").on_click(move |_, _, cx| open_logs(cx, &folder))
-        };
-        let latest = self
-            .ui
-            .home
-            .tabs
-            .logs
-            .target(&instance.home)
-            .filter(|path| path.is_file());
-        let open_file = latest.map(|latest| {
-            secondary("home-logs-open-file", tr("Open file"))
-                .on_click(move |_, _, cx| crate::toast::open(cx, &latest))
-        });
-        let toolbar = has_lines.then(|| self.log_toolbar(&focus, copy, window, cx));
+        let LogBox { body, has_lines } = self.log_box(&instance.home, &folder, cx);
+        let toolbar = self.log_toolbar(&focus, &instance.home, &folder, has_lines, window, cx);
+        // Open logs folder is in the "…" menu and the empty state, so the tabs' row has no action.
         div()
             .flex_1()
             .min_h_0()
             .flex()
             .flex_col()
-            .gap(px(12.))
             .overflow_hidden()
             .px(px(inset))
             .pt(px(10.))
             .pb(px(20.))
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(10.))
-                    .child(strip)
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .children(open_file)
-                            .child(open),
-                    ),
+            .child(div().flex().flex_none().items_center().child(strip))
+            .child(toolbar)
+            .children(
+                self.share_panel(&instance.home, cx)
+                    .map(|panel| panel.mb(px(12.))),
             )
-            .child(self.source_row(cx))
-            .children(toolbar)
-            .children(self.share_panel(&instance.home, cx))
             .child(body)
     }
 
-    /// The search and Follow on the left, Copy and Share log on the right; it wraps in a narrow
-    /// window.
-    fn log_toolbar(
-        &self,
-        focus: &FocusHandle,
-        copy: String,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let logs = &self.ui.home.tabs.logs;
-        let toggle = |this: &mut Self, cx: &mut Context<Self>| {
-            let logs = &mut this.ui.home.tabs.logs;
-            logs.follow = !logs.follow;
-            // Switching it on goes to the newest line at once.
-            logs.seen.set((u64::MAX, 0));
-            cx.notify();
-        };
-        let follow = div()
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .child(
-                switch("home-logs-follow", logs.follow)
-                    .on_click(cx.listener(move |this, _, _, cx| toggle(this, cx))),
-            )
-            .child(
-                div()
-                    .id("home-logs-follow-label")
-                    .cursor_pointer()
-                    .text_size(px(tokens::LABEL))
-                    .text_color(c(palette().text))
-                    .child(tr("Follow"))
-                    .on_click(cx.listener(move |this, _, _, cx| toggle(this, cx))),
-            );
-        let share = button(
-            "home-logs-share",
-            tr("Share log…"),
-            Look::new(Style::Secondary, Size::Medium)
-                .icon("link-01")
-                .disabled(logs.sharing),
-        );
-        let share = match logs.sharing {
-            true => share,
-            false => share
-                .tooltip(crate::glass_ui::tip(tr(
-                    "Uploads the log to mclo.gs, after you confirm",
-                )))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.ui.home.tabs.logs.confirm = true;
-                    cx.notify();
-                })),
-        };
-        div()
-            .flex()
-            .flex_none()
-            .flex_wrap()
-            .items_center()
-            .justify_between()
-            .gap(px(10.))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(16.))
-                    .child(self.log_search(focus, window, cx))
-                    .child(self.level_choice(cx))
-                    .child(follow),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(copy_button("home-logs-copy", tr("Copy"), copy))
-                    .child(share),
-            )
-    }
-
-    /// All, Warnings or Errors: which lines the log shows.
-    fn level_choice(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let this = cx.entity().downgrade();
-        let options = [
-            (Level::All, SharedString::from(tr("All"))),
-            (Level::Warnings, SharedString::from(tr("Warnings"))),
-            (Level::Errors, SharedString::from(tr("Errors"))),
-        ];
-        crate::widgets::choice::choices(
-            "home-logs-level",
-            &options,
-            self.ui.home.tabs.logs.level,
-            move |level, _, cx| {
-                let _ = this.update(cx, |this, cx| {
-                    let logs = &mut this.ui.home.tabs.logs;
-                    logs.level = level;
-                    logs.seen.set((u64::MAX, 0));
-                    cx.notify();
-                });
-            },
-        )
-    }
-
-    /// The search field: the text lines must contain, Escape to leave it.
-    fn log_search(
-        &self,
-        focus: &FocusHandle,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let t = crate::mods::field_theme(self.theme);
-        let focused = focus.is_focused(window);
-        let field = crate::widgets::field::search_box(
-            focused,
-            None,
-            line_edit::content(
-                &self.ui.home.tabs.logs.search,
-                &t,
-                focused,
-                false,
-                false,
-                "Search the log",
-            ),
-        )
-        .id("home-logs-search")
-        .track_focus(focus)
-        .seen()
-        .w(px(240.))
-        .min_w(px(140.))
-        .cursor_text()
-        .on_click({
-            let focus = focus.clone();
-            cx.listener(move |_, _: &ClickEvent, window, cx| {
-                window.focus(&focus, cx);
-                cx.notify();
-            })
-        })
-        .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
-            match line_edit::handle(&mut this.ui.home.tabs.logs.search, ev, cx) {
-                Key::Escape => window.blur(cx),
-                Key::Pass => return,
-                _ => {}
-            }
-            cx.stop_propagation();
-            cx.notify();
-        }));
-        line_edit::mouse(field, cx, |this: &mut Launcher| {
-            &mut this.ui.home.tabs.logs.search
-        })
-    }
-
-    /// The sunken box with the lines in it (only those near the view are built), or why there
-    /// are none.
-    fn log_box(
-        &self,
-        home: &std::path::Path,
-        folder: &std::path::Path,
-        cx: &mut Context<Self>,
-    ) -> LogBox {
+    /// The lines the level and search leave of what the source has.
+    fn shown_lines(&self, home: &std::path::Path) -> Shown<'_> {
         let logs = &self.ui.home.tabs.logs;
         let search = logs.search.text().trim();
         let (all, revision, nothing): (Vec<&str>, u64, Option<Nothing>) = if self.log_is_run(home) {
@@ -524,94 +293,55 @@ impl Launcher {
         };
         let nothing = nothing.or_else(|| all.is_empty().then_some(Nothing::NoLog));
         let total = all.len();
-        let shown: Vec<&str> = all
+        let lines = all
             .into_iter()
-            .filter(|line| severity(line) >= logs.level.floor())
-            .filter(|line| search.is_empty() || game_log::matches(line, search))
+            .enumerate()
+            .filter(|(_, line)| severity(line) >= logs.level.floor())
+            .filter(|(_, line)| search.is_empty() || game_log::matches(line, search))
             .collect();
-        let sunken = div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .rounded(tokens::r(tokens::R_CARD))
-            .bg(c(palette().field))
-            .border_1()
-            .border_color(c(palette().line));
-        if let Some(nothing) = nothing {
-            return LogBox {
-                body: sunken.child(self.nothing_to_show(nothing, folder, cx)),
-                copy: String::new(),
-                has_lines: false,
-            };
-        }
-        let copy = shown.join("\n");
-        let body = if shown.is_empty() {
-            sunken.child(empty_state(
-                tr("No line matches"),
-                tr("Clear the search or pick All to see the whole log."),
-                None,
-            ))
-        } else {
-            self.log_list(sunken, &shown, revision, cx)
-        };
-        LogBox {
-            body,
-            copy,
-            has_lines: total > 0,
+        Shown {
+            lines,
+            revision,
+            nothing,
+            total,
         }
     }
 
-    /// The scrolling list of `shown`, in `sunken`, following the newest line when Follow is on.
-    fn log_list(&self, sunken: Div, shown: &[&str], revision: u64, cx: &mut Context<Self>) -> Div {
-        let logs = &self.ui.home.tabs.logs;
-        let view = &self.ui.home.tabs.views[Tab::Logs.index()];
-        let scroll = view.scroll.clone();
-        crate::frame::scrolls_with(&scroll);
-        let now = (revision, shown.len());
-        let height = scroll.bounds().size.height;
-        if height > px(0.) && logs.seen.get() != now {
-            if logs.follow {
-                let below = (px(shown.len() as f32 * LINE) - height).max(px(0.));
-                scroll.set_offset(gpui::point(px(0.), -below));
-            }
-            logs.seen.set(now);
+    /// What Copy all copies: the lines shown, one to a line.
+    pub(super) fn copy_text(&self, home: &std::path::Path) -> String {
+        let shown = self.shown_lines(home);
+        let lines: Vec<&str> = shown.lines.iter().map(|(_, line)| *line).collect();
+        lines.join("\n")
+    }
+
+    /// The card with the lines in it (only those near the view are built), or why there are
+    /// none, in the page.
+    fn log_box(
+        &self,
+        home: &std::path::Path,
+        folder: &std::path::Path,
+        cx: &mut Context<Self>,
+    ) -> LogBox {
+        let shown = self.shown_lines(home);
+        if let Some(nothing) = shown.nothing {
+            return LogBox {
+                body: self.nothing_to_show(nothing, folder, cx),
+                has_lines: false,
+            };
         }
-        let (built, place) = view.near.list(&view.scroll, shown.len(), 1, LINE, 0.);
-        let rows = log_lines(&shown[built]);
-        let keys = scroll.clone();
-        let list = div()
-            .id("home-logs-lines")
-            .reach()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .overflow_y_scroll()
-            .track_scroll(&scroll)
-            .on_scroll(cx.listener(|_, _, _, cx| cx.notify()))
-            .on_key_down(cx.listener(move |_, ev: &KeyDownEvent, _, cx| {
-                if scroll_key(&keys, ev.keystroke.key.as_str()) {
-                    cx.stop_propagation();
-                    cx.notify();
-                }
-            }))
-            .child(place(rows));
-        div()
-            .relative()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .child(
-                sunken
-                    .p(px(12.))
-                    .font_family(crate::theme::MONO)
-                    .text_size(px(tokens::SMALL))
-                    .line_height(px(LINE))
-                    .child(list),
+        let body = if shown.lines.is_empty() {
+            empty_state(
+                tr("No line matches"),
+                tr("Clear the search or pick All to see the whole log."),
+                None,
             )
-            .child(view.scrollbar.draw(&view.scroll, cx))
+        } else {
+            self.log_list(&shown.lines, shown.revision, cx)
+        };
+        LogBox {
+            body,
+            has_lines: shown.total > 0,
+        }
     }
 
     /// The empty state of the log area: no log yet, one that could not be read, or still reading.

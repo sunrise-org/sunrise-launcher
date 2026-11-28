@@ -194,16 +194,6 @@ impl Launcher {
         self.multiplayer.stale();
     }
 
-    /// Moves the saved server at `index` one place up (`down` false) or down.
-    pub(super) fn move_server(&mut self, index: usize, down: bool) {
-        let other = if down {
-            index + 1
-        } else {
-            index.saturating_sub(1)
-        };
-        self.edit_servers(|list| list.swap(index, other));
-    }
-
     /// Removes the saved servers at `places`, whatever order they are given in.
     pub(super) fn remove_servers(&mut self, mut places: Vec<usize>) {
         places.sort_unstable_by(|a, b| b.cmp(a));

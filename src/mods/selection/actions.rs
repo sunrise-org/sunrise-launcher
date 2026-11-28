@@ -359,6 +359,9 @@ impl Launcher {
                     self.home_worlds_pick().select_all(&ids);
                     return !ids.is_empty();
                 }
+                if self.home_on_servers() {
+                    return self.servers_tick_all();
+                }
                 let Some(collection) = self.home_pick_scope() else {
                     return false;
                 };

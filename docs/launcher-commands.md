@@ -444,6 +444,25 @@ Make a profile: empty but for your options and name, or a copy of another one's 
 
 MCP: `instance_create`.
 
+## `sunrise-launcher instance import-from`
+
+Make a profile from one of another launcher (Prism Launcher, MultiMC, the Modrinth App, ATLauncher, GDLauncher, CurseForge, the official launcher): its worlds, options and keys, packs, screenshots, server list and play time, never its mods. Another launcher's folder is only read.
+
+    sunrise-launcher instance import-from [SOURCE]
+
+- `SOURCE`: The profile as --list writes it (launcher/name), or a game folder
+- `--list`: List the profiles found instead
+- `--name`: The new profile's name (default: the one it has there)
+- `--no-worlds`: Leave out the worlds
+- `--no-options`: Leave out the game options and keys (options.txt)
+- `--no-resource-packs`: Leave out the resource packs
+- `--no-shaders`: Leave out the shader packs
+- `--no-screenshots`: Leave out the screenshots
+- `--no-servers`: Leave out the server list
+- `--no-play-time`: Leave out the play time and when it was last played
+
+MCP: `instance_import_from`.
+
 ## `sunrise-launcher instance rename`
 
 Rename a profile (its folder stays).

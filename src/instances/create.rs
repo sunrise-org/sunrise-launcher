@@ -194,6 +194,32 @@ pub(super) fn create_with_publish(
     choose: impl FnOnce(&mut Meta),
     after_visible: impl FnOnce(&Path),
 ) -> Result<Instance, String> {
+    create_staged(
+        game_home,
+        data,
+        name,
+        copy,
+        picture,
+        choose,
+        after_visible,
+        |_| Ok(()),
+    )
+}
+
+/// [`create_with_publish`] with `fill`, which adds to an empty profile's game folder while it is
+/// still being put together (`import`'s files). An error from it, a stop included, leaves
+/// nothing behind: the folder is only published once it is whole.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn create_staged(
+    game_home: &Path,
+    data: &Path,
+    name: &str,
+    copy: Option<CopyFrom<'_>>,
+    picture: Option<Option<&[u8]>>,
+    choose: impl FnOnce(&mut Meta),
+    after_visible: impl FnOnce(&Path),
+    fill: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<Instance, String> {
     let name = name.trim();
     if name.is_empty() {
         return Err(crate::i18n::tr("A profile needs a name.").into());
@@ -271,6 +297,7 @@ pub(super) fn create_with_publish(
                 fs::copy(source, contents.join(f)).map_err(create_error)?;
             }
         }
+        fill(&contents)?;
         None
     };
     let icon = contents.join(PICTURE);

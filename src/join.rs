@@ -12,14 +12,16 @@
 //!
 //! - `cards`: a saved server's card and a featured one's, the selection bar, and the parts the
 //!   hosted servers' cards share (`server_row`, `more_button`, `section`).
+//! - `glides`: how "Your servers" moves when a server is moved, added or removed.
 //! - `dialog`: the "…" menu, the form and the question before a removal.
 use super::*;
 use gpui::{rgb, rgba};
 
 mod cards;
 mod dialog;
+pub(crate) mod glides;
 
-pub(crate) use cards::{more_button, no_tick, section, server_row, RowParts};
+pub(crate) use cards::{ghost_card, more_button, no_tick, section, server_row, RowParts, ROW};
 
 /// Horizon Minecraft's address, passed to the game as written. Empty: the row has no Join.
 pub(crate) const HORIZON_ADDRESS: &str = "play.playhorizon.dev";

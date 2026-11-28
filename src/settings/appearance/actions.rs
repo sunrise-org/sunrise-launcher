@@ -1,4 +1,4 @@
-//! Settings › Appearance: what the colour editor and the theme library do. Each action works
+//! Settings › Appearance: what the colour editor and the theme gallery do. Each action works
 //! on the settings through [`Launcher::appearance_change`], so a failure puts everything back
 //! and is said under the page, and a success is painted at once.
 use super::state::Dialog;
@@ -10,6 +10,7 @@ use sunrise_launcher::theme_files::{self, Reason, Roles};
 use sunrise_launcher::themes::hsv::Hsv;
 use sunrise_launcher::themes::library::{self, SLOTS};
 use sunrise_launcher::themes::share;
+use sunrise_launcher::themes::{self, Resolved};
 
 impl Launcher {
     /// The colours the editor shows: what is painted.
@@ -20,6 +21,10 @@ impl Launcher {
     /// Sets one colour of the editor and paints it, however it reads on the others.
     pub(super) fn colour_set(&mut self, slot: usize, rgb: u32, window: &Window) {
         let mut roles = self.editor_roles();
+        // Editing a built-in's colour makes a copy of it: remember which, for Reset.
+        if let Resolved::Builtin(theme) = themes::resolve(self.settings.theme.as_deref()) {
+            self.ui.settings.appearance.origin = Some(theme.id);
+        }
         (SLOTS[slot].set)(&mut roles, rgb);
         // While dragging, painted from memory: writing the theme and the settings at every
         // step falls behind the pointer. The drag's end writes it (`picker_release`).
@@ -164,23 +169,17 @@ impl Launcher {
         window.blur(cx);
     }
 
-    /// Chooses Sunrise's night or day, with its own colours.
-    pub(super) fn look_pick(&mut self, light: bool, window: &Window) {
-        self.appearance_change(|s| library::reset(s, light), window);
-    }
-
-    /// Loads the colours of the library's theme `slug` into the editor and paints them.
-    pub(super) fn theme_apply(&mut self, slug: &str, window: &Window) {
-        let found = library::listed(&theme_files::loaded())
-            .into_iter()
-            .find(|local| local.slug == slug);
-        self.appearance_change(
-            |s| match found {
-                Some(local) => library::paint(s, &local.roles),
-                None => Err(Reason::NoFile.text()),
-            },
-            window,
-        );
+    /// The code for the colours now painted, in a dialog to copy it from.
+    pub(super) fn share_current(&mut self) {
+        let theme = library::Custom {
+            name: self.current_name(),
+            roles: self.editor_roles(),
+        };
+        let code = share::encode(std::slice::from_ref(&theme));
+        self.dialog_open(Dialog::Export {
+            code,
+            themes: vec![theme],
+        });
     }
 
     /// Opens the library's dialog for `dialog`, a sheet over the window. Its text box gets the
@@ -291,7 +290,7 @@ impl Launcher {
         });
     }
 
-    /// One of a library row's "…" menu: Rename…, Duplicate, Export…, Delete.
+    /// One of a saved tile's "…" menu: Rename…, Duplicate, Share…, Delete.
     pub(super) fn theme_menu_pick(&mut self, slug: String, pick: usize, window: &Window) {
         self.ui.settings.appearance.more = None;
         match pick {
