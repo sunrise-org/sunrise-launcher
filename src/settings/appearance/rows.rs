@@ -15,6 +15,10 @@ impl Launcher {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Div {
+        // A dialog closed without Done is undone before the page is drawn from the look.
+        if self.edit_revert(window) {
+            cx.notify();
+        }
         let missing = appearance::missing(&self.settings);
         let mut rows: Vec<Div> = self.unusable_themes().into_iter().collect();
         rows.push(self.folder_row(cx));
@@ -44,7 +48,7 @@ impl Launcher {
             .children(gone)
             .child(self.themes_section(cx))
             .child(self.your_themes_section(cx))
-            .child(self.current_card(window, cx))
+            .child(self.current_card(cx))
             .child(group(rows))
             .children(said)
     }

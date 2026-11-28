@@ -79,6 +79,9 @@ fn run_launcher() {
     #[cfg(windows)]
     backend::remove_replaced_binaries();
     backend::cleanup_launcher_updates();
+    // The colour editor used to paint a hidden "my-colours" theme; it is a theme of the library
+    // now, called Custom.
+    sunrise_launcher::themes::library::migrate_working_copy_at_start();
     // What the launcher downloads goes through the player's proxy, if they set one: the parts
     // that build their own agents (`sunrise-port-pack`) are told before anything starts.
     sunrise_launcher::proxy::announce(sunrise_launcher::backend::Settings::load().proxy);

@@ -39,6 +39,8 @@ pub(crate) const PLAY_TONE: f32 = 0.15;
 /// Text reads at this contrast on its surface; edges, marks and the focus ring at the other.
 const TEXT: f32 = 4.5;
 const MARK: f32 = 3.;
+/// The dark label on a pale accent when the theme's own background doesn't read on it.
+const NEAR_BLACK: u32 = 0x0b0b0d;
 /// The least the Home backdrop is shaded directly behind the unboxed profile.
 pub(crate) const HERO_SHADE_ALPHA: f32 = 0.58;
 
@@ -52,6 +54,25 @@ pub(crate) struct HeroInk {
     pub shade: u32,
     /// How strongly `shade` lies behind the text, from [`HERO_SHADE_ALPHA`] up.
     pub shade_alpha: f32,
+}
+
+/// The label on `accent`: white wherever it reads there (4.5:1), so the accent keeps its own
+/// shade; on a paler one the theme's background or near-black, whichever reads better; black
+/// when neither does.
+fn on_accent(accent: u32, background: u32) -> u32 {
+    let reads = |c: u32| contrast(c, accent) >= TEXT;
+    if reads(0xffffff) {
+        return 0xffffff;
+    }
+    let dark = [background, NEAR_BLACK]
+        .into_iter()
+        .max_by(|&a, &b| contrast(a, accent).total_cmp(&contrast(b, accent)))
+        .unwrap_or(NEAR_BLACK);
+    if reads(dark) {
+        dark
+    } else {
+        0x000000
+    }
 }
 
 /// What the info colour starts from (a blue), on dark and on light themes, before it is fitted.
@@ -91,7 +112,9 @@ pub(crate) struct Palette {
     pub hero: HeroInk,
     /// The accent as picked: never changed. Marks, active indicators, progress.
     pub accent: u32,
-    /// Text and glyphs on the accent: white, always.
+    /// Text and glyphs on the accent fill (a Primary button and Play, a ticked box): white where
+    /// white reads on the accent, else a dark ink ([`on_accent`]). Not one of the player's nine
+    /// colours, so choosing it never changes a theme as picked.
     pub accent_on: u32,
     /// Play's two opaque accent stops, both fitted to hold white text.
     play_stops: [u32; 2],
@@ -281,8 +304,11 @@ impl Inputs {
         // Keep as much of the original control's quarter-white lift as the label allows.
         // On bright accents, shade the accent itself instead of first washing it out with white.
         // Leave room beyond 4.5:1 for renderer rounding.
-        let accent_on = 0xffffff;
-        let play_text = |c| contrast(accent_on, c) >= 4.65;
+        // Play's own stops are shaded to hold white; the label on the plain accent (a Primary
+        // button, a tick) is `accent_on`, below.
+        let white = 0xffffff;
+        let accent_on = on_accent(raw, background);
+        let play_text = |c| contrast(white, c) >= 4.65;
         // Play takes the theme's own colour: its accent (or the theme's authored face) is pulled
         // [`PLAY_TONE`] toward the theme's chrome, never a photo's, before the fits below.
         let theme_chrome = chrome_base;
@@ -294,10 +320,10 @@ impl Inputs {
         let light = if play_seed.is_some() {
             base
         } else {
-            fit_toward(mix_oklab(accent_on, toned(raw), 0.25), base, play_text)
+            fit_toward(mix_oklab(white, toned(raw), 0.25), base, play_text)
         };
         let dark = fit(play_glow, false, |c| {
-            contrast(accent_on, c) >= contrast(accent_on, light) + 1.5
+            contrast(white, c) >= contrast(white, light) + 1.5
         });
         let accent_ink = ink(raw, &surfaces[..5], TEXT);
         let focus = ink(raw, &everywhere, MARK);

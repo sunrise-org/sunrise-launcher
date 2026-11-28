@@ -67,7 +67,7 @@ pub(crate) enum Sheet {
     ModUpdates,
     /// A pack's details, opened from its card on Home's Packs tab (`home_mods::details`).
     PackDetails,
-    /// The theme library's dialog: save, rename, import or export themes
+    /// The theme library's dialog: edit a theme, import or export themes
     /// (`settings::appearance`).
     ThemeDialog,
 }
@@ -241,6 +241,9 @@ impl Launcher {
     /// Closes the sheet on screen the way Escape or a press outside does. Nothing is allowed,
     /// built or changed by it: a pending question is answered no, a held update stays held.
     pub(crate) fn close_sheet(&mut self) {
+        if self.ui.sheet == Some(Sheet::ThemeDialog) {
+            self.theme_dialog_closed();
+        }
         if self.ui.sheet == Some(Sheet::GithubAdd) {
             self.github.close();
         }

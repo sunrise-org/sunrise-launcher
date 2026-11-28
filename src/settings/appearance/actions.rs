@@ -1,4 +1,4 @@
-//! Settings › Appearance: what the colour editor and the theme gallery do. Each action works
+//! Settings › Appearance: what the colour picker, the dialogs and the theme gallery do. Each action works
 //! on the settings through [`Launcher::appearance_change`], so a failure puts everything back
 //! and is said under the page, and a success is painted at once.
 use super::state::Dialog;
@@ -10,7 +10,6 @@ use sunrise_launcher::theme_files::{self, Reason, Roles};
 use sunrise_launcher::themes::hsv::Hsv;
 use sunrise_launcher::themes::library::{self, SLOTS};
 use sunrise_launcher::themes::share;
-use sunrise_launcher::themes::{self, Resolved};
 
 impl Launcher {
     /// The colours the editor shows: what is painted.
@@ -18,18 +17,23 @@ impl Launcher {
         library::current(&self.settings)
     }
 
-    /// Sets one colour of the editor and paints it, however it reads on the others.
+    /// Sets one colour of the theme being edited and paints it, however it reads on the others.
     pub(super) fn colour_set(&mut self, slot: usize, rgb: u32, window: &Window) {
         let mut roles = self.editor_roles();
-        // Editing a built-in's colour makes a copy of it: remember which, for Reset.
-        if let Resolved::Builtin(theme) = themes::resolve(self.settings.theme.as_deref()) {
-            self.ui.settings.appearance.origin = Some(theme.id);
-        }
         (SLOTS[slot].set)(&mut roles, rgb);
-        // While dragging, painted from memory: writing the theme and the settings at every
-        // step falls behind the pointer. The drag's end writes it (`picker_release`).
-        if self.ui.settings.appearance.dragging.is_some() {
-            match library::preview(&mut self.settings, &roles) {
+        self.edit_paint(&roles, window);
+    }
+
+    /// Paints `roles` as the theme being edited (nothing when no theme is). While a colour is
+    /// dragged they are painted from memory: writing the theme and the settings at every step
+    /// falls behind the pointer. The drag's end writes them (`picker_release`).
+    fn edit_paint(&mut self, roles: &Roles, window: &Window) {
+        let state = &self.ui.settings.appearance;
+        let Some(slug) = state.edit.as_ref().map(|edit| edit.slug.clone()) else {
+            return;
+        };
+        if state.dragging.is_some() {
+            match library::preview(&mut self.settings, &slug, roles) {
                 Ok(()) => {
                     self.ui.settings.appearance.unsaved = true;
                     self.appearance_changed(window);
@@ -37,7 +41,7 @@ impl Launcher {
                 Err(error) => self.ui.settings.appearance.error = Some(error),
             }
         } else {
-            self.appearance_change(|s| library::paint(s, &roles), window);
+            self.appearance_change(|s| library::paint(s, &slug, roles), window);
         }
     }
 
@@ -123,7 +127,21 @@ impl Launcher {
         state.dragging = None;
         if std::mem::take(&mut state.unsaved) {
             let roles = library::current(&self.settings);
-            self.appearance_change(|s| library::paint(s, &roles), window);
+            self.edit_paint_written(&roles, window);
+        }
+    }
+
+    /// Writes `roles`, painted from memory by a drag, as the theme being edited.
+    fn edit_paint_written(&mut self, roles: &Roles, window: &Window) {
+        let slug = self
+            .ui
+            .settings
+            .appearance
+            .edit
+            .as_ref()
+            .map(|edit| edit.slug.clone());
+        if let Some(slug) = slug {
+            self.appearance_change(|s| library::paint(s, &slug, roles), window);
         }
     }
 
@@ -158,12 +176,14 @@ impl Launcher {
         }
     }
 
-    /// Escape in a text box: nothing typed is taken, and an open picker or dialog closes.
+    /// Escape in a text box: nothing typed is taken, and an open picker or dialog closes. In
+    /// the Edit dialog the picker closes first, and the dialog on the next Escape.
     pub(super) fn text_cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let state = &mut self.ui.settings.appearance;
-        state.editing = None;
+        let picker = state.editing.take().is_some();
         state.dragging = None;
-        if self.ui.sheet == Some(Sheet::ThemeDialog) {
+        let editing = state.edit.is_some();
+        if self.ui.sheet == Some(Sheet::ThemeDialog) && !(picker && editing) {
             self.close_sheet();
         }
         window.blur(cx);
@@ -185,23 +205,20 @@ impl Launcher {
     /// Opens the library's dialog for `dialog`, a sheet over the window. Its text box gets the
     /// keyboard when the sheet is first drawn.
     pub(super) fn dialog_open(&mut self, dialog: Dialog) {
-        let named = match &dialog {
-            Dialog::Rename(slug) => library::listed(&theme_files::loaded())
-                .into_iter()
-                .find(|local| &local.slug == slug)
-                .map(|local| local.name),
-            _ => None,
-        };
         self.open_sheet(Sheet::ThemeDialog);
         let state = &mut self.ui.settings.appearance;
+        if dialog != Dialog::Edit && state.edit.is_some() {
+            // A dialog left open by a path that doesn't close the sheet: put its theme back.
+            state.reverting = state.edit.take();
+        }
         state.error = None;
         state.note = None;
         state.more = None;
         state.editing = None;
         state.dragging = None;
         match &dialog {
-            Dialog::Save => state.name.set(String::new()),
-            Dialog::Rename(_) => {
+            Dialog::Edit => {
+                let named = state.edit.as_ref().map(|edit| edit.start.name.clone());
                 state.name.set(named.unwrap_or_default());
                 state.name.select_all();
             }
@@ -223,20 +240,16 @@ impl Launcher {
         self.dialog_open(Dialog::Export { code, themes });
     }
 
-    /// What the open dialog's main button does: saves, renames or imports. On success the
-    /// sheet closes; otherwise it stays, with why.
+    /// What the open dialog's main button does: keeps the edited theme or imports. On success
+    /// the sheet closes; otherwise it stays, with why.
     pub(super) fn dialog_confirm(&mut self, window: &mut Window, _cx: &mut Context<Self>) {
         let state = &self.ui.settings.appearance;
         let Some(dialog) = state.dialog.clone() else {
             return;
         };
         let root = theme_files::dir();
-        let typed = state.name.text().trim().to_string();
         let said = match &dialog {
-            Dialog::Save | Dialog::Rename(_) if typed.is_empty() => return,
-            Dialog::Save => library::save_new(&root, &typed, &self.editor_roles())
-                .map(|_| tr("Saved to your themes.").to_string()),
-            Dialog::Rename(slug) => library::rename(&root, slug, &typed).map(|()| String::new()),
+            Dialog::Edit => return self.edit_done(window),
             Dialog::Import => share::decode(state.code.text())
                 .map_err(|e| e.text())
                 .and_then(|themes| library::add_all(&root, &themes))
@@ -290,11 +303,11 @@ impl Launcher {
         });
     }
 
-    /// One of a saved tile's "…" menu: Rename…, Duplicate, Share…, Delete.
+    /// One of a saved tile's "…" menu: Edit…, Duplicate, Share…, Delete.
     pub(super) fn theme_menu_pick(&mut self, slug: String, pick: usize, window: &Window) {
         self.ui.settings.appearance.more = None;
         match pick {
-            0 => self.dialog_open(Dialog::Rename(slug)),
+            0 => self.theme_edit(&slug, window),
             1 => {
                 let done = library::duplicate(&theme_files::dir(), &slug).map(|_| ());
                 theme_files::reload();

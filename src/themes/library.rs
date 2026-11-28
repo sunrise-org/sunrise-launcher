@@ -1,6 +1,6 @@
-//! The player's own colours: the nine a theme is made of, the theme library (saved themes are
-//! ordinary theme folders, the same `theme.toml` a player can write by hand) and the one working
-//! copy the colour editor paints.
+//! The player's own colours: the nine a theme is made of and the theme library (saved themes are
+//! ordinary theme folders, the same `theme.toml` a player can write by hand). The colour editor
+//! paints one of those themes in place.
 //!
 //! Nothing here is a second format: a theme in the library is read back by `theme_files` like any
 //! other, and a file is only written once `theme_files::parse` accepts what is about to be in
@@ -13,11 +13,6 @@ use crate::themes::{self, Resolved};
 use std::path::Path;
 use sunrise_launcher_theme::night::{Night, NIGHT};
 
-/// The folder of the working copy: what the colour editor paints. It is a theme like any other,
-/// but the library doesn't list it.
-pub const WORKING: &str = "my-colours";
-/// The working copy's name in `Settings::theme`.
-pub const WORKING_ID: &str = "local:my-colours";
 /// The most characters a name may have (`theme_files::parse`'s limit).
 const NAME_MAX: usize = 64;
 
@@ -130,36 +125,44 @@ pub fn current(settings: &Settings) -> Roles {
     roles
 }
 
-/// Paints `roles`: they are written to the working copy, which becomes the chosen theme. The
-/// accent picked under it before is forgotten, since the working copy's own is the one meant.
-pub fn paint(settings: &mut Settings, roles: &Roles) -> Result<(), String> {
-    write(&theme_files::dir(), WORKING, "Custom", roles, None)?;
+/// Paints `roles` as the colours of the saved theme `slug`: they are written to its folder
+/// (its name and picture kept) and it becomes the chosen theme. The accent picked under it
+/// before is forgotten, since the theme's own is the one meant.
+pub fn paint(settings: &mut Settings, slug: &str, roles: &Roles) -> Result<(), String> {
+    let id = format!("{}{slug}", theme_files::PREFIX);
+    let local = theme_files::find(&id).ok_or_else(|| Reason::NoFile.text())?;
+    write(
+        &theme_files::dir(),
+        slug,
+        &local.name,
+        roles,
+        picture_file(&local),
+    )?;
     theme_files::reload();
-    settings.theme_accents.remove(WORKING_ID);
-    crate::appearance::select_theme(settings, WORKING_ID)
+    settings.theme_accents.remove(&id);
+    crate::appearance::select_theme(settings, &id)
 }
 
 /// [`paint`] in memory only: the editor's colours are shown while they are dragged, and
 /// written by [`paint`] once the drag ends.
-pub fn preview(settings: &mut Settings, roles: &Roles) -> Result<(), String> {
-    theme_files::preview(theme_files::Local {
-        slug: WORKING.to_string(),
-        name: "Custom".to_string(),
+pub fn preview(settings: &mut Settings, slug: &str, roles: &Roles) -> Result<(), String> {
+    let id = format!("{}{slug}", theme_files::PREFIX);
+    let local = theme_files::find(&id).ok_or_else(|| Reason::NoFile.text())?;
+    theme_files::preview(Local {
         roles: *roles,
-        picture: None,
+        ..local
     });
-    settings.theme_accents.remove(WORKING_ID);
-    crate::appearance::select_theme(settings, WORKING_ID)
+    settings.theme_accents.remove(&id);
+    crate::appearance::select_theme(settings, &id)
 }
 
-/// Goes back to Sunrise's own colours, in its night or its day.
-pub fn reset(settings: &mut Settings, light: bool) -> Result<(), String> {
-    let id = if light {
-        themes::DAWN_LIGHT_THEME.id
-    } else {
-        "default"
-    };
-    crate::appearance::select_theme(settings, id)
+/// The file name of a theme's picture inside its folder.
+fn picture_file(local: &Local) -> Option<&str> {
+    local
+        .picture
+        .as_deref()
+        .and_then(Path::file_name)
+        .and_then(|n| n.to_str())
 }
 
 /// `#rrggbb`, `rrggbb` or `#rgb`, as the player types it.
@@ -244,7 +247,7 @@ pub fn slug_for(root: &Path, name: &str) -> String {
     if !theme_files::slug_ok(&base) {
         base = "theme".to_string();
     }
-    let taken = |slug: &str| slug == WORKING || std::fs::symlink_metadata(root.join(slug)).is_ok();
+    let taken = |slug: &str| std::fs::symlink_metadata(root.join(slug)).is_ok();
     let mut slug = base.clone();
     let mut n = 2;
     while taken(&slug) {
@@ -267,12 +270,13 @@ pub fn unique_name(names: &[String], name: &str) -> String {
     tried
 }
 
-/// The themes among `entries` that can be used, the working copy left out: the library.
+/// The themes among `entries` that can be used: the library. A player's old working copy
+/// (`my-colours`, "Custom", where the editor used to paint) is one of them like any other.
 pub fn listed(entries: &[Entry]) -> Vec<Local> {
     entries
         .iter()
         .filter_map(|entry| match entry {
-            Entry::Good(local) if local.slug != WORKING => Some(local.clone()),
+            Entry::Good(local) => Some(local.clone()),
             _ => None,
         })
         .collect()
@@ -300,6 +304,100 @@ pub fn save_new(root: &Path, name: &str, roles: &Roles) -> Result<String, String
     Ok(slug)
 }
 
+/// The name of a copy of the theme called `source`: "Sunrise copy", then "Sunrise copy 2",
+/// "Sunrise copy 3"… when a name in `names` is already it (in any case).
+pub fn copy_name(names: &[String], source: &str) -> String {
+    let same = |a: &str, b: &str| a.to_lowercase() == b.to_lowercase();
+    let room = NAME_MAX - " copy 999".len();
+    let base: String = format!(
+        "{} copy",
+        source.trim().chars().take(room).collect::<String>()
+    );
+    let mut tried = base.clone();
+    let mut n = 2;
+    while names.iter().any(|taken| same(taken, &tried)) {
+        tried = format!("{base} {n}");
+        n += 1;
+    }
+    tried
+}
+
+/// Makes a new saved theme with the colours `roles`, a copy of the theme called `source`
+/// (see [`copy_name`]). Returns its folder and its name.
+pub fn make_copy(root: &Path, source: &str, roles: &Roles) -> Result<(String, String), String> {
+    let names: Vec<String> = saved(root).into_iter().map(|l| l.name).collect();
+    let name = copy_name(&names, source);
+    let slug = slug_for(root, &name);
+    write(root, &slug, &name, roles, None)?;
+    Ok((slug, name))
+}
+
+/// Puts the theme `slug` back as `theme` (its name and colours), keeping its picture: what
+/// Cancel does after the colours were painted into its file as they were edited.
+pub fn restore(root: &Path, slug: &str, theme: &Custom) -> Result<(), String> {
+    let local = find(root, slug)?;
+    write(root, slug, &theme.name, &theme.roles, picture_file(&local))
+}
+
+/// The folder the colour editor used to paint, before it worked on saved themes.
+const OLD_WORKING: &str = "my-colours";
+
+/// Turns the old hidden working copy into a theme of the library, once. When the chosen theme
+/// is `local:my-colours` and its folder is there, the folder becomes "Custom" (`custom`, or
+/// `custom-2`… when that is taken) and the setting follows it. `save` writes the settings; if
+/// it fails the folder goes back, so the setting never points at a folder that isn't there.
+/// Returns whether anything moved. Run again, it finds nothing to do.
+pub fn migrate_working_copy(
+    root: &Path,
+    settings: &mut Settings,
+    save: impl FnOnce(&Settings) -> Result<(), String>,
+) -> Result<bool, String> {
+    let old_id = format!("{}{OLD_WORKING}", theme_files::PREFIX);
+    let old = root.join(OLD_WORKING);
+    let is_there = std::fs::symlink_metadata(&old).is_ok_and(|m| m.is_dir());
+    if settings.theme.as_deref() != Some(old_id.as_str()) || !is_there {
+        return Ok(false);
+    }
+    if theme_files::root_linked(root) {
+        return Err(linked());
+    }
+    let slug = slug_for(root, "Custom");
+    let new = root.join(&slug);
+    std::fs::rename(&old, &new).map_err(|e| said(&new, e))?;
+    let new_id = format!("{}{slug}", theme_files::PREFIX);
+    let accent = settings.theme_accents.remove(&old_id);
+    settings.theme = Some(new_id.clone());
+    if let Some(accent) = accent {
+        settings.theme_accents.insert(new_id.clone(), accent);
+    }
+    // The file already says "Custom" when the editor wrote it; a hand-edited one is named.
+    let named = find(root, &slug).and_then(|local| {
+        if local.name == "Custom" {
+            return Ok(());
+        }
+        write(root, &slug, "Custom", &local.roles, picture_file(&local))
+    });
+    let done = named.and_then(|()| save(settings));
+    if let Err(why) = done {
+        let _ = std::fs::rename(&new, &old);
+        settings.theme = Some(old_id.clone());
+        if let Some(accent) = settings.theme_accents.remove(&new_id) {
+            settings.theme_accents.insert(old_id, accent);
+        }
+        return Err(why);
+    }
+    Ok(true)
+}
+
+/// [`migrate_working_copy`] on the player's own themes folder and settings, at startup.
+pub fn migrate_working_copy_at_start() {
+    let mut settings = Settings::load();
+    let moved = migrate_working_copy(&theme_files::dir(), &mut settings, Settings::save);
+    if let Err(why) = moved {
+        eprintln!("{why}");
+    }
+}
+
 /// Saves each of `themes` as a new theme. Returns how many were saved.
 pub fn add_all(root: &Path, themes: &[Custom]) -> Result<usize, String> {
     for theme in themes {
@@ -311,12 +409,7 @@ pub fn add_all(root: &Path, themes: &[Custom]) -> Result<usize, String> {
 /// Gives the theme `slug` another name, keeping its colours and its picture.
 pub fn rename(root: &Path, slug: &str, name: &str) -> Result<(), String> {
     let local = find(root, slug)?;
-    let picture = local
-        .picture
-        .as_deref()
-        .and_then(Path::file_name)
-        .and_then(|n| n.to_str());
-    write(root, slug, name.trim(), &local.roles, picture)
+    write(root, slug, name.trim(), &local.roles, picture_file(&local))
 }
 
 /// A copy of the theme `slug` under a new name, without its picture. Returns its folder.

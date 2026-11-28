@@ -1,5 +1,5 @@
-//! Settings › Appearance: the "…" menu of a saved theme's tile: Rename…, Duplicate, Share… and
-//! Delete. Renaming and sharing open a sheet (`dialogs`), and Delete needs no asking: the
+//! Settings › Appearance: the "…" menu of a saved theme's tile: Edit…, Duplicate, Share… and
+//! Delete. Editing and sharing open a sheet (`dialogs`), and Delete needs no asking: the
 //! theme's folder goes to the system's trash.
 use super::*;
 use crate::widgets::button::{icon_button_opening, Style};
@@ -14,9 +14,9 @@ const MENU_DROP: f32 = tokens::CONTROL + 4.;
 /// icon and its label.
 const MENU: [(&str, &str, &str); 4] = [
     (
-        "alt-theme-rename",
+        "alt-theme-edit",
         "pencil-edit-02",
-        crate::i18n::tr_key("Rename…"),
+        crate::i18n::tr_key("Edit…"),
     ),
     (
         "alt-theme-duplicate",
@@ -37,7 +37,7 @@ const MENU: [(&str, &str, &str); 4] = [
 
 impl Launcher {
     /// The "…" button of the theme in `slug`, as Home's cards have it, and under it, while it
-    /// is open, the menu: Rename…, Duplicate, Export…, Delete.
+    /// is open, the menu: Edit…, Duplicate, Share…, Delete.
     pub(super) fn theme_menu(
         &mut self,
         n: usize,

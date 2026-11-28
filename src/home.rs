@@ -353,7 +353,11 @@ impl Launcher {
                         .cursor_pointer()
                         .bg(rgb(palette().accent))
                         .shadow_md()
-                        .child(crate::glass_ui::icon("play", 20., gpui::white()))
+                        .child(crate::glass_ui::icon(
+                            "play",
+                            20.,
+                            rgb(palette().accent_on).into(),
+                        ))
                         .tooltip(crate::glass_ui::tip(trf(
                             "Play {world}",
                             &[("world", &world.name)],

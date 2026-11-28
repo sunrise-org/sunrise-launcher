@@ -48,7 +48,12 @@ pub(crate) fn switch(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
         .top(px(INSET))
         .size(px(KNOB))
         .rounded_full()
-        .bg(c(palette().text));
+        // On the accent it is the accent's own label colour, so it shows on a pale accent too.
+        .bg(c(if on {
+            palette().accent_on
+        } else {
+            palette().text
+        }));
     let el = div()
         .id(id)
         .flex_none()

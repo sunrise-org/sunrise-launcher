@@ -1,6 +1,5 @@
 //! Settings › Appearance: the actions a change takes, saving it and reading the themes
 //! folder again.
-use super::state::Look;
 use super::*;
 use sunrise_launcher::theme_files::{self, Entry};
 
@@ -18,20 +17,7 @@ impl Launcher {
         state.note = None;
         state.error = done.err();
         if state.error.is_some() {
-            let Look {
-                theme,
-                accent,
-                accents,
-                background,
-                scenery,
-                reduced_graphics,
-            } = before;
-            self.settings.theme = theme;
-            self.settings.accent = accent;
-            self.settings.theme_accents = accents;
-            self.settings.background = background;
-            self.settings.scenery_on = scenery;
-            self.settings.reduced_graphics = reduced_graphics;
+            before.restore(&mut self.settings);
             return;
         }
         self.appearance_changed(window);

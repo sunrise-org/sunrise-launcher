@@ -47,40 +47,91 @@ fn appearance_window(
     (launcher, cx)
 }
 
-/// A colour set in the editor is painted at once, saved in the settings and kept as the working
-/// theme's file, which reads back as the colours that were set.
+/// "+ New theme" makes a copy of the theme painted ("Sunrise copy"), chooses it and opens the
+/// Edit dialog on it; a colour set there is painted at once, saved in the settings and kept in
+/// the copy's own theme file, and Done keeps it.
 #[test]
-fn a_colour_set_in_the_editor_is_painted_and_kept_in_a_theme_file() {
+fn a_colour_set_in_the_edit_dialog_is_painted_and_kept_in_the_new_themes_file() {
     use sunrise_launcher::backend::Settings;
     use sunrise_launcher::themes::library;
     use sunrise_launcher::{appearance, theme_files};
-    if scratch_child("a_colour_set_in_the_editor_is_painted_and_kept_in_a_theme_file").is_none() {
+    let test = "a_colour_set_in_the_edit_dialog_is_painted_and_kept_in_the_new_themes_file";
+    if scratch_child(test).is_none() {
         return;
     }
     let mut app = gpui::TestAppContext::single();
     let (launcher, cx) = appearance_window(&mut app);
     cx.update(|window, cx| {
         launcher.update(cx, |l, cx| {
+            l.theme_new(window);
             l.colour_set(library::ACCENT, 0x123456, window);
             cx.notify();
         })
     });
     cx.run_until_parked();
+    let slug = launcher.read_with(cx, |l, _| {
+        let edit =
+            l.ui.settings
+                .appearance
+                .edit
+                .as_ref()
+                .expect("the dialog is open");
+        // The copy is now the chosen theme, named after the one it was made from.
+        assert_eq!(edit.start.name, l.current_name());
+        assert!(edit.start.name.ends_with(" copy"), "{}", edit.start.name);
+        assert_eq!(l.ui.sheet, Some(crate::sheets::Sheet::ThemeDialog));
+        edit.slug.clone()
+    });
     let saved = Settings::load();
-    assert_eq!(
-        saved.theme.as_deref(),
-        Some(sunrise_launcher::themes::library::WORKING_ID)
-    );
+    assert_eq!(saved.theme, Some(format!("local:{slug}")));
     assert_eq!(appearance::accent(&saved).rgb(), 0x123456);
-    let file = theme_files::dir()
-        .join(library::WORKING)
-        .join(theme_files::FILE);
+    let file = theme_files::dir().join(&slug).join(theme_files::FILE);
     let text = std::fs::read_to_string(file).unwrap();
     assert!(text.contains("accent = \"#123456\""), "{text}");
+    cx.update(|window, cx| {
+        launcher.update(cx, |l, cx| {
+            l.edit_done(window);
+            cx.notify();
+        })
+    });
     launcher.read_with(cx, |l, _| {
         assert_eq!(l.editor_roles().accent, 0x123456);
-        // Sunrise was the theme edited: Reset goes back to it.
-        assert_eq!(l.ui.settings.appearance.origin, Some("dawn"));
+        assert!(l.ui.settings.appearance.edit.is_none());
+        assert!(l.ui.settings.appearance.reverting.is_none());
+        assert_eq!(l.ui.sheet, None);
+    });
+    assert_eq!(Settings::load().theme, Some(format!("local:{slug}")));
+}
+
+/// Cancel (or Escape) deletes the theme made for the dialog and goes back to the look from
+/// before it opened.
+#[test]
+fn cancelling_a_new_theme_deletes_it_and_restores_the_look() {
+    use sunrise_launcher::backend::Settings;
+    use sunrise_launcher::theme_files;
+    use sunrise_launcher::themes::library;
+    let test = "cancelling_a_new_theme_deletes_it_and_restores_the_look";
+    if scratch_child(test).is_none() {
+        return;
+    }
+    let mut app = gpui::TestAppContext::single();
+    let (launcher, cx) = appearance_window(&mut app);
+    let before = Settings::load().theme;
+    cx.update(|window, cx| {
+        launcher.update(cx, |l, cx| {
+            l.theme_new(window);
+            l.colour_set(library::ACCENT, 0x123456, window);
+            l.close_sheet();
+            l.edit_revert(window);
+            cx.notify();
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(Settings::load().theme, before);
+    assert!(library::saved(&theme_files::dir()).is_empty());
+    launcher.read_with(cx, |l, _| {
+        assert!(l.ui.settings.appearance.edit.is_none());
+        assert_ne!(l.editor_roles().accent, 0x123456);
     });
 }
 
@@ -96,15 +147,23 @@ fn a_colour_that_reads_badly_is_painted_and_saved_all_the_same() {
     let (launcher, cx) = appearance_window(&mut app);
     cx.update(|window, cx| {
         launcher.update(cx, |l, cx| {
+            l.theme_new(window);
             // Mid grey page under white text.
             l.colour_set(0, 0x777777, window);
             cx.notify();
         })
     });
     cx.run_until_parked();
+    let slug = launcher.read_with(cx, |l, _| {
+        l.ui.settings
+            .appearance
+            .edit
+            .as_ref()
+            .map(|e| e.slug.clone())
+    });
     assert_eq!(
-        Settings::load().theme.as_deref(),
-        Some(sunrise_launcher::themes::library::WORKING_ID),
+        Settings::load().theme,
+        slug.map(|slug| format!("local:{slug}")),
         "painted and saved"
     );
     launcher.read_with(cx, |l, _| {

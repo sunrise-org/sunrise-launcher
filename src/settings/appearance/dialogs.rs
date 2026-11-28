@@ -1,7 +1,7 @@
-//! Settings › Appearance: the theme library's dialogs, sheets over the window: naming the
-//! colours being edited (Save as theme), renaming a theme, importing a code (with a look at the
-//! themes in it before they are added) and sharing themes as a code.
-use super::inputs::{CODE, NAME};
+//! Settings › Appearance: the theme library's dialogs, sheets over the window: editing a theme
+//! (`edit_dialog`), importing a code (with a look at the themes in it before they are added)
+//! and sharing themes as a code.
+use super::inputs::CODE;
 use super::preview::theme_card;
 use super::state::Dialog;
 use super::*;
@@ -11,8 +11,9 @@ use gpui::SharedString;
 use sunrise_launcher::themes::library;
 use sunrise_launcher::themes::share;
 
-/// A dialog's width.
+/// A dialog's width, and the Edit dialog's, which holds a preview beside the colours.
 const WIDTH: f32 = 520.;
+const EDIT_WIDTH: f32 = 760.;
 /// How tall a list of themes in a dialog grows before it scrolls.
 const LIST_MAX: f32 = 280.;
 
@@ -29,9 +30,7 @@ impl Launcher {
         if std::mem::take(&mut state.dialog_focus) {
             let ready = || cx.focus_handle().tab_index(0).tab_stop(true);
             let handle = match &dialog {
-                Dialog::Save | Dialog::Rename(_) => {
-                    Some(state.name_focus.get_or_insert_with(ready).clone())
-                }
+                Dialog::Edit => Some(state.name_focus.get_or_insert_with(ready).clone()),
                 Dialog::Import => Some(state.code_focus.get_or_insert_with(ready).clone()),
                 Dialog::Export { .. } => None,
             };
@@ -39,17 +38,25 @@ impl Launcher {
                 window.focus(&handle, cx);
             }
         }
+        let width = if dialog == Dialog::Edit {
+            EDIT_WIDTH
+        } else {
+            WIDTH
+        };
         let body = match dialog {
-            Dialog::Save => self.name_dialog(false, window, cx),
-            Dialog::Rename(_) => self.name_dialog(true, window, cx),
+            Dialog::Edit => self.edit_dialog(window, cx),
             Dialog::Import => self.import_dialog(window, cx),
             Dialog::Export { code, themes } => self.export_dialog(code, &themes, cx),
         };
-        Some(frame("alt-theme-dialog", WIDTH, body, cx))
+        Some(frame("alt-theme-dialog", width, body, cx))
     }
 
     /// The Cancel (or Close) button of a dialog.
-    fn dialog_cancel(&self, label: &'static str, cx: &mut Context<Self>) -> Stateful<Div> {
+    pub(super) fn dialog_cancel(
+        &self,
+        label: &'static str,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         secondary("alt-dialog-cancel", tr(label)).on_click(cx.listener(
             |this, _: &ClickEvent, _, cx| {
                 this.close_sheet();
@@ -60,7 +67,7 @@ impl Launcher {
 
     /// A dialog's main button: it does what the dialog is for when `ready`, and is dimmed and
     /// dead until then.
-    fn dialog_ok(
+    pub(super) fn dialog_ok(
         &self,
         label: impl Into<SharedString>,
         ready: bool,
@@ -78,45 +85,11 @@ impl Launcher {
     }
 
     /// Why the last try failed, in the dialog.
-    fn dialog_problem(&self, text: impl Into<SharedString>) -> Div {
+    pub(super) fn dialog_problem(&self, text: impl Into<SharedString>) -> Div {
         div()
             .text_size(px(tokens::SMALL))
             .text_color(rgb(palette().danger))
             .child(text.into())
-    }
-
-    /// Save as theme and Rename: a name, and the button that takes it.
-    fn name_dialog(&mut self, renaming: bool, window: &Window, cx: &mut Context<Self>) -> Div {
-        let heading = if renaming {
-            tr("Rename theme")
-        } else {
-            tr("Save as theme")
-        };
-        let field = self
-            .text_input(NAME, Self::dialog_confirm, window, cx)
-            .w_full();
-        let state = &self.ui.settings.appearance;
-        let ready = !state.name.text().trim().is_empty();
-        let problem = state
-            .dialog_error
-            .clone()
-            .map(|why| self.dialog_problem(why));
-        let ok = self.dialog_ok(if renaming { tr("Rename") } else { tr("Save") }, ready, cx);
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(12.))
-            .child(title(heading.into()))
-            .child(field)
-            .children(problem)
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap(px(8.))
-                    .child(self.dialog_cancel("Cancel", cx))
-                    .child(ok),
-            )
     }
 
     /// A pasted code, and a look at the themes it holds, in their colours, before they are

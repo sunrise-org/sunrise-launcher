@@ -3,7 +3,7 @@
 //! own colours with its name under it. Pressing a tile applies it at once.
 use super::state::Dialog;
 use super::*;
-use crate::widgets::button::secondary;
+use crate::widgets::button::{icon_button, secondary, Style};
 use crate::widgets::check::{checkbox, Tick};
 use crate::widgets::focus::c;
 use crate::widgets::{hover_fade, track_hover};
@@ -37,15 +37,16 @@ struct Tile {
     saved: Option<(usize, String)>,
 }
 
-/// A tile's picture: the sidebar in the Sidebar colour, a content area in Background holding a
+/// A theme's picture: the sidebar in the Sidebar colour, a content area in Background holding a
 /// banner with an Accent pill and two rows, each a Text line, a Muted line and an Accent dot,
-/// all on Cards.
-fn picture(roles: &Roles) -> Div {
+/// all on Cards. A tile draws it at `scale` 1, the Edit dialog bigger.
+pub(super) fn picture(roles: &Roles, scale: f32) -> Div {
+    let s = |n: f32| px(n * scale);
     let bar = |colour: u32, width: f32| {
         div()
             .flex_none()
-            .h(px(4.))
-            .w(px(width))
+            .h(s(4.))
+            .w(s(width))
             .rounded_full()
             .bg(rgb(colour))
     };
@@ -53,37 +54,37 @@ fn picture(roles: &Roles) -> Div {
         div()
             .flex()
             .items_center()
-            .gap(px(6.))
-            .h(px(20.))
-            .px(px(8.))
-            .rounded(px(5.))
+            .gap(s(6.))
+            .h(s(20.))
+            .px(s(8.))
+            .rounded(s(5.))
             .bg(rgb(roles.card))
             .child(bar(roles.text, 40.))
             .child(bar(roles.muted, 26.))
             .child(div().flex_1())
-            .child(div().size(px(8.)).rounded_full().bg(rgb(roles.accent)))
+            .child(div().size(s(8.)).rounded_full().bg(rgb(roles.accent)))
     };
     let banner = div()
         .flex()
         .items_center()
-        .h(px(34.))
-        .px(px(8.))
-        .rounded(px(6.))
+        .h(s(34.))
+        .px(s(8.))
+        .rounded(s(6.))
         .bg(rgb(roles.card))
         .child(
             div()
-                .w(px(44.))
-                .h(px(14.))
+                .w(s(44.))
+                .h(s(14.))
                 .rounded_full()
                 .bg(rgb(roles.accent)),
         );
-    let side = div().flex_none().w(px(26.)).h_full().bg(rgb(roles.chrome));
+    let side = div().flex_none().w(s(26.)).h_full().bg(rgb(roles.chrome));
     div()
         .flex()
         .w_full()
-        .h(px(PREVIEW_H))
+        .h(s(PREVIEW_H))
         .overflow_hidden()
-        .rounded(px(10.))
+        .rounded(s(10.))
         .border_1()
         .border_color(rgb(palette().divider))
         .bg(rgb(roles.background))
@@ -94,8 +95,8 @@ fn picture(roles: &Roles) -> Div {
                 .min_w_0()
                 .flex()
                 .flex_col()
-                .gap(px(8.))
-                .p(px(10.))
+                .gap(s(8.))
+                .p(s(10.))
                 .child(banner)
                 .child(line())
                 .child(line()),
@@ -166,12 +167,10 @@ impl Launcher {
             .child(grid)
     }
 
-    /// "Your themes": the saved and imported ones, then a tile to make another from the colours
-    /// now painted.
+    /// "Your themes": the saved and imported ones, then a tile to make another, a copy of the
+    /// theme now painted.
     pub(super) fn your_themes_section(&mut self, cx: &mut Context<Self>) -> Div {
         let saved = library::listed(&theme_files::loaded());
-        let painted = library::current(&self.settings);
-        let working = self.settings.theme.as_deref() == Some(library::WORKING_ID);
         let ticked: Vec<String> = saved
             .iter()
             .filter(|local| self.ui.settings.appearance.ticked.contains(&local.slug))
@@ -179,8 +178,7 @@ impl Launcher {
             .collect();
         let mut grid = div().grid().grid_cols(self.tile_columns()).gap(px(GAP));
         for (n, local) in saved.iter().enumerate() {
-            let selected = self.settings.theme.as_deref() == Some(local.id().as_str())
-                || (working && local.roles == painted);
+            let selected = self.settings.theme.as_deref() == Some(local.id().as_str());
             grid = grid.child(self.theme_tile(
                 Tile {
                     key: SharedString::from(format!("alt-theme-mine-{}", local.slug)),
@@ -223,33 +221,49 @@ impl Launcher {
             .child(grid)
     }
 
-    /// The dashed tile that keeps the colours now painted as a new theme of the player's.
+    /// The dashed tile that makes a new theme, a copy of the one now painted, and opens it to
+    /// edit. It is as big as a theme's tile: the same frame, and a line under it as tall as a
+    /// name's.
     fn new_theme_tile(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         let p = palette();
-        div()
-            .id("alt-theme-new")
-            .reach()
-            .cursor_pointer()
-            .min_h(px(PREVIEW_H + 4. * RING))
+        let frame = div()
             .flex()
             .items_center()
             .justify_center()
-            .gap(px(8.))
+            .h(px(PREVIEW_H + 4. * RING))
             .rounded(px(FRAME_R))
             .border_2()
             .border_dashed()
             .border_color(rgb(p.line))
-            .text_color(rgb(p.muted))
-            .hover(move |s| s.bg(rgb(p.hover)).text_color(rgb(p.text)))
-            .child(blocks::icon("plus", 16., rgb(p.muted).into()))
+            .child(blocks::icon("plus", 20., rgb(p.muted).into()));
+        let label = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(8.))
+            .px(px(4.))
             .child(
                 div()
+                    .min_w_0()
+                    .truncate()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_size(px(tokens::LABEL))
+                    .text_size(px(14.))
                     .child(tr("New theme")),
             )
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.dialog_open(Dialog::Save);
+            .child(div().flex_none().text_size(px(tokens::SMALL)).child(" "));
+        div()
+            .id("alt-theme-new")
+            .reach()
+            .cursor_pointer()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .text_color(rgb(p.muted))
+            .hover(move |s| s.text_color(rgb(p.text)))
+            .child(frame)
+            .child(label)
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.theme_new(window);
                 cx.notify();
             }))
     }
@@ -282,7 +296,7 @@ impl Launcher {
             } else {
                 gpui::hsla(0., 0., 0., 0.)
             })
-            .child(picture(&roles))
+            .child(picture(&roles, 1.))
             .child(ring);
         if selected {
             frame = frame.child(
@@ -300,8 +314,9 @@ impl Launcher {
             );
         }
         let group = key.clone();
-        if let Some((n, slug)) = saved {
-            frame = frame.children(self.saved_overlays(n, slug, &group, cx));
+        match saved {
+            Some((n, slug)) => frame = frame.children(self.saved_overlays(n, slug, &group, cx)),
+            None => frame = frame.child(self.customize_overlay(&key, &name, &roles, cx)),
         }
         let look = if roles.light { "Light" } else { "Dark" };
         let label = div()
@@ -340,6 +355,35 @@ impl Launcher {
                 cx.notify();
             }));
         track_hover(el, key)
+    }
+
+    /// A built-in tile's Customize button: a copy of it, opened to edit. Faint at rest like a
+    /// saved tile's "…".
+    fn customize_overlay(
+        &mut self,
+        key: &SharedString,
+        name: &SharedString,
+        roles: &Roles,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let (name, roles) = (name.clone(), *roles);
+        let button = icon_button(
+            SharedString::from(format!("{key}-customize")),
+            "pencil-edit-02",
+            tr("Customize"),
+            Style::Ghost,
+        )
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            cx.stop_propagation();
+            this.theme_copy(&name, &roles, window);
+            cx.notify();
+        }));
+        div()
+            .absolute()
+            .top(px(14.))
+            .right(px(14.))
+            .opacity(0.55)
+            .child(button)
     }
 
     /// A saved theme's tick (to share several at once) and "…" menu, shown while the pointer is

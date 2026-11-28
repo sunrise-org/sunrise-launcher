@@ -74,11 +74,7 @@ fn a_folder_is_named_from_the_name_and_never_twice() {
     assert_eq!(slug_for(root, "Ember Glow!"), "ember-glow");
     assert_eq!(slug_for(root, "日本語"), "theme");
     assert_eq!(slug_for(root, "con"), "theme");
-    assert_eq!(
-        slug_for(root, "My Colours"),
-        "my-colours-2",
-        "the working copy's folder is not for the library"
-    );
+    assert_eq!(slug_for(root, "My Colours"), "my-colours");
     assert_eq!(slug_for(root, &"x".repeat(80)).len(), 40);
     std::fs::create_dir(root.join("ember")).unwrap();
     std::fs::create_dir(root.join("ember-2")).unwrap();
@@ -103,10 +99,6 @@ fn saved_themes_are_listed_renamed_copied_and_removed() {
     // The same name again is Ember (2), in a folder of its own.
     assert_eq!(save_new(root, "Ember", &NIGHT_ROLES).unwrap(), "ember-2");
     assert_eq!(names(root), ["Ember", "Ember (2)"]);
-    // The working copy is a theme, but not one of the library's.
-    write(root, WORKING, "Custom", &NIGHT_ROLES, None).unwrap();
-    assert_eq!(saved(root).len(), 2);
-    assert!(theme_files::scan(root).len() == 3);
 
     rename(root, "ember", "  Cinder ").unwrap();
     assert_eq!(names(root), ["Cinder", "Ember (2)"]);
@@ -202,28 +194,154 @@ fn imported_themes_are_added_under_names_that_are_free() {
 }
 
 #[test]
-fn the_colours_painted_are_the_editors_start_and_a_reset_goes_back_to_sunrise() {
+fn the_colours_painted_are_the_editors_start() {
     let dark = current(&Settings::parse("{}"));
     assert_eq!(dark, roles_of(&themes::DAWN_DARK));
     assert!(!dark.light);
     let light = current(&Settings::parse(r#"{"theme": "dawn_light"}"#));
     assert!(light.light);
     assert_eq!(light.card, themes::DAWN_LIGHT.card);
+}
 
-    let mut settings = Settings::parse(r#"{"theme": "nord"}"#);
-    reset(&mut settings, true).unwrap();
-    assert_eq!(settings.theme.as_deref(), Some("dawn_light"));
-    reset(&mut settings, false).unwrap();
-    assert_eq!(settings.theme, None);
+/// The folder the colour editor used to paint (`my-colours`, "Custom") is a theme of the
+/// library now: listed, chosen and painted like any other, with its colours kept.
+#[test]
+fn an_old_working_copy_is_a_saved_theme_called_custom() {
+    let root = tempfile::tempdir().unwrap();
+    write(root.path(), "my-colours", "Custom", &NIGHT_ROLES, None).unwrap();
+    theme_files::set_loaded(theme_files::scan(root.path()));
+    assert_eq!(names(root.path()), ["Custom"]);
+    let mut settings = Settings::parse("{}");
+    crate::appearance::select_theme(&mut settings, "local:my-colours").unwrap();
+    assert_eq!(current(&settings), NIGHT_ROLES);
+    // Another theme chosen, and back: nothing about it is special.
+    crate::appearance::select_theme(&mut settings, "nord").unwrap();
+    crate::appearance::select_theme(&mut settings, "local:my-colours").unwrap();
+    assert_eq!(current(&settings), NIGHT_ROLES);
+    rename(root.path(), "my-colours", "Mine").unwrap();
+    assert_eq!(names(root.path()), ["Mine"]);
 }
 
 #[test]
-fn the_working_copy_can_be_chosen_and_is_then_what_is_painted() {
+fn a_copy_is_a_new_theme_named_after_what_it_was_made_from() {
     let root = tempfile::tempdir().unwrap();
-    write(root.path(), WORKING, "Custom", &NIGHT_ROLES, None).unwrap();
-    theme_files::set_loaded(theme_files::scan(root.path()));
-    assert_eq!(WORKING_ID, format!("{}{WORKING}", theme_files::PREFIX));
-    let mut settings = Settings::parse("{}");
-    crate::appearance::select_theme(&mut settings, WORKING_ID).unwrap();
-    assert_eq!(current(&settings), NIGHT_ROLES);
+    let copy = |source: &str| make_copy(root.path(), source, &NIGHT_ROLES).unwrap();
+    assert_eq!(
+        copy("Sunrise"),
+        ("sunrise-copy".into(), "Sunrise copy".into())
+    );
+    assert_eq!(
+        copy("Sunrise"),
+        ("sunrise-copy-2".into(), "Sunrise copy 2".into())
+    );
+    assert_eq!(
+        copy("sunrise"),
+        ("sunrise-copy-3".into(), "sunrise copy 3".into())
+    );
+    // Copying a copy is a copy of it.
+    assert_eq!(
+        copy("Sunrise copy"),
+        ("sunrise-copy-copy".into(), "Sunrise copy copy".into())
+    );
+    assert_eq!(
+        names(root.path()),
+        [
+            "Sunrise copy",
+            "Sunrise copy 2",
+            "sunrise copy 3",
+            "Sunrise copy copy"
+        ]
+    );
+    let long = copy(&"x".repeat(100)).1;
+    assert!(long.chars().count() <= NAME_MAX, "{long}");
+    assert!(theme_files::parse(&render(&long, &NIGHT_ROLES, None)).is_ok());
+}
+
+#[test]
+fn cancelling_puts_a_theme_back_as_it_was_with_its_picture() {
+    let root = tempfile::tempdir().unwrap();
+    let was = Custom {
+        name: "Ember".into(),
+        roles: NIGHT_ROLES,
+    };
+    std::fs::create_dir_all(root.path().join("ember")).unwrap();
+    image::RgbaImage::new(64, 64)
+        .save(root.path().join("ember/sky.png"))
+        .unwrap();
+    write(root.path(), "ember", "Ember", &NIGHT_ROLES, Some("sky.png")).unwrap();
+    let edited = Roles {
+        accent: 0xabcdef,
+        ..NIGHT_ROLES
+    };
+    write(root.path(), "ember", "Ember 2", &edited, Some("sky.png")).unwrap();
+    restore(root.path(), "ember", &was).unwrap();
+    let back = find(root.path(), "ember").unwrap();
+    assert_eq!((back.name.as_str(), back.roles), ("Ember", NIGHT_ROLES));
+    assert!(back.picture.is_some(), "the picture is kept");
+}
+
+fn working_copy(root: &Path, name: &str) -> Settings {
+    write(root, "my-colours", name, &NIGHT_ROLES, None).unwrap();
+    Settings::parse(r#"{"theme": "local:my-colours"}"#)
+}
+
+#[test]
+fn the_old_working_copy_becomes_a_theme_called_custom_once() {
+    let root = tempfile::tempdir().unwrap();
+    let mut settings = working_copy(root.path(), "Custom");
+    let saves = std::cell::Cell::new(0);
+    let save = |_: &Settings| {
+        saves.set(saves.get() + 1);
+        Ok(())
+    };
+    assert!(migrate_working_copy(root.path(), &mut settings, save).unwrap());
+    assert_eq!(settings.theme.as_deref(), Some("local:custom"));
+    assert!(!root.path().join("my-colours").exists());
+    assert_eq!(names(root.path()), ["Custom"]);
+    assert_eq!(find(root.path(), "custom").unwrap().roles, NIGHT_ROLES);
+    // Run again, nothing is left to do and nothing is saved.
+    assert!(!migrate_working_copy(root.path(), &mut settings, save).unwrap());
+    assert_eq!(
+        (saves.get(), settings.theme.as_deref()),
+        (1, Some("local:custom"))
+    );
+}
+
+#[test]
+fn the_migrated_theme_takes_a_free_folder_and_keeps_its_accent() {
+    let root = tempfile::tempdir().unwrap();
+    save_new(root.path(), "Custom", &NIGHT_ROLES).unwrap();
+    let mut settings = working_copy(root.path(), "My own name");
+    settings
+        .theme_accents
+        .insert("local:my-colours".into(), crate::themes::Accent::VIOLET);
+    assert!(migrate_working_copy(root.path(), &mut settings, |_| Ok(())).unwrap());
+    assert_eq!(settings.theme.as_deref(), Some("local:custom-2"));
+    assert_eq!(find(root.path(), "custom-2").unwrap().name, "Custom");
+    assert!(settings.theme_accents.contains_key("local:custom-2"));
+    assert!(!settings.theme_accents.contains_key("local:my-colours"));
+}
+
+#[test]
+fn the_migration_leaves_other_settings_and_a_missing_folder_alone() {
+    let root = tempfile::tempdir().unwrap();
+    let mut other = Settings::parse(r#"{"theme": "nord"}"#);
+    working_copy(root.path(), "Custom");
+    assert!(!migrate_working_copy(root.path(), &mut other, |_| Ok(())).unwrap());
+    assert!(root.path().join("my-colours").exists());
+    let mut gone = Settings::parse(r#"{"theme": "local:my-colours"}"#);
+    let empty = tempfile::tempdir().unwrap();
+    assert!(!migrate_working_copy(empty.path(), &mut gone, |_| Ok(())).unwrap());
+    assert_eq!(gone.theme.as_deref(), Some("local:my-colours"));
+}
+
+#[test]
+fn a_migration_that_cannot_be_saved_puts_everything_back() {
+    let root = tempfile::tempdir().unwrap();
+    let mut settings = working_copy(root.path(), "Custom");
+    let failed = migrate_working_copy(root.path(), &mut settings, |_| Err("disk full".into()));
+    assert_eq!(failed, Err("disk full".to_string()));
+    assert_eq!(settings.theme.as_deref(), Some("local:my-colours"));
+    assert!(root.path().join("my-colours").exists());
+    assert!(!root.path().join("custom").exists());
 }

@@ -9,6 +9,8 @@ use super::*;
 mod actions;
 mod colours;
 mod dialogs;
+mod edit;
+mod edit_dialog;
 mod handlers;
 mod inputs;
 mod photo;

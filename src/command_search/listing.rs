@@ -101,10 +101,7 @@ pub(super) const SETTINGS_ROWS: [(&str, Section); 17] = [
     (crate::i18n::tr_key("Game arguments"), Section::Game),
     (crate::i18n::tr_key("Minecraft folder"), Section::Game),
     (crate::i18n::tr_key("Themes"), Section::Appearance),
-    (
-        crate::i18n::tr_key("Customize colours"),
-        Section::Appearance,
-    ),
+    (crate::i18n::tr_key("Customize"), Section::Appearance),
     (crate::i18n::tr_key("Home header"), Section::Appearance),
     (
         crate::i18n::tr_key("Custom background"),

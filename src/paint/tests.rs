@@ -88,10 +88,14 @@ fn check(name: &str, theme: &Theme) {
     };
     // The swatch stays as picked; the gradient holds the white label at every point.
     assert_eq!(p.accent, theme.accent_choice.rgb(), "{name}: raw accent");
-    assert_eq!(p.accent_on, 0xffffff, "{name}: Play's text is white");
+    // The label on the accent is white where white reads, else a dark ink; it reads either way.
+    reads("the label on the accent", p.accent_on, &[p.accent], TEXT);
+    if contrast(0xffffff, p.accent) >= TEXT {
+        assert_eq!(p.accent_on, 0xffffff, "{name}: white where it reads");
+    }
     let [dark, light] = p.play_stops;
     let ramp = std::array::from_fn::<_, 101, _>(|i| over(light, i as f32 / 100., dark));
-    reads("white on Play", p.accent_on, &ramp, TEXT);
+    reads("white on Play's gradient", 0xffffff, &ramp, TEXT);
     assert!(luminance(light) > luminance(dark));
     // Play is its accent (or the theme's authored face) pulled toward the theme's chrome.
     let toned = mix_oklab(p.chrome, theme.play_seed.unwrap_or(p.accent), PLAY_TONE);
@@ -255,7 +259,7 @@ fn dawns_play_is_the_brand_orange_under_white() {
         let theme = from_settings(&settings, WindowAppearance::Dark);
         let p = Palette::of(&theme);
         assert_eq!((p.accent, p.accent_on), (0xc2552d, 0xffffff));
-        assert!(contrast(p.accent_on, p.play_stops[1]) >= TEXT);
+        assert!(contrast(0xffffff, p.play_stops[1]) >= TEXT);
     }
     assert!(
         contrast(0xffffff, 0xc4623a) < TEXT,
@@ -301,10 +305,9 @@ fn every_builtin_play_is_its_accent_toned_to_the_theme_at_readable_white_contras
         let theme = from_settings(&settings, WindowAppearance::Dark);
         let p = Palette::of(&theme);
         assert_eq!(p.accent, own, "{id}: the theme's accent is unchanged");
-        assert_eq!(p.accent_on, 0xffffff, "{id}: white label and icon");
         let [dark, light] = p.play_stops;
-        let bright_contrast = contrast(p.accent_on, light);
-        let dark_contrast = contrast(p.accent_on, dark);
+        let bright_contrast = contrast(0xffffff, light);
+        let dark_contrast = contrast(0xffffff, dark);
         assert!(bright_contrast >= TEXT, "{id}: {bright_contrast:.3}");
         assert!(
             dark_contrast >= bright_contrast + 1.5,
@@ -406,7 +409,7 @@ accent = "#101010""##,
         check(&format!("local {name}"), &theme);
         let p = Palette::of(&theme);
         assert_eq!(p.accent, roles.accent, "{name}");
-        assert_eq!(p.accent_on, 0xffffff, "{name}");
+        assert!(contrast(p.accent_on, p.accent) >= TEXT, "{name}");
         assert_eq!(p.background, roles.background, "{name}");
     }
 }
@@ -436,7 +439,7 @@ fn white_text_on_a_pale_accent_darkens_the_fill_only() {
     let p = Palette::of(&theme);
     let toned = mix_oklab(p.chrome, p.accent, PLAY_TONE);
     assert_eq!(p.play_stops[0], toned, "a dark accent needs no shading");
-    assert_eq!(p.play_stops[1], mix_oklab(p.accent_on, toned, 0.25));
+    assert_eq!(p.play_stops[1], mix_oklab(0xffffff, toned, 0.25));
 }
 
 /// The theme and the player's accent decide the palette; a frame reads what it began, and
@@ -540,4 +543,102 @@ fn a_players_light_theme_has_its_own_plates() {
     let p = Palette::of(&theme);
     assert_eq!(p.card_color, roles.card);
     assert_eq!(p.text, roles.text);
+}
+
+/// The eight themes of the gallery, each painted as the launcher paints it (the light ones in the
+/// light look), with the pairs a player reads, measured on the final palette: after the fitting,
+/// not on the hexes the theme was defined with.
+fn gallery_palettes() -> Vec<(&'static str, Palette)> {
+    themes::GALLERY
+        .iter()
+        .map(|t| {
+            let light = themes::is_light(Some(t.id));
+            // Chosen as the gallery chooses it, so the theme's own accent comes with it.
+            let mut settings = Settings {
+                appearance: if light {
+                    Appearance::Light
+                } else {
+                    Appearance::Dark
+                },
+                ..Settings::default()
+            };
+            sunrise_launcher::appearance::select_theme(&mut settings, t.id)
+                .expect("a gallery theme can be chosen");
+            let system = if light {
+                WindowAppearance::Light
+            } else {
+                WindowAppearance::Dark
+            };
+            (t.id, Palette::of(&from_settings(&settings, system)))
+        })
+        .collect()
+}
+
+/// Every pair of every built-in theme that is text on a surface, at the contrast the palette
+/// promises. A failure lists all the pairs that fell short, with their ratios.
+#[test]
+fn every_gallery_theme_reads() {
+    let palettes = gallery_palettes();
+    assert_eq!(palettes.len(), 8);
+    let mut short = Vec::new();
+    for (id, p) in palettes {
+        let cards = [p.card_color, p.raised];
+        let page = [
+            p.background,
+            p.card_color,
+            p.raised,
+            p.field,
+            p.hover,
+            p.selected,
+        ];
+        let chrome = [p.chrome, p.chrome_raised];
+        let accent = [p.accent];
+        let pairs: [(&str, u32, &[u32]); 8] = [
+            ("text", p.text, &page[..]),
+            ("muted", p.muted, &page[..]),
+            ("chrome text", p.chrome_text, &chrome[..]),
+            ("chrome muted", p.chrome_muted, &chrome[..]),
+            ("accent ink", p.accent_ink, &page[..5]),
+            ("success", p.success, &cards[..]),
+            ("danger", p.danger, &cards[..]),
+            ("Play's label", p.accent_on, &accent[..]),
+        ];
+        for (role, fg, on) in pairs {
+            for &bg in on {
+                let ratio = contrast(fg, bg);
+                if ratio < TEXT {
+                    short.push(format!("{id}: {role} {fg:06x} on {bg:06x} {ratio:.2}"));
+                }
+            }
+        }
+    }
+    assert!(short.is_empty(), "{}", short.join("\n"));
+}
+
+/// White stays the label wherever it reads on the accent; on a pale accent it is dark. The
+/// label is not one of the player's colours, so their own themes get the same rule and keep
+/// every colour they picked.
+#[test]
+fn the_label_on_the_accent_is_white_only_where_white_reads() {
+    for (id, p) in gallery_palettes() {
+        if contrast(0xffffff, p.accent) >= TEXT {
+            assert_eq!(p.accent_on, 0xffffff, "{id}");
+        } else {
+            assert!(luminance(p.accent_on) < 0.1, "{id}: {:06x}", p.accent_on);
+        }
+    }
+    let graphite = gallery_palettes()
+        .into_iter()
+        .find(|(id, _)| *id == "graphite")
+        .expect("graphite is in the gallery")
+        .1;
+    assert_eq!(graphite.accent, 0xd4d4d8, "the silver stays");
+    assert_ne!(
+        graphite.accent_on, 0xffffff,
+        "white on silver cannot be read"
+    );
+    // A pale accent a player picked keeps its colour; only the label on it is dark.
+    let pale = Palette::of(&look(None, Accent::from_rgb(0xffe39a)));
+    assert_eq!(pale.accent, 0xffe39a);
+    assert!(contrast(pale.accent_on, pale.accent) >= TEXT);
 }

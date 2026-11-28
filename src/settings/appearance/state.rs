@@ -16,10 +16,9 @@ type BehindKey = (Option<String>, Option<String>, bool);
 /// What the theme library's one open dialog (a sheet over the window) is for.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Dialog {
-    /// Naming the colours being edited, to keep them.
-    Save,
-    /// Giving the theme in this folder another name.
-    Rename(String),
+    /// Editing the saved theme in `State::edit`: its name and its colours, painted as they
+    /// change.
+    Edit,
     /// Taking a pasted code.
     Import,
     /// Showing the code for these themes.
@@ -27,6 +26,18 @@ pub(super) enum Dialog {
         code: String,
         themes: Vec<library::Custom>,
     },
+}
+
+/// The theme the Edit dialog is working on, and what to put back when it is cancelled.
+pub(super) struct Edit {
+    /// Its folder.
+    pub(super) slug: String,
+    /// Its name and colours when the dialog opened.
+    pub(super) start: library::Custom,
+    /// Made for this dialog ("+ New theme", Customize): Cancel deletes it again.
+    pub(super) created: bool,
+    /// The look before the dialog painted the theme: Cancel goes back to it.
+    pub(super) before: Look,
 }
 
 pub(crate) struct State {
@@ -47,7 +58,7 @@ pub(crate) struct State {
     pub(super) picker_focus: Option<FocusHandle>,
     /// Whether the hex field had the keyboard when last drawn: leaving it takes what is typed.
     pub(super) hex_was_focused: bool,
-    /// The name being typed for Save and Rename, and the code pasted for Import.
+    /// The name being typed in the Edit dialog, and the code pasted for Import.
     pub(super) name: line_edit::LineEdit,
     pub(super) name_focus: Option<FocusHandle>,
     pub(super) code: line_edit::LineEdit,
@@ -59,12 +70,11 @@ pub(crate) struct State {
     pub(super) dialog_focus: bool,
     /// The library's themes ticked for export, by folder.
     pub(super) ticked: BTreeSet<String>,
-    /// Whether the colour editor is open under the current theme's bar, and when that last
-    /// changed (for the open and close glide).
-    pub(super) colours_open: bool,
-    pub(super) colours_since: Option<std::time::Instant>,
-    /// The built-in theme the colours being edited started from: what Reset goes back to.
-    pub(super) origin: Option<&'static str>,
+    /// The theme the Edit dialog is open on.
+    pub(super) edit: Option<Edit>,
+    /// A dialog closed without Done (Escape, a press outside) and what it was editing, put
+    /// back when the page is next drawn, which has the window.
+    pub(super) reverting: Option<Edit>,
     /// The folder whose "…" menu is open, and whether Home header's menu is.
     pub(super) more: Option<String>,
     pub(super) header_open: bool,
@@ -115,9 +125,8 @@ impl Default for State {
             dialog_error: None,
             dialog_focus: false,
             ticked: BTreeSet::new(),
-            colours_open: false,
-            colours_since: None,
-            origin: None,
+            edit: None,
+            reverting: None,
             more: None,
             header_open: false,
             worlds_focus: None,
@@ -142,6 +151,7 @@ impl State {
 
 pub(super) struct Look {
     pub(super) theme: Option<String>,
+    pub(super) appearance: backend::Appearance,
     pub(super) accent: Accent,
     pub(super) accents: std::collections::BTreeMap<String, Accent>,
     pub(super) background: Option<String>,
@@ -153,11 +163,25 @@ impl Launcher {
     pub(super) fn look(&self) -> Look {
         Look {
             theme: self.settings.theme.clone(),
+            appearance: self.settings.appearance,
             accent: self.settings.accent,
             accents: self.settings.theme_accents.clone(),
             background: self.settings.background.clone(),
             scenery: self.settings.scenery_on,
             reduced_graphics: self.settings.reduced_graphics,
         }
+    }
+}
+
+impl Look {
+    /// Puts this look back into `settings`.
+    pub(super) fn restore(self, settings: &mut backend::Settings) {
+        settings.theme = self.theme;
+        settings.appearance = self.appearance;
+        settings.accent = self.accent;
+        settings.theme_accents = self.accents;
+        settings.background = self.background;
+        settings.scenery_on = self.scenery;
+        settings.reduced_graphics = self.reduced_graphics;
     }
 }
