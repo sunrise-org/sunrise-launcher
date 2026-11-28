@@ -108,6 +108,57 @@ pub(crate) fn copy_button(id: &'static str, label: &str, text: String) -> Statef
     })
 }
 
+/// An icon-only copy button: copies `text` and turns into the tick for a moment, with no toast.
+/// The click goes no further, so a card it sits on (a toast) doesn't take it as its own.
+pub(crate) fn copy_icon(id: &'static str, text: String) -> Stateful<Div> {
+    let key = copy_key(id, &text);
+    let name = SharedString::from(id);
+    let fill = hover_fade(
+        &name,
+        || {
+            div()
+                .absolute()
+                .inset_0()
+                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+        },
+        |d, a| {
+            let hover: Hsla = c(palette().hover);
+            d.bg(hover.opacity(hover.a * a))
+        },
+    );
+    let glyph = match super::copies::copied(&key) {
+        Some(n) => tick(&name, n, 16., c(palette().success)),
+        None => crate::glass_ui::icon("copy-01", 16., c(palette().muted)).into_any_element(),
+    };
+    let face = div()
+        .id(id)
+        .tab_index(0)
+        .relative()
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(26.))
+        // As tall as the line it sits on: the card keeps its height.
+        .my(px(-4.))
+        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+        .cursor_pointer()
+        .focus_visible(|s| s.shadow(focus_ring(palette().focus)))
+        .seen()
+        .child(fill)
+        .child(glyph)
+        .tooltip(crate::glass_ui::tip(tr("Copy")))
+        .on_click(move |_, window, cx| {
+            cx.stop_propagation();
+            crate::selectable::clipboard::copy_quietly(
+                cx,
+                gpui::ClipboardItem::new_string(text.clone()),
+            );
+            super::copies::note_copy(key.clone(), window, cx);
+        });
+    track_hover(face, name)
+}
+
 /// The key a copy button's copies are counted under: its id and a hash of its text.
 fn copy_key(id: &str, text: &str) -> SharedString {
     use std::hash::{Hash as _, Hasher as _};

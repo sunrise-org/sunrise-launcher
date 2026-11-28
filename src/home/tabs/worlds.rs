@@ -247,8 +247,7 @@ impl Launcher {
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(c(palette().text))
             .when(!on_play, |d| d.truncate())
-            .child(world.name.clone())
-            .tooltip(crate::glass_ui::tip(world.name.clone()));
+            .child(world.name.clone());
         let id = SharedString::from(format!("alt-world:{}", world.folder));
         let (ticked, any) = (ticks.contains(&world.folder), !ticks.is_empty());
         let check = self.tick_column(&id, ticked, any, {

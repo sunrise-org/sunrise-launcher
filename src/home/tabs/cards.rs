@@ -386,8 +386,7 @@ impl Launcher {
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(c(palette().text))
             .truncate()
-            .child(title.clone())
-            .tooltip(crate::glass_ui::tip(title));
+            .child(title.clone());
         let ticked = pick.ticked;
         let lit = id.clone();
         let card = crate::home::card()

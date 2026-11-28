@@ -29,6 +29,8 @@ type Parts = Vec<(String, bool)>;
 /// when it's sliding out.
 struct Line {
     parts: Parts,
+    /// What the card's copy button copies (the full path it names), if it has one.
+    copy: Option<String>,
     since: Instant,
     n: u64,
     held: Option<Instant>,
@@ -42,11 +44,12 @@ struct Line {
 
 static LINE: Mutex<Option<Line>> = Mutex::new(None);
 
-fn say_parts(parts: Parts) {
+fn say_parts(parts: Parts, copy: Option<String>) {
     let mut line = LINE.lock().unwrap_or_else(|e| e.into_inner());
     let n = line.as_ref().map_or(1, |l| l.n + 1);
     *line = Some(Line {
         parts,
+        copy,
         since: Instant::now(),
         n,
         held: None,
@@ -88,13 +91,19 @@ fn dismiss() {
 
 /// Says `text` now, in place of whatever was said before.
 pub(super) fn say(text: impl Into<String>) {
-    say_parts(vec![(text.into(), false)]);
+    say_parts(vec![(text.into(), false)], None);
 }
 
 /// Says `en` translated, its one `{hole}` filled with `value` in mono, wherever the language
 /// puts it.
 pub(super) fn say_with(en: &str, value: &str) {
-    say_parts(parts_with(tr(en), value));
+    say_parts(parts_with(tr(en), value), None);
+}
+
+/// [`say_with`], with a copy button on the card that copies `full` (the whole path, where the
+/// line shows it shortened).
+pub(super) fn say_copyable(en: &str, value: &str, full: String) {
+    say_parts(parts_with(tr(en), value), Some(full));
 }
 
 /// The longest start of a copy the toast shows, in characters, ellipsis included.
@@ -143,7 +152,7 @@ fn parts_with(said: &str, value: &str) -> Parts {
 
 /// The line still showing, its number, and whether it's sliding out. Its time up, it starts
 /// to; once it has, it's gone.
-fn current_parts() -> Option<(Parts, u64, bool)> {
+fn current_parts() -> Option<(Parts, u64, bool, Option<String>)> {
     let mut line = LINE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(l) = line.as_mut() {
         if l.leaving.is_none() && l.held.is_none() && l.since.elapsed() >= SHOWN {
@@ -154,7 +163,7 @@ fn current_parts() -> Option<(Parts, u64, bool)> {
         }
     }
     line.as_ref()
-        .map(|l| (l.parts.clone(), l.n, l.leaving.is_some()))
+        .map(|l| (l.parts.clone(), l.n, l.leaving.is_some(), l.copy.clone()))
 }
 
 /// The countdown bar's state while the line is held in place or running down: the share of its
@@ -187,14 +196,14 @@ pub(super) fn tilde(path: &Path) -> String {
 /// Opens `path` in the system's file manager (or its app), and says so.
 pub(super) fn open(cx: &mut App, path: &Path) {
     cx.open_with_system(path);
-    say_with("Opened {path}", &tilde(path));
+    say_copyable("Opened {path}", &tilde(path), path.display().to_string());
 }
 
 impl Launcher {
     /// From the drain: whether the line changed (a new one, one sliding out, or the last one
     /// gone).
     pub(super) fn toast_tick(&mut self) -> bool {
-        let now = current_parts().map(|(_, n, leaving)| (n, leaving));
+        let now = current_parts().map(|(_, n, leaving, _)| (n, leaving));
         let changed = now != self.toast_seen;
         self.toast_seen = now;
         changed
@@ -211,7 +220,7 @@ impl Launcher {
 /// The card for the line still showing, none once it is gone: the shared toast card, with the
 /// line's pieces inside it, sliding in and out and taking the pointer's click and hold.
 fn toast_card(top: f32) -> Option<Div> {
-    let (parts, n, leaving) = current_parts()?;
+    let (parts, n, leaving, copy) = current_parts()?;
     let p = crate::paint::palette();
     // One line, never taller: a part too long for the card is cut off with an ellipsis.
     let mut line = div()
@@ -255,7 +264,17 @@ fn toast_card(top: f32) -> Option<Div> {
                     running,
                 )
             });
-    let card = crate::widgets::feedback::toast_card(Tone::Info, line.into_any_element())
+    // The copy button at the right copies what the line names, and keeps the toast up: only a
+    // click on the toast itself lets it go.
+    let copy = copy.map(|text| crate::widgets::motion_bits::copy_icon("toast-copy", text));
+    let content = div()
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .min_w_0()
+        .child(line.flex_1())
+        .children(copy);
+    let card = crate::widgets::feedback::toast_card(Tone::Info, content.into_any_element())
         .children(timer)
         .id("toast")
         .relative()
@@ -314,7 +333,7 @@ mod tests {
         // Released, the 4.2 s are long past: it slides out, then it's gone.
         LINE.lock().unwrap().as_mut().unwrap().since -= SHOWN * 2;
         assert!(toast_card(0.).is_some());
-        assert!(current_parts().is_some_and(|(_, _, leaving)| leaving));
+        assert!(current_parts().is_some_and(|(_, _, leaving, _)| leaving));
         // The pointer can't catch it on the way out.
         hold(true);
         slid_out();
@@ -322,7 +341,7 @@ mod tests {
         say("Copied again");
         assert!(toast_card(0.).is_some());
         dismiss();
-        assert!(current_parts().is_some_and(|(_, _, leaving)| leaving));
+        assert!(current_parts().is_some_and(|(_, _, leaving, _)| leaving));
         slid_out();
         assert!(toast_card(0.).is_none());
     }
