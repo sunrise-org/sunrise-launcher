@@ -166,13 +166,19 @@ impl ProfileHandoff<'_> {
 }
 
 /// The shared version's preparation exclusion must follow its writer, even when
-/// there is no admitted profile (startup/Prepare).
+/// there is no admitted profile (startup/Prepare). A piped preparer leads its own process group
+/// on Unix and runs in its own job on Windows, with the preparation's lock (`file`) or without
+/// one (a probe such as developer-install's).
 pub(crate) fn spawn_preparer(
     mut command: std::process::Command,
-    file: &File,
+    file: Option<&File>,
     profile: Option<&ProfileHandoff<'_>>,
     piped: bool,
 ) -> io::Result<super::child::Child> {
+    let files: &[&File] = match &file {
+        Some(file) => std::slice::from_ref(file),
+        None => &[],
+    };
     command.env_remove("SUNRISE_ACCOUNT_SESSIONS");
     #[cfg(unix)]
     {
@@ -181,18 +187,19 @@ pub(crate) fn spawn_preparer(
         }
         let command = profile_streams(command, piped);
         match profile {
-            Some(profile) => profile.spawn_unix(command, &[file], None),
-            None => spawn_unix(command, &[file], None, None),
+            Some(profile) => profile.spawn_unix(command, files, None),
+            None => spawn_unix(command, files, None, None),
         }
         .map(Into::into)
     }
     #[cfg(windows)]
     spawn_windows_command(
         &command,
-        &[file],
+        files,
         windows::Start {
             profile: profile.map(|handoff| handoff.file),
             attached: !piped,
+            preparer: piped,
             ..windows::Start::default()
         },
         piped,
@@ -380,6 +387,28 @@ fn spawn_windows_command<'a>(
 
 #[cfg(test)]
 mod tests;
+
+/// The environment that makes [`job_fixture_leader`]'s run start its helpers.
+#[cfg(all(test, windows))]
+const JOB_FIXTURE_HELPERS: &str = "SUNRISE_JOB_FIXTURE_HELPERS";
+/// With it, the fixture's leader stays running after it started them.
+#[cfg(all(test, windows))]
+const JOB_FIXTURE_HOLD: &str = "SUNRISE_JOB_FIXTURE_HOLD";
+
+/// A Windows test's preparer leader: this test binary, which starts `helpers` processes that run
+/// for 30 s in its job, then ends, or with `hold` stays running. No shell parses its command
+/// line: `cmd /c` with the quoted arguments `spawn_exact` writes never started the pings.
+#[cfg(all(test, windows))]
+pub(crate) fn job_fixture_leader(helpers: usize, hold: bool) -> std::process::Command {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", "process::leases::tests::job_fixture_leader"])
+        .env(JOB_FIXTURE_HELPERS, helpers.to_string());
+    if hold {
+        command.env(JOB_FIXTURE_HOLD, "1");
+    }
+    command
+}
 
 fn error(error: Error) -> io::Error {
     match error {

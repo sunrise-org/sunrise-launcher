@@ -2067,5 +2067,7 @@
   "More than one native mod uses the ID {id}. Remove the duplicate, then try again.": "More than one native mod uses the ID {id}. Remove the duplicate, then try again.",
   "Choosing the mixin tool version": "Choosing the mixin tool version",
   "Preparing mods for checking": "Preparing mods for checking",
-  "The installed builds for these mods ({version}) hold different mods or were changed after they were installed. Remove them, then build again.": "The installed builds for these mods ({version}) hold different mods or were changed after they were installed. Remove them, then build again."
+  "The installed builds for these mods ({version}) hold different mods or were changed after they were installed. Remove them, then build again.": "The installed builds for these mods ({version}) hold different mods or were changed after they were installed. Remove them, then build again.",
+  "The game's preparer stopped ({status}): {line}": "The game's preparer stopped ({status}): {line}",
+  "The game's preparer ended, but a process it started kept its output open, so the launcher stopped that process. Some of the output was not read.": "The game's preparer ended, but a process it started kept its output open, so the launcher stopped that process. Some of the output was not read."
 }
