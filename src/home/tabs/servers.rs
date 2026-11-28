@@ -1,9 +1,11 @@
-//! The Saved servers tab: the profile's server list (`servers.dat`) as cards, as the Worlds tab
-//! draws its own. The header's actions are Add server (a dialog that saves an address, or joins
-//! it once without saving: quick join), Host a server and a refresh of the answers; the cards
-//! (`crate::join`) have Join and a "…" menu, and tick for the bar's Remove.
+//! The Servers tab: the profile's server list (`servers.dat`) and the servers this computer
+//! hosts, as cards under small headings, as the Worlds tab draws its own. The header's actions
+//! are a refresh of the answers, Host a server (the dialog that creates one) and Add server (a
+//! dialog that saves an address, or joins it once without saving: quick join); the cards
+//! (`crate::join`, `crate::servers_page`) have Join or Start and a "…" menu, and a saved
+//! server's tick for the bar's Remove.
 use super::*;
-use crate::join::{featured, featured_at, Featured};
+use crate::join::{featured, featured_at, section, Featured};
 use crate::widgets::button::{button, icon_button, Look, Size, Style};
 use std::rc::Rc;
 
@@ -30,7 +32,8 @@ impl Launcher {
                     .any(|(s, _)| featured_at(&s.ip).as_ref() == Some(server))
             })
             .collect();
-        let count = unsaved.len() + saved.len();
+        let count = unsaved.len() + saved.len() + self.hosted_count();
+        let none_saved = saved.is_empty();
         let shown: Vec<(usize, Featured)> = unsaved
             .into_iter()
             .filter(|(_, server)| {
@@ -48,17 +51,31 @@ impl Launcher {
         let order: Rc<Vec<String>> = Rc::new(found.iter().map(|(i, _)| i.to_string()).collect());
         // A server the search hides drops out of the ticks.
         self.multiplayer.picks.retain(&order);
-        let items = if shown.is_empty() && found.is_empty() {
+        let hosted = self.hosted_section(&query, cx);
+        let items = if shown.is_empty() && found.is_empty() && hosted.is_none() {
             search::no_matches()
         } else {
-            let mut items = div().flex().flex_col().gap(px(GAP));
-            for (n, server) in shown {
-                items = items.child(self.featured_server_card(n, server, cx));
+            let mut items = div().flex().flex_col().gap(px(18.));
+            if !shown.is_empty() {
+                let mut cards = div().flex().flex_col().gap(px(GAP));
+                for (n, server) in shown {
+                    cards = cards.child(self.featured_server_card(n, server, cx));
+                }
+                items = items.child(section(tr("Featured"), cards));
             }
-            for (place, entry) in found {
-                items = items.child(self.saved_server_card(place, entry, &order, cx));
+            if !found.is_empty() {
+                let mut cards = div().flex().flex_col().gap(px(GAP));
+                for (place, entry) in found {
+                    cards = cards.child(self.saved_server_card(place, entry, &order, cx));
+                }
+                items = items.child(section(tr("Your servers"), cards));
+            } else if none_saved && query.is_empty() {
+                items = items.child(section(
+                    tr("Your servers"),
+                    crate::home::muted(tr("Servers you join or add show up here.")),
+                ));
             }
-            items
+            items.children(hosted)
         };
         let pick_bar = self.server_pick_bar(&order, cx);
         self.home_set_bar(pick_bar);
@@ -79,6 +96,7 @@ impl Launcher {
         )
         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
             this.refresh_servers();
+            this.refresh_hosted();
             cx.notify();
         }));
         let host = button(
@@ -87,7 +105,7 @@ impl Launcher {
             Look::new(Style::Secondary, Size::Medium),
         )
         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-            this.navigate(Page::Hosting);
+            this.open_host_create(cx);
             cx.notify();
         }));
         let add = button(
@@ -109,19 +127,22 @@ impl Launcher {
             .child(add)
     }
 
-    /// Goes to Home with the Saved servers tab showing: where the servers are joined from.
+    /// Goes to Home with the Servers tab showing: where the servers are joined from and hosted.
     pub(crate) fn show_saved_servers(&mut self) {
         self.ui.home.tabs.selected = Tab::Servers;
         self.navigate(Page::Home);
     }
 
-    /// Whether Home's Saved servers tab is the one showing.
+    /// Whether Home's Servers tab is the one showing.
     pub(crate) fn home_on_servers(&self) -> bool {
         self.ui.home.tabs.selected == Tab::Servers
     }
 
-    /// Escape on the Saved servers tab: closes its menu, or clears its ticks. True when it did.
+    /// Escape on the Servers tab: closes a menu or dialog (the Create dialog, a hosted server's
+    /// menu), or clears its ticks. True when it did.
     pub(crate) fn servers_escape(&mut self) -> bool {
-        self.ui.page == Page::Home && self.home_on_servers() && self.join_escape()
+        self.ui.page == Page::Home
+            && self.home_on_servers()
+            && (self.hosting_escape() || self.join_escape())
     }
 }

@@ -1,4 +1,4 @@
-//! The servers of the selected profile as cards, for Home's Saved servers tab (`home::tabs::servers`
+//! The servers of the selected profile as cards, for Home's Servers tab (`home::tabs::servers`
 //! lays the tab out): each with Join and a "…" menu.
 //!
 //! Everything shown is read from the player's real launcher data, and nothing is written until
@@ -10,13 +10,16 @@
 //! - featured servers: a bundled pair, Horizon Minecraft (joinable once its address is set)
 //!   and Sunrise's own (inert, coming soon); no backend service.
 //!
-//! - `cards`: a saved server's card and a featured one's, and the selection bar.
+//! - `cards`: a saved server's card and a featured one's, the selection bar, and the parts the
+//!   hosted servers' cards share (`server_row`, `more_button`, `section`).
 //! - `dialog`: the "…" menu, the form and the question before a removal.
 use super::*;
 use gpui::{rgb, rgba};
 
 mod cards;
 mod dialog;
+
+pub(crate) use cards::{more_button, no_tick, section, server_row, RowParts};
 
 /// Horizon Minecraft's address, passed to the game as written. Empty: the row has no Join.
 pub(crate) const HORIZON_ADDRESS: &str = "play.playhorizon.dev";

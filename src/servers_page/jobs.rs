@@ -75,9 +75,12 @@ impl Launcher {
 
     /// Called with the launcher's other work: what the background sent, and the next status poll.
     pub(crate) fn servers_tick(&mut self) -> bool {
-        // The Hosting page shows how friends reach the server beside it, whatever the tab.
-        let showing = self.ui.page == crate::frame::Page::Hosting;
-        let overview = showing && self.servers.open.is_some() && self.servers.tab == Tab::Overview;
+        // A server's page shows how friends reach it beside it, whatever the tab; Home's Servers
+        // tab shows each hosted server's status.
+        let on_page = self.ui.page == crate::frame::Page::Hosting;
+        let showing =
+            on_page || (self.ui.page == crate::frame::Page::Home && self.home_on_servers());
+        let overview = on_page && self.servers.open.is_some() && self.servers.tab == Tab::Overview;
         let mut changed = self.internet_tick(overview);
         if !overview && self.servers.public_lookup != PublicLookup::Idle {
             self.servers.reset_public_lookup();
@@ -89,18 +92,15 @@ impl Launcher {
         if !showing || self.servers.polling || !self.servers.loaded {
             return changed;
         }
-        let every = if self.servers.open.is_some() {
-            POLL_OPEN
-        } else {
-            POLL_LIST
-        };
+        let open = self.servers.open.clone().filter(|_| on_page);
+        let every = if open.is_some() { POLL_OPEN } else { POLL_LIST };
         if self.servers.polled.is_some_and(|at| at.elapsed() < every) {
             return changed;
         }
         self.servers.polled = Some(Instant::now());
         self.servers.polling = true;
         let tx = self.servers.tx.clone();
-        match self.servers.open.clone() {
+        match open {
             Some(dir) => {
                 let since = if self.servers.log_dir.as_ref() == Some(&dir) {
                     self.servers.log_next
@@ -169,7 +169,9 @@ impl Launcher {
                 s.polling = false;
                 let mut changed = false;
                 for (dir, status) in all {
-                    if s.open.as_ref() != Some(&dir) {
+                    // The open server's own poll reads its status, while its page is up.
+                    if s.open.as_ref() != Some(&dir) || self.ui.page != crate::frame::Page::Hosting
+                    {
                         changed |= s.note_status(dir, status);
                     }
                 }
@@ -199,6 +201,10 @@ impl Launcher {
                             "{name} is ready. Press Start, then give your friends the address below.",
                             &[("name", &entry.name)],
                         ));
+                        // Made from Home's Servers tab: its page opens, where Start is.
+                        if self.ui.page == crate::frame::Page::Home && self.home_on_servers() {
+                            self.navigate(crate::frame::Page::Hosting);
+                        }
                     }
                     Err(p) => s.problem = Some(p),
                 }
@@ -244,8 +250,15 @@ impl Launcher {
                     self.side_servers = s.list.clone();
                 }
                 match result {
-                    Ok(()) => s.note = Some(tr("Server moved to the trash.").into()),
+                    Ok(()) => {
+                        s.note = Some(tr("Server moved to the trash.").into());
+                        crate::toast::say(tr("Server moved to the trash.").to_string());
+                    }
                     Err(e) => s.problem = Some(Problem::plain(e)),
+                }
+                // Its page is gone with it: back to the tab it was opened from.
+                if self.ui.page == crate::frame::Page::Hosting && self.servers.open.is_none() {
+                    self.show_saved_servers();
                 }
                 true
             }

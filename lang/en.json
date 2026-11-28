@@ -2962,5 +2962,16 @@
   "{mode} · {state}": "{mode} · {state}",
   "Rename server": "Rename server",
   "Start the server to get its address.": "Start the server to get its address.",
-  "A server needs a name.": "A server needs a name."
+  "A server needs a name.": "A server needs a name.",
+  "Featured": "Featured",
+  "Your servers": "Your servers",
+  "Hosted on this computer": "Hosted on this computer",
+  "Host a world for friends on this computer.": "Host a world for friends on this computer.",
+  "Open console": "Open console",
+  "Refresh status": "Refresh status",
+  "In your servers": "In your servers",
+  "Use an existing folder…": "Use an existing folder…",
+  "Updating…": "Updating…",
+  "Updated 1 pack.": "Updated 1 pack.",
+  "Updated {count} packs.": "Updated {count} packs."
 }

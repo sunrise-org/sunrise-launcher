@@ -6,10 +6,12 @@
 //! agree. The pure parts, the list and the skipped versions, are here and tested; the worker and
 //! the sheet use them.
 use super::*;
+use crate::home::tabs::Collection;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+mod packs;
 mod skips;
 pub(crate) use skips::Skips;
 
@@ -121,11 +123,18 @@ pub(crate) struct Check {
     pub(crate) hidden: usize,
     /// Why the last check couldn't ask the registry.
     pub(crate) failure: Option<String>,
+    /// The kind of pack the check is of (Packs or Shaders tab); None for the mods.
+    pub(crate) scope: Option<Kind>,
 }
 
 impl Check {
     pub(crate) fn is_checking(&self) -> bool {
         self.phase == Phase::Checking
+    }
+
+    /// Whether the check under way, or the last answer, is for the tab of `scope`.
+    pub(crate) fn is_for(&self, scope: Option<Kind>) -> bool {
+        self.scope == scope
     }
 
     /// Whether the button still says "Up to date" at `now`.
@@ -209,6 +218,15 @@ pub(crate) fn size_label(bytes: u64) -> String {
     }
 }
 
+/// The kind of pack the tab of `collection` lists; None for the mods.
+pub(crate) fn pack_scope(collection: Collection) -> Option<Kind> {
+    match collection {
+        Collection::Mods => None,
+        Collection::Resource => Some(Kind::ResourcePack),
+        Collection::Shader => Some(Kind::Shader),
+    }
+}
+
 impl Launcher {
     /// Where the skipped versions are kept: the launcher's data folder, for every profile.
     fn skips_dir() -> PathBuf {
@@ -248,10 +266,11 @@ impl Launcher {
             .collect()
     }
 
-    /// "Check for updates": asks the registry again, in the background, then lists what has a
-    /// newer release. A check left behind (another began, or the profile changed) is dropped
-    /// when it answers; the fetch itself can't be interrupted.
-    pub(crate) fn check_for_updates(&mut self, cx: &mut Context<Self>) {
+    /// "Check for updates" on the tab of `collection`: for mods it asks the registry again, for
+    /// packs it asks Modrinth about each pack the browser installed; in the background, then
+    /// lists what has a newer release. A check left behind (another began, or the profile
+    /// changed) is dropped when it answers; the fetch itself can't be interrupted.
+    pub(crate) fn check_for_updates(&mut self, collection: Collection, cx: &mut Context<Self>) {
         if self.mods_state.update_check.is_checking() {
             return;
         }
@@ -259,12 +278,21 @@ impl Launcher {
             crate::toast::say(why);
             return;
         }
+        let scope = pack_scope(collection);
         let generation = self.mods_state.update_check.begin();
-        let task = cx.background_executor().spawn(async move {
-            sunrise::v2::refreshed_index()
-                .map(|_| ())
-                .map_err(|e| e.to_string())
-        });
+        self.mods_state.update_check.scope = scope;
+        let task = match scope {
+            None => cx.background_executor().spawn(async move {
+                sunrise::v2::refreshed_index()
+                    .map(|_| None::<Vec<Found>>)
+                    .map_err(|e| e.to_string())
+            }),
+            Some(kind) => {
+                let (home, game) = (self.mods_home(), self.mods_game());
+                cx.background_executor()
+                    .spawn(async move { packs::check(&home, kind, &game).map(Some) })
+            }
+        };
         cx.spawn(async move |this, cx| {
             let answer = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -279,29 +307,39 @@ impl Launcher {
     fn finish_update_check(
         &mut self,
         generation: u64,
-        answer: Result<(), String>,
+        answer: Result<Option<Vec<Found>>, String>,
         cx: &mut Context<Self>,
     ) {
         if !self.mods_state.update_check.accepts(generation) {
             return;
         }
-        if let Err(why) = answer {
-            self.mods_state.update_check.phase = Phase::Idle;
-            self.mods_state.update_check.failure = Some(why.clone());
-            crate::toast::say(trf(
-                "Couldn't check for updates: {error}",
-                &[("error", &why)],
-            ));
-            return;
-        }
-        // The rows read the catalogue just fetched: what Home drew from the old one is stale.
-        self.mods_state.home_mod_labels = None;
-        self.ui.home.tabs.facts = Default::default();
-        self.home_inventory_changed();
-        self.v2_cards_again();
-        self.mods_refresh();
+        let answer = answer.map(|packs| match packs {
+            Some(found) => found,
+            None => {
+                // The rows read the catalogue just fetched: what Home drew from the old one is
+                // stale.
+                self.mods_state.home_mod_labels = None;
+                self.ui.home.tabs.facts = Default::default();
+                self.home_inventory_changed();
+                self.v2_cards_again();
+                self.mods_refresh();
+                self.found_updates()
+            }
+        });
+        let found = match answer {
+            Ok(found) => found,
+            Err(why) => {
+                self.mods_state.update_check.phase = Phase::Idle;
+                self.mods_state.update_check.failure = Some(why.clone());
+                crate::toast::say(trf(
+                    "Couldn't check for updates: {error}",
+                    &[("error", &why)],
+                ));
+                return;
+            }
+        };
         let skips = Skips::load(&Self::skips_dir());
-        let offer = offer(self.found_updates(), &skips);
+        let offer = offer(found, &skips);
         let now = Instant::now();
         let nothing = offer.items.is_empty() && offer.hidden == 0;
         self.mods_state.update_check.show(offer, now);
@@ -318,14 +356,53 @@ impl Launcher {
     }
 
     /// Update n: the ticked mods as one change, through the same path as the selection bar's
-    /// Update, which reports it once in the status strip and a toast.
-    pub(crate) fn install_checked_updates(&mut self) {
+    /// Update, which reports it once in the status strip and a toast. Packs are updated one
+    /// after another in a worker, and the result is a toast.
+    pub(crate) fn install_checked_updates(&mut self, cx: &mut Context<Self>) {
         let ids: BTreeSet<String> = self.mods_state.update_check.picks.clone();
+        let scope = self.mods_state.update_check.scope;
         self.close_sheet();
         if ids.is_empty() {
             return;
         }
-        self.run_mod_op(selection::ModOp::Update, &ids);
+        let Some(kind) = scope else {
+            self.run_mod_op(selection::ModOp::Update, &ids);
+            return;
+        };
+        if let Some(why) = self.mods_locked() {
+            crate::toast::say(why);
+            return;
+        }
+        if self.mutating() {
+            crate::toast::say(tr("Wait for the current operation to finish."));
+            return;
+        }
+        self.mods_state.busy = Some((tr("Updating…").to_owned(), 0.));
+        let (home, game) = (self.mods_home(), self.mods_game());
+        let task = cx
+            .background_executor()
+            .spawn(async move { packs::update(&home, kind, &game, &ids) });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.packs_updated(result);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The packs' update ended: the lists read again, and what happened said once.
+    fn packs_updated(&mut self, result: Result<usize, String>) {
+        self.mods_state.busy = None;
+        self.game_packs.stale();
+        self.home_inventory_changed();
+        match result {
+            Ok(1) => crate::toast::say(tr("Updated 1 pack.")),
+            Ok(n) => crate::toast::say(trf("Updated {count} packs.", &[("count", &n.to_string())])),
+            Err(why) => crate::toast::say(why),
+        }
     }
 
     /// "Skip this version": the mod's newer version stops being offered.

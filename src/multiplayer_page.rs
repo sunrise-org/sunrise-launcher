@@ -1,5 +1,5 @@
 //! The selected instance's server list (`sunrise_launcher::server_list`, the game's own
-//! `servers.dat`): what Home's Saved servers tab shows, with each server's
+//! `servers.dat`): what Home's Servers tab shows, with each server's
 //! picture and the status ping the game's Multiplayer screen sends, and the edits the page makes
 //! (add, edit, move, remove).
 use super::*;
@@ -37,7 +37,7 @@ pub(super) struct Multiplayer {
     pub(super) menu: Option<ServerMenu>,
 }
 
-/// What is open over the Saved servers tab.
+/// What is open over the Servers tab.
 pub(super) enum ServerDialog {
     /// The form of a new server, or of the saved server at this place.
     Form { edit: Option<usize> },
@@ -110,6 +110,13 @@ impl Launcher {
             });
         })
         .detach();
+    }
+
+    /// Asks `address` again, whatever it answered before.
+    pub(super) fn refresh_server(&mut self, address: &str, cx: &mut Context<Self>) {
+        self.multiplayer.reach.remove(address);
+        self.multiplayer.latency.remove(address);
+        self.ask_server(address.to_string(), cx);
     }
 
     /// Forgets every answer, so the next frame asks each server again.
@@ -208,7 +215,7 @@ impl Launcher {
         });
     }
 
-    /// Closes the dialog over the Saved servers tab, and what was typed in it.
+    /// Closes the dialog over the Servers tab, and what was typed in it.
     pub(super) fn close_server_dialog(&mut self) {
         self.multiplayer.dialog = None;
         self.multiplayer.error = None;
@@ -221,7 +228,7 @@ impl Launcher {
         self.servers.close_layers();
     }
 
-    /// Escape on the Saved servers tab: the "…" menu or the dialog goes first, then the ticks.
+    /// Escape on the Servers tab: the "…" menu or the dialog goes first, then the ticks.
     /// True when it closed or cleared something.
     pub(crate) fn join_escape(&mut self) -> bool {
         if self.multiplayer.menu.take().is_some() {

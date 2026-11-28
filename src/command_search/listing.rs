@@ -39,8 +39,10 @@ pub(crate) enum Target {
     Section(Section),
     /// Settings › Appearance, at the "Worlds on Home" choice.
     WorldsOnHome,
-    /// Home's Saved servers tab, where servers are joined from.
+    /// Home's Servers tab, where servers are joined from and hosted.
     SavedServers,
+    /// The Servers tab with the Create a server dialog open.
+    HostServer,
     /// A profile, by its id.
     Profile(String),
     /// A world of the selected profile: Home, where it is played from.
@@ -139,20 +141,19 @@ pub(crate) fn destinations() -> Vec<Entry> {
         Entry::page(tr("Packs").to_string(), "package", Page::Packs),
         Entry {
             target: Target::SavedServers,
+            ..Entry::page(tr("Servers").to_string(), "globe", Page::Home)
+        },
+        Entry {
+            target: Target::HostServer,
             ..Entry::page(
                 under(
                     crate::i18n::tr_key("Servers"),
-                    crate::i18n::tr_key("Saved servers"),
+                    crate::i18n::tr_key("Host a server"),
                 ),
-                "globe",
+                "server",
                 Page::Home,
             )
         },
-        Entry::page(
-            under(crate::i18n::tr_key("Servers"), crate::i18n::tr_key("Host")),
-            "server",
-            Page::Hosting,
-        ),
         Entry::page(tr("Skins").to_string(), "shirt", Page::Skins),
         Entry::page(tr("Settings").to_string(), "sliders", Page::Settings),
     ];

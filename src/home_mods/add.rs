@@ -41,26 +41,22 @@ impl Launcher {
             },
             cx,
         );
-        let find = match collection {
-            Collection::Resource => secondary("home-find-packs", tr("Find packs")).on_click(
-                cx.listener(|this, _, _, cx| {
-                    this.show_resource_pack_discover();
-                    cx.notify();
-                }),
-            ),
-            Collection::Shader => secondary("home-find-shaders", tr("Find shader packs")).on_click(
-                cx.listener(|this, _, _, cx| {
-                    this.show_shader_pack_discover();
-                    cx.notify();
-                }),
-            ),
-            Collection::Mods => secondary("home-browse-mods", tr("Find mods")).on_click(
-                cx.listener(|this, _, _, cx| {
-                    this.show_discover();
-                    cx.notify();
-                }),
-            ),
-        };
+        let find = secondary(
+            match collection {
+                Collection::Resource => "home-find-packs",
+                Collection::Shader => "home-find-shaders",
+                Collection::Mods => "home-browse-mods",
+            },
+            match collection {
+                Collection::Resource => tr("Find packs"),
+                Collection::Shader => tr("Find shader packs"),
+                Collection::Mods => tr("Find mods"),
+            },
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.home_open_discover(collection);
+            cx.notify();
+        }));
         let (title, line) = match collection {
             Collection::Resource => (
                 tr("No resource packs yet"),

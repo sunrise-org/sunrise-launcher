@@ -1,11 +1,11 @@
-//! The cards of Home's Saved servers tab: a saved server's (tick box, picture, name over how many
+//! The cards of Home's Servers tab: a saved server's (tick box, picture, name over how many
 //! are playing, its answer time, Join and a "…" menu) and a featured server's (the same, but for
 //! the tick box), and the bar under the list while servers are ticked.
 use super::*;
 use crate::mods::selection::{bar, Gesture};
 use crate::multiplayer_page::{Reach, ServerMenu};
 use crate::paint::palette;
-use crate::widgets::button::{icon_button_opening, secondary, Style};
+use crate::widgets::button::{icon_button, icon_button_opening, icon_only, Look, Size, Style};
 use std::{cell::Cell, rc::Rc, sync::Arc};
 use sunrise_launcher::server_list::Server;
 
@@ -32,16 +32,16 @@ fn reach_line(reach: Option<Reach>, asking: String) -> (SharedString, u32) {
     }
 }
 
-/// Join, off with the reason as its tooltip while the server doesn't answer.
+/// Join, the Play button of a world's row: off with the reason as its tooltip while the server
+/// doesn't answer.
 fn join_button(
     id: String,
     address: String,
     offline: bool,
     cx: &mut Context<Launcher>,
 ) -> Stateful<Div> {
-    let join = secondary(id, tr("Join"));
     if offline {
-        return join
+        return icon_only(id, Look::new(Style::Secondary, Size::Medium).icon("play"))
             .opacity(0.4)
             .cursor_default()
             .tab_stop(false)
@@ -49,11 +49,107 @@ fn join_button(
                 "This server doesn't answer right now",
             )));
     }
-    join.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+    icon_button(id, "play", tr("Join"), Style::Secondary).on_click(cx.listener(
+        move |this, _: &ClickEvent, _, cx| {
+            cx.stop_propagation();
+            this.play_to("--server", address.clone());
+            cx.notify();
+        },
+    ))
+}
+
+/// The "…" button of a card, the one every list card has: ghost, a step brighter under the
+/// pointer than the card's own light. A press closes the open menus and calls `opened` with where
+/// the button was drawn (window coordinates), for the menu that hangs from it. `open`: that menu
+/// is up, so the tooltip stays away.
+pub(crate) fn more_button(
+    id: impl Into<SharedString>,
+    open: bool,
+    cx: &mut Context<Launcher>,
+    opened: impl Fn(&mut Launcher, gpui::Bounds<gpui::Pixels>) + 'static,
+) -> Stateful<Div> {
+    let id: SharedString = id.into();
+    let drawn = Rc::new(Cell::new(gpui::Bounds::<gpui::Pixels>::default()));
+    let (write, read) = (drawn.clone(), drawn);
+    icon_button_opening(
+        id,
+        "more-horizontal",
+        tr("More actions"),
+        Style::Ghost,
+        open,
+    )
+    .hover(|s| s.bg(rgb(palette().selected)))
+    .child(
+        gpui::canvas(move |bounds, _, _| write.set(bounds), |_, _, _, _| {})
+            .absolute()
+            .inset_0(),
+    )
+    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
         cx.stop_propagation();
-        this.play_to("--server", address.clone());
+        this.close_menus();
+        opened(this, read.get());
         cx.notify();
     }))
+}
+
+/// What a server card is made of, left to right.
+pub(crate) struct RowParts {
+    /// The tick box's column, or [`no_tick`].
+    pub(crate) check: AnyElement,
+    pub(crate) picture: AnyElement,
+    /// [`crate::widgets::label::name_over`]: the name over its line.
+    pub(crate) name: Div,
+    /// A muted note after the name, such as how long the server took to answer.
+    pub(crate) note: Option<Div>,
+    /// Join or Start and Stop, then the "…" button, in a world row's spacing.
+    pub(crate) buttons: Vec<AnyElement>,
+}
+
+/// An empty tick column, for a card that can't be ticked, so it lines up with those that can.
+pub(crate) fn no_tick() -> AnyElement {
+    div().flex_none().w(px(CHECK_SLOT)).into_any_element()
+}
+
+/// A server card, built as a world's row is: its height, padding, gaps and hover light.
+pub(crate) fn server_row(id: SharedString, parts: RowParts) -> Stateful<Div> {
+    crate::home::card()
+        .id(id)
+        .flex_none()
+        .h(px(ROW))
+        .flex()
+        .items_center()
+        .gap(px(12.))
+        .px(px(12.))
+        .hover(|s| s.bg(rgb(palette().hover)))
+        .child(parts.check)
+        .child(div().flex_none().size(px(ICON)).child(parts.picture))
+        .child(parts.name)
+        .children(parts.note)
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(6.))
+                .children(parts.buttons),
+        )
+}
+
+/// A group of cards under a small muted heading, as the sidebar heads its groups.
+pub(crate) fn section(heading: impl Into<SharedString>, body: impl IntoElement) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(6.))
+        .child(
+            div()
+                .px(px(2.))
+                .text_size(px(tokens::SMALL))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(rgb(palette().muted))
+                .child(heading.into()),
+        )
+        .child(body)
 }
 
 impl Launcher {
@@ -65,38 +161,18 @@ impl Launcher {
         (index, featured): (usize, bool),
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        // Where the "…" was drawn, for the menu that hangs from it.
-        let drawn = Rc::new(Cell::new(gpui::Bounds::<gpui::Pixels>::default()));
-        let (write, read) = (drawn.clone(), drawn);
         let open = self
             .multiplayer
             .menu
             .as_ref()
             .is_some_and(|menu| menu.index == index && menu.featured == featured);
-        icon_button_opening(
-            SharedString::from(format!("{id}-more")),
-            "more-horizontal",
-            tr("More actions"),
-            Style::Ghost,
-            open,
-        )
-        // A step brighter than the card's own light, so it shows on a lit card.
-        .hover(|s| s.bg(rgb(palette().selected)))
-        .child(
-            gpui::canvas(move |bounds, _, _| write.set(bounds), |_, _, _, _| {})
-                .absolute()
-                .inset_0(),
-        )
-        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-            cx.stop_propagation();
-            this.close_menus();
+        more_button(format!("{id}-more"), open, cx, move |this, button| {
             this.multiplayer.menu = Some(ServerMenu {
                 index,
                 featured,
-                button: read.get(),
+                button,
             });
-            cx.notify();
-        }))
+        })
     }
 
     /// The saved server at `place` as a card. Ctrl or Shift on it ticks it (a plain press does
@@ -152,35 +228,30 @@ impl Launcher {
         );
         let more = self.card_menu_button(&id, (place, false), cx);
         let (pick_key, pick_order) = (key, order.clone());
-        let card = crate::home::card()
-            .id(id.clone())
-            .flex_none()
-            .h(px(ROW))
-            .flex()
-            .items_center()
-            .gap(px(12.))
-            .px(px(12.))
-            .hover(|s| s.bg(rgb(palette().hover)))
-            .when(ticked, |d| d.bg(rgb(palette().selected)))
-            .child(check)
-            .child(div().flex_none().size(px(ICON)).child(picture))
-            .child(crate::widgets::label::name_over(
-                server.name.clone(),
-                tokens::LABEL,
-                Some((words, ink)),
-            ))
-            .children(answer)
-            .child(join)
-            .child(more)
-            .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
-                let gesture = Gesture::of(&ev.modifiers());
-                if gesture.selects() || any {
-                    this.multiplayer
-                        .picks
-                        .click(&pick_order, &pick_key, gesture.range);
-                    cx.notify();
-                }
-            }));
+        let card = server_row(
+            id.clone(),
+            RowParts {
+                check,
+                picture,
+                name: crate::widgets::label::name_over(
+                    server.name.clone(),
+                    tokens::LABEL,
+                    Some((words, ink)),
+                ),
+                note: answer,
+                buttons: vec![join.into_any_element(), more.into_any_element()],
+            },
+        )
+        .when(ticked, |d| d.bg(rgb(palette().selected)))
+        .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
+            let gesture = Gesture::of(&ev.modifiers());
+            if gesture.selects() || any {
+                this.multiplayer
+                    .picks
+                    .click(&pick_order, &pick_key, gesture.range);
+                cx.notify();
+            }
+        }));
         Self::watch_hover(card, &id, cx)
     }
 
@@ -223,28 +294,24 @@ impl Launcher {
             (server.address.unwrap_or(server.name), server.name),
             ICON,
         );
-        crate::home::card()
-            .id(id)
-            .flex_none()
-            .h(px(ROW))
-            .flex()
-            .items_center()
-            .gap(px(12.))
-            .px(px(12.))
-            .hover(|s| s.bg(rgb(palette().hover)))
-            .child(div().flex_none().w(px(CHECK_SLOT)))
-            .child(div().flex_none().size(px(ICON)).child(picture))
-            .child(crate::widgets::label::name_over(
-                tr(server.name).to_string(),
-                tokens::LABEL,
-                Some((words, ink)),
-            ))
-            .children(join)
-            // A card with no menu keeps the width of one, so the Join buttons line up.
-            .child(match more {
-                Some(more) => more.into_any_element(),
-                None => div().flex_none().w(px(tokens::CONTROL)).into_any_element(),
-            })
+        let buttons = match (join, more) {
+            (Some(join), Some(more)) => vec![join.into_any_element(), more.into_any_element()],
+            _ => Vec::new(),
+        };
+        server_row(
+            id,
+            RowParts {
+                check: no_tick(),
+                picture,
+                name: crate::widgets::label::name_over(
+                    tr(server.name).to_string(),
+                    tokens::LABEL,
+                    Some((words, ink)),
+                ),
+                note: None,
+                buttons,
+            },
+        )
     }
 
     /// The bar under the list while servers are ticked: how many, Select all / Clear, and Remove.

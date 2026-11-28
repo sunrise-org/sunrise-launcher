@@ -1,9 +1,10 @@
-//! What opens over Home's Saved servers tab: a card's "…" menu, the form that adds or edits a
-//! server (and joins one without saving it: quick join), and the question before a removal.
+//! What opens over Home's Servers tab: a card's "…" menu, the form that adds or edits a server
+//! (and joins one without saving it: quick join), and the question before a removal. The hosted
+//! servers' own menu and dialogs are `servers_page::hosting::menu`.
 use super::*;
 use crate::frame::{Page, Reach as _};
 use crate::line_edit::{self, Key, LineEdit};
-use crate::multiplayer_page::{ServerDialog, ServerMenu};
+use crate::multiplayer_page::{Reach as Answer, ServerDialog, ServerMenu};
 use crate::paint::palette;
 use crate::sheets::{modal_frame, title};
 use crate::widgets::button::{danger, primary, secondary};
@@ -27,16 +28,17 @@ fn dimmed(button: Stateful<Div>) -> Stateful<Div> {
 }
 
 impl Launcher {
-    /// The layer over the page for what is open on the Servers pages: the Saved servers tab's
-    /// menu or dialog on Home, or the Host page's.
+    /// The layer over the page for what is open on Home's Servers tab: a hosted server's menu or
+    /// dialog, or a saved or featured one's.
     pub(crate) fn server_action_sheet(
         &self,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<Stateful<Div>> {
         match self.ui.page {
-            Page::Home if self.home_on_servers() => self.saved_servers_sheet(window, cx),
-            Page::Hosting => self.host_sheet(window, cx),
+            Page::Home if self.home_on_servers() => self
+                .host_sheet(window, cx)
+                .or_else(|| self.saved_servers_sheet(window, cx)),
             _ => None,
         }
     }
@@ -326,75 +328,24 @@ impl Launcher {
         modal_frame("server-remove", 450., body, cx, Self::close_server_dialog)
     }
 
-    /// The "…" menu of a saved server (Edit, Copy address, Move up and down, Remove) or of a
-    /// featured one (Add to my servers, Copy address).
+    /// The "…" menu of a saved server (Join, Edit, Copy address, Refresh status, Move up and
+    /// down, Remove) or of a featured one (Join, Add to my servers, Copy address, Refresh
+    /// status), its groups set apart by hairlines.
     fn server_menu_sheet(
         &self,
         open: &ServerMenu,
         cx: &mut Context<Self>,
     ) -> Option<Stateful<Div>> {
-        let index = open.index;
-        let (rows, count, dangers) = if open.featured {
-            let address = featured().get(index)?.address?;
-            let name = featured().get(index)?.name;
-            let rows = vec![
-                menu::row(
-                    Row::new("server-menu-add", "plus-sign", tr("Add to my servers")),
-                    cx.listener(move |this, _, _, cx| {
-                        this.multiplayer.menu = None;
-                        this.edit_servers(|list| list.add(tr(name), address));
-                        cx.notify();
-                    }),
-                ),
-                self.copy_address_row(address.to_string(), cx),
-            ];
-            (rows, 2, 0)
+        let (rows, hairlines) = if open.featured {
+            self.featured_menu_rows(open.index, cx)?
         } else {
-            let (server, _) = self.multiplayer.list.get(index)?;
-            let (name, last) = (server.name.clone(), self.multiplayer.list.len() - 1);
-            let rows = vec![
-                menu::row(
-                    Row::new("server-menu-edit", "pencil-edit-02", tr("Edit…")),
-                    cx.listener(move |this, _, window, cx| {
-                        this.open_server_form(Some(index), window, cx);
-                        cx.notify();
-                    }),
-                ),
-                self.copy_address_row(server.ip.clone(), cx),
-                menu::row(
-                    Row::new("server-menu-up", "arrow-up-01", tr("Move up"))
-                        .off((index == 0).then(SharedString::default)),
-                    cx.listener(move |this, _, _, cx| {
-                        this.multiplayer.menu = None;
-                        this.move_server(index, false);
-                        cx.notify();
-                    }),
-                ),
-                menu::row(
-                    Row::new("server-menu-down", "arrow-down-01", tr("Move down"))
-                        .off((index >= last).then(SharedString::default)),
-                    cx.listener(move |this, _, _, cx| {
-                        this.multiplayer.menu = None;
-                        this.move_server(index, true);
-                        cx.notify();
-                    }),
-                ),
-                menu::row(
-                    Row::new("server-menu-remove", "delete-02", tr("Remove…")).danger(),
-                    cx.listener(move |this, _, _, cx| {
-                        this.multiplayer.menu = None;
-                        this.multiplayer.dialog =
-                            Some(ServerDialog::Remove(vec![(index, name.clone())]));
-                        cx.notify();
-                    }),
-                ),
-            ];
-            (rows, 5, 1)
+            self.saved_menu_rows(open.index, cx)?
         };
+        let height = menu::height(rows.len(), hairlines);
         Some(menu::layer(
             "server-menu",
             rows,
-            menu::height(count, dangers),
+            height,
             open.button,
             (self.window_width, self.window_height),
             cx,
@@ -402,10 +353,129 @@ impl Launcher {
         ))
     }
 
-    /// "Copy address", which says it did in a toast: the menu closes and nothing else would.
-    fn copy_address_row(&self, address: String, cx: &mut Context<Self>) -> AnyElement {
+    /// The rows of a featured server's menu, and how many hairlines they hold.
+    fn featured_menu_rows(
+        &self,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<(Vec<AnyElement>, usize)> {
+        let server = featured().into_iter().nth(index)?;
+        let (address, name) = (server.address?, server.name);
+        let added = self
+            .multiplayer
+            .list
+            .iter()
+            .any(|(saved, _)| featured_at(&saved.ip).as_ref() == Some(&server));
+        let add = if added {
+            menu::row(
+                Row::new("server-menu-add", "tick-02", tr("In your servers"))
+                    .divided()
+                    .off(Some(SharedString::default())),
+                |_, _, _| {},
+            )
+        } else {
+            menu::row(
+                Row::new("server-menu-add", "plus-sign", tr("Add to my servers")).divided(),
+                cx.listener(move |this, _, _, cx| {
+                    this.multiplayer.menu = None;
+                    this.edit_servers(|list| list.add(tr(name), address));
+                    cx.notify();
+                }),
+            )
+        };
+        let rows = vec![
+            self.join_row(address.to_string(), cx),
+            add,
+            self.copy_address_row(address.to_string(), true, cx),
+            self.refresh_row(address.to_string(), false, cx),
+        ];
+        Some((rows, 2))
+    }
+
+    /// The rows of the saved server's menu at `index`, and how many hairlines they hold.
+    fn saved_menu_rows(
+        &self,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<(Vec<AnyElement>, usize)> {
+        let (server, _) = self.multiplayer.list.get(index)?;
+        let (name, last) = (server.name.clone(), self.multiplayer.list.len() - 1);
+        let rows = vec![
+            self.join_row(server.ip.clone(), cx),
+            menu::row(
+                Row::new("server-menu-edit", "pencil-edit-02", tr("Edit…")).divided(),
+                cx.listener(move |this, _, window, cx| {
+                    this.open_server_form(Some(index), window, cx);
+                    cx.notify();
+                }),
+            ),
+            self.copy_address_row(server.ip.clone(), false, cx),
+            self.refresh_row(server.ip.clone(), false, cx),
+            menu::row(
+                Row::new("server-menu-up", "arrow-up-01", tr("Move up"))
+                    .divided()
+                    .off((index == 0).then(SharedString::default)),
+                cx.listener(move |this, _, _, cx| {
+                    this.multiplayer.menu = None;
+                    this.move_server(index, false);
+                    cx.notify();
+                }),
+            ),
+            menu::row(
+                Row::new("server-menu-down", "arrow-down-01", tr("Move down"))
+                    .off((index >= last).then(SharedString::default)),
+                cx.listener(move |this, _, _, cx| {
+                    this.multiplayer.menu = None;
+                    this.move_server(index, true);
+                    cx.notify();
+                }),
+            ),
+            menu::row(
+                Row::new("server-menu-remove", "delete-02", tr("Remove…")).danger(),
+                cx.listener(move |this, _, _, cx| {
+                    this.multiplayer.menu = None;
+                    this.multiplayer.dialog =
+                        Some(ServerDialog::Remove(vec![(index, name.clone())]));
+                    cx.notify();
+                }),
+            ),
+        ];
+        Some((rows, 3))
+    }
+
+    /// "Join": off with the reason while the server doesn't answer.
+    fn join_row(&self, address: String, cx: &mut Context<Self>) -> AnyElement {
+        let offline = self.multiplayer.reach.get(&address).copied() == Some(Answer::Offline);
         menu::row(
-            Row::new("server-menu-copy", "copy-01", tr("Copy address")),
+            Row::new("server-menu-join", "play", tr("Join")).off(
+                offline.then(|| SharedString::from(tr("This server doesn't answer right now"))),
+            ),
+            cx.listener(move |this, _, _, cx| {
+                this.multiplayer.menu = None;
+                this.play_to("--server", address.clone());
+                cx.notify();
+            }),
+        )
+    }
+
+    /// "Refresh status": asks the server for its players again.
+    fn refresh_row(&self, address: String, apart: bool, cx: &mut Context<Self>) -> AnyElement {
+        let row = Row::new("server-menu-refresh", "refresh", tr("Refresh status"));
+        menu::row(
+            if apart { row.divided() } else { row },
+            cx.listener(move |this, _, _, cx| {
+                this.multiplayer.menu = None;
+                this.refresh_server(&address, cx);
+                cx.notify();
+            }),
+        )
+    }
+
+    /// "Copy address", which says it did in a toast: the menu closes and nothing else would.
+    fn copy_address_row(&self, address: String, apart: bool, cx: &mut Context<Self>) -> AnyElement {
+        let row = Row::new("server-menu-copy", "copy-01", tr("Copy address"));
+        menu::row(
+            if apart { row.divided() } else { row },
             cx.listener(move |this, _, _, cx| {
                 this.multiplayer.menu = None;
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(address.clone()));

@@ -28,7 +28,7 @@ pub(super) struct SettingsOutcome {
     pub(super) saved: HashMap<String, String>,
 }
 
-/// What is open over the Host page's list.
+/// What is open over the hosted servers on Home's Servers tab.
 pub(super) enum HostDialog {
     /// The new name's field (its text is `Servers::rename`).
     Rename { dir: PathBuf, focus: FocusHandle },
@@ -204,7 +204,7 @@ impl Servers {
         }
     }
 
-    /// Shuts the Host page's menu and dialog, as the page is left.
+    /// Shuts the hosted servers' menu and dialog, as the tab or page is left.
     pub(crate) fn close_layers(&mut self) {
         self.menu = None;
         self.dialog = None;

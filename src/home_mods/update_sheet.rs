@@ -1,9 +1,10 @@
-//! "Check for updates" on the Mods tab: the button beside Add file, and the sheet that lists
+//! "Check for updates" on the Mods, Packs and Shaders tabs: the button beside the search, the
+//! tab row's Install, and the sheet that lists
 //! what the check found, each mod ticked to be updated until the player says otherwise. The
 //! check and the install are `mods::updates`; this is how they look.
 use super::*;
 use crate::mods::updates::{size_label, Candidate};
-use crate::widgets::button::{button, link, primary, secondary, Look, Size, Style};
+use crate::widgets::button::{button, icon_only, link, primary, secondary, Look, Size, Style};
 use crate::widgets::check::{checkbox, Tick};
 use sunrise_launcher::browser::images;
 
@@ -11,12 +12,20 @@ use sunrise_launcher::browser::images;
 const ROW_PICTURE: f32 = 32.;
 
 impl Launcher {
-    /// The header's Check for updates: while it asks the registry its icon turns and it is
-    /// disabled; a check that found nothing says "Up to date" for a few seconds; the game or a
-    /// build running dims it with the reason.
-    pub(super) fn update_check_button(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+    /// Check for updates, an icon beside the search field: while it asks, the icon turns and it
+    /// is disabled; a check that found nothing shows a tick for a few seconds; the game or a
+    /// build running dims it with the reason. The tooltip says what it is in each state.
+    pub(crate) fn update_check_button(
+        &mut self,
+        collection: Collection,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let scope = crate::mods::updates::pack_scope(collection);
+        let id = ("home-mods-check", collection.tab_index());
         let look = Look::new(Style::Secondary, Size::Medium);
-        if self.mods_state.update_check.is_checking() {
+        let check = &self.mods_state.update_check;
+        let mine = check.is_for(scope);
+        if mine && check.is_checking() {
             let ink = Hsla::from(gpui::rgb(crate::paint::palette().text));
             let icon = crate::glass_ui::icon("refresh", 18., ink);
             let spinning = if crate::motion::still() {
@@ -35,36 +44,50 @@ impl Launcher {
                 )
                 .into_any_element()
             };
-            // The icon is added last and drawn first: the button takes it after its label.
-            return button("home-mods-check", tr("Checking…"), look.disabled(true))
-                .flex_row_reverse()
-                .child(spinning);
+            return icon_only(id, look.disabled(true))
+                .child(spinning)
+                .tooltip(crate::glass_ui::tip(tr("Checking…")));
         }
         if let Some(why) = self.mods_locked() {
-            return button(
-                "home-mods-check",
-                tr("Check for updates"),
-                look.icon("refresh").disabled(true),
-            )
-            .tooltip(crate::glass_ui::tip(why));
+            return icon_only(id, look.icon("refresh").disabled(true))
+                .tooltip(crate::glass_ui::tip(why));
         }
-        let up_to_date = self.mods_state.update_check.up_to_date(Instant::now());
+        let up_to_date = mine && check.up_to_date(Instant::now());
         let (label, icon) = if up_to_date {
             (tr("Up to date"), "tick-02")
         } else {
             (tr("Check for updates"), "refresh")
         };
-        button("home-mods-check", label, look.icon(icon)).on_click(cx.listener(
-            |this, _: &ClickEvent, _, cx| {
-                this.check_for_updates(cx);
+        icon_only(id, look.icon(icon))
+            .tooltip(crate::glass_ui::tip(label))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.check_for_updates(collection, cx);
                 cx.notify();
-            },
-        ))
+            }))
     }
 
-    /// `add` with Check for updates before it, on the tabs that have updates (Mods).
+    /// The tab row's Install: opens Discover on the kind this tab lists, with the profile shown
+    /// as the one to add to. A secondary, so Play stays the page's one primary.
+    pub(crate) fn home_install_button(
+        &mut self,
+        collection: Collection,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        button(
+            ("home-install", collection.tab_index()),
+            tr("Install"),
+            Look::new(Style::Secondary, Size::Medium).icon("download-04"),
+        )
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            this.home_open_discover(collection);
+            cx.notify();
+        }))
+    }
+
+    /// `add` with Install before it: the right side of the tab row on Mods, Packs and Shaders.
     pub(super) fn home_manage(
         &mut self,
+        collection: Collection,
         add: Stateful<Div>,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
@@ -73,7 +96,7 @@ impl Launcher {
             .flex()
             .items_center()
             .gap(px(8.))
-            .child(self.update_check_button(cx))
+            .child(self.home_install_button(collection, cx))
             .child(add)
     }
 
@@ -275,7 +298,7 @@ impl Launcher {
         } else {
             primary("home-update-go", update).on_click(cx.listener(
                 |this, _: &ClickEvent, _, cx| {
-                    this.install_checked_updates();
+                    this.install_checked_updates(cx);
                     cx.notify();
                 },
             ))

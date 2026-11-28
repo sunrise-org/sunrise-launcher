@@ -1,9 +1,18 @@
-//! The dialog a server is created in.
+//! The dialog a server is created in, framed as the Add server dialog is (`join::dialog`).
 use super::widgets::*;
 use super::*;
-use crate::widgets::button::secondary;
+use crate::sheets::{modal_frame, title};
+use crate::widgets::button::{link, secondary};
 use crate::widgets::check::{checkbox, Tick};
 use crate::widgets::feedback::{banner, Tone};
+
+/// Closes the dialog, unless the server is being made.
+fn close_create(this: &mut Launcher) {
+    if !this.servers.creating {
+        this.servers.create = None;
+        this.servers.problem = None;
+    }
+}
 
 impl Launcher {
     /// The one dialog a server is created in, over the page.
@@ -44,7 +53,7 @@ impl Launcher {
             div().child(self.host_field(
                 Field::Seed,
                 tr("Seed (optional: leave empty for a random world)"),
-                420.,
+                FIELD_WIDTH,
                 cx,
             ))
         } else if worlds.is_empty() {
@@ -205,31 +214,15 @@ impl Launcher {
                     .on_click(|_, _, cx| cx.open_url(servers::EULA_URL)),
             );
         let body = div()
-            .id("host-create-body")
             .flex()
             .flex_col()
-            .min_h_0()
-            .gap(px(18.))
-            .p(px(24.))
-            .overflow_y_scroll()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(
-                        div()
-                            .text_size(px(tokens::TITLE))
-                            .font_weight(FontWeight::BOLD)
-                            .child(tr("Create a server")),
-                    )
-                    .child(hint(tr(
-                        "Everything has a default: accept Minecraft's terms and Create makes a friends-only survival world. You can change all of it later.",
-                    ))),
-            )
+            .child(title(tr("Create a server").to_string()))
+            .child(hint(tr(
+                "Everything has a default: accept Minecraft's terms and Create makes a friends-only survival world. You can change all of it later.",
+            )))
             .child(part(
                 "Name",
-                div().child(self.host_field(Field::Name, tr("My server"), 420., cx)),
+                div().child(self.host_field(Field::Name, tr("My server"), FIELD_WIDTH, cx)),
             ))
             .child(part(
                 "World",
@@ -259,17 +252,17 @@ impl Launcher {
             .child(eula_line);
         let said = if creating {
             let last = self.servers.job_log.back().cloned().unwrap_or_default();
-            hint(format!("{} {last}", tr("Creating…")))
+            Some(hint(format!("{} {last}", tr("Creating…"))))
         } else if let Some(p) = &self.servers.problem {
-            banner(Tone::Danger, p.message.clone(), None)
+            Some(banner(Tone::Danger, p.message.clone(), None))
         } else if eula_missing {
-            banner(
+            Some(banner(
                 Tone::Danger,
                 tr("Tick the EULA box to create the server."),
                 None,
-            )
+            ))
         } else {
-            div()
+            None
         };
         let prepare = self
             .servers
@@ -286,62 +279,44 @@ impl Launcher {
                     move |this, cx| this.host_fix(fix.clone(), cx),
                 )
             });
-        let foot = div()
+        // An existing folder is the other way in: a quiet link, left of the buttons.
+        let existing = link("host-create-folder", tr("Use an existing folder…")).on_click(
+            cx.listener(move |this, _: &ClickEvent, _, cx| {
+                if !this.servers.creating {
+                    this.add_server_folder(cx);
+                }
+                cx.notify();
+            }),
+        );
+        let buttons = div()
             .flex()
-            .flex_none()
             .items_center()
-            .gap(px(10.))
-            .px(px(24.))
-            .py(px(16.))
-            .border_t_1()
-            .border_color(palette().rule())
-            .child(said.flex_1().min_w_0())
+            .gap(px(8.))
             .children(prepare)
             .child(self.host_button(
                 "host-create-cancel",
                 tr("Cancel"),
                 !creating,
                 cx,
-                |this, _| {
-                    this.servers.create = None;
-                    this.servers.problem = None;
-                },
+                |this, _| close_create(this),
             ))
             .child(
                 self.host_primary("host-create-go", tr("Create"), !creating, cx, |this, _| {
                     this.create_server()
                 }),
             );
-        Some(
+        let body = body.children(said).child(
             div()
-                .id("host-create")
-                .absolute()
-                .inset_0()
-                .occlude()
                 .flex()
                 .items_center()
-                .justify_center()
-                .p(px(24.))
-                .bg(palette().scrim())
-                .text_color(rgb(palette().text))
-                .on_scroll(|_, _, cx| cx.stop_propagation())
-                .child(
-                    // Solid, like every other dialog: a card's fill is see-through, made to lie on
-                    // the page, and the page showed through the form.
-                    card()
-                        .w(px(620.))
-                        .max_w_full()
-                        .max_h_full()
-                        .rounded(crate::tokens::r(crate::tokens::R_PANEL))
-                        .border_color(rgb(palette().line))
-                        .bg(rgb(palette().raised))
-                        .overflow_hidden()
-                        .child(
-                            crate::scrollbar::Scrollbar::page("host-create")
-                                .wrap(body, &self.theme),
-                        )
-                        .child(foot),
-                ),
-        )
+                .justify_between()
+                .gap(px(8.))
+                .child(div().children((!creating).then_some(existing)))
+                .child(buttons),
+        );
+        Some(modal_frame("host-create", 520., body, cx, close_create))
     }
 }
+
+/// The width of a text field in the dialog: its frame's inside.
+const FIELD_WIDTH: f32 = 470.;

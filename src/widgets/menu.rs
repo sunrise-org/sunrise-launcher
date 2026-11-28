@@ -1,5 +1,5 @@
-//! A "…" menu over the page: its rows (a 16 px icon and a label, a hairline before a danger row)
-//! in a card hung from the button that opened it, over a layer that takes the window's presses so
+//! A "…" menu over the page: its rows (a 16 px icon and a label, a hairline before a danger row
+//! or the first of a group) in a card hung from the button that opened it, over a layer that takes the window's presses so
 //! one outside the card shuts it. The Servers pages' cards share it; the caller says what each
 //! row does and how the menu closes.
 use super::*;
@@ -20,6 +20,8 @@ pub(crate) struct Row {
     pub(crate) icon: &'static str,
     pub(crate) label: SharedString,
     pub(crate) danger: bool,
+    /// A hairline above the row: it opens a new group of them.
+    pub(crate) divided: bool,
     pub(crate) off: Option<SharedString>,
 }
 
@@ -34,6 +36,7 @@ impl Row {
             icon,
             label: label.into(),
             danger: false,
+            divided: false,
             off: None,
         }
     }
@@ -44,6 +47,12 @@ impl Row {
         self
     }
 
+    /// The row set apart from the one above by a hairline, as the first of a group.
+    pub(crate) fn divided(mut self) -> Self {
+        self.divided = true;
+        self
+    }
+
     /// The row dimmed and dead while `why` is Some (its words, "" for none).
     pub(crate) fn off(mut self, why: Option<SharedString>) -> Self {
         self.off = why;
@@ -51,10 +60,10 @@ impl Row {
     }
 }
 
-/// How tall a menu of `rows` rows is, `dangers` of them set apart by a hairline (9) before
-/// them, with 8 padding each side and the border.
-pub(crate) fn height(rows: usize, dangers: usize) -> f32 {
-    rows as f32 * tokens::CONTROL + dangers as f32 * 9. + 18.
+/// How tall a menu of `rows` rows is, `hairlines` of them set apart by a hairline (9) before
+/// them (a danger row or a divided one), with 8 padding each side and the border.
+pub(crate) fn height(rows: usize, hairlines: usize) -> f32 {
+    rows as f32 * tokens::CONTROL + hairlines as f32 * 9. + 18.
 }
 
 /// A 32 px menu row, as the sidebar profile menu and the Worlds menu draw theirs. The hairline
@@ -90,7 +99,7 @@ pub(crate) fn row(
             .on_click(go)
             .into_any_element(),
     };
-    if !entry.danger {
+    if !entry.danger && !entry.divided {
         return line;
     }
     div()

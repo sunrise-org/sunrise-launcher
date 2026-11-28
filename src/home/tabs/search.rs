@@ -1,4 +1,4 @@
-//! The search field in a tab's header row: Mods, Worlds, Packs and Saved servers each keep their
+//! The search field in a tab's header row: Mods, Worlds, Packs and Servers each keep their
 //! own text while the profile stays selected.
 use super::*;
 use crate::i18n::tr_key;

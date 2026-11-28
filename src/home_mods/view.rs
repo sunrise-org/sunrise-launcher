@@ -99,12 +99,8 @@ impl Launcher {
             },
             cx,
         );
-        // Mods have updates to check for; packs come from no registry, so they have none.
-        let add = if collection.is_packs() {
-            add
-        } else {
-            self.home_manage(add, cx)
-        };
+        // Install (Discover on this kind) stands before Add file on every tab.
+        let add = self.home_manage(collection, add, cx);
         let Some(snapshot) = self.ui.home.mods.snapshot.clone() else {
             return Content {
                 count: None,

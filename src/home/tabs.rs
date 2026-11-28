@@ -47,6 +47,11 @@ impl Collection {
         }
     }
 
+    /// The tab's place in the row of tabs, for ids that tell the tabs' buttons apart.
+    pub(crate) fn tab_index(self) -> usize {
+        self.tab().index()
+    }
+
     /// Its place among `Tabs::picks`.
     fn pick_slot(self) -> usize {
         match self {
@@ -109,7 +114,7 @@ impl Tab {
 
     fn label(self) -> &'static str {
         match self {
-            Self::Servers => tr("Saved servers"),
+            Self::Servers => tr("Servers"),
             Self::Worlds => tr("Worlds"),
             Self::Packs => tr("Packs"),
             Self::Shaders => tr("Shaders"),
@@ -288,6 +293,11 @@ impl Launcher {
         // An empty tab says so in its body; "0 worlds" over it says nothing more.
         let searchable = count.is_some_and(|count| count > 0) && active != Tab::Logs;
         let search = searchable.then(|| self.home_search(active, window, cx));
+        // Check for updates sits right after the field, on the tabs that list mods or packs.
+        let check = active
+            .collection()
+            .filter(|_| searchable)
+            .map(|collection| self.update_check_button(collection, cx));
         let bar = self.ui.home.tabs.bar.take();
         let menu = self.home_item_menu(active, cx);
         let view = &self.ui.home.tabs.views[active.index()];
@@ -336,8 +346,9 @@ impl Launcher {
                     .pb(px(12.))
                     .h(px(if searchable { 59. } else { 38. }))
                     .items_center()
-                    .gap(px(10.))
-                    .children(search),
+                    .gap(px(8.))
+                    .children(search)
+                    .children(check),
             )
             .child(
                 div()
@@ -379,6 +390,19 @@ impl Launcher {
             // Under the list, not over it: the last rows stay in reach while rows are ticked.
             .children(bar)
             .children(menu)
+    }
+
+    /// Install on the tab of `collection`: Discover on the same kind (mods, resource packs or
+    /// shader packs), adding to the selected profile. Back returns to this tab of Home.
+    pub(crate) fn home_open_discover(&mut self, collection: Collection) {
+        if self.ui.page == Page::Home {
+            self.ui.remember(Page::Home);
+        }
+        match collection {
+            Collection::Mods => self.show_discover(),
+            Collection::Resource => self.show_resource_pack_discover(),
+            Collection::Shader => self.show_shader_pack_discover(),
+        }
     }
 
     /// Picks Home's tab for `collection` (Mods, Packs or Shaders), without leaving the page

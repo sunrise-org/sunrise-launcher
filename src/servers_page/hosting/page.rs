@@ -1,4 +1,4 @@
-//! The hosting page's layout: the list of servers, one server's page and its tabs.
+//! One hosted server's page and its tabs (the list of servers is Home's Servers tab).
 use super::widgets::*;
 use super::*;
 use crate::widgets::button::secondary;
@@ -28,32 +28,46 @@ impl Launcher {
         true
     }
 
+    /// Whether a hosted server's page has a server to show: it opens from a card on Home's
+    /// Servers tab, and the page has nothing without one.
+    pub(crate) fn hosted_open(&self) -> bool {
+        self.servers
+            .open
+            .as_ref()
+            .is_some_and(|dir| self.servers.list.iter().any(|e| &e.dir == dir))
+    }
+
+    /// The open server's name, for the page's title.
+    pub(crate) fn hosted_title(&self) -> String {
+        let open = self.servers.open.as_ref();
+        self.servers
+            .list
+            .iter()
+            .find(|e| Some(&e.dir) == open)
+            .map(|e| e.name.clone())
+            .unwrap_or_default()
+    }
+
+    /// Back to Home's Servers tab, where the server's card is.
+    pub(crate) fn leave_hosted(&mut self) {
+        self.servers.open = None;
+        self.servers.reset_public_lookup();
+        self.servers.polled = None;
+        self.servers.problem = None;
+        self.servers.note = None;
+        self.show_saved_servers();
+    }
+
     pub(crate) fn hosting(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        if !self.servers.loaded {
-            self.servers.list = servers::list();
-            self.servers.modes.clear();
-            self.servers.loaded = true;
-            if self.servers.open.is_none() && self.servers.list.len() == 1 {
-                let dir = self.servers.list[0].dir.clone();
-                self.open_server(dir);
-            }
-        }
+        self.load_hosted();
         let open = self
             .servers
             .open
             .clone()
             .filter(|dir| self.servers.list.iter().any(|e| &e.dir == dir));
-        // The list of servers fills the page, as Versions' does; one server's page keeps its
-        // width.
-        let listing = open.is_none();
         let body = match open {
             Some(dir) => self.host_server(&dir, cx),
-            None => {
-                if self.servers.open.take().is_some() {
-                    self.servers.reset_public_lookup();
-                }
-                self.host_list(cx)
-            }
+            None => div(),
         };
         crate::scrollbar::Scrollbar::page("host")
             .wrap(
@@ -66,12 +80,7 @@ impl Launcher {
                     .pt(px(18.))
                     .pb(px(24.))
                     .text_color(rgb(palette().text))
-                    .child(
-                        body.when(!listing, |b| b.max_w(px(1180.)))
-                            .flex()
-                            .flex_col()
-                            .gap(px(18.)),
-                    ),
+                    .child(body.max_w(px(1180.)).flex().flex_col().gap(px(18.))),
                 &self.theme,
             )
             .size_full()
@@ -246,31 +255,6 @@ impl Launcher {
                     ),
             );
         let mut page = div();
-        if self.servers.list.len() > 1 {
-            page = page.child(
-                div().flex().child(
-                    div()
-                        .id("host-back")
-                        .reach()
-                        .flex()
-                        .items_center()
-                        .gap(px(8.))
-                        .text_size(px(tokens::LABEL))
-                        .text_color(rgb(palette().muted))
-                        .cursor_pointer()
-                        .child("‹")
-                        .child(tr("All servers"))
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.servers.open = None;
-                            this.servers.reset_public_lookup();
-                            this.servers.polled = None;
-                            this.servers.problem = None;
-                            this.servers.note = None;
-                            cx.notify();
-                        })),
-                ),
-            );
-        }
         page = page.child(head);
         if status.crashes > 0 {
             let last = status

@@ -216,6 +216,10 @@ impl Launcher {
                 }
             }
             Target::SavedServers => self.show_saved_servers(),
+            Target::HostServer => {
+                self.show_saved_servers();
+                self.open_host_create(cx);
+            }
             Target::World => self.navigate(Page::Home),
             Target::Mod(title) => {
                 if !self.open_mod_named(&title) {
@@ -557,12 +561,12 @@ mod tests {
     fn a_word_ranks_by_where_it_is_found() {
         assert_eq!(rank("home", "Home"), Some(0));
         assert_eq!(rank("ho", "Home"), Some(1));
-        assert_eq!(rank("host", "Servers › Host"), Some(2));
-        assert_eq!(rank("ost", "Servers › Host"), Some(3));
+        assert_eq!(rank("host", "Servers › Host a server"), Some(2));
+        assert_eq!(rank("ost", "Servers › Host a server"), Some(3));
         assert_eq!(rank("zz", "Home"), None);
         // Every word must be found; each adds its own place.
-        assert_eq!(rank("servers ho", "Servers › Host"), Some(1 + 2));
-        assert_eq!(rank("servers zz", "Servers › Host"), None);
+        assert_eq!(rank("servers ho", "Servers › Host a server"), Some(1 + 2));
+        assert_eq!(rank("servers zz", "Servers › Host a server"), None);
         assert_eq!(rank("WILD", "Wildflower Valley"), Some(1));
     }
 
@@ -575,8 +579,8 @@ mod tests {
                 "Home",
                 "Mods",
                 "Packs",
-                "Servers › Saved servers",
-                "Servers › Host",
+                "Servers",
+                "Servers › Host a server",
                 "Skins",
                 "Settings",
                 "Sunrise",
@@ -723,8 +727,8 @@ mod tests {
                 "Home",
                 "Mods",
                 "Packs",
-                "Servers › Saved servers",
-                "Servers › Host",
+                "Servers",
+                "Servers › Host a server",
                 "Skins",
                 "Settings"
             ]
@@ -790,13 +794,9 @@ mod tests {
             assert!(press(&mut search, key) == Press::Stay);
         }
         assert_eq!(search.query.text(), "ser");
-        assert_eq!(
-            on(&search),
-            "Servers › Saved servers",
-            "the first row again"
-        );
+        assert_eq!(on(&search), "Servers", "the first row again");
         press(&mut search, "down");
-        assert!(press(&mut search, "enter") == Press::Open(Target::Page(Page::Hosting)));
+        assert!(press(&mut search, "enter") == Press::Open(Target::HostServer));
         // Backspace is the field's too, and lists again.
         press(&mut search, "backspace");
         assert_eq!(search.query.text(), "se");

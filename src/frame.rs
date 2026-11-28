@@ -52,6 +52,8 @@ impl Launcher {
                 self.skins_open();
                 self.ui.page = page;
             }
+            // A hosted server's page needs a server: with none open, its list is Home's tab.
+            Page::Hosting if !self.hosted_open() => self.show_saved_servers(),
             _ => self.ui.page = page,
         }
         if self.ui.page != before {
@@ -157,8 +159,7 @@ impl Launcher {
             Page::Home => self.home(window, cx),
             Page::Hosting => {
                 let body = self.hosting(cx);
-                let actions = self.host_actions(cx);
-                // Back to Home, where the servers are joined from, over "Host" and its actions.
+                // Back to Home's Servers tab, where the server's card is.
                 let back = div()
                     .id("host-back-home")
                     .reach()
@@ -175,9 +176,9 @@ impl Launcher {
                         16.,
                         crate::widgets::focus::c(palette().muted),
                     ))
-                    .child(tr("Back to Home"))
+                    .child(tr("Servers"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.show_saved_servers();
+                        this.leave_hosted();
                         cx.notify();
                     }));
                 let head = div()
@@ -187,7 +188,7 @@ impl Launcher {
                     .flex_col()
                     .gap(px(8.))
                     .child(div().flex().child(back))
-                    .child(crate::widgets::nav::page_head(tr("Host"), actions));
+                    .child(crate::widgets::nav::page_head(self.hosted_title(), None));
                 div()
                     .flex()
                     .flex_col()
@@ -365,7 +366,7 @@ impl Launcher {
         // What lies over the page, bottom to top. The top one has the keyboard (`modal`).
         crate::glass_ui::tips_layers();
         self.versions_focus(window);
-        let create = (page == Page::Hosting)
+        let create = (page == Page::Home && self.home_on_servers())
             .then(|| self.hosting_create(cx))
             .flatten();
         let sheet = self.live_sheet(window, cx);

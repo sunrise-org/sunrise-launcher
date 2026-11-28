@@ -260,8 +260,8 @@ impl Launcher {
             c.eula_missing = true;
             // The box is the form's last line, under the fold in a small window: bring it up
             // to where the footer's message points.
-            // (`Scrollbar::page("host-create")` gives the form its handle.)
-            if let Some(body) = crate::frame::drawn_scroll("host-create") {
+            // (The dialog is a sheet, and `modal_frame` gives it its handle.)
+            if let Some(body) = crate::frame::drawn_scroll("sheet") {
                 body.scroll_to_bottom();
             }
             return;

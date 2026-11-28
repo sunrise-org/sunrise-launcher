@@ -1,6 +1,7 @@
-//! Hosting in the new look: the servers this computer hosts, and one of them at a time with its
-//! address, players, settings, backups and log. Every action is the Servers page's own
-//! (`servers_page.rs`); only the drawing is new.
+//! Hosting in the new look: the servers this computer hosts as cards on Home's Servers tab
+//! (`cards.rs`, `menu.rs`, `create.rs`), and one of them at a time on its own page with its
+//! address, players, settings, backups and log (`page.rs`). Every action is the Servers page's
+//! own (`servers_page.rs`); only the drawing is new.
 use super::*;
 use crate::paint::palette;
 use crate::settings::{group, hint, off, row};
