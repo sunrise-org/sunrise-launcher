@@ -1451,10 +1451,16 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn with_no_reaper_a_dropped_child_is_ended_here_within_a_bound() {
+        use crate::process::owned::{Registry, CHILDREN};
+        // The test's own children: the launcher's quit registry never holds them (review of
+        // #681).
+        static OWN: Registry = Registry::new();
         let marker = format!("no-reaper-{}", std::process::id());
-        let child = crate::process::leases::spawn_preparer(stubborn(&marker), None, None, true)
-            .map(crate::process::owned::Owned::start_preparer)
+        let mut child = crate::process::leases::spawn_preparer(stubborn(&marker), None, None, true)
+            .map(|child| OWN.track_preparer(child))
             .unwrap();
+        let pid = child.child().id();
+        assert!(OWN.holds(pid) && !CHILDREN.holds(pid));
         let held = Held::new(child);
         NO_REAPER.with(|none| none.set(true));
         let started = Instant::now();
@@ -1570,10 +1576,17 @@ mod tests {
     /// stuck in the file system wouldn't: it never waits on one child (review of #670).
     #[test]
     fn the_reaper_reaps_an_ended_child_queued_behind_one_still_running() {
-        use crate::process::owned::Owned;
-        let mut running = Owned::spawn(Command::new("sleep").arg("30")).unwrap();
+        use crate::process::owned::{Registry, CHILDREN};
+        // The test's own children: the launcher's quit registry never holds them (review of
+        // #681).
+        static OWN: Registry = Registry::new();
+        let mut running = OWN.spawn(Command::new("sleep").arg("30")).unwrap();
         let running_pid = running.child().id();
-        let mut ended = Owned::spawn(&mut Command::new("true")).unwrap();
+        let mut ended = OWN.spawn(&mut Command::new("true")).unwrap();
+        let ended_pid = ended.child().id();
+        for pid in [running_pid, ended_pid] {
+            assert!(OWN.holds(pid) && !CHILDREN.holds(pid));
+        }
         while !ended.child().ended_unreaped(false).unwrap() {
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -1594,14 +1607,19 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn the_reaper_thread_reaps_a_child_that_ends_while_another_still_runs() {
-        use crate::process::owned::Owned;
+        use crate::process::owned::{Registry, CHILDREN};
+        // The test's own children: the launcher's quit registry never holds them (review of
+        // #681).
+        static OWN: Registry = Registry::new();
         let unreaped = |pid: u32| Path::new(&format!("/proc/{pid}")).exists();
         reaper::start().unwrap();
-        let mut running = Owned::spawn(Command::new("sleep").arg("30")).unwrap();
+        let mut running = OWN.spawn(Command::new("sleep").arg("30")).unwrap();
         let running_pid = running.child().id();
+        assert!(OWN.holds(running_pid) && !CHILDREN.holds(running_pid));
         assert!(reaper::reap(running).is_none(), "the reaper took it");
-        let mut later = Owned::spawn(Command::new("sleep").arg("0.3")).unwrap();
+        let mut later = OWN.spawn(Command::new("sleep").arg("0.3")).unwrap();
         let later_pid = later.child().id();
+        assert!(OWN.holds(later_pid) && !CHILDREN.holds(later_pid));
         assert!(reaper::reap(later).is_none(), "the reaper took it");
         let waiting = Instant::now();
         while unreaped(later_pid) && waiting.elapsed() < Duration::from_secs(3) {
@@ -1710,19 +1728,24 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_gone_reaper_gives_the_child_back_and_the_next_start_replaces_it() {
-        use crate::process::owned::Owned;
+        use crate::process::owned::{Registry, CHILDREN};
+        // The test's own children: the launcher's quit registry never holds them (review of
+        // #681).
+        static OWN: Registry = Registry::new();
         let reaper = reaper::Reaper::new();
         reaper.gone();
-        let mut first = Owned::spawn(&mut Command::new("true")).unwrap();
+        let mut first = OWN.spawn(&mut Command::new("true")).unwrap();
         let first_pid = first.child().id();
+        assert!(OWN.holds(first_pid) && !CHILDREN.holds(first_pid));
         let mut back = reaper
             .reap(first)
             .expect("a gone reaper gives the child back");
         assert_eq!(back.child().id(), first_pid);
         drop(back);
         reaper.start().unwrap();
-        let mut later = Owned::spawn(&mut Command::new("true")).unwrap();
+        let mut later = OWN.spawn(&mut Command::new("true")).unwrap();
         let pid = later.child().id();
+        assert!(OWN.holds(pid) && !CHILDREN.holds(pid));
         assert!(
             reaper.reap(later).is_none(),
             "the next start put in a working reaper"
@@ -1739,6 +1762,29 @@ mod tests {
         );
     }
 
+    /// Runs this binary's test `name` alone in a child process with `env` set, and checks that
+    /// the child really ran it and it passed. A name that no longer matches a test runs nothing
+    /// and exits with success, so that alone would skip the test's assertions unseen (review of
+    /// #681).
+    #[cfg(target_os = "linux")]
+    fn in_child(name: &str, env: &str) {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name])
+            .env(env, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "{name} failed in its child process:\n{stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            stdout.contains("test result: ok. 1 passed"),
+            "the child process ran no test named {name}:\n{stdout}"
+        );
+    }
+
     /// A line far longer than [`MAX_LINE`] is cut as it is read: the reader never holds more of
     /// it than that, so a preparer writing one huge line can't grow the launcher's memory
     /// (follow-up to #670).
@@ -1747,15 +1793,10 @@ mod tests {
     fn an_overlong_line_is_cut_as_it_is_read() {
         const CHILD: &str = "SUNRISE_PREPARER_LONG_LINE_TEST";
         if std::env::var_os(CHILD).is_none() {
-            let status = Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "preparer::tests::an_overlong_line_is_cut_as_it_is_read",
-                ])
-                .env(CHILD, "1")
-                .status()
-                .unwrap();
-            assert!(status.success(), "the test failed in its child process");
+            in_child(
+                "preparer::tests::an_overlong_line_is_cut_as_it_is_read",
+                CHILD,
+            );
             return;
         }
         /// `left` bytes of `x`, with no newline.
@@ -1968,6 +2009,18 @@ esac"#,
             lines(long.as_bytes()).next().unwrap().unwrap().len(),
             MAX_LINE
         );
+        // A two-byte character split by the cut: its first byte is kept alone and read as U+FFFD,
+        // its second is dropped with the rest of the line, and the next line comes whole (review
+        // of #681).
+        let split = format!("{}é and more\nnext line\n", "a".repeat(MAX_LINE - 1));
+        let read: Vec<String> = lines(split.as_bytes()).map(Result::unwrap).collect();
+        assert_eq!(
+            read,
+            [
+                format!("{}\u{fffd}", "a".repeat(MAX_LINE - 1)),
+                "next line".into()
+            ]
+        );
         let many: String = (0..2000)
             .map(|n| format!("line {n:04} {}\n", "y".repeat(40)))
             .collect();
@@ -2112,17 +2165,9 @@ esac"#,
     fn a_child_flooding_its_output_does_not_grow_the_launchers_memory() {
         const CHILD: &str = "SUNRISE_PREPARER_FLOOD_TEST";
         if std::env::var_os(CHILD).is_none() {
-            let status = Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "preparer::tests::a_child_flooding_its_output_does_not_grow_the_launchers_memory",
-                ])
-                .env(CHILD, "1")
-                .status()
-                .unwrap();
-            assert!(
-                status.success(),
-                "the flood test failed in its child process"
+            in_child(
+                "preparer::tests::a_child_flooding_its_output_does_not_grow_the_launchers_memory",
+                CHILD,
             );
             return;
         }

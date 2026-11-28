@@ -101,7 +101,7 @@ impl Registry {
     }
 
     #[cfg(all(test, unix))]
-    fn holds(&self, pid: u32) -> bool {
+    pub(crate) fn holds(&self, pid: u32) -> bool {
         self.entries().iter().any(|entry| entry.pid == pid)
     }
 }
