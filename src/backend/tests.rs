@@ -368,20 +368,33 @@ fn mojang_downloads_only_for_an_owner() {
     };
     let log = |_: String| {};
     let no_owner = || Ok(account::Launch::default());
+    let store = sources::Store {
+        dir: &dir,
+        sources: &[],
+    };
     for (pass, signed_in) in [
         (Err(account::NoOwner::default()), false),
         (Err(account::NoOwner::default()), true),
         (no_owner(), false),
         (no_owner(), true),
     ] {
-        assert!(download_for(&pins, &dir, pass, signed_in, &fetch, &mojang::CANCEL, &log).is_err());
+        assert!(download_for(
+            &pins,
+            &store,
+            pass,
+            signed_in,
+            &fetch,
+            &mojang::CANCEL,
+            &log
+        )
+        .is_err());
     }
     assert!(asked.lock().unwrap().is_empty());
     assert!(!dir.exists());
     // With no account, the message stands alone once its bullet is taken off.
     let said = download_for(
         &pins,
-        &dir,
+        &store,
         Err(account::NoOwner::default()),
         false,
         &fetch,
@@ -390,7 +403,7 @@ fn mojang_downloads_only_for_an_owner() {
     )
     .unwrap_err();
     assert_eq!(
-        said.trim_start_matches("\n  • "),
+        said.message.trim_start_matches("\n  • "),
         "Sign in with the Microsoft account that owns Minecraft: Sunrise then downloads 26.3 from Mojang itself."
     );
     // An owner: Mojang is asked (and the download fails here, without network).
@@ -408,7 +421,7 @@ fn mojang_downloads_only_for_an_owner() {
         owner: Some((owner, secrets)),
         ..Default::default()
     });
-    assert!(download_for(&pins, &dir, pass, true, &fetch, &mojang::CANCEL, &log).is_err());
+    assert!(download_for(&pins, &store, pass, true, &fetch, &mojang::CANCEL, &log).is_err());
     assert!(!asked.lock().unwrap().is_empty());
     let _ = fs::remove_dir_all(&dir);
 
@@ -421,7 +434,16 @@ fn mojang_downloads_only_for_an_owner() {
     .unwrap();
     asked.lock().unwrap().clear();
     for (pass, signed_in) in [(Err(account::NoOwner::default()), true), (no_owner(), true)] {
-        assert!(download_for(&pins, &dir, pass, signed_in, &fetch, &mojang::CANCEL, &log).is_err());
+        assert!(download_for(
+            &pins,
+            &store,
+            pass,
+            signed_in,
+            &fetch,
+            &mojang::CANCEL,
+            &log
+        )
+        .is_err());
     }
     assert!(asked.lock().unwrap().is_empty());
     let _ = fs::remove_dir_all(&dir);
@@ -520,50 +542,415 @@ fn mojang_downloads_only_for_an_owner() {
     }
 }
 
-/// A preparation that reuses the imported game files still reads the assets from the
-/// launcher that has them: a Prism Launcher instance's are in the launcher root, linked into
-/// the official layout (jan.sonki on Discord: silent, grey title screen since 0.2.48).
+/// A signed-in owner prepares from Sunrise's own pinned store even when another launcher
+/// (e.g. Modrinth App) has the matching client jar alongside a re-issued/patched library:
+/// matching files are copied locally and differing ones are downloaded from Mojang.
 #[test]
-fn reused_imports_take_the_assets_from_the_launcher_that_has_them() {
-    let dir = std::env::temp_dir().join(format!("sunrise-reused-assets-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    let client = b"fake client jar";
-    let manifest = br#"{"id": "26.3"}"#;
-    let write = |path: &str, data: &[u8]| {
-        let path = dir.join(path);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, data).unwrap();
-    };
-    let prism = "PrismLauncher";
-    write(
-        &format!("{prism}/libraries/com/mojang/minecraft/26.3/minecraft-26.3-client.jar"),
-        client,
-    );
-    write(&format!("{prism}/assets/indexes/34.json"), b"{}");
-    let instance = dir.join(prism).join("instances/26.3/minecraft");
-    fs::create_dir_all(&instance).unwrap();
-    let pins = sources::Pins::read(&serde_json::json!({ "minecraft": {
+fn signed_in_owner_prepares_from_pinned_store_copying_matching_and_downloading_differing() {
+    let root = tempfile::tempdir().unwrap();
+    let own = root.path().join("own");
+    let modrinth = root.path().join("ModrinthApp/meta");
+    let client = b"fake 26.3 client jar";
+    let common = b"unchanged common library";
+    let pinned_freetype = b"pinned lwjgl-freetype 3.4.3";
+    let sound = b"fake sound ogg";
+    let index = serde_json::json!({"objects": {
+        "minecraft/sounds/a.ogg": {"hash": sources::sha1_hex(sound), "size": sound.len()},
+    }})
+    .to_string();
+    let manifest = serde_json::json!({
+        "id": "26.3",
+        "assetIndex": {
+            "id": "34",
+            "sha1": sources::sha1_hex(index.as_bytes()),
+            "url": "https://piston-meta.mojang.com/v1/packages/idx/34.json",
+        },
+        "downloads": {"client": {
+            "sha1": sources::sha1_hex(client),
+            "size": client.len(),
+            "url": "https://piston-data.mojang.com/client.jar",
+        }},
+        "libraries": [
+            {"name": "org.example:common:1.0", "downloads": {"artifact": {
+                "path": "org/example/common/1.0/common-1.0.jar",
+                "sha1": sources::sha1_hex(common),
+                "url": "https://libraries.minecraft.net/org/example/common/1.0/common-1.0.jar",
+            }}},
+            {"name": "org.lwjgl:lwjgl-freetype:3.4.3", "downloads": {"artifact": {
+                "path": "org/lwjgl/lwjgl-freetype/3.4.3/lwjgl-freetype-3.4.3.jar",
+                "sha1": sources::sha1_hex(pinned_freetype),
+                "url": "https://libraries.minecraft.net/org/lwjgl/lwjgl-freetype/3.4.3/lwjgl-freetype-3.4.3.jar",
+            }}},
+        ],
+    })
+    .to_string();
+    let manifest_sha1 = sources::sha1_hex(manifest.as_bytes());
+    let pins = sources::Pins::read(&serde_json::json!({"minecraft": {
         "version": "26.3",
         "client_sha1": sources::sha1_hex(client),
-        "manifest_sha1": sources::sha1_hex(manifest),
+        "manifest_sha1": manifest_sha1,
     }}))
     .unwrap();
-    let linked = dir.join("linked");
-    let fetch = |_: &str| Ok(manifest.to_vec());
-    let lines = std::cell::RefCell::new(Vec::new());
-    let log = |line: String| lines.borrow_mut().push(line);
-    let resolved = sources::resolve(&instance, &pins, &[], &linked, &fetch, &log);
-    let folder = assets_folder(resolved, &instance, "26.3", &log);
-    assert_eq!(folder, linked);
-    assert!(folder.join("assets/indexes/34.json").is_file());
 
-    // Nothing found: the chosen folder, and a line saying what the game will lack.
-    let empty = dir.join("empty");
-    fs::create_dir_all(&empty).unwrap();
-    let resolved = sources::resolve(&empty, &pins, &[], &linked, &fetch, &log);
-    assert_eq!(assets_folder(resolved, &empty, "26.3", &log), empty);
-    assert!(lines.borrow().last().unwrap().contains("will be silent"));
-    fs::remove_dir_all(&dir).unwrap();
+    // Modrinth has matching client jar + common library, plus a patched freetype instead of 3.4.3.
+    let write = |base: &Path, rel: &str, data: &[u8]| {
+        let p = base.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, data).unwrap();
+    };
+    write(&modrinth, "versions/26.3/26.3.jar", client);
+    write(
+        &modrinth,
+        "libraries/org/example/common/1.0/common-1.0.jar",
+        common,
+    );
+    write(
+        &modrinth,
+        "libraries/org/lwjgl/lwjgl-freetype/3.4.3-mojang-2.15.0/lwjgl-freetype-3.4.3-mojang-2.15.0.jar",
+        b"re-issued patched freetype",
+    );
+
+    let sound_hash = sources::sha1_hex(sound);
+    let fixture = std::collections::HashMap::from([
+        (
+            format!("https://piston-meta.mojang.com/v1/packages/{manifest_sha1}/26.3.json"),
+            manifest.into_bytes(),
+        ),
+        (
+            "https://piston-data.mojang.com/client.jar".to_string(),
+            client.to_vec(),
+        ),
+        (
+            "https://libraries.minecraft.net/org/example/common/1.0/common-1.0.jar".to_string(),
+            common.to_vec(),
+        ),
+        (
+            "https://libraries.minecraft.net/org/lwjgl/lwjgl-freetype/3.4.3/lwjgl-freetype-3.4.3.jar".to_string(),
+            pinned_freetype.to_vec(),
+        ),
+        (
+            "https://piston-meta.mojang.com/v1/packages/idx/34.json".to_string(),
+            index.into_bytes(),
+        ),
+        (
+            format!(
+                "{}/{}/{sound_hash}",
+                sunrise_launcher_addresses::MOJANG_RESOURCES,
+                &sound_hash[..2]
+            ),
+            sound.to_vec(),
+        ),
+    ]);
+    let asked = std::sync::Mutex::new(Vec::<String>::new());
+    let fetch = |url: &str| -> Result<Vec<u8>, String> {
+        asked.lock().unwrap().push(url.to_string());
+        fixture
+            .get(url)
+            .cloned()
+            .ok_or_else(|| format!("unexpected url {url}"))
+    };
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let candidate_list = [modrinth];
+    let store = sources::Store {
+        dir: &own,
+        sources: &candidate_list,
+    };
+
+    let options = PrepareStoreOptions {
+        os: "linux",
+        allow_local_without_owner: false,
+        local_sources: &[],
+    };
+    let folder = prepare_store_with(&pins, &store, &options, &cancel, &|| {
+        mojang::download(&pins, &store, "linux", 2, &fetch, &cancel, &|_| {}).map_err(|e| {
+            OwnerDownloadError {
+                verified_owner: true,
+                message: e,
+            }
+        })
+    })
+    .unwrap();
+    assert_eq!(folder, own);
+    assert_eq!(
+        fs::read(own.join("libraries/org/lwjgl/lwjgl-freetype/3.4.3/lwjgl-freetype-3.4.3.jar"))
+            .unwrap(),
+        pinned_freetype
+    );
+    let asked = asked.lock().unwrap();
+    assert!(
+        !asked.iter().any(|u| u.ends_with("client.jar")),
+        "matching client jar should be copied from Modrinth: {asked:#?}"
+    );
+    assert!(
+        !asked.iter().any(|u| u.contains("common-1.0.jar")),
+        "matching common library should be copied from Modrinth: {asked:#?}"
+    );
+    assert!(
+        asked.iter().any(|u| u.contains("lwjgl-freetype-3.4.3.jar")),
+        "missing pinned freetype should be downloaded from Mojang: {asked:#?}"
+    );
+
+    // An unsigned-in ordinary player never borrows another launcher's install: they are told to
+    // sign in, even when another launcher has a complete pinned copy.
+    let fresh_own = root.path().join("fresh-own");
+    let complete_other = root.path().join("CompleteOther");
+    let manifest_url =
+        format!("https://piston-meta.mojang.com/v1/packages/{manifest_sha1}/26.3.json");
+    write(
+        &complete_other,
+        "versions/26.3/26.3.json",
+        &fixture[&manifest_url],
+    );
+    write(&complete_other, "versions/26.3/26.3.jar", client);
+    write(
+        &complete_other,
+        "libraries/org/example/common/1.0/common-1.0.jar",
+        common,
+    );
+    write(
+        &complete_other,
+        "libraries/org/lwjgl/lwjgl-freetype/3.4.3/lwjgl-freetype-3.4.3.jar",
+        pinned_freetype,
+    );
+    let other_sources = [complete_other];
+    let fresh_store = sources::Store {
+        dir: &fresh_own,
+        sources: &other_sources,
+    };
+    let sign_in_err = prepare_store_with(
+        &pins,
+        &fresh_store,
+        &PrepareStoreOptions {
+            os: "linux",
+            allow_local_without_owner: false,
+            local_sources: &other_sources,
+        },
+        &cancel,
+        &|| {
+            Err(OwnerDownloadError {
+                verified_owner: false,
+                message: "\n  • Sign in with the Microsoft account that owns Minecraft: Sunrise then downloads 26.3 from Mojang itself.".into(),
+            })
+        },
+    )
+    .unwrap_err();
+    assert!(
+        sign_in_err.contains("Sign in with the Microsoft account that owns Minecraft"),
+        "{sign_in_err}"
+    );
+    assert!(
+        !fresh_own.exists(),
+        "unsigned-in ordinary player must not borrow from another launcher"
+    );
+
+    // Behind the developer route (`allow_local_without_owner = true`), every file is checked by
+    // hash and copied into Sunrise's own store (never linked).
+    let dev_folder = prepare_store_with(
+        &pins,
+        &fresh_store,
+        &PrepareStoreOptions {
+            os: "linux",
+            allow_local_without_owner: true,
+            local_sources: &other_sources,
+        },
+        &cancel,
+        &|| {
+            Err(OwnerDownloadError {
+                verified_owner: false,
+                message: "\n  • Sign in with the Microsoft account that owns Minecraft: Sunrise then downloads 26.3 from Mojang itself.".into(),
+            })
+        },
+    )
+    .unwrap();
+    assert_eq!(dev_folder, fresh_own);
+    assert_eq!(
+        fs::read(fresh_own.join("versions/26.3/26.3.jar")).unwrap(),
+        client
+    );
+    assert!(
+        !fs::symlink_metadata(fresh_own.join("libraries"))
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "developer route must copy, never symlink"
+    );
+}
+
+/// A reused-import preparation (`reused = true`) with a partial `data_dir()/minecraft` store
+/// (e.g. an earlier cancelled download that created `assets/indexes/` without the index or sound
+/// objects) refills the missing files for a signed-in owner instead of short-circuiting.
+#[test]
+fn reused_import_refills_partial_store_for_owner() {
+    let root = tempfile::tempdir().unwrap();
+    let own = root.path().join("own");
+    let client = b"fake 26.3 client jar";
+    let sound = b"fake sound ogg";
+    let index = serde_json::json!({"objects": {
+        "minecraft/sounds/a.ogg": {"hash": sources::sha1_hex(sound), "size": sound.len()},
+    }})
+    .to_string();
+    let manifest = serde_json::json!({
+        "id": "26.3",
+        "assetIndex": {
+            "id": "34",
+            "sha1": sources::sha1_hex(index.as_bytes()),
+            "url": "https://piston-meta.mojang.com/v1/packages/idx/34.json",
+        },
+        "downloads": {"client": {
+            "sha1": sources::sha1_hex(client),
+            "size": client.len(),
+            "url": "https://piston-data.mojang.com/client.jar",
+        }},
+        "libraries": [],
+    })
+    .to_string();
+    let manifest_sha1 = sources::sha1_hex(manifest.as_bytes());
+    let pins = sources::Pins::read(&serde_json::json!({"minecraft": {
+        "version": "26.3",
+        "client_sha1": sources::sha1_hex(client),
+        "manifest_sha1": manifest_sha1,
+    }}))
+    .unwrap();
+
+    // Simulate a partial store left by an interrupted download: manifest + empty assets/indexes dir.
+    fs::create_dir_all(own.join("versions/26.3")).unwrap();
+    fs::write(own.join("versions/26.3/26.3.json"), &manifest).unwrap();
+    fs::create_dir_all(own.join("assets/indexes")).unwrap();
+
+    let sound_hash = sources::sha1_hex(sound);
+    let fixture = std::collections::HashMap::from([
+        (
+            "https://piston-data.mojang.com/client.jar".to_string(),
+            client.to_vec(),
+        ),
+        (
+            "https://piston-meta.mojang.com/v1/packages/idx/34.json".to_string(),
+            index.into_bytes(),
+        ),
+        (
+            format!(
+                "{}/{}/{sound_hash}",
+                sunrise_launcher_addresses::MOJANG_RESOURCES,
+                &sound_hash[..2]
+            ),
+            sound.to_vec(),
+        ),
+    ]);
+    let fetch = |url: &str| -> Result<Vec<u8>, String> {
+        fixture
+            .get(url)
+            .cloned()
+            .ok_or_else(|| format!("unexpected url {url}"))
+    };
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let store = sources::Store {
+        dir: &own,
+        sources: &[],
+    };
+
+    let folder = prepare_store_with(
+        &pins,
+        &store,
+        &PrepareStoreOptions {
+            os: "linux",
+            allow_local_without_owner: false,
+            local_sources: &[],
+        },
+        &cancel,
+        &|| {
+            mojang::download(&pins, &store, "linux", 2, &fetch, &cancel, &|_| {}).map_err(|e| {
+                OwnerDownloadError {
+                    verified_owner: true,
+                    message: e,
+                }
+            })
+        },
+    )
+    .unwrap();
+    assert_eq!(folder, own);
+    assert!(own.join("assets/indexes/34.json").is_file());
+    assert_eq!(
+        fs::read(
+            own.join("assets/objects")
+                .join(&sound_hash[..2])
+                .join(&sound_hash)
+        )
+        .unwrap(),
+        sound
+    );
+}
+
+#[test]
+fn failed_local_assembly_returns_err_instead_of_unchecked_external_folder() {
+    let root = tempfile::tempdir().unwrap();
+    let own = root.path().join("own");
+    let external = root.path().join("ExternalLauncher");
+    let client = b"fake 26.3 client jar";
+    let manifest = serde_json::json!({
+        "id": "26.3",
+        "downloads": {"client": {
+            "sha1": sources::sha1_hex(client),
+            "size": client.len(),
+            "url": "https://piston-data.mojang.com/client.jar",
+        }},
+        "libraries": [],
+    })
+    .to_string();
+    let manifest_sha1 = sources::sha1_hex(manifest.as_bytes());
+    let pins = sources::Pins::read(&serde_json::json!({"minecraft": {
+        "version": "26.3",
+        "client_sha1": sources::sha1_hex(client),
+        "manifest_sha1": manifest_sha1,
+    }}))
+    .unwrap();
+
+    // External folder has only an unchecked/incomplete setup (manifest, no matching client jar).
+    fs::create_dir_all(external.join("versions/26.3")).unwrap();
+    fs::write(external.join("versions/26.3/26.3.json"), &manifest).unwrap();
+    let local_sources = [external.clone()];
+    let store = sources::Store {
+        dir: &own,
+        sources: &local_sources,
+    };
+    let no_owner = || {
+        Err(OwnerDownloadError {
+            verified_owner: false,
+            message: "\n  • Sign in to download.".into(),
+        })
+    };
+
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let err = prepare_store_with(
+        &pins,
+        &store,
+        &PrepareStoreOptions {
+            os: "linux",
+            allow_local_without_owner: true,
+            local_sources: &local_sources,
+        },
+        &cancel,
+        &no_owner,
+    )
+    .unwrap_err();
+    assert!(err.contains("Missing pinned Minecraft 26.3 file"), "{err}");
+    assert!(err.contains("Sign in to download."), "{err}");
+
+    // Cancellation also returns Err directly rather than falling back to Ok.
+    let cancelled = std::sync::atomic::AtomicBool::new(true);
+    let cancel_err = prepare_store_with(
+        &pins,
+        &store,
+        &PrepareStoreOptions {
+            os: "linux",
+            allow_local_without_owner: true,
+            local_sources: &local_sources,
+        },
+        &cancelled,
+        &no_owner,
+    )
+    .unwrap_err();
+    assert!(cancel_err.contains("cancelled"), "{cancel_err}");
+    assert!(!cancel_err.contains("Sign in to download."), "{cancel_err}");
 }
 
 #[test]
@@ -621,15 +1008,9 @@ fn native_resources_resolve_to_the_base_and_prevent_its_removal() {
     // Preparing a native build runs the base's preparer, and says so when it can't.
     let try_prepare = || {
         let preparation = prepare_lock(&native).unwrap();
-        preparer(
-            &native,
-            Path::new("."),
-            MinecraftFrom::Install,
-            &|_| {},
-            &preparation,
-        )
-        .map(|_| ())
-        .unwrap_err()
+        preparer(&native, None, &|_| {}, &preparation)
+            .map(|_| ())
+            .unwrap_err()
     };
     assert_eq!(try_prepare(), crate::preparer::too_old(&base));
     fs::remove_file(base_dir.join(COMPLETE)).unwrap();
@@ -2538,23 +2919,172 @@ fn any_missing_extra_sends_the_store_refill_once_per_run() {
         &["languages"],
     ] {
         let asked = AtomicBool::new(false);
-        assert!(
-            refill_wanted(true, Some(&lacks(kinds)), &asked),
-            "{kinds:?}"
-        );
+        assert!(refill_wanted(Some(&lacks(kinds)), &asked), "{kinds:?}");
         // Asked once: the second call in the run says no.
-        assert!(
-            !refill_wanted(true, Some(&lacks(kinds)), &asked),
-            "{kinds:?}"
-        );
+        assert!(!refill_wanted(Some(&lacks(kinds)), &asked), "{kinds:?}");
     }
-    // Nothing missing, no answer from the preparer, or no asset index: not asked, and a
-    // refusal does not use up the run's one ask.
+    // Nothing missing or no answer from the preparer: not asked, and a refusal does not use up
+    // the run's one ask.
     let asked = AtomicBool::new(false);
-    assert!(!refill_wanted(true, Some(&lacks(&[])), &asked));
-    assert!(!refill_wanted(true, None, &asked));
-    assert!(!refill_wanted(false, Some(&lacks(&["fonts"])), &asked));
-    assert!(refill_wanted(true, Some(&lacks(&["fonts"])), &asked));
+    assert!(!refill_wanted(Some(&lacks(&[])), &asked));
+    assert!(!refill_wanted(None, &asked));
+    assert!(refill_wanted(Some(&lacks(&["fonts"])), &asked));
+}
+
+#[test]
+fn refill_own_store_runs_without_asset_index_and_with_unrelated_index() {
+    use std::sync::atomic::AtomicBool;
+    let root = tempfile::tempdir().unwrap();
+    let version = root.path().join("versions/v1");
+    fs::create_dir_all(&version).unwrap();
+    fs::write(
+        version.join("research-lock.json"),
+        serde_json::json!({"minecraft": {
+            "version": "26.3",
+            "client_sha1": "aa",
+            "manifest_sha1": "bb",
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let lacks: crate::preparer::Extras = vec![("sounds".into(), "The sounds".into())];
+
+    // Partial own store without any `assets/indexes` directory still triggers a refill once.
+    let own_without_index = root.path().join("own-empty");
+    let asked = AtomicBool::new(false);
+    let calls = std::cell::RefCell::new(Vec::<(String, PathBuf)>::new());
+    let record = |pins: &sources::Pins, own: &Path| {
+        calls
+            .borrow_mut()
+            .push((pins.version.clone(), own.to_path_buf()));
+    };
+    refill_own_store_with(&version, &own_without_index, Some(&lacks), &asked, &record);
+    refill_own_store_with(&version, &own_without_index, Some(&lacks), &asked, &record);
+    assert_eq!(
+        *calls.borrow(),
+        vec![("26.3".to_string(), own_without_index)]
+    );
+
+    // Own store with an unrelated index directory also triggers a refill once.
+    let own_unrelated = root.path().join("own-unrelated");
+    fs::create_dir_all(own_unrelated.join("assets/indexes")).unwrap();
+    fs::write(own_unrelated.join("assets/indexes/old.json"), "{}").unwrap();
+    let asked = AtomicBool::new(false);
+    calls.borrow_mut().clear();
+    refill_own_store_with(&version, &own_unrelated, Some(&lacks), &asked, &record);
+    assert_eq!(*calls.borrow(), vec![("26.3".to_string(), own_unrelated)]);
+}
+
+#[test]
+fn minecraft_folders_in_only_returns_own_store() {
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("launcher");
+    let external = root.path().join("ExternalMinecraft");
+    fs::create_dir_all(&data).unwrap();
+    fs::create_dir_all(&external).unwrap();
+    let settings = Settings {
+        minecraft_dir: Some(external),
+        ..Default::default()
+    };
+    settings.save_to(&data).unwrap();
+
+    // Without Sunrise's own store, no external folder is returned.
+    assert!(minecraft_folders_in(&data).is_empty());
+
+    // Once Sunrise's own store exists, only it is returned.
+    let own = data.join("minecraft");
+    fs::create_dir_all(&own).unwrap();
+    assert_eq!(minecraft_folders_in(&data), vec![own]);
+}
+
+#[cfg(unix)]
+#[test]
+fn complete_assets_never_passes_external_folder_to_extras() {
+    use std::os::unix::fs::PermissionsExt;
+    const CHILD: &str = "SUNRISE_COMPLETE_ASSETS_OWN_ONLY_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let home = tempfile::tempdir().unwrap();
+        let external = home.path().join("ExternalLauncher");
+        fs::create_dir_all(&external).unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "backend::tests::complete_assets_never_passes_external_folder_to_extras",
+            ])
+            .env(CHILD, "1")
+            .env("SUNRISE_LAUNCHER_HOME", home.path().join("launcher"))
+            .env("SUNRISE_HOME", home.path().join("game"))
+            .env("SUNRISE_MINECRAFT_DIR", &external)
+            .env("XDG_DATA_HOME", home.path().join("xdg-data"))
+            .env("XDG_CONFIG_HOME", home.path().join("xdg-config"))
+            .env(
+                "SUNRISE_LAUNCHER_LOCATION_FILE",
+                home.path().join("location"),
+            )
+            .env("SUNRISE_LAUNCHER_TRASH", home.path().join("trash"))
+            .env("SUNRISE_LAUNCHER_CLIPBOARD", home.path().join("clipboard"))
+            .env("SUNRISE_LAUNCHER_DESKTOP", home.path().join("desktop"))
+            .env("SUNRISE_NO_KEYCHAIN", "1")
+            .env("SUNRISE_LAUNCHER_NO_SELF_UPDATE", "1")
+            .env("SUNRISE_NO_AUDIO", "1")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+
+    let external = PathBuf::from(std::env::var_os("SUNRISE_MINECRAFT_DIR").unwrap());
+    let settings = Settings {
+        minecraft_dir: Some(external.clone()),
+        ..Default::default()
+    };
+    settings.save().unwrap();
+
+    let setup_version = |tag: &str| {
+        let root = version_dir(tag);
+        let resources = resources_at(&root);
+        fs::create_dir_all(&resources).unwrap();
+        fs::write(resources.join(RESOURCES_MANIFEST), b"{}").unwrap();
+        let binary = root.join(crate::preparer::BINARY);
+        fs::write(
+            &binary,
+            "#!/bin/sh\nset -eu\ncase \"$1\" in\n\
+             missing-extras) printf '%s\\n' '{\"format\":1,\"prepared\":true,\"missing\":[{\"kind\":\"sounds\",\"what\":\"The sounds\"}]}' ;;\n\
+             extras) printf '%s\\n' \"$@\" > \"$(dirname \"$0\")/extras-args\"; printf '%s\\n' '{\"format\":1,\"added\":[],\"failed\":[]}' ;;\n\
+             *) exit 2 ;;\n\
+             esac\n",
+        )
+        .unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        root
+    };
+
+    // With no own store present, `extras` receives no `--minecraft-dir` at all.
+    let v1 = setup_version("v1");
+    complete_assets("v1");
+    let v1_args = fs::read_to_string(v1.join("extras-args")).unwrap();
+    assert!(!v1_args.contains("--minecraft-dir"), "{v1_args}");
+    assert!(
+        !v1_args.contains(external.to_string_lossy().as_ref()),
+        "{v1_args}"
+    );
+
+    // With an empty own store present, `extras` receives only Sunrise's own store.
+    let own = data_dir().join("minecraft");
+    fs::create_dir_all(&own).unwrap();
+    let v2 = setup_version("v2");
+    complete_assets("v2");
+    let v2_args: Vec<String> = fs::read_to_string(v2.join("extras-args"))
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    let passed: Vec<&str> = v2_args
+        .windows(2)
+        .filter(|pair| pair[0] == "--minecraft-dir")
+        .map(|pair| pair[1].as_str())
+        .collect();
+    assert_eq!(passed, [own.to_str().unwrap()], "{v2_args:?}");
 }
 
 #[test]
