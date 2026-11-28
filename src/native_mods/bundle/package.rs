@@ -75,3 +75,6 @@ fn copy_files(to: &Path, files: impl IntoIterator<Item = (String, Vec<u8>)>) -> 
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

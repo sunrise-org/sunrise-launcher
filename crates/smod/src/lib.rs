@@ -17,6 +17,7 @@ pub mod manifest;
 pub mod mod_list;
 pub mod modpack;
 pub mod output;
+pub mod package;
 pub mod packages;
 pub mod runtime_leases;
 pub mod selection;

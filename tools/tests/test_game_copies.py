@@ -114,6 +114,148 @@ SAME_CODE = (
     ("crates/sunrise-mod-package/src/modpack.rs", "crates/smod/src/modpack.rs", (
         ('#[cfg(feature = "index-read")] impl PackMod', "impl PackMod"),
     )),
+    # The launcher always walks a mod folder (no `folder` feature) and carries `layouts.json` metadata.
+    # The `include`/`.gitignore` precedence and `read_cargo_manifest` checks fix #5685 review findings
+    # ahead of the matching game fix; drop those two edits once the game fixes them and the pin moves.
+    ("crates/sunrise-mod-source/src/package.rs", "crates/smod/src/package.rs", (
+        ('#[cfg(feature = "folder")]', ""),
+        ('#[cfg(all(test, feature = "folder"))]', "#[cfg(test)]"),
+        ('&& name != "icon.png"', '&& name != "icon.png"\n        && name != crate::layouts::FILE'),
+        ('''pub fn source_files(root: &Path) -> io::Result<Vec<String>> {
+    let invalid = |message: String| io::Error::new(io::ErrorKind::InvalidData, message);
+    let manifest = match std::fs::read_to_string(root.join("Cargo.toml")) {
+        Ok(text) => text
+            .parse::<toml::Table>()
+            .map_err(|e| invalid(format!("Cargo.toml: {e}")))?,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => toml::Table::new(),
+        Err(e) => return Err(e),
+    };''', '''/// Reads a plain `Cargo.toml` file within `remaining` bytes without following symbolic links.
+/// Returns `Ok(None)` when the file does not exist.
+fn read_cargo_manifest(
+    path: &Path,
+    label: &str,
+    remaining: &mut u64,
+) -> io::Result<Option<toml::Table>> {
+    let invalid = |message: String| io::Error::new(io::ErrorKind::InvalidData, message);
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    if !meta.is_file() {
+        return Err(invalid(format!("{label}: unsupported file type")));
+    }
+    if meta.len() > *remaining {
+        return Err(invalid(
+            "native package exceeds its entry or size limit".into(),
+        ));
+    }
+    let mut text = String::new();
+    std::fs::File::open(path)?
+        .take(remaining.saturating_add(1))
+        .read_to_string(&mut text)?;
+    if text.len() as u64 > *remaining {
+        return Err(invalid(
+            "native package exceeds its entry or size limit".into(),
+        ));
+    }
+    *remaining -= text.len() as u64;
+    text.parse::<toml::Table>()
+        .map(Some)
+        .map_err(|e| invalid(format!("{label}: {e}")))
+}
+
+pub fn source_files(root: &Path) -> io::Result<Vec<String>> {
+    let invalid = |message: String| io::Error::new(io::ErrorKind::InvalidData, message);
+    let mut remaining = crate::manifest::MAX_SOURCE_BYTES;
+    let manifest = read_cargo_manifest(&root.join("Cargo.toml"), "Cargo.toml", &mut remaining)?
+        .unwrap_or_default();'''),
+        ('''    let mut ignored = GitignoreBuilder::new("");
+    if root.join(".gitignore").is_file()
+        && let Some(error) = ignored.add(root.join(".gitignore"))
+    {
+        return Err(invalid(format!(".gitignore: {error}")));
+    }
+    let ignored = ignored
+        .build()
+        .map_err(|e| invalid(format!(".gitignore: {e}")))?;
+    let packaged = |name: &str, is_dir: bool| {
+        if !is_dir && (name == "Cargo.toml" || name == "Cargo.lock") {
+            return true;
+        }
+        if ignored
+            .matched_path_or_any_parents(name, is_dir)
+            .is_ignore()
+        {
+            return false;
+        }
+        match (&include, &exclude) {
+            // Cargo checks no folder against `include`, which names files.
+            (Some(include), _) => {
+                is_dir || include.matched_path_or_any_parents(name, false).is_ignore()
+            }
+            (None, Some(exclude)) => !exclude
+                .matched_path_or_any_parents(name, is_dir)
+                .is_ignore(),
+            (None, None) => true,
+        }
+    };''', '''    let ignored = if include.is_none() {
+        let mut ignored = GitignoreBuilder::new("");
+        if root.join(".gitignore").is_file()
+            && let Some(error) = ignored.add(root.join(".gitignore"))
+        {
+            return Err(invalid(format!(".gitignore: {error}")));
+        }
+        Some(
+            ignored
+                .build()
+                .map_err(|e| invalid(format!(".gitignore: {e}")))?,
+        )
+    } else {
+        None
+    };
+    let packaged = |name: &str, is_dir: bool| {
+        if !is_dir && (name == "Cargo.toml" || name == "Cargo.lock") {
+            return true;
+        }
+        match (&include, &exclude) {
+            // Cargo checks no folder against `include`, which names files, and ignores `.gitignore`.
+            (Some(include), _) => {
+                is_dir || include.matched_path_or_any_parents(name, false).is_ignore()
+            }
+            (None, exclude) => {
+                if ignored.as_ref().is_some_and(|ignored| {
+                    ignored
+                        .matched_path_or_any_parents(name, is_dir)
+                        .is_ignore()
+                }) {
+                    return false;
+                }
+                exclude.as_ref().is_none_or(|exclude| {
+                    !exclude
+                        .matched_path_or_any_parents(name, is_dir)
+                        .is_ignore()
+                })
+            }
+        }
+    };'''),
+        ('''if entry.path().join("Cargo.toml").exists() {''',
+         '''if std::fs::symlink_metadata(entry.path().join("Cargo.toml")).is_ok() {'''),
+        ('''        for (dir, name) in named {
+            let text = std::fs::read_to_string(dir.join("Cargo.toml"))?;
+            let table = text
+                .parse::<toml::Table>()
+                .map_err(|e| invalid(format!("{name}/Cargo.toml: {e}")))?;
+            wanted_folders(&table, &name, &mut wanted)?;
+            pending.push((dir, name));
+        }''', '''        for (dir, name) in named {
+            let label = format!("{name}/Cargo.toml");
+            let table = read_cargo_manifest(&dir.join("Cargo.toml"), &label, &mut remaining)?
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, label))?;
+            wanted_folders(&table, &name, &mut wanted)?;
+            pending.push((dir, name));
+        }'''),
+    )),
     ("crates/sunrise-jar-fetch/Cargo.toml", "crates/jar-fetch/Cargo.toml", (
         ('name = "sunrise-jar-fetch"', 'name = "sunrise-launcher-jar-fetch"'),
         ("edition.workspace = true", 'edition = "2024"'),
@@ -352,6 +494,7 @@ PACKAGE_FORMAT = "crates/sunrise-mod-package/src/sdk/package-format"
 FORMAT_CONSTANTS = (
     ("crates/sunrise-mod-surface/src/uses_meta.rs", "USES_FILE", "crates/smod/src/manifest.rs", "USES_FILE"),
     ("crates/sunrise-mod-surface/src/uses_meta.rs", "MAX_USES_BYTES", "crates/smod/src/manifest.rs", "MAX_USES"),
+    ("crates/sunrise-mod-package/src/manifest.rs", "MAX_SOURCE_BYTES", "crates/smod/src/manifest.rs", "MAX_SOURCE_BYTES"),
     ("crates/sunrise-core/src/prepared_files.rs", "FILE_NAME", "src/preparer.rs", "DATA_FILE"),
     ("crates/sunrise-mod-package/src/mixins_tool.rs", "REV", "src/native_mods/bundle.rs", "MIXINS_REV"),
     ("crates/sunrise-core/src/version.rs", "VERSION_ID", "src/backend.rs", "PINNED_GAME"),

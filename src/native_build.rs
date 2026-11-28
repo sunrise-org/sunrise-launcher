@@ -189,18 +189,22 @@ impl Launcher {
     }
 }
 
-/// What a failed build says, and the mods that stopped it: a mod's own compile failure, or its
-/// build script or features the prebuilt game refuses, in plain words naming it, read against
+/// What a failed build says, and the mods that stopped it: a mod's own compile failure, or the
+/// features the prebuilt game refuses, in plain words naming it, read against
 /// `built`, the mods the build was given (never the instance selected when it ends); any other
 /// failure as it is.
 fn failure_message(error: String, built: &[String]) -> (String, Vec<String>) {
     if let Some(id) = native_mods::compile_failed_mod(&error, built) {
         return (native_mods::fit::compile_failed(id), vec![id.clone()]);
     }
-    match native_mods::refused_mod(&error, built) {
-        Some((id, refusal)) => (refusal.plain(), vec![id.clone()]),
-        None => (error, Vec::new()),
+    if let Some((id, refusal)) = native_mods::refused_mod(&error, built) {
+        return (refusal.plain(), vec![id.clone()]);
     }
+    let failed = native_mods::build_script_failed_mod(&error, built)
+        .into_iter()
+        .cloned()
+        .collect();
+    (error, failed)
 }
 
 #[cfg(test)]
@@ -227,21 +231,33 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_build_script_or_features_reads_like_a_mod_that_failed() {
+    fn refused_features_read_like_a_mod_that_failed() {
         let built = vec!["maps".to_string(), "fast-ore".to_string()];
-        for refusal in [
-            native_mods::Refusal::BuildScript {
-                mod_id: "fast-ore".into(),
-            },
-            native_mods::Refusal::Features {
-                mod_id: "fast-ore".into(),
-            },
-        ] {
-            // As the build ends: the log's line, after any mods left out before it.
-            let error = format!("maps was left out\n\n{refusal}");
-            let (text, failed) = failure_message(error, &built);
-            assert_eq!(text, refusal.plain());
-            assert_eq!(failed, ["fast-ore"]);
-        }
+        let refusal = native_mods::Refusal::Features {
+            mod_id: "fast-ore".into(),
+        };
+        // As the build ends: the log's line, after any mods left out before it.
+        let error = format!("maps was left out\n\n{refusal}");
+        let (text, failed) = failure_message(error, &built);
+        assert_eq!(text, refusal.plain());
+        assert_eq!(failed, ["fast-ore"]);
+    }
+
+    #[test]
+    fn an_older_tools_build_script_failure_marks_the_blamed_mod_and_keeps_its_message() {
+        let built = vec![
+            "fast".to_string(),
+            "fast-ore".to_string(),
+            "maps".to_string(),
+        ];
+        let error = "The native build failed: E_NATIVE_BUILD_SCRIPT: fast-ore has a build script"
+            .to_string();
+        let (text, failed) = failure_message(error.clone(), &built);
+        assert_eq!(text, error);
+        assert_eq!(failed, ["fast-ore"]);
+
+        let (text, failed) = failure_message(error.clone(), &["maps".to_string()]);
+        assert_eq!(text, error);
+        assert!(failed.is_empty());
     }
 }

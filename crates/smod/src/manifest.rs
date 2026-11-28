@@ -43,8 +43,6 @@ pub fn sha512_of(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// The manifest's file name in a `.smod` or a mod folder.
-pub const MANIFEST: &str = "sunrise-mod.toml";
 /// Ids no mod or pack may take: the mod site's own pages under `/mods/` (a project's page is
 /// `/mods/<id>`), and the names of the pages below an id.
 pub const RESERVED_IDS: [&str; 7] = [
@@ -75,6 +73,14 @@ pub const STORAGE_DIR: &str = ".sunrise-mod-data";
 /// The largest manifest this build reads.
 /// Maximum manifest bytes accepted by package readers and developer tools.
 pub const MAX_MANIFEST: u64 = 32 << 20;
+
+/// The most source files a package carries (every [`source_file`] of a native package): as many as
+/// its content files, so a port laid out one file per class fits. The packers and the readers that
+/// inflate source (`index::native::Bundle::read`) check it from the archive's directory before
+/// inflating any; [`Package::read_zip`] never reads a source file.
+pub const MAX_SOURCE_FILES: usize = crate::files::MAX_FILES;
+/// The most bytes those source files take, unpacked.
+pub const MAX_SOURCE_BYTES: u64 = 64 << 20;
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -598,7 +604,7 @@ impl Manifest {
                 if !rust_ident(&module.name) {
                     return Err(format!("{MANIFEST}: module name must be an identifier"));
                 }
-                if !plain_path(&module.source) || !source_file(&module.source) {
+                if !plain_path(&module.source) || !module.source.starts_with("src/") {
                     return Err(format!(
                         "{MANIFEST}: module source must be a file under src/"
                     ));
@@ -713,31 +719,15 @@ impl Manifest {
     }
 }
 
-/// Folders of a mod's project that are never part of its package: Git's, Cargo's build output
-/// and the pinned SDK the mod tool fetches into `.sunrise/`.
-pub const NOT_PACKAGED: [&str; 3] = [".git", "target", ".sunrise"];
-
-/// A source file that belongs to the flat Cargo project, not its resource packs.
-pub fn source_file(name: &str) -> bool {
-    if name.split('/').any(|part| NOT_PACKAGED.contains(&part)) {
-        return false;
-    }
-    name == "Cargo.toml"
-        || name == "Cargo.lock"
-        || name == "build.rs"
-        || (name.starts_with("src/") && (name.ends_with(".rs") || name.ends_with(".toml")))
-        || (!name.contains('/')
-            && ["README", "LICENSE", "LICENCE", "COPYING", "NOTICE"]
-                .iter()
-                .any(|prefix| name.starts_with(prefix)))
-}
+pub use crate::package::{MANIFEST, NOT_PACKAGED, binary_kind, source_file};
 
 fn plain_path(name: &str) -> bool {
     !name.starts_with('/')
         && !name.contains(['\\', ':'])
-        && !name
-            .split('/')
-            .any(|part| part.is_empty() || part == "." || part == "..")
+        && !name.split('/').any(|part| {
+            // A Windows extraction drops a trailing dot or space, so `a.` would land as `a`.
+            part.is_empty() || part == "." || part == ".." || part.ends_with(['.', ' '])
+        })
 }
 
 /// A mod as found on disk.
@@ -759,16 +749,6 @@ impl Package {
         let mut has_cargo = false;
         let mut has_source = false;
         let toml = if metadata.is_dir() {
-            for old in [
-                "sunrise-native.json",
-                "horizon-mixin.toml",
-                "native",
-                "rust",
-            ] {
-                if std::fs::symlink_metadata(path.join(old)).is_ok() {
-                    return Err(format!("{old}: unsupported package path"));
-                }
-            }
             if std::fs::symlink_metadata(path.join("Cargo.toml")).is_ok() {
                 check_folder_file(path, "Cargo.toml")?;
                 has_cargo = true;
@@ -827,7 +807,15 @@ impl Package {
                 return Self::read_zip(&mut zip);
             }
         };
-        let mut package = Self::from_parts(&toml, icon, has_cargo, has_source)?;
+        let manifest = Manifest::parse(&toml)?;
+        if has_cargo != manifest.native.is_some() || has_source != has_cargo {
+            return Err("inconsistent code declaration ([native]) and source".into());
+        }
+        let mut package = Package {
+            manifest,
+            icon,
+            layouts: Default::default(),
+        };
         package.check_runtime_layout(&crate::files::runtime_folder_files(path)?)?;
         match std::fs::File::open(path.join(crate::layouts::FILE)) {
             Ok(file) => {
@@ -840,66 +828,52 @@ impl Package {
         Ok(package)
     }
 
-    /// Read and validate an archive, including all selected source and resource entries.
+    /// Read an archive: its manifest, icon, layouts, content files and uses table, and the
+    /// `runtime/` files it lists. Any other entry, a native package's source among them, is
+    /// skipped without being read; every entry's path and file type are still checked.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn read_zip<R: Read + std::io::Seek>(zip: &mut zip::ZipArchive<R>) -> Result<Self, String> {
         let mut icon = None;
-        let mut has_cargo = false;
-        let mut has_source = false;
-        let mut entries = Vec::new();
         let mut layouts = None;
         let mut uses = false;
         let mut runtime = Vec::new();
+        let mut resources = Vec::new();
+        let mut names = std::collections::HashSet::new();
         for i in 0..zip.len() {
             let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
             let name = entry.name().map_err(|e| e.to_string())?.into_owned();
+            let directory = entry.is_dir();
+            let path = if directory {
+                name.trim_end_matches('/')
+            } else {
+                &name
+            };
+            if !plain_path(path) || !names.insert(name.clone()) {
+                return Err(format!("invalid or duplicate package path: {name}"));
+            }
             let mode = entry.unix_mode().unwrap_or_default();
-            entries.push((name.clone(), entry.size(), entry.is_dir()));
-            let first = name.split('/').next().unwrap_or("");
-            if matches!(
-                first,
-                "sunrise-native.json" | "horizon-mixin.toml" | "native" | "rust"
-            ) {
-                return Err(format!("{name}: unsupported package path"));
+            let kind = mode & 0o170000;
+            if !matches!(kind, 0 | 0o100000) && !(directory && kind == 0o040000) {
+                return Err(format!("{name}: unsupported file type"));
             }
-            has_source |= first == "src";
-            if entry.is_dir() && matches!(mode & 0o170000, 0 | 0o040000) {
+            if directory {
                 continue;
             }
-            has_cargo |= name == "Cargo.toml";
-            if name == crate::layouts::FILE && matches!(mode & 0o170000, 0 | 0o100000) {
-                if layouts.is_some() {
-                    return Err("duplicate layouts.json".into());
-                }
+            if name == crate::layouts::FILE {
                 layouts = Some(crate::layouts::Layouts::read(&mut entry)?);
-                continue;
-            }
-            if let Some(below) = name
+            } else if let Some(below) = name
                 .strip_prefix(RUNTIME_DIR)
                 .and_then(|n| n.strip_prefix('/'))
             {
                 // Any file type, but a file: its bytes are checked against `[runtime]` below.
-                if !matches!(mode & 0o170000, 0 | 0o100000) {
-                    return Err(format!("{name}: unsupported file type"));
-                }
                 runtime.push((below.to_owned(), entry.size()));
-                continue;
-            }
-            if name == USES_FILE && matches!(mode & 0o170000, 0 | 0o100000) {
-                if uses {
-                    return Err(format!("duplicate {USES_FILE}"));
-                }
+            } else if name == USES_FILE {
                 if entry.size() > MAX_USES {
                     return Err(format!("{USES_FILE} exceeds {} MiB", MAX_USES >> 20));
                 }
                 uses = true;
-                continue;
-            }
-            check_file(&name, mode, || Ok(&mut entry)).map_err(|e| e.to_string())?;
-            if name == "icon.png" {
-                if icon.is_some() {
-                    return Err("duplicate icon.png".into());
-                }
+            } else if name == "icon.png" {
+                check_file(&name, mode, || Ok(&mut entry)).map_err(|e| e.to_string())?;
                 if entry.size() > crate::icon::MAX_ICON as u64 {
                     return Err("icon.png exceeds 256 KiB".into());
                 }
@@ -911,6 +885,11 @@ impl Package {
                     .read_to_end(&mut bytes)
                     .map_err(|e| format!("icon.png: {e}"))?;
                 icon = Some(crate::icon::Icon::parse(bytes)?);
+            } else if name == MANIFEST {
+                check_file(&name, mode, || Ok(&mut entry)).map_err(|e| e.to_string())?;
+            } else if name.starts_with("assets/") || name.starts_with("data/") {
+                check_file(&name, mode, || Ok(&mut entry)).map_err(|e| e.to_string())?;
+                resources.push((name, entry.size()));
             }
         }
         let mut toml = String::new();
@@ -922,66 +901,57 @@ impl Package {
         if toml.len() as u64 > MAX_MANIFEST {
             return Err(format!("{MANIFEST}: over {} MiB", MAX_MANIFEST >> 20));
         }
-        let mut package = Self::from_parts(&toml, icon, has_cargo, has_source)?;
+        let package = Package {
+            manifest: Manifest::parse(&toml)?,
+            icon,
+            layouts: layouts.unwrap_or_default(),
+        };
         if uses && !package.is_native() {
             return Err(format!("a content mod has no code, so no {USES_FILE}"));
         }
-        package.layouts = layouts.unwrap_or_default();
         package.check_runtime_layout(&runtime)?;
         if package.is_native() {
-            let mut names = std::collections::HashSet::new();
-            let mut source_count = 0usize;
-            let mut source_bytes = 0u64;
-            let mut resource_count = 0usize;
             let mut resource_bytes = 0u64;
-            for (name, size, directory) in entries {
-                let path = if directory {
-                    name.trim_end_matches('/')
-                } else {
-                    &name
-                };
-                if !plain_path(path) || !names.insert(name.clone()) {
-                    return Err(format!("invalid or duplicate package path: {name}"));
+            for (name, size) in &resources {
+                crate::files::check_path(name)?;
+                crate::files::check_namespace(name, &package.manifest)?;
+                if *size > crate::files::MAX_FILE {
+                    return Err(format!("{name} exceeds the content file size limit"));
                 }
-                if !directory {
-                    if name != MANIFEST
-                        && name != crate::layouts::FILE
-                        && name != USES_FILE
-                        && name != "icon.png"
-                        && !name.starts_with("runtime/")
-                        && !name.starts_with("assets/")
-                        && !name.starts_with("data/")
-                        && !source_file(&name)
-                    {
-                        return Err(format!("unexpected package path: {name}"));
-                    }
-                    if source_file(&name) {
-                        source_count += 1;
-                        source_bytes = source_bytes
-                            .checked_add(size)
-                            .ok_or("native package too large")?;
-                    } else if name.starts_with("assets/") || name.starts_with("data/") {
-                        crate::files::check_path(&name)?;
-                        crate::files::check_namespace(&name, &package.manifest)?;
-                        if size > crate::files::MAX_FILE {
-                            return Err(format!("{name} exceeds the content file size limit"));
-                        }
-                        resource_count += 1;
-                        resource_bytes = resource_bytes
-                            .checked_add(size)
-                            .ok_or("content too large")?;
-                    }
-                }
+                resource_bytes = resource_bytes
+                    .checked_add(*size)
+                    .ok_or("content too large")?;
             }
-            if source_count > 511 || source_bytes > 64 << 20 {
-                return Err("native package exceeds its entry or size limit".into());
-            }
-            if resource_count > crate::files::MAX_FILES || resource_bytes > crate::files::MAX_TOTAL
+            if resources.len() > crate::files::MAX_FILES || resource_bytes > crate::files::MAX_TOTAL
             {
                 return Err("content exceeds its entry or size limit".into());
             }
         }
         Ok(package)
+    }
+
+    /// Refuse an archive whose source entries are too many or too large: they are counted, and
+    /// their declared sizes summed from the archive's directory, before any is inflated, as the
+    /// packers bound them.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn check_source_bounds<R: Read + std::io::Seek>(
+        zip: &mut zip::ZipArchive<R>,
+    ) -> Result<(), String> {
+        let (mut count, mut bytes) = (0usize, 0u64);
+        for i in 0..zip.len() {
+            let entry = zip.by_index_raw(i).map_err(|e| e.to_string())?;
+            if entry.is_dir() || !entry.name().is_ok_and(|name| source_file(&name)) {
+                continue;
+            }
+            count += 1;
+            bytes = bytes
+                .checked_add(entry.size())
+                .ok_or("native package too large")?;
+            if count > MAX_SOURCE_FILES || bytes > MAX_SOURCE_BYTES {
+                return Err("native package exceeds its entry or size limit".into());
+            }
+        }
+        Ok(())
     }
 
     /// Refuse a `runtime/` folder that is not the one `[runtime]` lists: an extra, a missing or an
@@ -1040,23 +1010,6 @@ impl Package {
         )))
     }
 
-    fn from_parts(
-        text: &str,
-        icon: Option<crate::icon::Icon>,
-        has_cargo: bool,
-        has_source: bool,
-    ) -> Result<Self, String> {
-        let manifest = Manifest::parse(text)?;
-        let package = Package {
-            manifest,
-            icon,
-            layouts: Default::default(),
-        };
-        if has_cargo != package.is_native() || has_source != has_cargo {
-            return Err("inconsistent code declaration ([native]) and source".into());
-        }
-        Ok(package)
-    }
     /// Whether the mod at `path` (a `.smod` or a folder) has a [`MANIFEST`].
     pub fn has_manifest(path: &Path) -> bool {
         if path.is_dir() {
@@ -1072,7 +1025,11 @@ impl Package {
         #[cfg(target_arch = "wasm32")]
         false
     }
-    /// Select and validate a flat project's source and resource files deterministically.
+    /// Select and validate a flat project's source and resource files deterministically. The
+    /// source is what `cargo package` would put in the crate ([`crate::package::source_files`]): a
+    /// file outside it (one under `.cargo/`, one `[package] exclude` or `.gitignore` names) is left
+    /// out unread, and one inside it is refused when its bytes are a prebuilt binary
+    /// ([`binary_kind`]) or it is not a plain file.
     pub fn directory_files(
         &self,
         root: &Path,
@@ -1102,51 +1059,29 @@ impl Package {
             }
         }
         if self.is_native() {
-            fn walk(
-                root: &Path,
-                dir: &Path,
-                files: &mut std::collections::BTreeMap<String, Vec<u8>>,
-                source_bytes: &mut u64,
-                source_count: &mut usize,
-            ) -> Result<(), String> {
-                for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
-                    let entry = entry.map_err(|e| e.to_string())?;
-                    let path = entry.path();
-                    let relative = path.strip_prefix(root).map_err(|e| e.to_string())?;
-                    let name = relative
-                        .to_str()
-                        .ok_or("non-UTF-8 package path")?
-                        .replace('\\', "/");
-                    let kind = entry.file_type().map_err(|e| e.to_string())?;
-                    if kind.is_dir() {
-                        if entry
-                            .file_name()
-                            .to_str()
-                            .is_some_and(|name| NOT_PACKAGED.contains(&name))
-                            || matches!(name.as_str(), "assets" | "data" | RUNTIME_DIR)
-                        {
-                            continue;
-                        }
-                        walk(root, &path, files, source_bytes, source_count)?;
-                    } else if source_file(&name) {
-                        check_folder_file(root, &name)?;
-                        let size = entry.metadata().map_err(|e| e.to_string())?.len();
-                        *source_bytes = source_bytes
-                            .checked_add(size)
-                            .ok_or("native package too large")?;
-                        *source_count += 1;
-                        if *source_bytes > 64 << 20 || *source_count > 511 {
-                            return Err("native package exceeds its entry or size limit".into());
-                        }
-                        files.insert(name, std::fs::read(path).map_err(|e| e.to_string())?);
-                    }
-                    // Anything else (a repository tool's `module.toml`, notes, scripts) stays
-                    // out, like a folder's other files: Cargo builds only the source set.
+            let (mut source_bytes, mut source_count) = (0u64, 0usize);
+            for name in crate::package::source_files(root).map_err(|e| e.to_string())? {
+                let path = root.join(&name);
+                let mode = folder_mode(root, &name).map_err(|e| e.to_string())?;
+                check_source_type(&name, mode).map_err(|e| e.to_string())?;
+                let size = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
+                source_bytes = source_bytes
+                    .checked_add(size)
+                    .ok_or("native package too large")?;
+                source_count += 1;
+                if source_bytes > MAX_SOURCE_BYTES || source_count > MAX_SOURCE_FILES {
+                    return Err("native package exceeds its entry or size limit".into());
                 }
-                Ok(())
+                // Read once: the bytes checked are the bytes packed.
+                let mut bytes = Vec::new();
+                std::fs::File::open(&path)
+                    .map_err(|e| format!("{name}: {e}"))?
+                    .take(size)
+                    .read_to_end(&mut bytes)
+                    .map_err(|e| format!("{name}: {e}"))?;
+                refuse_binary(&name, &bytes).map_err(|e| e.to_string())?;
+                files.insert(name, bytes);
             }
-            let (mut source_bytes, mut source_count) = (0, 0);
-            walk(root, root, &mut files, &mut source_bytes, &mut source_count)?
         }
         files.insert(
             MANIFEST.to_owned(),
@@ -1220,8 +1155,15 @@ impl Package {
             zip.write_all(bytes).map_err(|e| e.to_string())
         };
         put(MANIFEST, manifest_text.as_bytes())?;
+        let mut lowercase = std::collections::HashMap::from([(MANIFEST.to_lowercase(), MANIFEST)]);
         let code = manifest.native.is_some();
+        let (mut source_bytes, mut source_count) = (0u64, 0usize);
         for (name, bytes) in files {
+            if let Some(other) = lowercase.insert(name.to_lowercase(), *name) {
+                return Err(format!(
+                    "{other} and {name} differ only by case, which a Windows or macOS extraction cannot keep apart"
+                ));
+            }
             let source = code && source_file(name) && plain_path(name);
             if *name == crate::layouts::FILE {
                 crate::layouts::Layouts::read(*bytes)?;
@@ -1244,7 +1186,18 @@ impl Package {
                 put(name, bytes)?;
                 continue;
             }
-            if *name != "icon.png" && !source {
+            if source {
+                // A source file has no name or mode rule: only its bytes may not be a binary.
+                refuse_binary(name, bytes).map_err(|e| e.to_string())?;
+                source_bytes += bytes.len() as u64;
+                source_count += 1;
+                if source_bytes > MAX_SOURCE_BYTES || source_count > MAX_SOURCE_FILES {
+                    return Err("native package exceeds its entry or size limit".into());
+                }
+                put(name, bytes)?;
+                continue;
+            }
+            if *name != "icon.png" {
                 crate::files::check_path(name)?;
             }
             check_file(name, 0, || Ok(*bytes)).map_err(|e| e.to_string())?;
@@ -1262,6 +1215,12 @@ impl Package {
 pub enum ContentFileError {
     UnsupportedType(String),
     Executable(String),
+    /// A native package's source file whose bytes are prebuilt object code of this kind
+    /// ([`binary_kind`]), whatever its name. A content file with such a header is `Executable`.
+    Binary {
+        name: String,
+        kind: &'static str,
+    },
     Read {
         name: String,
         source: std::io::Error,
@@ -1277,6 +1236,10 @@ impl std::fmt::Display for ContentFileError {
             Self::Executable(name) => {
                 write!(f, "{name}: unsupported executable file in a content mod")
             }
+            Self::Binary { name, kind } => write!(
+                f,
+                "{name}: unsupported executable file ({kind}); a package carries source, never prebuilt binaries"
+            ),
             Self::Read { name, source } => write!(f, "{name}: {source}"),
         }
     }
@@ -1291,8 +1254,44 @@ impl std::error::Error for ContentFileError {
     }
 }
 
-/// The shared content-file boundary. Refuse type/mode before opening a file,
-/// then inspect its header even when its name has no executable extension.
+/// The first bytes of a file, up to 8, for the content checks.
+fn file_head<R: Read>(
+    name: &str,
+    open: impl FnOnce() -> std::io::Result<R>,
+) -> Result<([u8; 8], usize), ContentFileError> {
+    let error = |source| ContentFileError::Read {
+        name: name.into(),
+        source,
+    };
+    let mut file = open().map_err(error)?;
+    let mut head = [0; 8];
+    let mut read = 0;
+    while read < head.len() {
+        let size = file.read(&mut head[read..]).map_err(error)?;
+        if size == 0 {
+            break;
+        }
+        read += size;
+    }
+    Ok((head, read))
+}
+
+/// The refusal of a source file whose bytes are prebuilt object code ([`binary_kind`]), whatever
+/// its name. Inspects the full bounded `bytes` buffer so a PE signature past the first 1 KiB is
+/// still caught.
+pub(crate) fn refuse_binary(name: &str, bytes: &[u8]) -> Result<(), ContentFileError> {
+    match binary_kind(bytes) {
+        Some(kind) => Err(ContentFileError::Binary {
+            name: name.into(),
+            kind,
+        }),
+        None => Ok(()),
+    }
+}
+
+/// The boundary of a content file (an asset, a data file, the manifest, the icon). Refuse
+/// type/mode before opening a file, then inspect its header even when its name has no executable
+/// extension.
 pub(crate) fn check_file<R: Read>(
     name: &str,
     mode: u32,
@@ -1307,7 +1306,7 @@ pub(crate) fn check_file<R: Read>(
         .and_then(|n| n.rsplit_once('.'));
     let executable = extension.is_some_and(|(_, ext)| {
         [
-            "wasm", "exe", "dll", "so", "dylib", "class", "jar", "com", "bat", "cmd", "ps1",
+            "exe", "dll", "so", "dylib", "class", "jar", "com", "bat", "cmd", "ps1", "wasm",
         ]
         .iter()
         .any(|kind| ext.eq_ignore_ascii_case(kind))
@@ -1315,36 +1314,50 @@ pub(crate) fn check_file<R: Read>(
     if executable || mode & 0o111 != 0 {
         return Err(ContentFileError::Executable(name.into()));
     }
-    let error = |source| ContentFileError::Read {
-        name: name.into(),
-        source,
-    };
-    let mut file = open().map_err(error)?;
-    let mut header = [0; 4];
-    let mut read = 0;
-    while read < header.len() {
-        let size = file.read(&mut header[read..]).map_err(error)?;
-        if size == 0 {
-            break;
-        }
-        read += size;
-    }
-    let executable = matches!(
-        &header,
-        b"\0asm"
-            | b"\x7fELF"
-            | b"\xfe\xed\xfa\xce"
-            | b"\xce\xfa\xed\xfe"
-            | b"\xfe\xed\xfa\xcf"
-            | b"\xcf\xfa\xed\xfe"
-            | b"\xca\xfe\xba\xbe"
-            | b"\xbe\xba\xfe\xca"
-    ) || header.starts_with(b"MZ")
-        || (header.starts_with(b"#!") && header[2] != b'[');
-    if executable {
+    let (head, read) = file_head(name, open)?;
+    let head = &head[..read];
+    // Any `MZ` is refused here, not only a PE: a content file has no use for it.
+    if binary_kind(head).is_some()
+        || head.starts_with(b"MZ")
+        || (head.starts_with(b"#!") && head.get(2) != Some(&b'['))
+    {
         return Err(ContentFileError::Executable(name.into()));
     }
     Ok(())
+}
+
+/// The type check of a native package's source file, before it is opened: a plain file. Its name
+/// and mode play no part, so a C source tree may carry a `configure` script, a `.bat` or a file
+/// with the executable bit; its bytes are checked by [`refuse_binary`].
+fn check_source_type(name: &str, mode: u32) -> Result<(), ContentFileError> {
+    if matches!(mode & 0o170000, 0 | 0o100000) {
+        Ok(())
+    } else {
+        Err(ContentFileError::UnsupportedType(name.into()))
+    }
+}
+
+/// The file mode of `name` in a mod folder: the mode itself for a file (0 off Unix), a link's for
+/// anything else, so that nothing but a plain file passes the content checks.
+fn folder_mode(root: &Path, name: &str) -> Result<u32, ContentFileError> {
+    let metadata =
+        std::fs::symlink_metadata(root.join(name)).map_err(|source| ContentFileError::Read {
+            name: name.into(),
+            source,
+        })?;
+    Ok(if metadata.is_file() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            metadata.mode()
+        }
+        #[cfg(not(unix))]
+        {
+            0
+        }
+    } else {
+        0o120000
+    })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1372,20 +1385,7 @@ fn read_folder_uses(root: &Path) -> Result<Option<Vec<u8>>, String> {
 
 fn check_folder_file(root: &Path, name: &str) -> Result<(), String> {
     let path = root.join(name);
-    let metadata = std::fs::symlink_metadata(&path).map_err(|e| format!("{name}: {e}"))?;
-    let mode = if metadata.is_file() {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            metadata.mode()
-        }
-        #[cfg(not(unix))]
-        {
-            0
-        }
-    } else {
-        0o120000
-    };
+    let mode = folder_mode(root, name).map_err(|e| e.to_string())?;
     check_file(name, mode, || std::fs::File::open(&path)).map_err(|e| e.to_string())
 }
 
@@ -1829,12 +1829,14 @@ capabilities = ["registries"]
     }
 
     #[test]
-    fn flat_project_packs_only_selected_safe_files() {
+    fn a_native_project_folder_packs_the_files_cargo_package_would_carry() {
         let root = std::env::temp_dir().join(format!("sunrise-flat-pack-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("vendor/zlib")).unwrap();
         std::fs::create_dir_all(root.join(".git/hooks")).unwrap();
         std::fs::create_dir_all(root.join("target/generated")).unwrap();
+        std::fs::create_dir_all(root.join(".cargo")).unwrap();
         let manifest = format!(
             "{EXAMPLE}[native]\ngame = '26.3'\nsunrise = '{}'\nmixins = '{}'\n",
             "a".repeat(40),
@@ -1843,38 +1845,78 @@ capabilities = ["registries"]
         std::fs::write(root.join(MANIFEST), manifest).unwrap();
         std::fs::write(
             root.join("Cargo.toml"),
-            "[package]\nname = 'other'\nversion = '2.0.0'\n",
+            "[package]\nname = 'other'\nversion = '2.0.0'\n[dependencies]\nhelper = { path = 'crates/helper' }\n",
         )
         .unwrap();
         std::fs::write(root.join("src/lib.rs"), "pub fn hooks() {}\n").unwrap();
+        std::fs::write(
+            root.join("vendor/zlib/inflate.c"),
+            "int inflate(void) { return 0; }\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("configure"), "#!/bin/sh\necho ok\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                root.join("configure"),
+                std::fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
+        std::fs::create_dir_all(root.join("crates/helper/src")).unwrap();
+        std::fs::write(
+            root.join("crates/helper/Cargo.toml"),
+            "[package]\nname = 'helper'\nversion = '0.1.0'\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("crates/helper/src/lib.rs"), "pub fn h() {}\n").unwrap();
+        std::fs::create_dir_all(root.join("tools/unused/src")).unwrap();
+        std::fs::write(
+            root.join("tools/unused/Cargo.toml"),
+            "[package]\nname = 'unused'\nversion = '0.1.0'\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("tools/unused/src/lib.rs"), "fn u() {}\n").unwrap();
+        std::fs::write(root.join(".gitignore"), "ignored.txt\n").unwrap();
+        std::fs::write(root.join("ignored.txt"), "skip me").unwrap();
         let registry_lock = "version = 4\n[[package]]\nname = 'itoa'\nversion = '1.0.18'\n";
         std::fs::write(root.join("Cargo.lock"), registry_lock).unwrap();
         std::fs::write(root.join(".git/hooks/pre-commit"), "#!/bin/sh\n").unwrap();
         std::fs::write(root.join("target/generated/bad.rs"), "#!/bin/sh\n").unwrap();
-        // The SDK the mod tool fetched: the API's own crate, which is never the mod's.
+        std::fs::write(root.join(".cargo/config.toml"), "[build]\n").unwrap();
         let sdk = root.join(".sunrise/sdk/api/crates/sunrise-mod-api/src");
         std::fs::create_dir_all(&sdk).unwrap();
         std::fs::write(sdk.join("lib.rs"), "pub fn api() {}\n").unwrap();
         std::fs::write(root.join(".sunrise/sdk/sdk.json"), "{}").unwrap();
-        // A repository's own tool files beside the mod are left out, not refused.
-        std::fs::create_dir_all(root.join("sources/horizon")).unwrap();
-        std::fs::write(root.join("module.toml"), "id = 'ruby'\n").unwrap();
-        std::fs::write(root.join("sources/sounds.toml"), "[sounds]\n").unwrap();
-        std::fs::write(root.join("sources/horizon/keys.rs"), "fn keys() {}\n").unwrap();
         let bytes = Package::pack_directory(&root).unwrap();
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         assert_eq!(Package::read_zip(&mut zip).unwrap().manifest.id, "ruby");
-        assert!(zip.by_name("Cargo.toml").is_ok());
-        assert!(zip.by_name("src/lib.rs").is_ok());
+        for kept in [
+            "Cargo.toml",
+            "Cargo.lock",
+            "src/lib.rs",
+            "vendor/zlib/inflate.c",
+            "configure",
+            "crates/helper/Cargo.toml",
+            "crates/helper/src/lib.rs",
+        ] {
+            assert!(zip.by_name(kept).is_ok(), "missing {kept}");
+        }
         let mut packed_lock = String::new();
         std::io::Read::read_to_string(&mut zip.by_name("Cargo.lock").unwrap(), &mut packed_lock)
             .unwrap();
         assert_eq!(packed_lock, registry_lock);
-        assert!(zip.by_name(".git/hooks/pre-commit").is_err());
-        assert!(zip.by_name("target/generated/bad.rs").is_err());
-        assert!(zip.by_name("module.toml").is_err());
-        assert!(zip.by_name("sources/sounds.toml").is_err());
-        assert!(zip.by_name("sources/horizon/keys.rs").is_err());
+        for skipped in [
+            ".git/hooks/pre-commit",
+            "target/generated/bad.rs",
+            ".cargo/config.toml",
+            "ignored.txt",
+            "tools/unused/Cargo.toml",
+            "tools/unused/src/lib.rs",
+        ] {
+            assert!(zip.by_name(skipped).is_err(), "unexpected {skipped}");
+        }
         assert!(
             zip.file_names_raw()
                 .all(|name| !name.starts_with(b".sunrise")),
@@ -1886,13 +1928,200 @@ capabilities = ["registries"]
         assert!(!source_file(
             ".sunrise/sdk/api/crates/sunrise-mod-api/src/lib.rs"
         ));
-        std::fs::write(root.join("src/lib.rs"), b"MZ executable").unwrap();
+        // A name packing cannot encode is left out, and is no bar.
+        // macOS's file systems refuse a name that is not UTF-8, so only Linux can make one.
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let bad = root.join(std::ffi::OsStr::from_bytes(b"bad-\xff.c"));
+            std::fs::write(&bad, b"int x;\n").unwrap();
+        }
+        // On Unix a `\` is part of a file name, never a separator.
+        #[cfg(unix)]
+        std::fs::write(root.join("src").join("a\\b.rs"), "").unwrap();
+        let bytes = Package::pack_directory(&root).unwrap();
+        let zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         assert!(
-            Package::pack_directory(&root)
-                .unwrap_err()
-                .contains("unsupported executable")
+            zip.file_names_raw()
+                .all(|name| !name.starts_with(b"bad-") && !name.contains(&b'\\')),
+            "unencodable names must be left out"
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_prebuilt_binary_named_as_source_is_refused_when_packed_and_skipped_when_read() {
+        use std::io::Write;
+        let root = std::env::temp_dir().join(format!("sunrise-bin-src-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let manifest = format!(
+            "{EXAMPLE}[native]\ngame = '26.3'\nsunrise = '{}'\nmixins = '{}'\n",
+            "a".repeat(40),
+            "b".repeat(40)
+        );
+        std::fs::write(root.join(MANIFEST), &manifest).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = 'ruby'\nversion = '0.1.0'\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("src/lib.rs"), "pub fn hooks() {}\n").unwrap();
+        let mut pe = vec![0u8; 0x48];
+        pe[..2].copy_from_slice(b"MZ");
+        pe[0x3c] = 0x40;
+        pe[0x40..0x44].copy_from_slice(b"PE\0\0");
+        let mut pe_past_1k = vec![0u8; 0x508];
+        pe_past_1k[..2].copy_from_slice(b"MZ");
+        pe_past_1k[0x3c..0x40].copy_from_slice(&0x500u32.to_le_bytes());
+        pe_past_1k[0x500..0x504].copy_from_slice(b"PE\0\0");
+        for (bytes, kind) in [
+            (&b"\x7fELF\x02\x01\x01\0"[..], "ELF"),
+            (b"\xcf\xfa\xed\xfe\x07\0\0\x01", "Mach-O"),
+            (&pe, "PE"),
+            (&pe_past_1k, "PE"),
+            (b"!<arch>\nfoo.o/", "ar archive"),
+        ] {
+            std::fs::write(root.join("src/lib.rs"), bytes).unwrap();
+            let error = Package::pack_directory(&root).unwrap_err();
+            assert!(
+                error.contains(kind) && error.contains("prebuilt binaries"),
+                "{error}"
+            );
+            let error = Package::write_files(&manifest, &[("src/lib.rs", bytes)]).unwrap_err();
+            assert!(
+                error.contains(kind) && error.contains("prebuilt binaries"),
+                "{error}"
+            );
+            // Package::read_zip skips source entries unread.
+            let archive = root.join("skip.smod");
+            let mut zip = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
+            let options = zip::write::SimpleFileOptions::default();
+            zip.start_file(MANIFEST, options).unwrap();
+            zip.write_all(manifest.as_bytes()).unwrap();
+            zip.start_file("src/lib.rs", options).unwrap();
+            zip.write_all(bytes).unwrap();
+            zip.finish().unwrap();
+            assert_eq!(Package::read(&archive).unwrap().manifest.id, "ruby");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_native_archive_with_any_other_entry_loads() {
+        let manifest = format!(
+            "{EXAMPLE}[native]\ngame = '26.3'\nsunrise = '{}'\nmixins = '{}'\n",
+            "a".repeat(40),
+            "b".repeat(40)
+        );
+        let bytes = Package::write_files(
+            &manifest,
+            &[
+                ("Cargo.toml", b"[package]\nname='ruby'\nversion='1'\n"),
+                ("src/lib.rs", b"pub fn hooks() {}"),
+                ("vendor/zlib/inflate.c", b"int inflate(void) { return 0; }"),
+                ("sunrise-native.json", b"{}"),
+            ],
+        )
+        .unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        assert_eq!(Package::read_zip(&mut zip).unwrap().manifest.id, "ruby");
+    }
+
+    #[test]
+    fn an_archive_entry_that_escapes_or_links_is_refused_by_name() {
+        use std::io::Write;
+        let root = std::env::temp_dir().join(format!("sunrise-escape-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let archive = root.join("bad.smod");
+        for bad in ["../escape.c", "/abs/path.c", "src/a."] {
+            let mut zip = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
+            let options = zip::write::SimpleFileOptions::default();
+            zip.start_file(MANIFEST, options).unwrap();
+            zip.write_all(EXAMPLE.as_bytes()).unwrap();
+            zip.start_file(bad, options).unwrap();
+            zip.write_all(b"x").unwrap();
+            zip.finish().unwrap();
+            let error = Package::read(&archive).err().unwrap();
+            assert!(error.contains(bad), "{bad}: {error}");
+        }
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
+        let options = zip::write::SimpleFileOptions::default().system(zip::System::Unix);
+        zip.start_file(MANIFEST, options).unwrap();
+        zip.write_all(EXAMPLE.as_bytes()).unwrap();
+        zip.add_symlink("vendor/link.c", "../outside", options)
+            .unwrap();
+        zip.finish().unwrap();
+        let error = Package::read(&archive).err().unwrap();
+        assert!(error.contains("vendor/link.c"), "{error}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_native_project_of_many_source_files_packs_and_reads() {
+        let manifest = format!(
+            "{EXAMPLE}[native]\ngame = '26.3'\nsunrise = '{}'\nmixins = '{}'\n",
+            "a".repeat(40),
+            "b".repeat(40)
+        );
+        let names: Vec<String> = (0..600).map(|i| format!("vendor/f{i}.c")).collect();
+        let mut entries: Vec<(&str, &[u8])> = vec![
+            ("Cargo.toml", b"[package]\nname='ruby'\nversion='1'\n"),
+            ("src/lib.rs", b"pub fn hooks() {}"),
+        ];
+        entries.extend(names.iter().map(|n| (n.as_str(), &b"int x;\n"[..])));
+        let bytes = Package::write_files(&manifest, &entries).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        assert_eq!(Package::read_zip(&mut zip).unwrap().manifest.id, "ruby");
+        Package::check_source_bounds(&mut zip).unwrap();
+    }
+
+    #[test]
+    fn a_project_reader_ignores_unrelated_root_paths() {
+        let root = std::env::temp_dir().join(format!("sunrise-unrelated-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let manifest = format!(
+            "{EXAMPLE}[native]\ngame = '26.3'\nsunrise = '{}'\nmixins = '{}'\n",
+            "a".repeat(40),
+            "b".repeat(40)
+        );
+        std::fs::write(root.join(MANIFEST), manifest).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = 'ruby'\nversion = '0.1.0'\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("src/lib.rs"), "pub fn hooks() {}\n").unwrap();
+        for name in ["sunrise-native.json", "horizon-mixin.toml"] {
+            std::fs::write(root.join(name), "").unwrap();
+        }
+        std::fs::create_dir(root.join("native")).unwrap();
+        std::fs::create_dir(root.join("rust")).unwrap();
+        assert_eq!(Package::read(&root).unwrap().manifest.id, "ruby");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_packer_refuses_names_that_differ_only_by_case_and_parts_a_windows_extraction_renames() {
+        let manifest = format!(
+            "{EXAMPLE}[native]\ngame = '26.3'\nsunrise = '{}'\nmixins = '{}'\n",
+            "a".repeat(40),
+            "b".repeat(40)
+        );
+        let error = Package::write_files(
+            &manifest,
+            &[("build.rs", b"".as_slice()), ("Build.rs", b"".as_slice())],
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("Build.rs") && error.contains("build.rs"),
+            "{error}"
+        );
+        assert!(plain_path("src/a.c"));
+        assert!(!plain_path("src/a."));
+        assert!(!plain_path("src/a /b.c"));
     }
 
     #[test]
@@ -1916,8 +2145,6 @@ capabilities = ["registries"]
         );
         std::fs::write(root.join(MANIFEST), format!("{EXAMPLE}{native}")).unwrap();
         assert_eq!(Package::read(&root).unwrap().manifest.id, "ruby");
-        std::fs::create_dir(root.join("native")).unwrap();
-        assert!(Package::read(&root).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -1974,10 +2201,11 @@ issues = \"http://example.org/issues\"
         assert_eq!(Package::read(&archive).unwrap().manifest.id, "ruby");
         assert_eq!(Package::read(&dir).unwrap().manifest.id, "ruby");
         let cases: &[(&str, &[u8])] = &[
-            ("mod.wasm", b""),
-            ("./mod.wasm", b"\0asm"),
-            ("MOD.WASM", b""),
-            ("sub/mod.wasm", b""),
+            ("mod.exe", b""),
+            ("./mod.exe", b"MZ"),
+            ("MOD.EXE", b""),
+            ("sub/mod.exe", b""),
+            ("assets/ruby/CODE.ExE", b""),
             ("assets/ruby/CODE.WaSm", b""),
             ("assets/ruby/model.bin", b"\0asm"),
             ("assets/ruby/native.bin", b"\x7fELF"),
@@ -1997,23 +2225,32 @@ issues = \"http://example.org/issues\"
             zip.start_file(*name, options).unwrap();
             zip.write_all(bytes).unwrap();
             zip.finish().unwrap();
-            let error = Package::read(&archive).err().unwrap();
-            assert!(
-                error.contains("unsupported executable file"),
-                "{name}: {error}"
-            );
             if name.starts_with("assets/") {
+                let error = Package::read(&archive).err().unwrap();
+                assert!(
+                    error.contains("unsupported executable file"),
+                    "{name}: {error}"
+                );
                 let error = Package::read(&dir).err().unwrap();
                 assert!(
                     error.contains("unsupported executable file"),
                     "{name}: {error}"
                 );
             } else {
+                // Not a content file: the reader skips it, in an archive as in a folder.
                 assert!(Package::read(&dir).is_ok(), "unpackaged {name}");
+                if *name != "./mod.exe" {
+                    assert!(Package::read(&archive).is_ok(), "skipped {name}");
+                }
             }
             std::fs::remove_file(file).unwrap();
         }
-        assert!(Package::write_files(EXAMPLE, &[("assets/ruby/model.bin", b"\0asm")]).is_err());
+        for (name, bytes) in cases.iter().filter(|(name, _)| name.starts_with("assets/")) {
+            assert!(
+                Package::write_files(EXAMPLE, &[(name, bytes)]).is_err(),
+                "{name}"
+            );
+        }
         // Native bundle sources can start with Rust inner attributes, not a script shebang.
         assert!(
             Package::write_files(
@@ -2075,11 +2312,26 @@ issues = \"http://example.org/issues\"
             check_file(name, 0o100755, || Ok(std::io::Cursor::new(nbt))),
             Err(ContentFileError::Executable(_))
         ));
-        for header in [b"\x7fELF", b"MZ!!", b"\0asm"] {
-            assert!(matches!(
-                check_file(name, 0o100644, || Ok(std::io::Cursor::new(header))),
-                Err(ContentFileError::Executable(_))
-            ));
+        for (header, expected) in [
+            (&b"\x7fELF"[..], "ELF"),
+            (b"MZ!!", "PE"),
+            (b"\0asm", "WebAssembly"),
+            (b"\xcf\xfa\xed\xfe", "Mach-O"),
+            (
+                b"\xca\xfe\xba\xbe",
+                "Mach-O universal binary or Java class file",
+            ),
+            (b"!<arch>\n", "ar archive"),
+            // A file that is only a shebang's first two bytes.
+            (b"#!", "script"),
+        ] {
+            assert!(
+                matches!(
+                    check_file(name, 0o100644, || Ok(std::io::Cursor::new(header))),
+                    Err(ContentFileError::Executable(_))
+                ),
+                "{expected}"
+            );
         }
     }
 
@@ -2194,5 +2446,101 @@ issues = \"http://example.org/issues\"
         std::fs::write(dir.path().join(USES_FILE), b"[]").unwrap();
         let error = Package::pack_directory(dir.path()).unwrap_err();
         assert!(error.contains(USES_FILE), "{error}");
+    }
+
+    #[test]
+    fn include_overrides_gitignore_and_cargo_manifests_are_checked_and_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let native = format!(
+            "{EXAMPLE}[native]\ngame = '26.3'\nsunrise = '{}'\nmixins = '{}'\n",
+            "a".repeat(40),
+            "b".repeat(40)
+        );
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("out")).unwrap();
+        std::fs::write(root.join(MANIFEST), &native).unwrap();
+        std::fs::write(root.join(".gitignore"), "generated.c\nout/\n").unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = 'ruby'\nversion = '0.1.0'\ninclude = ['src/**', 'generated.c', 'out/shim.c']\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("src/lib.rs"), "pub fn hooks() {}\n").unwrap();
+        std::fs::write(root.join("generated.c"), "int g(void) { return 1; }\n").unwrap();
+        std::fs::write(root.join("out/shim.c"), "int s(void) { return 2; }\n").unwrap();
+        std::fs::write(root.join("out/ignored.c"), "int i(void) { return 3; }\n").unwrap();
+
+        let listed = crate::package::source_files(root).unwrap();
+        assert_eq!(
+            listed,
+            ["Cargo.toml", "generated.c", "out/shim.c", "src/lib.rs"]
+        );
+        let packed = Package::pack_directory(root).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(packed)).unwrap();
+        assert!(zip.by_name("generated.c").is_ok());
+        assert!(zip.by_name("out/shim.c").is_ok());
+        assert!(zip.by_name("out/ignored.c").is_err());
+
+        // Oversized root and nested Cargo manifests are refused before reading into memory.
+        let huge = tempfile::tempdir().unwrap();
+        let root_cargo = std::fs::File::create(huge.path().join("Cargo.toml")).unwrap();
+        root_cargo.set_len(MAX_SOURCE_BYTES + 1).unwrap();
+        let error = crate::package::source_files(huge.path())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("exceeds its entry or size limit"), "{error}");
+
+        std::fs::write(
+            huge.path().join("Cargo.toml"),
+            "[package]\nname = 'ruby'\n[dependencies]\nhelper = { path = 'crates/helper' }\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(huge.path().join("crates/helper")).unwrap();
+        let nested_cargo =
+            std::fs::File::create(huge.path().join("crates/helper/Cargo.toml")).unwrap();
+        nested_cargo.set_len(MAX_SOURCE_BYTES + 1).unwrap();
+        let error = crate::package::source_files(huge.path())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("exceeds its entry or size limit"), "{error}");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let outside = dir.path().join("outside.toml");
+            std::fs::write(&outside, "[package]\nname = 'outside'\n").unwrap();
+
+            let linked_nested = tempfile::tempdir().unwrap();
+            std::fs::write(
+                linked_nested.path().join("Cargo.toml"),
+                "[package]\nname = 'ruby'\n[dependencies]\nhelper = { path = 'crates/helper' }\n",
+            )
+            .unwrap();
+            std::fs::create_dir_all(linked_nested.path().join("crates/helper")).unwrap();
+            symlink(
+                &outside,
+                linked_nested.path().join("crates/helper/Cargo.toml"),
+            )
+            .unwrap();
+            let error = crate::package::source_files(linked_nested.path())
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("crates/helper/Cargo.toml")
+                    && error.contains("unsupported file type"),
+                "{error}"
+            );
+
+            let linked_root = tempfile::tempdir().unwrap();
+            symlink(&outside, linked_root.path().join("Cargo.toml")).unwrap();
+            let error = crate::package::source_files(linked_root.path())
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("Cargo.toml") && error.contains("unsupported file type"),
+                "{error}"
+            );
+        }
     }
 }

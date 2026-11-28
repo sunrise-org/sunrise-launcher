@@ -1,5 +1,6 @@
 //! Source-only native packages. Reading a package never executes its code.
 use super::Facts;
+use crate::manifest::USES_FILE;
 use std::{collections::BTreeMap, io::Read, path::Path};
 
 /// The prebuilt package's layout number: the game repository's `sdk/package-format` file.
@@ -33,21 +34,49 @@ impl Bundle {
         // An install is the first open: the runtime files' hashes are checked here, before the
         // download is accepted.
         package.read_runtime(path)?;
+        // The reader skips what it does not read; the tools that stage the files refuse what is no
+        // part of a package, validate the native layout, and bound the source before inflating any
+        // of it.
+        check_native_layout(&mut zip)?;
+        crate::Package::check_source_bounds(&mut zip)?;
         let mut files = BTreeMap::new();
+        let mut lowercase = BTreeMap::<String, String>::new();
         for i in 0..zip.len() {
             let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
             if entry.is_dir() {
                 continue;
             }
             let name = entry.name().map_err(|e| e.to_string())?.into_owned();
+            if let Some(other) = lowercase.insert(name.to_lowercase(), name.clone()) {
+                return Err(format!(
+                    "{other} and {name} differ only by case, which a Windows or macOS extraction cannot keep apart"
+                ));
+            }
+            let source = crate::manifest::source_file(&name);
+            let own = name == crate::manifest::MANIFEST
+                || name == crate::layouts::FILE
+                || name == USES_FILE
+                || name == "icon.png"
+                || ["assets/", "data/", "runtime/"]
+                    .iter()
+                    .any(|folder| name.starts_with(folder));
+            if !source && !own {
+                return Err(format!("unexpected package path: {name}"));
+            }
             let size = entry.size();
             let mut bytes = Vec::new();
+            // One byte more than declared, so an entry longer than its header says is seen, not cut.
             (&mut entry)
                 .take(size.saturating_add(1))
                 .read_to_end(&mut bytes)
                 .map_err(|e| format!("{name}: {e}"))?;
             if bytes.len() as u64 != size {
                 return Err(format!("{name}: invalid expanded size"));
+            }
+            // The package reader never opens a source file; the build that does refuses prebuilt
+            // object code here.
+            if source {
+                crate::manifest::refuse_binary(&name, &bytes).map_err(|e| e.to_string())?;
             }
             files.insert(name, bytes);
         }
@@ -74,6 +103,27 @@ impl Bundle {
             ..Facts::default()
         }
     }
+}
+
+/// Validates required native project entries (`Cargo.toml` and at least one file under `src/`)
+/// from archive headers alone, before any source entry is inflated.
+fn check_native_layout<R: Read + std::io::Seek>(
+    zip: &mut zip::ZipArchive<R>,
+) -> Result<(), String> {
+    let (mut has_cargo, mut has_source) = (false, false);
+    for i in 0..zip.len() {
+        let entry = zip.by_index_raw(i).map_err(|e| e.to_string())?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name().map_err(|e| e.to_string())?;
+        has_cargo |= name == "Cargo.toml";
+        has_source |= name.starts_with("src/");
+    }
+    if !has_cargo || !has_source {
+        return Err("inconsistent code declaration ([native]) and source".into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -187,19 +237,181 @@ mod tests {
     }
 
     #[test]
-    fn refuses_old_paths_unsafe_entries_and_unknown_fields() {
+    fn any_other_file_is_carried_as_source() {
         for (i, name) in [
             "sunrise-native.json",
-            "horizon-mixin.toml",
             "native/rust/src/lib.rs",
-            "rust/src/lib.rs",
-            "../escape.rs",
-            "src/../escape.rs",
-            "src/blob.bin",
+            "vendor/zlib/inflate.c",
         ]
-        .iter()
+        .into_iter()
         .enumerate()
         {
+            let bundle = read(&format!("carried-{i}"), &manifest(), &[(name, b"int x;")]).unwrap();
+            assert_eq!(bundle.files[name], b"int x;");
+        }
+    }
+
+    #[test]
+    fn a_prebuilt_binary_among_the_source_is_refused_by_its_bytes() {
+        let mut pe_past_1k = vec![0u8; 0x508];
+        pe_past_1k[..2].copy_from_slice(b"MZ");
+        pe_past_1k[0x3c..0x40].copy_from_slice(&0x500u32.to_le_bytes());
+        pe_past_1k[0x500..0x504].copy_from_slice(b"PE\0\0");
+        for (i, bytes) in [
+            &b"\x7fELF\x02\x01"[..],
+            b"!<arch>\nlib.o/",
+            pe_past_1k.as_slice(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let error = read(
+                &format!("binary-{i}"),
+                &manifest(),
+                &[("vendor/lib.c", bytes)],
+            )
+            .err()
+            .unwrap();
+            assert!(error.starts_with("vendor/lib.c: "), "{error}");
+            assert!(error.contains("prebuilt binaries"), "{error}");
+        }
+    }
+
+    #[test]
+    fn missing_cargo_or_src_is_refused_before_inflating_source() {
+        let dir = tempfile::tempdir().unwrap();
+        for (case, entries) in [
+            (
+                "no-cargo",
+                vec![
+                    (crate::manifest::MANIFEST, manifest().into_bytes()),
+                    ("src/lib.rs", b"fn hook() {}".to_vec()),
+                    // Binary bytes that would fail as `Binary` if source were inflated first.
+                    ("vendor/lib.c", b"\x7fELF\x02\x01".to_vec()),
+                ],
+            ),
+            (
+                "no-src",
+                vec![
+                    (crate::manifest::MANIFEST, manifest().into_bytes()),
+                    (
+                        "Cargo.toml",
+                        b"[package]\nname='other'\nversion='9'\n".to_vec(),
+                    ),
+                    ("vendor/lib.c", b"\x7fELF\x02\x01".to_vec()),
+                ],
+            ),
+        ] {
+            let path = dir.path().join(format!("{case}.smod"));
+            let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+            let options = zip::write::SimpleFileOptions::default();
+            for (name, bytes) in entries {
+                zip.start_file(name, options).unwrap();
+                zip.write_all(&bytes).unwrap();
+            }
+            zip.finish().unwrap();
+            let error = Bundle::read(&path).err().unwrap();
+            assert!(
+                error.contains("inconsistent code declaration"),
+                "{case}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn layouts_json_is_package_metadata_not_source_when_packing_and_reading() {
+        assert!(!crate::manifest::source_file(crate::layouts::FILE));
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("mod");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join(crate::manifest::MANIFEST), manifest()).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = 'veinminer'\nversion = '0.3.0'\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("src/lib.rs"), "pub fn hooks() {}\n").unwrap();
+        let layouts = br#"{"veinminer":{"veinminer::T":"0123456789abcdef"}}"#;
+        std::fs::write(root.join(crate::layouts::FILE), layouts).unwrap();
+
+        let source = crate::package::source_files(&root).unwrap();
+        assert!(!source.iter().any(|name| name == crate::layouts::FILE));
+
+        let packed = crate::Package::pack_directory(&root).unwrap();
+        let archive = dir.path().join("veinminer.smod");
+        std::fs::write(&archive, packed).unwrap();
+        let bundle = Bundle::read(&archive).unwrap();
+        assert_eq!(bundle.files[crate::layouts::FILE], layouts);
+    }
+
+    #[test]
+    fn the_tools_refuse_entries_outside_the_file_set_that_the_reader_skips() {
+        for (i, (name, bytes)) in [
+            ("target/x.so", &b"\x7fELF\x02\x01"[..]),
+            (".cargo/config.toml", b"[build]\nrustflags = []\n"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let extras = [(name, bytes)];
+            let error = read(&format!("outside-{i}"), &manifest(), &extras)
+                .err()
+                .unwrap();
+            assert!(error.contains(name), "{error}");
+            let path = std::env::temp_dir().join(format!(
+                "native-bundle-skip-{i}-{}.smod",
+                std::process::id()
+            ));
+            let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+            let options = zip::write::SimpleFileOptions::default();
+            for (name, bytes) in [
+                (crate::manifest::MANIFEST, manifest().into_bytes()),
+                (
+                    "Cargo.toml",
+                    b"[package]\nname='other'\nversion='9'\n".to_vec(),
+                ),
+                ("src/lib.rs", b"fn hook() {}".to_vec()),
+                (name, bytes.to_vec()),
+            ] {
+                zip.start_file(name, options).unwrap();
+                zip.write_all(&bytes).unwrap();
+            }
+            zip.finish().unwrap();
+            let mut zip = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
+            assert!(crate::Package::read_zip(&mut zip).is_ok(), "{name}");
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn names_that_differ_only_by_case_are_refused_by_both_names() {
+        let error = read(
+            "case",
+            &manifest(),
+            &[("src/Evil.rs", b"a"), ("src/evil.rs", b"b")],
+        )
+        .err()
+        .unwrap();
+        assert!(
+            error.contains("src/Evil.rs") && error.contains("src/evil.rs"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    #[ignore = "daily"]
+    fn source_entries_are_counted_before_any_is_inflated() {
+        let names: Vec<String> = (0..=crate::manifest::MAX_SOURCE_FILES)
+            .map(|i| format!("vendor/f{i}.c"))
+            .collect();
+        let extras: Vec<(&str, &[u8])> = names.iter().map(|n| (n.as_str(), &b""[..])).collect();
+        let error = read("many", &manifest(), &extras).err().unwrap();
+        assert_eq!(error, "native package exceeds its entry or size limit");
+    }
+
+    #[test]
+    fn refuses_unsafe_entries_and_unknown_fields() {
+        for (i, name) in ["../escape.rs", "src/../escape.rs"].iter().enumerate() {
             assert!(
                 read(&format!("invalid-{i}"), &manifest(), &[(name, b"bad")]).is_err(),
                 "{name}"
