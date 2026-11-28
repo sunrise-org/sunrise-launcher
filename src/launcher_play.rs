@@ -307,31 +307,24 @@ impl Launcher {
         });
     }
 
-    /// Prepares the selected version, its Minecraft files from the player's install or, for an
-    /// owner who asks, from Mojang.
-    pub(crate) fn prepare(&mut self, from: backend::MinecraftFrom) {
+    /// Prepares the selected version from its pinned Minecraft files in Sunrise's own store.
+    pub(crate) fn prepare(&mut self) {
         let Some(tag) = self.selected().cloned() else {
             return;
         };
-        self.prepare_version(tag, from);
+        self.prepare_version(tag);
     }
 
-    pub(crate) fn prepare_version(&mut self, tag: String, from: backend::MinecraftFrom) {
-        self.prepare_version_cancellable(tag, from, None);
+    pub(crate) fn prepare_version(&mut self, tag: String) {
+        self.prepare_version_cancellable(tag, None);
     }
 
     pub(crate) fn prepare_version_cancellable(
         &mut self,
         tag: String,
-        from: backend::MinecraftFrom,
         stop: Option<native_mods::Cancellation>,
     ) {
         sunrise_launcher::mojang::CANCEL.store(false, Ordering::Relaxed);
-        let minecraft = self
-            .settings
-            .minecraft_dir
-            .clone()
-            .unwrap_or_else(|| sunrise_launcher::preparer::minecraft_dir(None));
         self.prepare_log.clear();
         self.prepare_error = None;
         self.prepare_log
@@ -345,10 +338,8 @@ impl Launcher {
             let result = (|| {
                 let lock = backend::prepare_lock(&tag)?;
                 let (cmd, minecraft) = match &stop {
-                    Some(stop) => {
-                        backend::preparer_cancellable(&tag, &minecraft, from, &log, &lock, stop)?
-                    }
-                    None => backend::preparer(&tag, &minecraft, from, &log, &lock)?,
+                    Some(stop) => backend::preparer_cancellable(&tag, None, &log, &lock, stop)?,
+                    None => backend::preparer(&tag, None, &log, &lock)?,
                 };
                 match &stop {
                     Some(stop) => backend::sounds_cancellable(&tag, &minecraft, &log, &lock, stop),

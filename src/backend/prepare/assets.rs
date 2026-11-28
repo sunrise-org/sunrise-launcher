@@ -102,7 +102,12 @@ pub(in crate::backend) fn refill_own_store(tag: &str, missing: Option<&crate::pr
             .map_err(|e| e.to_string())?;
         Ok(body)
     };
-    if let Err(e) = download_for_owner(&pins, &own, &fetch, None, &|line| eprintln!("{line}")) {
+    let candidates = candidate_sources(None, &own);
+    let store = sources::Store {
+        dir: &own,
+        sources: &candidates,
+    };
+    if let Err(e) = download_for_owner(&pins, &store, &fetch, None, &|line| eprintln!("{line}")) {
         eprintln!("{tag}: the missing assets were not downloaded: {e}");
     }
 }
@@ -188,17 +193,15 @@ fn complete_assets_with(
     }
 }
 
-/// The Minecraft folders whose asset store can hold what a prepared version lacks: the one
-/// chosen in the launcher, the official launcher's (or SUNRISE_MINECRAFT_DIR), the folder
-/// other launchers' files are linked into and Sunrise's own download, then every launcher's
-/// default folder.
+/// The Minecraft folders whose asset store can hold what a prepared version lacks: Sunrise's own
+/// store first, then the folder chosen in the launcher, the official launcher's (or
+/// SUNRISE_MINECRAFT_DIR) and every launcher's default folder.
 fn minecraft_folders() -> Vec<PathBuf> {
-    let mut folders: Vec<PathBuf> = Settings::load().minecraft_dir.into_iter().collect();
-    folders.extend([
-        crate::preparer::minecraft_dir(None),
-        data_dir().join("linked-minecraft"),
-        data_dir().join("minecraft"),
-    ]);
+    let mut folders: Vec<PathBuf> = vec![data_dir().join("minecraft")];
+    if let Some(chosen) = Settings::load().minecraft_dir {
+        folders.push(chosen);
+    }
+    folders.push(crate::preparer::minecraft_dir(None));
     folders.extend(
         sources::Folders::current()
             .map(|f| sources::known_folders(sources::Os::current(), &f))
@@ -215,6 +218,37 @@ fn minecraft_folders() -> Vec<PathBuf> {
     found
 }
 
+/// Candidate base folders from other launchers to copy hash-matching files from before
+/// downloading into `own`.
+pub(in crate::backend) fn candidate_sources(chosen: Option<&Path>, own: &Path) -> Vec<PathBuf> {
+    let known = sources::Folders::current()
+        .map(|f| sources::known_folders(sources::Os::current(), &f))
+        .unwrap_or_default();
+    sources::candidate_bases(chosen, &known, own)
+}
+
+pub(in crate::backend) fn mojang_os() -> &'static str {
+    match sources::Os::current() {
+        sources::Os::Linux => "linux",
+        sources::Os::MacOs => "osx",
+        sources::Os::Windows => "windows",
+    }
+}
+
+/// Why [`download_for_owner`] did not complete: either a verified owner's download failed, or no
+/// verified owner was available to authorize a Mojang download.
+#[derive(Debug)]
+pub(in crate::backend) struct OwnerDownloadError {
+    pub verified_owner: bool,
+    pub message: String,
+}
+
+impl std::fmt::Display for OwnerDownloadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
 /// The official launcher's game directory, else the first other launcher's found
 /// (sources.rs); preparing looks in all of them anyway.
 pub fn default_minecraft_dir() -> Option<PathBuf> {
@@ -225,16 +259,16 @@ pub fn default_minecraft_dir() -> Option<PathBuf> {
         .find(|dir| dir.is_dir())
 }
 
-/// Downloads the pinned version from Mojang into `dir` when an account in the launcher owns
-/// Minecraft (asked again now), else says what signing in would do, as the last line of the
-/// not-found error.
+/// Assembles the pinned version into `store.dir` (copying matching files from `store.sources`
+/// and downloading the rest from Mojang) when an account in the launcher owns Minecraft (asked
+/// again now), else says what signing in would do.
 pub(in crate::backend) fn download_for_owner(
     pins: &sources::Pins,
-    dir: &Path,
+    store: &sources::Store<'_>,
     fetch: sources::Fetch,
     cancel: Option<&std::sync::atomic::AtomicBool>,
     log: &dyn Fn(String),
-) -> Result<(), String> {
+) -> Result<(), OwnerDownloadError> {
     let mut accounts = account::Accounts::load();
     // Any account that owns the game may download it (`launch`), not only the one that plays.
     let pass = account::launch(
@@ -251,7 +285,7 @@ pub(in crate::backend) fn download_for_owner(
     }
     download_for(
         pins,
-        dir,
+        store,
         pass,
         !accounts.accounts.is_empty(),
         fetch,
@@ -278,8 +312,13 @@ pub fn download_version_for_owner(
         Ok(body)
     };
     let pins = sources::Pins::for_version(id, manifest_sha1);
-    download_for_owner(&pins, &dir, &fetch, None, log)
-        .map_err(|e| e.trim_start_matches("\n  • ").to_string())?;
+    let candidates = candidate_sources(None, &dir);
+    let store = sources::Store {
+        dir: &dir,
+        sources: &candidates,
+    };
+    download_for_owner(&pins, &store, &fetch, None, log)
+        .map_err(|e| e.message.trim_start_matches("\n  • ").to_string())?;
     Ok(dir)
 }
 
@@ -296,13 +335,13 @@ fn sign_in_to_download(version: &str) -> String {
 /// `owner`, an account the services said owns the game just now.
 pub(in crate::backend) fn download_for(
     pins: &sources::Pins,
-    dir: &Path,
+    store: &sources::Store<'_>,
     pass: Result<account::Launch, account::NoOwner>,
     signed_in: bool,
     fetch: sources::Fetch,
     cancel: &std::sync::atomic::AtomicBool,
     log: &dyn Fn(String),
-) -> Result<(), String> {
+) -> Result<(), OwnerDownloadError> {
     let v = &pins.version;
     match pass {
         Ok(account::Launch {
@@ -314,26 +353,34 @@ pub(in crate::backend) fn download_for(
                 "{name} owns Minecraft: downloading {version} from Mojang",
                 &[("name", &name), ("version", &v.to_string())],
             ));
-            let os = match sources::Os::current() {
-                sources::Os::Linux => "linux",
-                sources::Os::MacOs => "osx",
-                sources::Os::Windows => "windows",
-            };
-            mojang::download(pins, dir, os, 8, fetch, cancel, log).map_err(|e| {
-                format!("\n  • Sunrise tried to download {v} from Mojang for {name}, but: {e}")
+            mojang::download(pins, store, mojang_os(), 8, fetch, cancel, log).map_err(|e| {
+                OwnerDownloadError {
+                    verified_owner: true,
+                    message: format!(
+                        "\n  • Sunrise tried to download {v} from Mojang for {name}, but: {e}"
+                    ),
+                }
             })
         }
         // An owner by its last answer, who can't be asked now.
-        Ok(pass) => Err(format!(
-            "\n  • Downloading {v} from Mojang needs your Microsoft account, which could not be \
-             checked: {}",
-            pass.offline.unwrap_or_default()
-        )),
-        Err(_) if signed_in => Err(
-            "\n  • No signed-in account owns Minecraft: Java Edition, so Sunrise can't download it."
+        Ok(pass) => Err(OwnerDownloadError {
+            verified_owner: false,
+            message: format!(
+                "\n  • Downloading {v} from Mojang needs your Microsoft account, which could not \
+                 be checked: {}",
+                pass.offline.unwrap_or_default()
+            ),
+        }),
+        Err(_) if signed_in => Err(OwnerDownloadError {
+            verified_owner: false,
+            message: "\n  • No signed-in account owns Minecraft: Java Edition, so Sunrise can't \
+                      download it."
                 .into(),
-        ),
-        Err(_) => Err(format!("\n  • {}", sign_in_to_download(v))),
+        }),
+        Err(_) => Err(OwnerDownloadError {
+            verified_owner: false,
+            message: format!("\n  • {}", sign_in_to_download(v)),
+        }),
     }
 }
 

@@ -1,13 +1,14 @@
 //! The preparer and what it reports: whether its output fits this build, its sources'
 //! fingerprint, the runtime reports, and running it.
 use super::{
-    assets_folder, download_for_owner, ensure_server_jar, files_under, java, resources,
-    resources_at, resources_for_game, resources_owner, resources_owner_in, set_prepare_step,
-    with_java, MinecraftFrom, PrepareStep, Unprepared, PREPARATION_STAMP, RESOURCES_MANIFEST,
+    candidate_sources, download_for_owner, ensure_server_jar, files_under, java, mojang_os,
+    resources, resources_at, resources_for_game, resources_owner, resources_owner_in,
+    set_prepare_step, with_java, OwnerDownloadError, PrepareStep, Unprepared, PREPARATION_STAMP,
+    RESOURCES_MANIFEST,
 };
 use crate::backend::{
     data_dir, fetch_bytes_cancellable, game_version, installed_in, installed_resources_owner,
-    prepare_lock_at, read_json, version_dir,
+    prepare_lock_at, read_json, version_dir, Settings,
 };
 use crate::managed_play::Resources;
 use crate::{mojang, sources};
@@ -395,32 +396,29 @@ pub(crate) fn complete_reports_at(versions: &Path, tag: &str, target: &Path, to:
 }
 
 /// Checks what the preparation needs and picks how to run it. PLAY.txt describes the same
-/// steps: the player's own launcher install, the server jar from that version's own json, and
-/// Java (and Python, for versions before sunrise-prepare). Also returns the Minecraft folder
-/// to prepare from: `minecraft`, or the files another launcher keeps, linked into the official
-/// launcher's layout (sources.rs).
+/// steps: the pinned Minecraft files assembled in Sunrise's own store (`data_dir()/minecraft`),
+/// the server jar from that version's own json, and Java. `explicit_minecraft` is set only by the
+/// CLI's `prepare --minecraft <folder>` developer route. Returns the command and Sunrise's own
+/// Minecraft folder to prepare from.
 pub fn preparer(
     tag: &str,
-    minecraft: &Path,
-    from: MinecraftFrom,
+    explicit_minecraft: Option<&Path>,
     log: &dyn Fn(String),
     preparation: &crate::preparer::Preparation,
 ) -> Result<(Command, PathBuf), String> {
-    preparer_staged(tag, minecraft, from, log, &preparation.handoff(None))
+    preparer_staged(tag, explicit_minecraft, log, &preparation.handoff(None))
 }
 
 pub fn preparer_cancellable(
     tag: &str,
-    minecraft: &Path,
-    from: MinecraftFrom,
+    explicit_minecraft: Option<&Path>,
     log: &dyn Fn(String),
     preparation: &crate::preparer::Preparation,
     stop: &crate::native_mods::Cancellation,
 ) -> Result<(Command, PathBuf), String> {
     preparer_staged(
         tag,
-        minecraft,
-        from,
+        explicit_minecraft,
         log,
         &preparation.handoff_cancellable(None, stop),
     )
@@ -428,8 +426,7 @@ pub fn preparer_cancellable(
 
 pub(crate) fn preparer_staged(
     tag: &str,
-    minecraft: &Path,
-    from: MinecraftFrom,
+    explicit_minecraft: Option<&Path>,
     log: &dyn Fn(String),
     handoff: &crate::preparer::Handoff<'_>,
 ) -> Result<(Command, PathBuf), String> {
@@ -457,8 +454,13 @@ pub(crate) fn preparer_staged(
         stop.check()?;
     }
     let reused = !needs.server_jar;
-    let chosen = minecraft.to_path_buf();
-    // Resolved even when the game files are reused: the assets still come from the install.
+    let dev_offline = crate::developer_offline::enabled(tag);
+    let chosen = explicit_minecraft
+        .map(Path::to_path_buf)
+        .or_else(|| Settings::load().minecraft_dir)
+        .unwrap_or_else(|| crate::preparer::minecraft_dir(None));
+    // Always assemble into Sunrise's own folder from the pinned version file, even when the
+    // import is reused (so sounds and assets come from a complete pinned store).
     let minecraft = {
         let pins = read_json(&dir.join("research-lock.json"))
             .and_then(|lock| sources::Pins::read(&lock))
@@ -467,35 +469,24 @@ pub(crate) fn preparer_staged(
                     .to_string()
             })?;
         let own = data_dir().join("minecraft");
-        let mut known = vec![("Sunrise's own download", own.clone())];
-        known.extend(
-            sources::Folders::current()
-                .map(|f| sources::known_folders(sources::Os::current(), &f))
-                .unwrap_or_default(),
-        );
+        sources::remove_legacy_linked(&data_dir().join("linked-minecraft"));
+        let candidates = candidate_sources(Some(&chosen), &own);
+        let local_sources = match explicit_minecraft {
+            Some(explicit) if !dev_offline => sources::candidate_bases(Some(explicit), &[], &own),
+            _ => candidates.clone(),
+        };
+        let store = sources::Store {
+            dir: &own,
+            sources: &candidates,
+        };
+        let options = PrepareStoreOptions {
+            os: mojang_os(),
+            reused,
+            allow_local_without_owner: explicit_minecraft.is_some() || dev_offline,
+            local_sources: &local_sources,
+        };
         let fetch = |url: &str| fetch_bytes_cancellable(url, stop);
-        let linked = data_dir().join("linked-minecraft");
-        if from == MinecraftFrom::Mojang {
-            // Straight from Mojang (what is already there and whole is kept), for an owner only.
-            download_for_owner(&pins, &own, &fetch, Some(cancel), log)
-                .map_err(|e| e.trim_start_matches("\n  • ").to_string())?;
-            own
-        } else {
-            let resolved = sources::resolve(minecraft, &pins, &known, &linked, &fetch, log);
-            if reused {
-                assets_folder(resolved, &chosen, &version, log)
-            } else {
-                match resolved? {
-                    sources::Resolved::Folder(dir) => dir,
-                    sources::Resolved::NotFound(checked) => {
-                        let not_found = sources::not_found(&version, &checked, minecraft);
-                        download_for_owner(&pins, &own, &fetch, Some(cancel), log)
-                            .map_err(|e| not_found + &e)?;
-                        own
-                    }
-                }
-            }
-        }
+        prepare_store(&pins, &store, &options, &fetch, cancel, log)?
     };
     if let Some(stop) = stop {
         stop.check()?;
@@ -556,6 +547,80 @@ pub(crate) fn preparer_staged(
     // This also precedes the sounds pass shared by GUI, CLI and staged Prepare.
     Resources::invalidate(&dir).map_err(|e| e.to_string())?;
     Ok((cmd, minecraft))
+}
+
+pub(in crate::backend) struct PrepareStoreOptions<'a> {
+    pub os: &'a str,
+    pub reused: bool,
+    /// Only true for the developer route (`prepare --minecraft <folder>` or an eligible unsigned
+    /// developer build with `SUNRISE_LAUNCHER_DEVELOPER_OFFLINE=1`): ordinary players who are not
+    /// signed in never borrow another launcher's install.
+    pub allow_local_without_owner: bool,
+    /// Candidate folders for local-only developer assembly when no verified owner is signed in.
+    pub local_sources: &'a [PathBuf],
+}
+
+/// Assembles the pinned Minecraft files into `store.dir`: for a signed-in verified owner, copies
+/// matching files from `store.sources` and downloads the rest from Mojang; without a verified
+/// owner, requires sign-in unless the developer route (`allow_local_without_owner`) is active.
+fn prepare_store(
+    pins: &sources::Pins,
+    store: &sources::Store<'_>,
+    options: &PrepareStoreOptions<'_>,
+    fetch: sources::Fetch,
+    cancel: &std::sync::atomic::AtomicBool,
+    log: &dyn Fn(String),
+) -> Result<PathBuf, String> {
+    prepare_store_with(
+        pins,
+        store,
+        options,
+        cancel,
+        &|| download_for_owner(pins, store, fetch, Some(cancel), log),
+        log,
+    )
+}
+
+pub(in crate::backend) fn prepare_store_with(
+    pins: &sources::Pins,
+    store: &sources::Store<'_>,
+    options: &PrepareStoreOptions<'_>,
+    cancel: &std::sync::atomic::AtomicBool,
+    owner_download: &dyn Fn() -> Result<(), OwnerDownloadError>,
+    log: &dyn Fn(String),
+) -> Result<PathBuf, String> {
+    match owner_download() {
+        Ok(()) => Ok(store.dir.to_path_buf()),
+        Err(e) if e.verified_owner || !options.allow_local_without_owner => {
+            Err(e.message.trim_start_matches("\n  • ").to_string())
+        }
+        Err(e) => {
+            let local = sources::Store {
+                dir: store.dir,
+                sources: options.local_sources,
+            };
+            match mojang::assemble_local(pins, &local, options.os, cancel) {
+                Ok(()) => Ok(store.dir.to_path_buf()),
+                Err(why) if options.reused => {
+                    log(format!(
+                        "Minecraft {}'s assets were not found in any launcher folder: the game \
+                         will be silent and the title screen plain ({why})",
+                        pins.version
+                    ));
+                    Ok(if store.dir.is_dir() {
+                        store.dir.to_path_buf()
+                    } else {
+                        options
+                            .local_sources
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| store.dir.to_path_buf())
+                    })
+                }
+                Err(why) => Err(format!("{why}{}{}", sources::prepare_advice(), e.message)),
+            }
+        }
+    }
 }
 
 /// Complete resources and publish their managed-Play snapshot while Prepare still holds its lock.

@@ -70,18 +70,17 @@ pub(super) fn prepare(
     download: bool,
     version: Option<String>,
 ) -> Result<i32, Error> {
+    // `--download` is kept for CLI compatibility; preparing always assembles the pinned version
+    // into Sunrise's own folder, copying hash-matching files and downloading the rest for an owner.
+    let _ = download;
     let tag = backend::resolve_version(version.as_deref())?;
-    let minecraft = backend::minecraft_dir(minecraft)?;
-    let from = if download {
-        backend::MinecraftFrom::Mojang
-    } else {
-        backend::MinecraftFrom::Install
-    };
+    let explicit = minecraft
+        .map(|dir| backend::minecraft_dir(Some(dir)))
+        .transpose()?;
     let preparation = backend::prepare_lock(&tag)?;
     let (preparer, minecraft) = backend::preparer(
         &tag,
-        &minecraft,
-        from,
+        explicit.as_deref(),
         &|line| eprintln!("{line}"),
         &preparation,
     )?;
