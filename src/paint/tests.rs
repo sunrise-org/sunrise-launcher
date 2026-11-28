@@ -467,3 +467,75 @@ fn begin_sets_the_frames_palette_from_the_inputs() {
     assert_eq!(palette(), pa);
     assert_eq!(pa.accent, glass::ACCENT);
 }
+
+/// Every surface of a player's theme follows its own colours: the text is their Text, the
+/// cards their Cards, the sidebar and bar their Sidebar, the rules their Lines. Colours that
+/// read badly on each other are painted as chosen all the same.
+#[test]
+fn a_players_colours_reach_every_role_as_chosen() {
+    use sunrise_launcher::theme_files::Roles;
+    let roles = Roles {
+        background: 0x912634,
+        card: 0xee3749,
+        chrome: 0xe96033,
+        text: 0x060200,
+        muted: 0xb9aba6,
+        accent: 0xc2552d,
+        line: 0xf7c9a2,
+        success: 0x7dc98c,
+        danger: 0xec8d8d,
+        light: false,
+    };
+    let night = roles.night();
+    let p = Palette::plain(night, roles.accent);
+    assert_eq!(p.text, roles.text);
+    assert_eq!(p.muted, roles.muted);
+    assert_eq!(p.background, roles.background);
+    assert_eq!(p.card_color, roles.card);
+    assert_eq!(p.chrome, roles.chrome);
+    assert_eq!(p.divider, over(roles.line, night.rule_alpha, roles.card));
+    // The selected row and the hover are made from the cards and the text, not a fixed grey.
+    assert_ne!(
+        p.selected,
+        Palette::plain(Roles::DAWN.night(), roles.accent).selected
+    );
+    assert_eq!(p.hover, over(roles.text, glass::fill::ACTIVE, roles.card));
+    // The theme the older parts of the window draw with follows the text and the cards too.
+    let theme = Theme::for_appearance(
+        Appearance::Dark,
+        Accent::from_rgb(roles.accent),
+        WindowAppearance::Dark,
+    )
+    .with_night(night)
+    .with_solid_plates();
+    assert_eq!(theme.look.plate, roles.card);
+    assert_eq!(
+        theme.ink,
+        gpui::Hsla::from(gpui::rgb(roles.text)).opacity(sunrise_launcher_theme::glass::ink::FULL)
+    );
+}
+
+/// A light theme of the player's is painted from its own colours too, plates included.
+#[test]
+fn a_players_light_theme_has_its_own_plates() {
+    use sunrise_launcher::theme_files::Roles;
+    let roles = Roles {
+        card: 0xfff0f0,
+        background: 0xf0e0e0,
+        chrome: 0xe0d0d0,
+        text: 0x201010,
+        ..Roles::DAWN_LIGHT
+    };
+    let theme = Theme::for_appearance(
+        Appearance::Dark,
+        Accent::from_rgb(roles.accent),
+        WindowAppearance::Dark,
+    )
+    .with_night(roles.night())
+    .with_solid_plates();
+    assert_eq!(theme.look.plate, roles.card);
+    assert_eq!(theme.look.plate_alpha, 1.);
+    let p = Palette::of(&theme);
+    assert_eq!(p.card_color, roles.card);
+    assert_eq!(p.text, roles.text);
+}

@@ -300,8 +300,8 @@ struct Launcher {
     /// Its Friends over the internet panel (`internet.rs`).
     internet: internet::Internet,
     /// The window's own focus, so Tab reaches the controls when nothing else has the keyboard.
-    /// The toast last drawn (`toast`), by its number.
-    toast_seen: Option<(u64, bool)>,
+    /// The toasts last drawn, by number and whether each is sliding out, newest first.
+    toast_seen: Vec<(u64, bool)>,
     root_focus: FocusHandle,
     /// Microsoft accounts (accounts.json), the sign-in under way and what it last showed.
     accounts: Accounts,

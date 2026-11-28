@@ -12,38 +12,27 @@ use sunrise_launcher::themes::library::{self, SLOTS};
 use sunrise_launcher::themes::share;
 
 impl Launcher {
-    /// The colours the editor shows: ones typed that can't be read on each other yet, else
-    /// what is painted.
+    /// The colours the editor shows: what is painted.
     pub(super) fn editor_roles(&self) -> Roles {
-        let draft = self.ui.settings.appearance.draft;
-        draft.unwrap_or_else(|| library::current(&self.settings))
+        library::current(&self.settings)
     }
 
-    /// Sets one colour of the editor and paints the result. Colours that can't be read on
-    /// each other are kept in the editor and not painted, with why.
+    /// Sets one colour of the editor and paints it, however it reads on the others.
     pub(super) fn colour_set(&mut self, slot: usize, rgb: u32, window: &Window) {
         let mut roles = self.editor_roles();
         (SLOTS[slot].set)(&mut roles, rgb);
-        self.ui.settings.appearance.draft = None;
-        match roles.readable() {
-            // While dragging, painted from memory: writing the theme and the settings at every
-            // step falls behind the pointer. The drag's end writes it (`picker_release`).
-            Ok(()) if self.ui.settings.appearance.dragging.is_some() => {
-                match library::preview(&mut self.settings, &roles) {
-                    Ok(()) => {
-                        self.ui.settings.appearance.unsaved = true;
-                        self.appearance_changed(window);
-                    }
-                    Err(error) => self.ui.settings.appearance.error = Some(error),
+        // While dragging, painted from memory: writing the theme and the settings at every
+        // step falls behind the pointer. The drag's end writes it (`picker_release`).
+        if self.ui.settings.appearance.dragging.is_some() {
+            match library::preview(&mut self.settings, &roles) {
+                Ok(()) => {
+                    self.ui.settings.appearance.unsaved = true;
+                    self.appearance_changed(window);
                 }
+                Err(error) => self.ui.settings.appearance.error = Some(error),
             }
-            Ok(()) => self.appearance_change(|s| library::paint(s, &roles), window),
-            Err(reason) => {
-                let state = &mut self.ui.settings.appearance;
-                state.draft = Some(roles);
-                state.error = None;
-                state.note = Some(reason.text());
-            }
+        } else {
+            self.appearance_change(|s| library::paint(s, &roles), window);
         }
     }
 
@@ -177,7 +166,6 @@ impl Launcher {
 
     /// Chooses Sunrise's night or day, with its own colours.
     pub(super) fn look_pick(&mut self, light: bool, window: &Window) {
-        self.ui.settings.appearance.draft = None;
         self.appearance_change(|s| library::reset(s, light), window);
     }
 
@@ -186,7 +174,6 @@ impl Launcher {
         let found = library::listed(&theme_files::loaded())
             .into_iter()
             .find(|local| local.slug == slug);
-        self.ui.settings.appearance.draft = None;
         self.appearance_change(
             |s| match found {
                 Some(local) => library::paint(s, &local.roles),

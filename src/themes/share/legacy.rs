@@ -91,9 +91,6 @@ fn theme_of(reader: &mut Reader, n: usize) -> Result<Custom, CodeError> {
         };
         (slot.set)(&mut roles, u32::from_be_bytes([0, *r, *g, *b]));
     }
-    roles
-        .readable()
-        .map_err(|_| CodeError::Colours(name.clone()))?;
     Ok(Custom { name, roles })
 }
 

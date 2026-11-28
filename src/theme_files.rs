@@ -7,7 +7,7 @@
 //!
 //! The folder is read once when the launcher starts and again on Reload ([`loaded`],
 //! [`reload`]), never while a frame is drawn. Everything a file says is checked here, where it
-//! is read: what comes out is a [`Local`] whose colours read on each other, or a [`Reason`]
+//! is read: what comes out is a [`Local`] made of the file's colours, or a [`Reason`]
 //! the Appearance page shows beside the folder's name. A file that fails is never rewritten,
 //! and never stops another theme from loading.
 use crate::i18n::{tr, trf};
@@ -30,10 +30,6 @@ const MAX_SIDE: u32 = 8192;
 const MAX_PIXELS: u64 = 16_000_000;
 /// The picture is drawn behind a window: one this wide on its longer side fills any screen.
 const SHOWN_SIDE: u32 = 2560;
-/// Text reads at this contrast.
-const TEXT: f32 = 4.5;
-/// The most a hovered, raised or selected surface moves away from the one it is on.
-const RAISE: f32 = 0.16;
 /// Names Windows keeps for devices, whatever follows the first dot.
 const DEVICES: [&str; 22] = [
     "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
@@ -107,27 +103,6 @@ impl Roles {
         }
     }
 
-    /// The launcher fits each ink toward white or black until it reads, so a palette works
-    /// unless even that end fails on one of its surfaces, hovered or not: that pair is the
-    /// reason.
-    pub fn readable(&self) -> Result<(), Reason> {
-        let end = self.ink_end();
-        for (name, surface) in [
-            ("card", self.card),
-            ("background", self.background),
-            ("chrome", self.chrome),
-        ] {
-            let worst = contrast(end, surface).min(contrast(end, over(end, RAISE, surface)));
-            if worst < TEXT {
-                return Err(Reason::Unreadable {
-                    surface: name,
-                    ratio: worst,
-                });
-            }
-        }
-        Ok(())
-    }
-
     /// The colours as the launcher's palettes are made from them: Dawn's glass, scenery and
     /// warning colour (its day's when `light`) around the file's nine.
     pub fn night(&self) -> Night {
@@ -197,10 +172,6 @@ pub enum Reason {
     AnimatedWebP(String),
     PictureTooBig(String),
     PictureSize(String, u32, u32),
-    Unreadable {
-        surface: &'static str,
-        ratio: f32,
-    },
     Io(String),
 }
 
@@ -264,10 +235,6 @@ impl Reason {
                     ("width", &w.to_string()),
                     ("height", &h.to_string()),
                 ],
-            ),
-            Reason::Unreadable { surface, ratio } => trf(
-                "Text can't be read on {surface}: even black or white reaches only {ratio}:1 where 4.5:1 is needed. Make background, card and chrome all dark or all light.",
-                &[("surface", surface), ("ratio", &format!("{ratio:.1}"))],
             ),
             Reason::Io(said) => said.clone(),
         }
@@ -531,7 +498,6 @@ pub fn parse(text: &str) -> Result<Parsed, Reason> {
         danger: role("danger", Roles::DAWN.danger)?,
         light,
     };
-    roles.readable()?;
     Ok(Parsed {
         name: name.to_string(),
         roles,

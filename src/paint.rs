@@ -150,6 +150,7 @@ impl Inputs {
             night: theme.night,
             accent: theme.accent_choice.rgb(),
             play_seed: theme.play_seed,
+            exact: theme.own_colours,
         }
     }
 }
@@ -216,6 +217,8 @@ struct Inputs {
     night: Night,
     accent: u32,
     play_seed: Option<u32>,
+    /// The player's own colours: their text colours stand exactly as picked.
+    exact: bool,
 }
 
 impl Inputs {
@@ -224,6 +227,7 @@ impl Inputs {
             night: n,
             accent: raw,
             play_seed,
+            exact,
         } = *self;
         // Light text on dark surfaces fits lighter; dark text on light ones fits darker.
         let lighter = n.dark;
@@ -254,12 +258,24 @@ impl Inputs {
         ];
 
         let ink = |color, solid: &[u32], min| fit(color, lighter, reads(solid, min));
-        let text = ink(n.ink, &surfaces, TEXT);
-        let muted = ink(n.muted, &surfaces, TEXT);
+        // The text colours stand as picked: whether they read on the surfaces is the player's
+        // choice. The built-in themes' own inks read already.
+        // The player's own text colours stand as picked: whether they read is their choice. A
+        // built-in theme's are moved toward white or black where that makes them read.
+        let own_ink = |color, solid: &[u32]| {
+            let end = if lighter { 0xffffff } else { 0x000000 };
+            if exact || !reads(solid, TEXT)(end) {
+                color
+            } else {
+                fit(color, lighter, reads(solid, TEXT))
+            }
+        };
+        let text = own_ink(n.ink, &surfaces);
+        let muted = own_ink(n.muted, &surfaces);
         let line = ink(over(n.ink, 0.4, card_color), &surfaces[..4], MARK);
         let divider = over(n.stroke, n.rule_alpha, card_color);
-        let chrome_text = ink(n.ink, &on_chrome, TEXT);
-        let chrome_muted = ink(n.muted, &on_chrome, TEXT);
+        let chrome_text = own_ink(n.ink, &on_chrome);
+        let chrome_muted = own_ink(n.muted, &on_chrome);
         let chrome_line = ink(over(n.ink, 0.4, chrome), &on_chrome, MARK);
 
         // Keep as much of the original control's quarter-white lift as the label allows.
@@ -372,6 +388,7 @@ impl Palette {
             night,
             accent,
             play_seed: None,
+            exact: false,
         }
         .palette()
     }

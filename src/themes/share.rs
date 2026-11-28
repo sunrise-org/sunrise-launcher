@@ -68,8 +68,6 @@ pub enum CodeError {
     Truncated,
     /// The bytes are not themes.
     Damaged,
-    /// The text of this theme can't be read on its colours.
-    Colours(String),
 }
 
 impl CodeError {
@@ -91,10 +89,6 @@ impl CodeError {
             }
             Self::Truncated => tr("This code is cut short.").into(),
             Self::Damaged => tr("This code can't be read as themes.").into(),
-            Self::Colours(name) => trf(
-                "{name}'s text can't be read on its colours.",
-                &[("name", name)],
-            ),
         }
     }
 }
@@ -301,9 +295,6 @@ fn theme_of(reader: &mut Reader, n: usize, before: Option<&Roles>) -> Result<Cus
             (slot.set)(&mut roles, u32::from_be_bytes([0, *r, *g, *b]));
         }
     }
-    roles
-        .readable()
-        .map_err(|_| CodeError::Colours(name.clone()))?;
     Ok(Custom { name, roles })
 }
 

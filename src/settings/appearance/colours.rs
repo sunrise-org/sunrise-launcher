@@ -114,12 +114,11 @@ impl Launcher {
             let shown = (slot.get)(&roles);
             lines = lines.child(self.colour_line(i, slot.label, shown, window, cx));
         }
-        let own = self
+        let custom = self
             .settings
             .theme
             .as_deref()
             .is_some_and(|id| id.starts_with(theme_files::PREFIX));
-        let custom = own || self.ui.settings.appearance.draft.is_some();
         let label = if roles.light {
             tr("Reset to Light")
         } else {

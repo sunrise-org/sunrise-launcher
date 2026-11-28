@@ -42,11 +42,13 @@ pub struct Theme {
     pub night: Night,
     /// A stronger version of the default accent for the primary Home action, if authored.
     pub(crate) play_seed: Option<u32>,
+    /// The colours are the player's own: their text colours are painted exactly as picked.
+    pub(crate) own_colours: bool,
     /// The accent this look was built from, before the glass look's mixes.
     pub accent_choice: Accent,
     pub dark: bool,
     /// Whether the pages draw the redesign's glass look: both appearances do (light with ink
-    /// for white and light plates, `glass_ui::light`).
+    /// for white and light plates).
     pub glass: bool,
 }
 
@@ -110,7 +112,10 @@ pub fn from_settings(settings: &Settings, system: WindowAppearance) -> Theme {
     theme = match themes::resolve(settings.theme.as_deref()) {
         themes::Resolved::Twilight => theme,
         themes::Resolved::Builtin(picked) => theme.with_launcher_theme(picked, dark),
-        themes::Resolved::Local(local) => theme.with_night(local.roles.night()),
+        themes::Resolved::Local(local) => Theme {
+            own_colours: true,
+            ..theme.with_night(local.roles.night())
+        },
         themes::Resolved::Missing => theme.with_launcher_theme(&themes::DAWN_THEME, dark),
     };
     // Reduced graphics keeps the sky's colours and drops its decorative effects.
@@ -149,10 +154,8 @@ impl Theme {
     /// The dark look's plates as the theme's own solid card: nothing stands behind the pages to
     /// show through them.
     pub fn with_solid_plates(mut self) -> Self {
-        if self.dark {
-            self.look.plate = self.night.card;
-            self.look.plate_alpha = 1.;
-        }
+        self.look.plate = self.night.card;
+        self.look.plate_alpha = 1.;
         self
     }
 
@@ -168,14 +171,9 @@ impl Theme {
     fn glass(self, accent: Accent) -> Self {
         use sunrise_launcher_theme::glass::{fill, ink, Glass, BLUR, DANGER, TINT};
         let dark = self.dark;
-        // Light: the ink where dark has white, as `glass_ui::white` does.
-        let white = |a: f32| {
-            if dark {
-                gpui::white().opacity(a)
-            } else {
-                c(sunrise_launcher_theme::glass::ON_LIGHT).opacity(a)
-            }
-        };
+        // The theme's own text colour, so a player's theme reaches these too.
+        let ink_rgb = self.night.ink;
+        let white = |a: f32| c(ink_rgb).opacity(a);
         let look = Glass::new(accent.rgb(), TINT, BLUR);
         let look = if dark { look } else { light_look(look) };
         Self {
@@ -211,6 +209,7 @@ impl Theme {
             well: c(p.well),
             night,
             play_seed: None,
+            own_colours: false,
             accent_choice: accent,
             dark: p.dark,
             glass: false,

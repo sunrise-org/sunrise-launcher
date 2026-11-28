@@ -156,13 +156,7 @@ fn a_themes_picture_stays_through_a_rename_and_goes_with_the_theme() {
 fn a_theme_the_launcher_would_refuse_is_never_written() {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
-    let grey = Roles {
-        background: 0x777777,
-        card: 0x777777,
-        chrome: 0x777777,
-        ..NIGHT_ROLES
-    };
-    assert!(save_new(root, "Mud", &grey).is_err());
+    // Colours are never refused, however they read: only a bad name or a path is.
     assert!(save_new(root, "  ", &NIGHT_ROLES).is_err());
     assert!(write(root, "long", &"n".repeat(70), &NIGHT_ROLES, None).is_err());
     assert!(theme_files::scan(root).is_empty());

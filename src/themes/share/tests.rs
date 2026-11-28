@@ -237,7 +237,10 @@ fn a_theme_builds_on_the_one_before_only_when_that_saves_colours() {
         ..NIGHT
     };
     let changed = differences(&own, &Roles::DAWN).count_ones() as usize;
-    assert!(changed >= 2, "the first theme must differ from Sunrise for this test");
+    assert!(
+        changed >= 2,
+        "the first theme must differ from Sunrise for this test"
+    );
     let body = body_of(&[
         theme("Ember", own),
         theme(
@@ -403,7 +406,7 @@ fn nothing_and_nonsense_are_refused_with_their_own_reasons() {
 }
 
 #[test]
-fn a_name_is_made_safe_and_text_that_cannot_be_read_is_refused() {
+fn a_name_is_made_safe_and_any_colours_are_taken() {
     let read = decode(&encode(&[theme("a\u{7}b\u{202e}c\nd", NIGHT)])).unwrap();
     assert_eq!(read[0].name, "abcd");
     let blank = decode(&encode(&[theme(" \u{7} ", NIGHT)])).unwrap();
@@ -414,10 +417,8 @@ fn a_name_is_made_safe_and_text_that_cannot_be_read_is_refused() {
         chrome: 0x777777,
         ..NIGHT
     };
-    assert_eq!(
-        decode(&encode(&[theme("Mud", grey)])),
-        Err(CodeError::Colours("Mud".into()))
-    );
+    let read = decode(&encode(&[theme("Mud", grey)])).unwrap();
+    assert_eq!(read[0].roles, grey);
 }
 
 #[test]

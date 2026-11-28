@@ -173,25 +173,13 @@ fn a_colour_is_exactly_a_hash_and_six_hex_digits() {
 }
 
 #[test]
-fn a_palette_no_ink_can_read_on_names_the_surface_and_the_ratio() {
-    // A white card over a black page: no text reads on both.
+fn colours_that_do_not_read_on_each_other_are_taken_as_they_are() {
+    // A white card over a black page: the player's choice, painted as it is.
     let text =
         "version = 1\nname = \"x\"\n[palette]\ncard = \"#ffffff\"\nbackground = \"#000000\"\n";
-    let Reason::Unreadable { surface, ratio } = why(text) else {
-        panic!("{:?}", parse(text));
-    };
-    assert_eq!(surface, "background");
-    assert!(ratio < 1.5, "{ratio}");
-    assert!(
-        why(text).text().contains("background"),
-        "{}",
-        why(text).text()
-    );
-    // A mid grey holds no ink once hovered.
-    assert!(matches!(
-        why("version = 1\nname = \"x\"\n[palette]\ncard = \"#777777\"\nbackground = \"#777777\"\nchrome = \"#777777\"\n"),
-        Reason::Unreadable { surface: "card", .. }
-    ));
+    let parsed = parse(text).unwrap();
+    assert_eq!(parsed.roles.card, 0xffffff);
+    assert_eq!(parsed.roles.background, 0x000000);
     // Light all through is as good as dark all through.
     let light = parse("version = 1\nname = \"x\"\n[palette]\ncard = \"#ffffff\"\nbackground = \"#f2f2f2\"\nchrome = \"#e8e8e8\"\ntext = \"#111111\"\nmuted = \"#444444\"\n").unwrap();
     assert!(!light.roles.night().dark);
@@ -581,9 +569,7 @@ fn lines_success_danger_and_the_look_are_read_and_default_sensibly() {
 }
 
 #[test]
-fn sunrises_day_is_a_palette_that_reads() {
-    assert!(Roles::DAWN.readable().is_ok());
-    assert!(Roles::DAWN_LIGHT.readable().is_ok());
+fn sunrises_day_is_a_light_palette() {
     assert!(!Roles::DAWN_LIGHT.night().dark);
     assert_eq!(Roles::DAWN_LIGHT.night().page, DAWN_LIGHT.page);
 }

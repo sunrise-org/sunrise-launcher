@@ -67,7 +67,10 @@ fn a_colour_set_in_the_editor_is_painted_and_kept_in_a_theme_file() {
     });
     cx.run_until_parked();
     let saved = Settings::load();
-    assert_eq!(saved.theme.as_deref(), Some(library::WORKING_ID));
+    assert_eq!(
+        saved.theme.as_deref(),
+        Some(sunrise_launcher::themes::library::WORKING_ID)
+    );
     assert_eq!(appearance::accent(&saved).rgb(), 0x123456);
     let file = theme_files::dir()
         .join(library::WORKING)
@@ -76,33 +79,33 @@ fn a_colour_set_in_the_editor_is_painted_and_kept_in_a_theme_file() {
     assert!(text.contains("accent = \"#123456\""), "{text}");
     launcher.read_with(cx, |l, _| {
         assert_eq!(l.editor_roles().accent, 0x123456);
-        assert!(l.ui.settings.appearance.draft.is_none());
     });
 }
 
-/// Colours that can't be read on each other are shown in the editor but not painted, and the
-/// editor goes on from them, so a dark theme can be turned light one colour at a time.
+/// Whatever colour the player picks is painted and saved, however it reads on the others.
 #[test]
-fn colours_that_cannot_be_read_yet_stay_in_the_editor_unpainted() {
+fn a_colour_that_reads_badly_is_painted_and_saved_all_the_same() {
     use sunrise_launcher::backend::Settings;
     use sunrise_launcher::themes::library::SLOTS;
-    if scratch_child("colours_that_cannot_be_read_yet_stay_in_the_editor_unpainted").is_none() {
+    if scratch_child("a_colour_that_reads_badly_is_painted_and_saved_all_the_same").is_none() {
         return;
     }
     let mut app = gpui::TestAppContext::single();
     let (launcher, cx) = appearance_window(&mut app);
     cx.update(|window, cx| {
         launcher.update(cx, |l, cx| {
-            // Mid grey page under white text: not readable, so not painted.
+            // Mid grey page under white text.
             l.colour_set(0, 0x777777, window);
             cx.notify();
         })
     });
     cx.run_until_parked();
-    assert_eq!(Settings::load().theme, None, "nothing is painted or saved");
+    assert_eq!(
+        Settings::load().theme.as_deref(),
+        Some(sunrise_launcher::themes::library::WORKING_ID),
+        "painted and saved"
+    );
     launcher.read_with(cx, |l, _| {
-        let state = &l.ui.settings.appearance;
-        assert!(state.draft.is_some() && state.note.is_some());
         assert_eq!((SLOTS[0].get)(&l.editor_roles()), 0x777777);
     });
 }

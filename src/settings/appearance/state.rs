@@ -7,7 +7,6 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use sunrise_launcher::appearance::Behind;
-use sunrise_launcher::theme_files::Roles;
 use sunrise_launcher::themes::hsv::Hsv;
 use sunrise_launcher::themes::library;
 use sunrise_launcher::themes::Accent;
@@ -48,8 +47,6 @@ pub(crate) struct State {
     pub(super) picker_focus: Option<FocusHandle>,
     /// Whether the hex field had the keyboard when last drawn: leaving it takes what is typed.
     pub(super) hex_was_focused: bool,
-    /// Colours typed that can't be read on each other yet: shown, not painted, until they can.
-    pub(super) draft: Option<Roles>,
     /// The name being typed for Save and Rename, and the code pasted for Import.
     pub(super) name: line_edit::LineEdit,
     pub(super) name_focus: Option<FocusHandle>,
@@ -103,7 +100,6 @@ impl Default for State {
             unsaved: false,
             picker_focus: None,
             hex_was_focused: false,
-            draft: None,
             name: line_edit::LineEdit::new(String::new(), 64, 40),
             name_focus: None,
             // A code for a few themes is a few hundred characters.

@@ -17,23 +17,6 @@ thread_local! {
     static LOOK: Cell<Glass> = Cell::new(Glass::default_look());
     /// Whether the rows being built go in a Settings card ([`flat_rows`]).
     static FLAT: Cell<bool> = const { Cell::new(false) };
-    /// The light appearance: the glass look's white ink and fills turn to [`INK`].
-    static LIGHT: Cell<bool> = const { Cell::new(false) };
-}
-
-/// The light appearance's ink: the mockup's text on white (`#100a1f`), at the opacities the dark
-/// look gives white.
-const INK: u32 = sunrise_launcher_theme::glass::ON_LIGHT;
-
-/// Set as each frame's pages start being built: whether the appearance is light.
-#[cfg_attr(not(windows), allow(dead_code))] // the Windows setup window
-pub fn set_light(light: bool) {
-    LIGHT.set(light);
-}
-
-/// Whether the light appearance is drawn.
-pub fn light() -> bool {
-    LIGHT.get()
 }
 
 /// Whether the pages being built draw the glass look: helpers with no theme at hand ask.
@@ -60,14 +43,9 @@ pub fn set_look(look: Glass) {
     LOOK.set(look);
 }
 
-/// White at `a`: the dark look's ink and fills. In light, the ink at `a`, so every part keeps
-/// its weight on the light plates.
+/// The theme's text colour at `a`: the glass look's ink and fills, whatever the theme.
 pub fn white(a: f32) -> Hsla {
-    if light() {
-        color(INK).opacity(a)
-    } else {
-        gpui::white().opacity(a)
-    }
+    color(palette().text).opacity(a)
 }
 
 /// A colour of the look (`0xrrggbb`).
