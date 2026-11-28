@@ -118,26 +118,39 @@ fn try_copy_from_sources(file: &File, sources: &[PathBuf]) -> std::io::Result<bo
     }
 }
 
-fn game_files(manifest: &Value, pins: &Pins, dir: &Path, os: &str) -> Result<Vec<File>, String> {
+fn game_files(
+    manifest: &Value,
+    pins: &Pins,
+    dir: &Path,
+    os: &str,
+    local: bool,
+) -> Result<Vec<File>, String> {
     let v = &pins.version;
     let versions = dir.join("versions").join(v);
     let client = &manifest["downloads"]["client"];
     // A version Sunrise doesn't pin takes its client's sha1 from its version file, itself
     // checked against the sha1 Mojang's version list gives (`Pins::for_version`).
     let client_sha1 = match pins.client_sha1.as_str() {
-        "" => text(client, "sha1")?,
+        "" => text(client, "sha1", "downloads.client")?,
         pinned => pinned.to_string(),
     };
+    let client_url = if local {
+        String::new()
+    } else {
+        text(client, "url", "downloads.client")?
+    };
     let mut game = vec![File {
-        url: text(client, "url")?,
+        url: client_url,
         sha1: client_sha1,
         size: client["size"].as_u64(),
         path: versions.join(format!("{v}.jar")),
         candidates: CandidateKind::Client(v.clone()),
     }];
-    let libraries = manifest["libraries"]
-        .as_array()
-        .ok_or("The version file has no libraries")?;
+    let libraries = match manifest["libraries"].as_array() {
+        Some(list) => list.as_slice(),
+        None if local && manifest["libraries"].is_null() => &[],
+        None => return Err("The version file has no libraries".to_string()),
+    };
     for library in libraries.iter().filter(|l| allowed(l, os)) {
         // Before 1.19 a library's natives for this system are a classifier of its own.
         let native = native_classifier(library, os)
@@ -147,11 +160,16 @@ fn game_files(manifest: &Value, pins: &Pins, dir: &Path, os: &str) -> Result<Vec
             .flatten()
             .filter(|a| !a.is_null())
         {
-            let rel_str = text(artifact, "path")?;
+            let rel_str = text(artifact, "path", "libraries")?;
             let rel = relative(&rel_str)?;
+            let url = if local {
+                String::new()
+            } else {
+                text(artifact, "url", "libraries")?
+            };
             game.push(File {
-                url: text(artifact, "url")?,
-                sha1: text(artifact, "sha1")?,
+                url,
+                sha1: text(artifact, "sha1", "libraries")?,
                 size: artifact["size"].as_u64(),
                 path: dir.join("libraries").join(rel),
                 candidates: CandidateKind::Library(rel_str),
@@ -162,11 +180,16 @@ fn game_files(manifest: &Value, pins: &Pins, dir: &Path, os: &str) -> Result<Vec
     // Mojang's fixed one is what keeps Log4Shell out.
     let logging = &manifest["logging"]["client"]["file"];
     if !logging.is_null() {
-        let id = text(logging, "id")?;
+        let id = text(logging, "id", "logging.client.file")?;
         let rel = relative(&id)?;
+        let url = if local {
+            String::new()
+        } else {
+            text(logging, "url", "logging.client.file")?
+        };
         game.push(File {
-            url: text(logging, "url")?,
-            sha1: text(logging, "sha1")?,
+            url,
+            sha1: text(logging, "sha1", "logging.client.file")?,
             size: logging["size"].as_u64(),
             path: dir.join("assets/log_configs").join(rel),
             candidates: CandidateKind::Relative(format!("assets/log_configs/{id}")),
@@ -175,13 +198,18 @@ fn game_files(manifest: &Value, pins: &Pins, dir: &Path, os: &str) -> Result<Vec
     Ok(game)
 }
 
-fn asset_index_file(manifest: &Value, dir: &Path) -> Result<File, String> {
+fn asset_index_file(manifest: &Value, dir: &Path, local: bool) -> Result<File, String> {
     let index = &manifest["assetIndex"];
-    let id = text(index, "id")?;
+    let id = text(index, "id", "assetIndex")?;
     let rel_name = format!("{id}.json");
+    let url = if local {
+        String::new()
+    } else {
+        text(index, "url", "assetIndex")?
+    };
     Ok(File {
-        url: text(index, "url")?,
-        sha1: text(index, "sha1")?,
+        url,
+        sha1: text(index, "sha1", "assetIndex")?,
         size: index["size"].as_u64(),
         path: dir.join("assets/indexes").join(relative(&rel_name)?),
         candidates: CandidateKind::Relative(format!("assets/indexes/{rel_name}")),
@@ -206,7 +234,7 @@ pub fn download(
     let manifest_path = store.dir.join("versions").join(v).join(format!("{v}.json"));
     fetch_manifest(pins, &manifest_path, store.sources, fetch, log)?;
     let manifest = read_json(&manifest_path)?;
-    let game = game_files(&manifest, pins, store.dir, os)?;
+    let game = game_files(&manifest, pins, store.dir, os, false)?;
     let libraries = game.len() - 1;
     log(trf(
         "Downloading Minecraft {version} from Mojang: the game and {libraries} libraries",
@@ -216,7 +244,7 @@ pub fn download(
         ],
     ));
     fetch_all(&game, store.sources, jobs, fetch, cancel, log)?;
-    let index = asset_index_file(&manifest, store.dir)?;
+    let index = asset_index_file(&manifest, store.dir, false)?;
     let assets = fetch_all(
         std::slice::from_ref(&index),
         store.sources,
@@ -270,7 +298,7 @@ pub(crate) fn assemble_local(
     let manifest_path = store.dir.join("versions").join(v).join(format!("{v}.json"));
     ensure_local_manifest(pins, &manifest_path, store.sources)?;
     let manifest = read_json(&manifest_path)?;
-    let game = game_files(&manifest, pins, store.dir, os)?;
+    let game = game_files(&manifest, pins, store.dir, os, true)?;
     let mut missing = None;
     for file in &game {
         if cancel.load(Relaxed) {
@@ -298,7 +326,7 @@ fn copy_local_assets(
     store: &Store<'_>,
     cancel: &AtomicBool,
 ) -> Result<(), String> {
-    let Ok(index) = asset_index_file(manifest, store.dir) else {
+    let Ok(index) = asset_index_file(manifest, store.dir, true) else {
         return Ok(());
     };
     if !file_ok(&index)
@@ -409,8 +437,8 @@ pub fn java_runtime(
     let manifest = &entry["manifest"];
     let manifest: Value = serde_json::from_slice(&fetch_checked(
         fetch,
-        &text(manifest, "url")?,
-        &text(manifest, "sha1")?,
+        &text(manifest, "url", "manifest")?,
+        &text(manifest, "sha1", "manifest")?,
     )?)
     .map_err(|e| unreadable_manifest(component, &e))?;
     let files = manifest["files"]
@@ -429,14 +457,14 @@ pub fn java_runtime(
                     executables.push(path.clone());
                 }
                 downloads.push(File {
-                    url: text(raw, "url")?,
-                    sha1: text(raw, "sha1")?,
+                    url: text(raw, "url", name)?,
+                    sha1: text(raw, "sha1", name)?,
                     size: raw["size"].as_u64(),
                     path,
                     candidates: CandidateKind::None,
                 });
             }
-            Some("link") => links.push((path, text(file, "target")?)),
+            Some("link") => links.push((path, text(file, "target", name)?)),
             _ => {}
         }
     }
@@ -498,11 +526,11 @@ fn read_json(path: &Path) -> Result<Value, String> {
     serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-fn text(v: &Value, key: &str) -> Result<String, String> {
+fn text(v: &Value, key: &str, section: &str) -> Result<String, String> {
     v[key]
         .as_str()
         .map(String::from)
-        .ok_or_else(|| format!("The version file has no {key} in {v}"))
+        .ok_or_else(|| format!("The version file has no {key} in {section}"))
 }
 
 /// A path from the version file, refused if it could leave the folder.

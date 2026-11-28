@@ -828,3 +828,71 @@ fn assemble_local_copies_all_pinned_files_without_network() {
     );
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn assemble_local_copies_pinned_client_with_minimal_manifest() {
+    let jar = b"client fixture";
+    let manifest = b"{}";
+    let pins = Pins::read(&serde_json::json!({"minecraft": {
+        "version": "26.3",
+        "client_sha1": sha1_hex(jar),
+        "manifest_sha1": sha1_hex(manifest),
+    }}))
+    .unwrap();
+    let root = scratch("assemble-local-minimal");
+    let own = root.join("own");
+    let other = root.join("fixture");
+    fs::create_dir_all(other.join("versions/26.3")).unwrap();
+    fs::write(other.join("versions/26.3/26.3.jar"), jar).unwrap();
+    fs::write(other.join("versions/26.3/26.3.json"), manifest).unwrap();
+
+    let sources = [other];
+    let store = Store {
+        dir: &own,
+        sources: &sources,
+    };
+    assemble_local(&pins, &store, "linux", &GO).unwrap();
+    assert_eq!(
+        fs::read(own.join("versions/26.3/26.3.json")).unwrap(),
+        manifest
+    );
+    assert_eq!(fs::read(own.join("versions/26.3/26.3.jar")).unwrap(), jar);
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn download_missing_manifest_field_never_prints_null() {
+    let manifest = b"{}";
+    let manifest_sha1 = sha1_hex(manifest);
+    let pins = Pins::read(&serde_json::json!({"minecraft": {
+        "version": "26.3",
+        "client_sha1": sha1_hex(CLIENT),
+        "manifest_sha1": manifest_sha1,
+    }}))
+    .unwrap();
+    let server = Server {
+        files: HashMap::from([(
+            format!("https://piston-meta.mojang.com/v1/packages/{manifest_sha1}/26.3.json"),
+            manifest.to_vec(),
+        )]),
+        asked: Mutex::new(Vec::new()),
+    };
+    let dir = scratch("missing-field");
+    let store = Store {
+        dir: &dir,
+        sources: &[],
+    };
+    let error = download(
+        &pins,
+        &store,
+        "linux",
+        1,
+        &|url| server.fetch(url),
+        &GO,
+        &|_| {},
+    )
+    .unwrap_err();
+    assert!(!error.contains("null"), "{error}");
+    assert!(error.contains("downloads.client"), "{error}");
+    fs::remove_dir_all(&dir).unwrap();
+}
