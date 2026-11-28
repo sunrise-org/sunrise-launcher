@@ -63,6 +63,10 @@ pub(crate) enum Sheet {
     Refused,
     /// The builds a registry release works on (`mods::release_builds`).
     ReleaseBuilds,
+    /// What "Check for updates" found on Home's Mods tab (`home_mods::update_sheet`).
+    ModUpdates,
+    /// A pack's details, opened from its card on Home's Packs tab (`home_mods::details`).
+    PackDetails,
 }
 
 /// The way out of a problem the play bar raised, as the Notice sheet's one action.
@@ -457,6 +461,14 @@ impl Launcher {
                 }
                 sheet
             }
+            Some(Sheet::ModUpdates) => Some(self.updates_sheet(cx)),
+            Some(Sheet::PackDetails) => match self.pack_details_sheet(cx) {
+                Some(sheet) => Some(sheet),
+                None => {
+                    self.ui.sheet = None;
+                    None
+                }
+            },
             Some(Sheet::NightlySourceLog) => self
                 .source_log_body(cx)
                 .map(|body| frame("nightly-source-log", 690., body, cx)),

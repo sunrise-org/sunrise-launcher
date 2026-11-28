@@ -19,7 +19,6 @@ pub(super) enum Event {
 }
 
 pub(super) struct Mods {
-    pub(super) installed_list: cull::Cull,
     pub(super) discover_list: cull::Cull,
     pub(super) pack_discover_list: cull::Cull,
     /// The game folder the browser installs into and lists: the selected instance's.
@@ -69,7 +68,6 @@ impl Mods {
     pub(super) fn new() -> Self {
         let (tx, rx) = crate::wake::channel();
         Self {
-            installed_list: cull::Cull::default(),
             discover_list: cull::Cull::default(),
             pack_discover_list: cull::Cull::default(),
             home: ModsHome::default(),

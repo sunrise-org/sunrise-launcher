@@ -1,39 +1,59 @@
-//! Settings › Appearance: the section's state and defaults, the look a change is saved
-//! against, and the themes it lists.
+//! Settings › Appearance: the section's state and defaults, and the look a change is saved
+//! against.
 use super::*;
-use crate::paint::Palette;
 use gpui::RenderImage;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
-use sunrise_launcher::appearance::{self, Behind};
-use sunrise_launcher::theme_files::{self, Entry};
-use sunrise_launcher::themes::{self, Accent};
-
-pub(super) struct Choice {
-    /// What `select_theme` takes.
-    pub(super) id: String,
-    pub(super) name: SharedString,
-    pub(super) about: SharedString,
-    /// Its colours with the accent it would start with, for the preview.
-    pub(super) palette: Palette,
-}
+use sunrise_launcher::appearance::Behind;
+use sunrise_launcher::theme_files::Roles;
+use sunrise_launcher::themes::Accent;
 
 type BehindKey = (Option<String>, Option<String>, bool);
 
+/// What the theme library's one open panel is doing.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Panel {
+    /// Naming the colours being edited, to keep them.
+    Save,
+    /// Giving the theme in this folder another name.
+    Rename(String),
+    /// Asking before the themes in these folders are deleted.
+    Delete(Vec<String>),
+    /// Showing the code for this many themes.
+    Export(String, usize),
+    /// Taking a pasted code.
+    Import,
+}
+
 pub(crate) struct State {
-    /// The themes to choose from, made again when the folder is read or a choice changes.
-    pub(super) choices: Option<Vec<Choice>>,
-    pub(super) accent: line_edit::LineEdit,
-    pub(super) accent_focus: Option<FocusHandle>,
-    /// Whether the accent field had the keyboard when last drawn: leaving it takes what is typed.
-    pub(super) accent_editing: bool,
+    /// The hex of the colour being typed, and which colour that is (an index into
+    /// `themes::library::SLOTS`).
+    pub(super) hex: line_edit::LineEdit,
+    pub(super) hex_focus: Option<FocusHandle>,
+    pub(super) editing: Option<usize>,
+    /// Whether the hex field had the keyboard when last drawn: leaving it takes what is typed.
+    pub(super) hex_was_focused: bool,
+    /// Colours typed that can't be read on each other yet: shown, not painted, until they can.
+    pub(super) draft: Option<Roles>,
+    /// The name being typed for Save and Rename, and the code pasted for Import.
+    pub(super) name: line_edit::LineEdit,
+    pub(super) name_focus: Option<FocusHandle>,
+    pub(super) code: line_edit::LineEdit,
+    pub(super) code_focus: Option<FocusHandle>,
+    pub(super) panel: Option<Panel>,
+    /// The library's themes ticked for export, by folder.
+    pub(super) ticked: BTreeSet<String>,
+    /// The folder whose "…" menu is open, and whether Home header's menu is.
+    pub(super) more: Option<String>,
+    pub(super) header_open: bool,
     /// The keyboard's place on "Worlds on Home", and the search's request to be taken to it:
     /// whether that was done yet.
     pub(super) worlds_focus: Option<FocusHandle>,
     pub(super) worlds_asked: Option<std::rc::Rc<std::cell::Cell<bool>>>,
     /// What the last action could not do.
     pub(super) error: Option<String>,
-    /// What Reload found.
+    /// What the last action did, or why a colour isn't painted yet.
     pub(super) note: Option<String>,
     /// What is behind the pages for the settings it was worked out from (theme, picture, scenery).
     pub(super) behind: Option<(BehindKey, Behind)>,
@@ -51,10 +71,20 @@ pub(crate) struct State {
 impl Default for State {
     fn default() -> Self {
         State {
-            choices: None,
-            accent: line_edit::LineEdit::new(String::new(), 32, 18),
-            accent_focus: None,
-            accent_editing: false,
+            hex: line_edit::LineEdit::new(String::new(), 8, 9),
+            hex_focus: None,
+            editing: None,
+            hex_was_focused: false,
+            draft: None,
+            name: line_edit::LineEdit::new(String::new(), 64, 40),
+            name_focus: None,
+            // A code for a few themes is a few hundred characters.
+            code: line_edit::LineEdit::new(String::new(), 40_000, 60),
+            code_focus: None,
+            panel: None,
+            ticked: BTreeSet::new(),
+            more: None,
+            header_open: false,
             worlds_focus: None,
             worlds_asked: None,
             error: None,
@@ -94,62 +124,5 @@ impl Launcher {
             scenery: self.settings.scenery_on,
             reduced_graphics: self.settings.reduced_graphics,
         }
-    }
-
-    /// The themes to choose from: Dawn first, Sunrise's own violet, the other built-in ones,
-    /// then the player's.
-    pub(super) fn appearance_choices(&mut self) {
-        if self.ui.settings.appearance.choices.is_some() {
-            return;
-        }
-        let in_use = appearance::effective_id(&self.settings);
-        let choice = |id: String, name: SharedString, about: SharedString, night| {
-            // Each preview wears its theme's own accent; the one in use, the accent in use.
-            let accent = if id == in_use {
-                appearance::accent(&self.settings).rgb()
-            } else {
-                themes::own_accent(Some(&id)).rgb()
-            };
-            Choice {
-                palette: Palette::plain(night, accent),
-                id,
-                name,
-                about,
-            }
-        };
-        let builtin = |t: &themes::Theme| {
-            choice(
-                t.id.into(),
-                tr(t.name).into(),
-                tr(t.description).into(),
-                t.palette.copied().unwrap_or(theme::night::NIGHT),
-            )
-        };
-        let mut all = vec![
-            builtin(&themes::DAWN_THEME),
-            choice(
-                themes::TWILIGHT.into(),
-                tr(themes::TWILIGHT_NAME).into(),
-                tr(themes::TWILIGHT_DESCRIPTION).into(),
-                theme::night::NIGHT,
-            ),
-        ];
-        all.extend(
-            themes::THEMES
-                .iter()
-                .filter(|t| t.id != themes::DAWN_THEME.id)
-                .map(builtin),
-        );
-        for entry in theme_files::loaded().iter() {
-            if let Entry::Good(local) = entry {
-                all.push(choice(
-                    local.id(),
-                    local.name.clone().into(),
-                    trf("Your theme · {folder}", &[("folder", &local.slug)]).into(),
-                    local.roles.night(),
-                ));
-            }
-        }
-        self.ui.settings.appearance.choices = Some(all);
     }
 }

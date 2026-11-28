@@ -35,6 +35,56 @@ impl Appearance {
     }
 }
 
+/// Where Home's profile header (mark, name, Play) stands in its banner, as the player picks it
+/// in Settings.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HeaderAlign {
+    /// At the banner's left padding.
+    Left,
+    /// At the banner's right padding.
+    Right,
+    /// On the banner's own middle.
+    CenterPanel,
+    /// On the whole window's middle, the sidebar included.
+    #[default]
+    CenterWindow,
+}
+
+impl HeaderAlign {
+    pub const ALL: [HeaderAlign; 4] = [
+        Self::Left,
+        Self::Right,
+        Self::CenterPanel,
+        Self::CenterWindow,
+    ];
+
+    /// Its name in `settings.json` and on the command line.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::CenterPanel => "center-panel",
+            Self::CenterWindow => "center-window",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        let name = name.trim().to_ascii_lowercase();
+        Self::ALL.into_iter().find(|a| a.name() == name)
+    }
+
+    /// What Settings calls it (a catalog key).
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Left => crate::i18n::tr_key("Left"),
+            Self::Right => crate::i18n::tr_key("Right"),
+            Self::CenterPanel => crate::i18n::tr_key("Centre of the page"),
+            Self::CenterWindow => crate::i18n::tr_key("Centre of the window"),
+        }
+    }
+}
+
 /// What the launcher's window does while the game runs, as the player picks it in Settings.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -239,6 +289,9 @@ pub struct Settings {
     /// draws it; a saved choice is kept.
     #[serde(default = "open_sidebar")]
     pub sidebar_expanded: bool,
+    /// Where Home's profile header stands in its banner.
+    #[serde(default)]
+    pub header_align: HeaderAlign,
 }
 
 impl Settings {

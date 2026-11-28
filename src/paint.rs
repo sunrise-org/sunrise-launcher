@@ -366,6 +366,7 @@ impl Inputs {
 
 impl Palette {
     /// The palette of `night` under `accent`: a theme's preview, whatever theme is in use.
+    #[cfg(test)]
     pub(crate) fn plain(night: Night, accent: u32) -> Palette {
         Inputs {
             night,
@@ -431,18 +432,6 @@ impl Palette {
     /// the glass behind it shows.
     pub(crate) fn input_fill(&self) -> Hsla {
         Hsla::from(rgb(self.field)).opacity(0.55)
-    }
-
-    /// Play's opaque accent gradient. Linear sRGB interpolation cannot produce luminance above
-    /// the brighter stop, so the white label holds between the stops as well as on them.
-    pub(crate) fn play_gradient(&self) -> gpui::Background {
-        let [dark, light] = self.play_stops.map(rgb);
-        gpui::linear_gradient(
-            135.,
-            gpui::linear_color_stop(light, 0.),
-            gpui::linear_color_stop(dark, 1.),
-        )
-        .color_space(gpui::ColorSpace::Srgb)
     }
 
     /// A resting input's outline: faint. The focus ring, not this line, marks the one in use.

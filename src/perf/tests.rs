@@ -204,7 +204,6 @@ fn no_list_an_empty_one_or_one_that_fits_ends_scrolling_at_once() {
         (Target::NoProfile, Skip::NoProfile),
         (Target::Closed, Skip::Closed),
         (Target::Empty, Skip::Empty),
-        (Target::Failed, Skip::Failed),
         (laid(0., 0.), Skip::Fits),
     ] {
         let perf = drawn();

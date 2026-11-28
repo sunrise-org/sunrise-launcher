@@ -327,21 +327,7 @@ impl Launcher {
                 .when(is_ticked, |d| d.bg(c(palette().selected)))
                 .child(check)
                 .child(toggle)
-                .when(shown > 0, |d| d.border_t_1().border_color(palette().rule()))
-                // The pack another page opened the shelf at.
-                .when(
-                    self.mods_state
-                        .reveal
-                        .as_ref()
-                        .is_some_and(|r| r.is_pack(pack)),
-                    |d| {
-                        d.bg(c(palette().hover)).child(super::ui::reveal(
-                            crate::frame::scrolls("packs"),
-                            self.mods_state.revealed.clone(),
-                            None,
-                        ))
-                    },
-                );
+                .when(shown > 0, |d| d.border_t_1().border_color(palette().rule()));
             shown += 1;
             row = row
                 .child(crate::mod_icons::tile(

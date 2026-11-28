@@ -135,7 +135,7 @@ impl Launcher {
             .as_ref()
             .filter(|_| self.ui.page == Page::Project)
             .map_or(Page::Discover, |open| open.from);
-        self.inspect_nightly_from(source, refresh, from);
+        self.inspect_nightly_from(source, refresh, from, false);
     }
 
     pub(in crate::mods) fn inspect_nightly_from(
@@ -143,10 +143,12 @@ impl Launcher {
         source: Source,
         refresh: bool,
         from: Page,
+        installed: bool,
     ) {
         let scope = self.mods_page_scope();
         self.ui.page = Page::Project;
-        if from != Page::Installed {
+        // An installed mod's page keeps the open mod it was drawn from.
+        if !installed {
             self.mods_state.open = None;
         }
         let state = &mut self.mods_state.nightly;
@@ -434,36 +436,6 @@ impl Launcher {
                 self.mods_state.notice = Some(Err(error));
             }
         }
-    }
-
-    pub(in crate::mods) fn submit_mod_update_all(
-        &mut self,
-        displayed_names: BTreeMap<String, String>,
-    ) {
-        if !self.guard() {
-            return;
-        }
-        let registry: Vec<_> = self
-            .rows()
-            .into_iter()
-            .filter(model::bulk_updatable)
-            .map(|row| row.id)
-            .collect();
-        // Source mods and registry mods update as two jobs, sources first.
-        if let Some((target, sources)) = self.take_source_updates(None) {
-            self.mods_state.notice = None;
-            self.mods.message = None;
-            if let Err(error) = self.queue_sources(target, sources) {
-                self.mods_state.notice = Some(Err(error));
-                return;
-            }
-        }
-        self.submit_registry_change(
-            crate::mods_page::install::Kind::UpdateAllV2,
-            "update-all",
-            registry,
-            displayed_names,
-        );
     }
 
     fn take_source_updates(

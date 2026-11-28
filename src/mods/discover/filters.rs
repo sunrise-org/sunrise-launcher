@@ -144,20 +144,20 @@ impl Launcher {
         self.choose_view(Page::PackFind);
     }
 
-    /// The way to what is installed: Installed for mods, Packs for the kind on show.
+    /// The way to what is installed: Home's Mods or Packs tab, or the shelf of the shader or
+    /// data packs on show.
     fn installed_link(&self, tab: KindTab, cx: &mut Context<Self>) -> Stateful<Div> {
-        let page = if tab == KindTab::Mods {
-            Page::Installed
-        } else {
-            Page::Packs
-        };
         button(
             "alt-discover-installed",
             tr("Installed"),
             Look::new(Style::Ghost, Size::Small).icon("package-01"),
         )
         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-            this.choose_view(page);
+            match tab {
+                KindTab::Mods => this.show_home_tab(false),
+                KindTab::Resource => this.show_home_tab(true),
+                KindTab::Shader | KindTab::Data => this.choose_view(Page::Packs),
+            }
             cx.notify();
         }))
     }

@@ -11,7 +11,7 @@ mod jobs;
 mod project;
 
 pub(super) use jobs::Event;
-pub(super) use project::{short_sha, source_error};
+pub(super) use project::short_sha;
 
 const FRESH: Duration = Duration::from_secs(600);
 pub(super) const SOURCE_ID_CONFLICT: &str =

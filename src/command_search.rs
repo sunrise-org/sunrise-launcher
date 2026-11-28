@@ -216,10 +216,12 @@ impl Launcher {
                 }
             }
             Target::World => self.navigate(Page::Home),
-            Target::Mod(title) => self.open_installed(crate::mods::Installed::ModNamed(title)),
-            Target::Pack(kind, title) => {
-                self.open_installed(crate::mods::Installed::PackNamed(kind, title))
+            Target::Mod(title) => {
+                if !self.open_mod_named(&title) {
+                    self.show_home_tab(false);
+                }
             }
+            Target::Pack(kind, title) => self.open_pack_named(kind, title),
             Target::Search => {}
             Target::Sidebar => self.toggle_sidebar(),
         }
@@ -683,6 +685,8 @@ mod tests {
             include_str!("settings/account_section.rs"),
             include_str!("settings/appearance.rs"),
             include_str!("settings/appearance/rows.rs"),
+            include_str!("settings/appearance/colours.rs"),
+            include_str!("settings/appearance/theme_library.rs"),
             include_str!("settings/game.rs"),
             include_str!("settings/launcher.rs"),
             include_str!("settings/privacy.rs"),

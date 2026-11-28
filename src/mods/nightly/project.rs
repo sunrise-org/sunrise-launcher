@@ -289,13 +289,19 @@ impl Launcher {
             .flex_col()
             .gap(px(14.))
             .child(
-                back(if from == Page::Installed {
-                    tr("Installed")
+                back(if from == Page::Home {
+                    tr("Home")
                 } else {
                     tr("Discover")
                 })
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.choose_view(from);
+                    if from == Page::Home {
+                        this.mods_state.nightly.open = None;
+                        this.mods_state.open = None;
+                        this.leave_details_to(from);
+                    } else {
+                        this.choose_view(from);
+                    }
                     cx.notify();
                 })),
             )

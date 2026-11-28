@@ -43,7 +43,12 @@ impl Launcher {
         self.multiplayer.target = None;
         match page {
             Page::Discover => self.open_mods(),
-            Page::Packs => self.open_packs(),
+            // The profile's resource packs are Home's Packs tab; the shelves of shader and data
+            // packs open from Discover's "Installed" link for those kinds.
+            Page::Packs => {
+                self.select_home_tab(true);
+                self.ui.page = Page::Home;
+            }
             Page::Join | Page::Hosting => {
                 self.ui.last_server = Some(page);
                 self.ui.page = page;
@@ -399,7 +404,7 @@ mod tests {
         for page in [Page::Packs, Page::PackFind, Page::PackProject] {
             assert!(page.active_tab() == Page::Packs);
         }
-        for page in [Page::Discover, Page::Installed, Page::Project] {
+        for page in [Page::Discover, Page::Project] {
             assert!(page.active_tab() == Page::Discover);
         }
     }
@@ -432,7 +437,7 @@ mod tests {
         assert!(state.page_transition(Page::Home, t2, true).is_none());
         // Sub-tabs within the same top-level section do not replay the whole-page entrance.
         let t3 = t2 + std::time::Duration::from_millis(50);
-        assert_eq!(state.page_transition(Page::Installed, t3, false), Some(t3));
+        assert_eq!(state.page_transition(Page::Project, t3, false), Some(t3));
         let t4 = t3 + std::time::Duration::from_millis(300);
         assert!(state.page_transition(Page::Discover, t4, false).is_none());
     }

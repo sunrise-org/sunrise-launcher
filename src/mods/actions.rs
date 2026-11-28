@@ -336,22 +336,6 @@ impl Launcher {
         }));
     }
 
-    pub(super) fn bulk_off(&mut self) {
-        let rows = self.rows();
-        let chosen: Vec<String> = rows
-            .iter()
-            .filter(|r| r.local.is_none() && r.on && self.mods_state.selection.contains(&r.id))
-            .map(|r| r.id.clone())
-            .collect();
-        if chosen.is_empty() {
-            self.mods_state.notice = Some(Err(
-                tr("None of the selected mods is turned on.").to_string()
-            ));
-            return;
-        }
-        self.turn_off(chosen);
-    }
-
     pub(super) fn remove_mod_button(
         &self,
         id: &str,

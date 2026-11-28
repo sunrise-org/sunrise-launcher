@@ -7,9 +7,8 @@ pub(crate) enum Page {
     #[default]
     Home,
     Discover,
-    Installed,
     Packs,
-    /// Packs › Discover (`Packs` is its Installed).
+    /// Packs › Discover (`Packs` is the shelves of shader and data packs).
     PackFind,
     /// A pack's page, opened from Packs › Discover.
     PackProject,
@@ -36,7 +35,7 @@ impl Page {
     /// The tab that stays selected on a subpage.
     pub(crate) fn active_tab(self) -> Self {
         match self {
-            Self::Installed | Self::Project => Self::Discover,
+            Self::Project => Self::Discover,
             Self::PackFind | Self::PackProject => Self::Packs,
             Self::Hosting => Self::Join,
             other => other,
@@ -91,7 +90,7 @@ impl Page {
     /// player can come back to, else Discover.
     pub(crate) fn details_origin(self) -> Self {
         match self {
-            Self::Home | Self::Discover | Self::Installed | Self::Packs | Self::PackFind => self,
+            Self::Home | Self::Discover | Self::Packs | Self::PackFind => self,
             _ => Self::Discover,
         }
     }

@@ -7,6 +7,7 @@ use crate::sheets::Sheet;
 use crate::widgets::button::{button, icon_button_opening, Look, Size, Style};
 use crate::widgets::feedback::{banner_button, progress, Banner, Tone};
 use gpui::rgb;
+use sunrise_launcher::backend::HeaderAlign;
 
 /// The banner's height when nothing under the buttons adds to it (Figma: the art's 208).
 const BANNER_HEIGHT: f32 = 208.;
@@ -63,9 +64,10 @@ impl Launcher {
             .children(state)
     }
 
-    /// The banner (Figma "Profile · …"): the scenery across it, fading into the panel at its
-    /// left edge; on the window's middle the mark and name, the play time, then Play and Profile
-    /// settings with the build under them, and the cat's lane beside them. Under the banner: a build under way and what the profile says.
+    /// The banner (Figma "Profile · …"): the scenery across it, washed with the panel where the
+    /// header stands; the mark and name, the play time, then Play and Profile settings with the
+    /// build under them, placed as the player's header alignment says, and the cat's lane beside
+    /// them. Under the banner: a build under way and what the profile says.
     fn profile_banner(
         &mut self,
         instance: &instances::Instance,
@@ -75,7 +77,8 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Div {
         let (build, tag) = self.build_name(instance);
-        let identity = self.identity(instance);
+        let align = self.settings.header_align;
+        let identity = self.identity(instance, align);
         let controls = div()
             .flex_none()
             .flex()
@@ -84,11 +87,7 @@ impl Launcher {
             .child(self.play_button(view, compact, cx))
             .child(self.profile_options_button(cx));
         // Play and the gear, and under them the build it plays, which opens the chooser.
-        let actions = div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(px(8.))
+        let actions = aligned(div().flex().flex_col().gap(px(8.)), align)
             .child(controls)
             // The build picker is centred under Play and the gear together while it fits there.
             // Auto margins rather than centring, so a longer label starts at Play's left edge
@@ -109,28 +108,45 @@ impl Launcher {
         // The cat walks the ground along the art's bottom edge, right of the buttons.
         let (lane, _) = self.cat(true, false, window, cx);
         let pad = if compact { 16. } else { 24. };
-        // Where the banner was last drawn; before the first frame, where the sidebar puts it.
+        // Where the sidebar and the frame's margin put the banner's left edge, and how far the
+        // drawn edge was last found from that. The margin is constant, so the offset is too, and
+        // the reckoned edge follows the sidebar's fold in the same frame.
+        let reckoned = crate::rail::rail_width(self.rail_open()) + tokens::FRAME_INSET;
         let measured = self.ui.home.banner_left.clone();
-        let banner_left = measured
-            .get()
-            .unwrap_or_else(|| crate::rail::rail_width(self.rail_open()) + tokens::FRAME_INSET);
+        let banner_left = reckoned + measured.get().unwrap_or(0.);
         let banner_width = self.window_width - banner_left - tokens::FRAME_INSET;
-        // The name, Play and the build stand on the window's middle (the top bar's search is
-        // there too), sidebar included; where that leaves them too little room on the left,
-        // on the banner's middle.
+        // Where the header stands. On a middle, the name, Play and the build stand there; the
+        // window's middle (the top bar's search is there too) leaves, where it would give them too
+        // little room on a side, for the banner's middle.
         let controls_width = if compact { 132. } else { PLAY_WIDTH } + 8. + tokens::PLAY;
-        let centre = centre_in_banner(self.window_width / 2. - banner_left, banner_width);
-        let lane_left = centre + controls_width / 2. + 16.;
+        let centre = match align {
+            HeaderAlign::CenterWindow => {
+                centre_in_banner(self.window_width / 2. - banner_left, banner_width)
+            }
+            _ => banner_width / 2.,
+        };
+        // The cat's lane runs from the controls to the banner's far padding.
+        let (lane_left, lane_right) = match align {
+            HeaderAlign::Left => (pad + controls_width + 16., pad),
+            HeaderAlign::Right => (pad, pad + controls_width + 16.),
+            _ => (centre + controls_width / 2. + 16., pad),
+        };
         // The lane's middle: the strip's depth hardly changes along it.
-        let middle = (lane_left + banner_width - pad) / 2.;
+        let middle = (lane_left + banner_width - lane_right) / 2.;
         let feet = ground_height(banner_width, middle);
         let ground = div()
             .absolute()
             .left(px(lane_left))
-            .right(px(pad))
+            .right(px(lane_right))
             .bottom(px(feet - crate::cat::BELOW_FEET))
             .flex()
             .child(lane);
+        // The header's rows: a side of the banner, or a box on a middle.
+        let place = |content: Div| match align {
+            HeaderAlign::Left => div().w_full().flex().justify_start().child(content),
+            HeaderAlign::Right => div().w_full().flex().justify_end().child(content),
+            _ => centred(content, centre, pad),
+        };
         let art = self.ui.home.art.take();
         let panel = palette().background;
         div()
@@ -139,19 +155,15 @@ impl Launcher {
             .overflow_hidden()
             .rounded_t(crate::tokens::r(crate::tokens::R_PANEL))
             .when_some(art, |d, art| match art {
-                crate::home::Art::Fading(art) => d.child(art),
-                // A scene runs across the banner under an even veil of the panel, so the name
-                // and the buttons in its middle read on any picture; the left edge fades into
-                // the panel as the design's own art does.
-                crate::home::Art::Scene(art) => {
-                    let veil = gpui::Hsla::from(rgb(panel));
+                crate::home::Art::Fading(art) => {
                     d.child(art)
-                        .child(div().absolute().inset_0().bg(veil.opacity(0.4)))
-                        .child(div().absolute().inset_0().bg(gpui::linear_gradient(
-                            90.,
-                            gpui::linear_color_stop(veil.opacity(0.6), 0.),
-                            gpui::linear_color_stop(veil.opacity(0.), 0.3),
-                        )))
+                        .child(wash(panel, align, centre, banner_width, false))
+                }
+                // A scene runs across the banner under a light even veil of the panel, so any
+                // picture reads, and the wash where the header stands.
+                crate::home::Art::Scene(art) => {
+                    d.child(art)
+                        .child(wash(panel, align, centre, banner_width, true))
                 }
             })
             .child(
@@ -164,25 +176,20 @@ impl Launcher {
                     .pt(px(if compact { 16. } else { 32. }))
                     // As tall as the design's art (208), however little the banner holds.
                     .min_h(px(BANNER_HEIGHT))
-                    .child(centred(identity, centre, pad))
-                    .child(centred(actions, centre, pad))
+                    .child(place(identity))
+                    .child(place(actions))
                     .children(self.build_progress(view, cx))
                     .children(self.says(instance, view, false, cx)),
             )
             .child(ground)
-            .child(left_edge(measured, cx))
+            .child(left_edge(measured, reckoned, cx))
     }
 
-    /// The profile's mark beside its name, centred together, and under them, centred, when it
-    /// was last played and for how long.
-    fn identity(&mut self, instance: &instances::Instance) -> Div {
+    /// The profile's mark beside its name, together, and under them when it was last played and
+    /// for how long, all on `align`'s side.
+    fn identity(&mut self, instance: &instances::Instance, align: HeaderAlign) -> Div {
         let p = palette();
-        div()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(px(8.))
+        aligned(div().min_w_0().flex().flex_col().gap(px(8.)), align)
             .child(
                 div()
                     .min_w_0()
@@ -574,17 +581,19 @@ impl Launcher {
 
 /// The line under the profile's name: "Last played today · Time played 3 h", or "Not played
 /// yet".
-/// Records where the banner's left edge is drawn; a move (the sidebar opening, a resize)
-/// draws again, so the header follows within a frame.
+/// Records how far the banner's drawn left edge is from `reckoned`, where the sidebar and the
+/// frame's margin put it. Only the offset is kept, so the edge itself follows the sidebar's fold
+/// without a frame's lag; a change in the offset draws again.
 fn left_edge(
     at: std::rc::Rc<std::cell::Cell<Option<f32>>>,
+    reckoned: f32,
     cx: &mut Context<Launcher>,
 ) -> gpui::Canvas<()> {
     let this = cx.weak_entity();
     gpui::canvas(
         move |bounds, _, cx| {
-            let left = f32::from(bounds.left());
-            if at.replace(Some(left)) != Some(left) {
+            let offset = (f32::from(bounds.left()) - reckoned).round();
+            if at.replace(Some(offset)).unwrap_or(0.) != offset {
                 let this = this.clone();
                 cx.defer(move |cx| {
                     this.update(cx, |_, cx| cx.notify()).ok();
@@ -606,6 +615,63 @@ fn centre_in_banner(wanted: f32, width: f32) -> f32 {
     } else {
         width / 2.
     }
+}
+
+/// `column` with its children on `align`'s side: the left, the right, or the middle.
+fn aligned(column: Div, align: HeaderAlign) -> Div {
+    match align {
+        HeaderAlign::Left => column.items_start(),
+        HeaderAlign::Right => column.items_end(),
+        HeaderAlign::CenterPanel | HeaderAlign::CenterWindow => column.items_center(),
+    }
+}
+
+/// The panel's colour washed over the art, dark where the header's text stands: from the left
+/// edge, from the right edge, or out from `centre` (from the banner's left) both ways. `scene`
+/// adds a light even veil under it, so any picture reads.
+fn wash(panel: u32, align: HeaderAlign, centre: f32, width: f32, scene: bool) -> Div {
+    let veil = gpui::Hsla::from(rgb(panel));
+    // Left to right, `from` opacity at the box's left edge, `to` at `stop` of its width.
+    let fade = |from: f32, to: f32, stop: f32| {
+        gpui::linear_gradient(
+            90.,
+            gpui::linear_color_stop(veil.opacity(from), 0.),
+            gpui::linear_color_stop(veil.opacity(to), stop),
+        )
+    };
+    let layer = || div().absolute();
+    let shade = match align {
+        HeaderAlign::Left => vec![layer().inset_0().bg(fade(0.85, 0., 0.55))],
+        HeaderAlign::Right => vec![layer()
+            .top_0()
+            .bottom_0()
+            .left(px(0.45 * width))
+            .w(px(0.55 * width))
+            .bg(fade(0., 0.85, 1.))],
+        HeaderAlign::CenterPanel | HeaderAlign::CenterWindow => {
+            // Two halves that meet at the middle, each fading outwards.
+            let reach = 0.3 * width;
+            vec![
+                layer()
+                    .top_0()
+                    .bottom_0()
+                    .left(px(centre - reach))
+                    .w(px(reach))
+                    .bg(fade(0., 0.85, 1.)),
+                layer()
+                    .top_0()
+                    .bottom_0()
+                    .left(px(centre))
+                    .w(px(reach))
+                    .bg(fade(0.85, 0., 1.)),
+            ]
+        }
+    };
+    div()
+        .absolute()
+        .inset_0()
+        .when(scene, |d| d.child(layer().inset_0().bg(veil.opacity(0.25))))
+        .children(shade)
 }
 
 /// `content` centred on `centre` (from the banner's left edge), inside the banner's padding

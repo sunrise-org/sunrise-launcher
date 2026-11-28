@@ -625,9 +625,7 @@ impl Launcher {
                     }
                     return;
                 }
-                if self.ui.page == Page::Installed
-                    && self.ui.sheet.is_none()
-                    && !self.blocking_dialog()
+                if self.ui.page == Page::Home && self.ui.sheet.is_none() && !self.blocking_dialog()
                 {
                     self.github.close();
                     self.open_sheet(Sheet::GithubAdd);

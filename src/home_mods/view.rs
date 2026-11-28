@@ -4,14 +4,6 @@ use super::*;
 use crate::mods::selection::{bar, ModOp};
 
 impl Launcher {
-    pub(super) fn open_home_item(&mut self, open: Open) {
-        match open {
-            Open::Project(id) => self.mods_show_project(id),
-            Open::Installed(id) => self.open_installed(crate::mods::Installed::Mod(id)),
-            Open::Pack(kind, file) => self.open_installed(crate::mods::Installed::Pack(kind, file)),
-        }
-    }
-
     /// Refresh what the selected profile has installed off-thread. Home and the status strip
     /// read the same answer; no launch summary reads a file while drawing.
     pub(crate) fn refresh_home_inventory(&mut self, cx: &mut Context<Self>) {
@@ -103,6 +95,12 @@ impl Launcher {
             },
             cx,
         );
+        // Mods have updates to check for; packs come from no registry, so they have none.
+        let add = if packs {
+            add
+        } else {
+            self.home_manage(add, cx)
+        };
         let Some(snapshot) = self.ui.home.mods.snapshot.clone() else {
             return Content {
                 count: None,

@@ -29,9 +29,6 @@ struct Drawn {
     /// Whether the last drawn frame left nothing to correct (no mismeasured row and no visible
     /// spacer). Starts false until a frame has been measured.
     settled: bool,
-    /// Actual drawn bounds of each built row in the last frame (tests).
-    #[cfg(test)]
-    drawn_bounds: std::collections::HashMap<usize, Bounds<Pixels>>,
 }
 
 #[derive(Debug)]
@@ -120,15 +117,6 @@ impl Cull {
                 });
                 let unsettled = drawn.record(&spans, &bounds, scroll.bounds(), scroll.offset().y);
                 drawn.settled = !unsettled;
-                #[cfg(test)]
-                {
-                    drawn.drawn_bounds.clear();
-                    for (span, b) in spans.iter().zip(&bounds) {
-                        if let Span::Row(index) = span {
-                            drawn.drawn_bounds.insert(*index, *b);
-                        }
-                    }
-                }
                 if unsettled {
                     // A frame being drawn can't ask for the next one itself: ask right after.
                     let window = window.window_handle();
@@ -143,12 +131,6 @@ impl Cull {
     /// spacer).
     pub(crate) fn settled(&self) -> bool {
         self.0.borrow().settled
-    }
-
-    /// The bounds GPUI laid out for row `index` on the last frame, if it was built (tests).
-    #[cfg(test)]
-    pub(crate) fn drawn_bounds(&self, index: usize) -> Option<Bounds<Pixels>> {
-        self.0.borrow().drawn_bounds.get(&index).copied()
     }
 }
 

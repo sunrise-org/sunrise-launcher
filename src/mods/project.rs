@@ -310,7 +310,6 @@ impl Launcher {
         });
         let back_label = match (back_to, &parent_name) {
             (_, Some(name)) => name.clone(),
-            (Page::Installed, _) => tr("Installed").to_string(),
             (Page::Home, _) => tr("Home").to_string(),
             (Page::Packs, _) => tr("Packs").to_string(),
             _ => tr("Discover").to_string(),

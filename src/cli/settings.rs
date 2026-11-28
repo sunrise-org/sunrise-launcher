@@ -2,7 +2,7 @@
 use super::*;
 
 /// The keys `settings` sets.
-pub(super) const SETTING_KEYS: [&str; 17] = [
+pub(super) const SETTING_KEYS: [&str; 18] = [
     "selected-version",
     "minecraft-dir",
     "server-dir",
@@ -20,6 +20,7 @@ pub(super) const SETTING_KEYS: [&str; 17] = [
     "background",
     "scenery",
     "reduced-graphics",
+    "header-align",
 ];
 
 pub(super) fn on_off(value: &str) -> Result<bool, String> {
@@ -86,6 +87,10 @@ pub(super) fn set_setting(s: &mut backend::Settings, key: &str, value: &str) -> 
         },
         "scenery" => s.scenery_on = Some(on_off(value)?),
         "reduced-graphics" => s.reduced_graphics = Some(on_off(value)?),
+        "header-align" => {
+            s.header_align = backend::HeaderAlign::parse(value)
+                .ok_or_else(|| format!("{value}: say left, right, center-panel or center-window"))?
+        }
         "language" => {
             use sunrise_launcher::i18n::Language;
             s.language = match value.trim() {

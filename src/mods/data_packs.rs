@@ -254,7 +254,6 @@ impl Launcher {
         m.shelf = Shelf::Data;
         m.data.first = Some(world);
         m.data.reread();
-        m.last_packs = Some(Page::Packs);
         self.ui.page = Page::Packs;
     }
 

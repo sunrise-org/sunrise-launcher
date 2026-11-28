@@ -11,6 +11,8 @@ use sunrise_launcher_theme::night::{Land, Mood, Night, SkyArt};
 use sunrise_launcher_theme::{contrast, Blocks};
 
 mod builtin;
+pub mod library;
+pub mod share;
 pub use builtin::*;
 
 /// An accent: a hue in degrees, or none for Sunrise's violet, whose tokens are the palette's own

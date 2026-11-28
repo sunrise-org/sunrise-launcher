@@ -88,6 +88,8 @@ pub(crate) struct Tabs {
     /// Switches flipped on a card and not yet confirmed by a fresh read of the files: the card
     /// shows the flip at once, and the read replaces it.
     pub(crate) flipped: HashMap<(bool, String), Flip>,
+    /// The pack whose details sheet is open (`home_mods::details`).
+    pub(crate) pack_details: Option<crate::home_mods::Item>,
 }
 
 /// A flip shown ahead of the files.
@@ -311,6 +313,18 @@ impl Launcher {
             // Under the list, not over it: the last rows stay in reach while rows are ticked.
             .children(bar)
             .children(menu)
+    }
+
+    /// Picks Home's Mods tab (or its Packs tab), without leaving the page shown.
+    pub(crate) fn select_home_tab(&mut self, packs: bool) {
+        self.ui.home.tabs.selected = if packs { Tab::Packs } else { Tab::Mods };
+    }
+
+    /// Goes to Home with the Mods tab (or the Packs tab) showing: where what used to be
+    /// Mods › Installed and the installed packs are listed now.
+    pub(crate) fn show_home_tab(&mut self, packs: bool) {
+        self.select_home_tab(packs);
+        self.navigate(Page::Home);
     }
 
     /// Which list the Home tab shown ticks rows in: the Packs tab (true) or the Mods tab

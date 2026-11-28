@@ -115,9 +115,9 @@ fn pack_thumbnail(bytes: Vec<u8>) -> Option<Arc<RenderImage>> {
 pub(crate) enum Open {
     /// A registry mod's page, by its id.
     Project(String),
-    /// A mod the registry doesn't know: Mods › Installed, at the mod with this ID.
+    /// A mod the registry doesn't know: its own page, from the installed mod with this ID.
     Installed(String),
-    /// A pack: its shelf, at the pack that is this file.
+    /// A pack: its details sheet, for the pack that is this file.
     Pack(PackKind, String),
 }
 
@@ -453,7 +453,9 @@ const PICTURE: f32 = 40.;
 
 mod add;
 mod cards;
+mod details;
 mod menu;
+mod update_sheet;
 mod view;
 
 #[cfg(test)]

@@ -1,125 +1,13 @@
-//! Settings › Appearance: the theme cards' preview, and the rows for colours,
-//! layout and the section's own picture and cat settings.
+//! Settings › Appearance: the page itself (the look and colours, then what is behind Home, the
+//! layout and the cat) and the rows that are not about colours.
 use super::*;
-use crate::paint::Palette;
 use crate::widgets::button::secondary;
 use crate::widgets::check::switch;
 use crate::widgets::feedback::{banner, Tone};
 use gpui::SharedString;
 use sunrise_launcher::appearance::{self, Behind};
 use sunrise_launcher::theme_files::{self, Entry};
-use sunrise_launcher::themes::{self, Accent};
-
-/// An accent swatch's size, its ring included.
-const SWATCH: f32 = 30.;
-
-/// What [`Accent::ALL`]'s swatches are called, in their order.
-const ACCENT_NAMES: [&str; 7] = ["Violet", "Blue", "Teal", "Green", "Amber", "Red", "Pink"];
-
-/// The least width of a theme's card, and the room between cards.
-const CARD_MIN: f32 = 168.;
-const GAP: f32 = 12.;
-
-thread_local! {
-    /// Where the grid of themes was last drawn, for its number of columns.
-    static THEME_GRID: gpui::ScrollHandle = gpui::ScrollHandle::new();
-}
-
-/// How many cards fit a row `width` wide at a card's least width.
-pub(super) fn theme_columns(width: f32) -> u16 {
-    (((width + GAP) / (CARD_MIN + GAP)).floor() as u16).max(1)
-}
-
-/// A theme's preview: a miniature of the launcher in its own palette: the sidebar with one
-/// row selected, the Home banner with Play in the theme's fill, and the tabs below.
-fn preview(p: &Palette) -> Div {
-    let bar = |w: f32, color: u32| {
-        div()
-            .h(px(4.))
-            .w(px(w))
-            .flex_none()
-            .rounded(crate::tokens::r(crate::tokens::R_BAR))
-            .bg(rgb(color))
-    };
-    // A sidebar row: the selected one sits on the selection colour.
-    let side = |on: bool| {
-        div()
-            .h(px(10.))
-            .w_full()
-            .px(px(4.))
-            .flex()
-            .items_center()
-            .rounded(crate::tokens::r(crate::tokens::R_BAR))
-            .when(on, |d| d.bg(rgb(p.chrome_raised)))
-            .child(bar(
-                if on { 14. } else { 12. },
-                if on { p.chrome_text } else { p.chrome_muted },
-            ))
-    };
-    div()
-        .h(px(92.))
-        .bg(rgb(p.background))
-        .flex()
-        .child(
-            div()
-                .w(px(34.))
-                .h_full()
-                .flex_none()
-                .bg(rgb(p.chrome))
-                .border_r_1()
-                .border_color(rgb(p.chrome_line))
-                .p(px(4.))
-                .flex()
-                .flex_col()
-                .gap(px(3.))
-                .child(side(true))
-                .child(side(false))
-                .child(side(false)),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .h_full()
-                .p(px(8.))
-                .flex()
-                .flex_col()
-                .gap(px(6.))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .rounded(crate::tokens::r(crate::tokens::R_SMALL))
-                        .bg(rgb(p.card_color))
-                        .border_1()
-                        .border_color(rgb(p.divider))
-                        .p(px(6.))
-                        .flex()
-                        .flex_col()
-                        .justify_between()
-                        .child(bar(26., p.text))
-                        .child(
-                            div().flex().child(
-                                div()
-                                    .w(px(24.))
-                                    .h(px(10.))
-                                    .rounded(crate::tokens::r(crate::tokens::R_BAR))
-                                    .border_1()
-                                    .border_color(p.input_edge())
-                                    .bg(p.play_gradient()),
-                            ),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .gap(px(6.))
-                        .child(bar(14., p.accent))
-                        .child(bar(14., p.muted))
-                        .child(bar(14., p.muted)),
-                ),
-        )
-}
+use sunrise_launcher::themes;
 
 impl Launcher {
     pub(in crate::settings) fn settings_appearance(
@@ -127,106 +15,44 @@ impl Launcher {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        self.appearance_choices();
         let missing = appearance::missing(&self.settings);
-        let selected = match &self.settings.theme {
-            // A missing theme is still the choice: nothing else is ticked in its place.
-            Some(id) if missing => id.clone(),
-            _ => appearance::effective_id(&self.settings),
-        };
-        // As many columns as fit at a card's least width, and the cards share the row between
-        // them: no strip of empty space on the right at any width. The row's width is worked out
-        // from the window (a measured width only exists after the first frame, which drew one
-        // column), and the measured one takes over once there is one.
-        let grid = THEME_GRID.with(|g| g.clone());
-        let measured = f32::from(grid.bounds().size.width);
-        let width = if measured > 0. {
-            measured
-        } else {
-            self.settings_pane_width()
-        };
-        let columns = theme_columns(width);
-        let mut cards = div()
-            .id("alt-theme-grid")
-            .track_scroll(&grid)
-            .grid()
-            .grid_cols(columns)
-            .gap(px(GAP));
-        let choices = self
-            .ui
-            .settings
-            .appearance
-            .choices
-            .as_deref()
-            .unwrap_or_default();
-        for (n, choice) in choices.iter().enumerate() {
-            let on = choice.id == selected;
-            let id = choice.id.clone();
-            cards = cards.child(
-                div()
-                    .id(ElementId::named_usize("alt-theme", n))
-                    .tab_index(0)
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .rounded(crate::tokens::r(crate::tokens::R_CARD))
-                    .overflow_hidden()
-                    .border_1()
-                    .border_color(rgb(if on {
-                        palette().text
-                    } else {
-                        palette().divider
-                    }))
-                    .bg(rgb(palette().card_color))
-                    .cursor_pointer()
-                    .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
-                    .seen()
-                    .child(preview(&choice.palette))
-                    .child(
-                        div()
-                            .px(px(10.))
-                            .py(px(8.))
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .child(
-                                        div()
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_size(px(tokens::LABEL))
-                                            .truncate()
-                                            .child(choice.name.clone()),
-                                    )
-                                    // Chosen is said in words and by the tick, not by colour
-                                    // alone.
-                                    .child(if on {
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(4.))
-                                            .text_size(px(tokens::SMALL))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child(blocks::icon(
-                                                "check",
-                                                13.,
-                                                rgb(palette().text).into(),
-                                            ))
-                                            .child(tr("Selected"))
-                                    } else {
-                                        hint(choice.about.clone()).truncate()
-                                    }),
-                            ),
-                    )
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        this.appearance_change(|s| appearance::select_theme(s, &id), window);
-                        cx.notify();
-                    })),
-            );
-        }
-        // A folder that isn't a theme is listed with why, and can't be chosen.
+        let mut rows = vec![
+            self.look_row(cx),
+            self.colours_row(window, cx),
+            self.library_row(window, cx),
+        ];
+        rows.extend(self.unusable_themes());
+        rows.push(self.folder_row(cx));
+        rows.push(self.background_row(cx));
+        rows.push(self.scenery_row(cx));
+        rows.push(self.reduced_graphics_row(cx));
+        rows.push(self.header_row(cx));
+        rows.push(self.worlds_row(cx));
+        rows.push(self.corners_row(cx));
+        rows.push(self.cat_row(cx));
+        let state = &self.ui.settings.appearance;
+        let said = state
+            .error
+            .clone()
+            .map(|t| banner(Tone::Danger, t, None))
+            .or_else(|| state.note.clone().map(hint));
+        let gone = missing.then(|| {
+            banner(Tone::Danger, trf(
+                "The chosen theme, {id}, can't be read. Dawn is shown until it is repaired: fix its file, then press Reload.",
+                &[("id", self.settings.theme.as_deref().unwrap_or_default())],
+            ), None)
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .children(gone)
+            .child(group(rows))
+            .children(said)
+    }
+
+    /// The folders in the themes folder that aren't themes, each with why.
+    fn unusable_themes(&self) -> Option<Div> {
         let bad: Vec<Div> = theme_files::loaded()
             .iter()
             .filter_map(|entry| match entry {
@@ -258,37 +84,12 @@ impl Launcher {
                 Entry::Good(_) => None,
             })
             .collect();
-        let state = &self.ui.settings.appearance;
-        let said = state
-            .error
-            .clone()
-            .map(|t| banner(Tone::Danger, t, None))
-            .or_else(|| state.note.clone().map(hint));
-        let gone = missing.then(|| {
-            banner(Tone::Danger, trf(
-                "The chosen theme, {id}, can't be read. Dawn is shown until it is repaired: fix its file, then press Reload.",
-                &[("id", self.settings.theme.as_deref().unwrap_or_default())],
-            ), None)
-        });
-        let theme = stacked(
-            tr("Theme"),
-            tr("Colours for the whole launcher and the scene in the Home banner. Play uses white text in every theme."),
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(12.))
-                .children(gone)
-                .child(cards),
-        );
-        let mut rows = vec![theme];
-        if !bad.is_empty() {
-            rows.push(div().flex().flex_col().gap(px(10.)).children(bad));
-        }
-        rows.push(self.accent_row(missing, window, cx));
-        rows.push(self.background_row(cx));
-        rows.push(self.scenery_row(cx));
+        (!bad.is_empty()).then(|| div().flex().flex_col().gap(px(10.)).children(bad))
+    }
+
+    fn reduced_graphics_row(&mut self, cx: &mut Context<Self>) -> Div {
         let reduced = self.settings.reduced_graphics();
-        rows.push(row(
+        row(
             tr("Reduced graphics"),
             tr("Keeps the Home banner's scene and the cat still. Also reduces motion in the launcher."),
             div().child(
@@ -306,7 +107,11 @@ impl Launcher {
                         cx.notify();
                     })),
             ),
-        ));
+        )
+    }
+
+    /// Whether Home lists its worlds as rows or as tiles.
+    fn worlds_row(&mut self, cx: &mut Context<Self>) -> Div {
         let layout = self.settings.world_layout;
         let layouts: Vec<(backend::WorldLayout, SharedString)> = [
             (backend::WorldLayout::Rows, crate::i18n::tr_key("Rows")),
@@ -327,7 +132,7 @@ impl Launcher {
                 backend::WorldLayout::Tiles => 1,
             },
         );
-        rows.push(row_with(tr("Worlds on Home"), Some(about), {
+        row_with(tr("Worlds on Home"), Some(about), {
             let state = &mut self.ui.settings.appearance;
             let focus = state
                 .worlds_focus
@@ -353,11 +158,14 @@ impl Launcher {
                 .track_focus(&focus)
                 .children(asked),
             )
-        }));
-        rows.push(
-            self.wide_row(
+        })
+    }
+
+    /// The themes folder: opening it, and reading it again.
+    fn folder_row(&mut self, cx: &mut Context<Self>) -> Div {
+        self.wide_row(
                 tr("Your themes"),
-                tr("A theme is a folder with a theme.toml: up to six colours and one picture. Reload reads the folder again."),
+                tr("A theme is a folder with a theme.toml: up to nine colours and one picture. Reload reads the folder again."),
                 div()
                     .child(
                         secondary("alt-themes-folder", tr("Open themes folder")).on_click(
@@ -391,11 +199,12 @@ impl Launcher {
                             cx.notify();
                         },
                     ))),
-            ),
-        );
-        rows.push(self.corners_row(cx));
+            )
+    }
+
+    fn cat_row(&mut self, cx: &mut Context<Self>) -> Div {
         let cat = self.settings.show_cat();
-        rows.push(row(
+        row(
             tr("Show the cat"),
             tr("It visits Home now and then. It stays away while motion is reduced."),
             // On, the switch runs from the pointer (a keyboard still turns it off).
@@ -413,148 +222,6 @@ impl Launcher {
                     },
                 )),
             ),
-        ));
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(10.))
-            .child(group(rows))
-            .children(said)
-    }
-
-    /// The accent: the theme's own colour and the named ones to pick from, and one field that
-    /// takes any name, hue or `#rrggbb`. What is typed is taken on Enter or when the field is
-    /// left; Escape leaves the accent as it was.
-    fn accent_row(&mut self, missing: bool, window: &Window, cx: &mut Context<Self>) -> Div {
-        let state = &mut self.ui.settings.appearance;
-        let focus = state
-            .accent_focus
-            .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
-            .clone();
-        let focused = focus.is_focused(window);
-        let left = std::mem::replace(&mut state.accent_editing, focused) && !focused;
-        let shown = appearance::accent(&self.settings);
-        let typed = state.accent.text().trim().to_string();
-        if left && !missing && !typed.is_empty() && typed != shown.name() {
-            self.appearance_change(|s| appearance::type_accent(s, &typed), window);
-            // This frame has started in the old colours.
-            cx.notify();
-        }
-        let shown = appearance::accent(&self.settings);
-        let state = &mut self.ui.settings.appearance;
-        if !focused {
-            state.accent.set(shown.name());
-        }
-        let own = themes::own_accent(self.settings.theme.as_deref());
-        let edit: fn(&mut Self) -> &mut line_edit::LineEdit =
-            |this| &mut this.ui.settings.appearance.accent;
-        let field_theme = crate::mods::field_theme(self.theme);
-        let to_focus = focus.clone();
-        let field = crate::widgets::field::field_box(focused, false)
-            .id("alt-accent")
-            .track_focus(&focus)
-            .seen()
-            .w(px(150.))
-            .h(px(tokens::FIELD))
-            .px(px(12.))
-            .font_family(theme::MONO)
-            .text_size(px(tokens::LABEL))
-            .text_color(rgb(palette().text))
-            .cursor_text()
-            .child(line_edit::content(
-                &self.ui.settings.appearance.accent,
-                &field_theme,
-                focused,
-                false,
-                false,
-                "teal, 176 or #2563eb",
-            ))
-            .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| {
-                window.focus(&to_focus, cx);
-                cx.notify();
-            }))
-            .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, window, cx| {
-                match line_edit::handle(edit(this), ev, cx) {
-                    line_edit::Key::Pass => return,
-                    // Enter takes what is typed; Escape leaves the accent as it was.
-                    line_edit::Key::Enter => {
-                        let typed = edit(this).text().to_string();
-                        this.appearance_change(|s| appearance::type_accent(s, &typed), window);
-                    }
-                    line_edit::Key::Escape => {
-                        let shown = appearance::accent(&this.settings).name();
-                        edit(this).set(shown);
-                        window.blur(cx);
-                    }
-                    _ => {}
-                }
-                cx.stop_propagation();
-                cx.notify();
-            }));
-        let field = line_edit::mouse(field, cx, edit);
-        // The theme's own colour first, then each named accent the theme doesn't already wear.
-        let picks = std::iter::once((own, true)).chain(
-            Accent::ALL
-                .into_iter()
-                .filter(|a| *a != own)
-                .map(|a| (a, false)),
-        );
-        let mut swatches = div().flex().flex_wrap().items_center().gap(px(8.));
-        for (i, (accent, theirs)) in picks.enumerate() {
-            let on = accent == shown;
-            let tip = if theirs {
-                tr("Theme accent")
-            } else {
-                Accent::ALL
-                    .iter()
-                    .position(|a| *a == accent)
-                    .map_or("", |i| tr(ACCENT_NAMES[i]))
-            };
-            let swatch = div()
-                .id(("alt-accent-swatch", i))
-                .flex_none()
-                .size(px(SWATCH))
-                .rounded_full()
-                .p(px(3.))
-                .border_2()
-                .border_color(if on {
-                    rgb(palette().text).into()
-                } else {
-                    gpui::transparent_black()
-                })
-                .reach_edge()
-                .tooltip(crate::glass_ui::tip(tip))
-                .child(div().size_full().rounded_full().bg(rgb(accent.rgb())));
-            swatches = swatches.child(if missing || on {
-                swatch.cursor_default()
-            } else {
-                swatch
-                    .cursor_pointer()
-                    .hover(|s| s.border_color(rgb(palette().muted)))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        if theirs {
-                            this.appearance_change(appearance::reset_accent, window);
-                        } else {
-                            this.appearance_change(|s| appearance::set_accent(s, accent), window);
-                        }
-                        cx.notify();
-                    }))
-            });
-        }
-        self.wide_row(
-            tr("Accent"),
-            tr("Pick a colour, or type a colour name, a hue in degrees or #rrggbb. Play darkens a pale accent just enough for its white label."),
-            div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(px(16.))
-                .child(swatches.when(missing, |d| d.opacity(0.4)))
-                .child(if missing {
-                    div().opacity(0.4).child(field)
-                } else {
-                    div().child(field)
-                }),
         )
     }
 

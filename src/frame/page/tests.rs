@@ -31,7 +31,6 @@ fn history_keeps_only_the_latest_pages() {
 #[test]
 fn only_lists_are_an_origin_for_details() {
     assert_eq!(Page::Home.details_origin(), Page::Home);
-    assert_eq!(Page::Installed.details_origin(), Page::Installed);
     assert_eq!(Page::Packs.details_origin(), Page::Packs);
     assert_eq!(Page::Settings.details_origin(), Page::Discover);
     assert!(Page::Project.is_details() && Page::PackProject.is_details());

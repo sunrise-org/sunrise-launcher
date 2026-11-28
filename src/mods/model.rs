@@ -17,8 +17,6 @@ pub(super) enum Make {
 }
 
 impl Make {
-    pub(super) const ALL: [Make; 2] = [Make::Native, Make::Content];
-
     pub(super) fn label(self) -> &'static str {
         match self {
             Make::Native => tr("Native"),
@@ -278,8 +276,6 @@ pub(super) struct Cells {
 pub(super) mod column {
     pub(in super::super) const VERSION: f32 = 72.;
     pub(in super::super) const STATUS: f32 = 176.;
-    pub(in super::super) const ACTION: f32 = 96.;
-    pub(in super::super) const SWITCH: f32 = 44.;
 }
 
 /// `row`'s cells. `error` is why its last update failed. The status is the first thing that
@@ -451,25 +447,6 @@ impl Row {
             .or_else(|| self.entry.as_ref().map(|e| e.file.as_str()))
     }
 
-    pub(super) fn source_label(&self) -> &str {
-        use sunrise_launcher::github_mods::AddedFrom;
-        let Some(local) = &self.local else {
-            return tr("Sunrise mods");
-        };
-        let Some(origin) = &local.github else {
-            return tr("Local file");
-        };
-        match &origin.added_from {
-            Some(AddedFrom::Collection { name, .. }) => name,
-            Some(AddedFrom::Discover) => tr("Sunrise mods"),
-            Some(AddedFrom::Github) => tr("From GitHub"),
-            Some(AddedFrom::LocalFolder { .. }) => tr("From source"),
-            // Only the paste flow installed GitHub packages without a source tracker.
-            None if origin.source.is_none() => tr("From GitHub"),
-            None => tr("Source"),
-        }
-    }
-
     /// Badge for mods added outside the Sunrise registry: "From source" (GitHub link or local
     /// repository folder) or "Local" (a local `.smod` file).
     pub(crate) fn manual_badge(&self) -> Option<ManualBadge> {
@@ -479,12 +456,6 @@ impl Row {
             Some(origin) if origin.is_manual() => Some(ManualBadge::FromSource),
             Some(_) => None,
         }
-    }
-
-    /// Whether this mod was added manually (via Add from source or as a local `.smod`) and must
-    /// not receive automatic or Update all updates.
-    pub(super) fn is_manual(&self) -> bool {
-        self.manual_badge().is_some()
     }
 
     /// The native mod that serves this content package's code, when it names one.
@@ -723,28 +694,10 @@ impl Ord for Group {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Show {
-    All,
-    On,
-    Off,
-}
-
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct RowFilter {
     pub(super) text: String,
-    pub(super) show: Show,
     pub(super) makes: BTreeSet<Make>,
-}
-
-impl Default for RowFilter {
-    fn default() -> Self {
-        Self {
-            text: String::new(),
-            show: Show::All,
-            makes: BTreeSet::new(),
-        }
-    }
 }
 
 /// Installed uses collection order first, keeping the status and name order within each group.
@@ -756,78 +709,6 @@ pub(super) fn group_installed(rows: &mut [Row]) {
         (None, Some(_)) => std::cmp::Ordering::Greater,
         (None, None) => std::cmp::Ordering::Equal,
     });
-}
-
-pub(super) fn installed_groups<'a>(
-    rows: &'a [Row],
-    visible: &'a [usize],
-) -> impl Iterator<Item = (Option<&'a str>, &'a [usize])> {
-    let collection = |i: usize| rows[i].collection.as_ref();
-    visible
-        .chunk_by(move |a, b| collection(*a).map(|c| &c.id) == collection(*b).map(|c| &c.id))
-        .map(move |group| (collection(group[0]).map(|c| c.name.as_str()), group))
-}
-
-pub(super) struct FilterCounts {
-    pub(super) shows: Vec<(Show, usize)>,
-    pub(super) kinds: Vec<(Make, usize)>,
-}
-
-/// Omit empty filters and their controls; a filter that disappears cannot remain selected.
-pub(super) fn counted_filters(rows: &[Row], filter: &mut RowFilter) -> FilterCounts {
-    let on = rows.iter().filter(|row| row.on).count();
-    let shows: Vec<_> = [
-        (Show::All, rows.len()),
-        (Show::On, on),
-        (Show::Off, rows.len() - on),
-    ]
-    .into_iter()
-    .filter(|(_, count)| *count != 0)
-    .collect();
-    if !shows.iter().any(|(show, _)| *show == filter.show) {
-        filter.show = Show::All;
-    }
-    let kinds: Vec<_> = Make::ALL
-        .into_iter()
-        .map(|kind| {
-            (
-                kind,
-                rows.iter().filter(|row| row.make == Some(kind)).count(),
-            )
-        })
-        .filter(|(_, count)| *count != 0)
-        .collect();
-    filter
-        .makes
-        .retain(|make| kinds.iter().any(|(kind, _)| kind == make));
-    FilterCounts { shows, kinds }
-}
-
-pub(super) fn visible_count(rows: &[Row], visible: &[usize]) -> String {
-    trf(
-        "{shown} of {total} mods shown",
-        &[
-            ("shown", &visible.len().to_string()),
-            ("total", &rows.len().to_string()),
-        ],
-    )
-}
-
-pub(super) fn visible(rows: &[Row], f: &RowFilter) -> Vec<usize> {
-    let words: Vec<String> = f.text.split_whitespace().map(str::to_lowercase).collect();
-    (0..rows.len())
-        .filter(|&i| {
-            let r = &rows[i];
-            let hay = format!("{} {} {}", r.id, r.title, r.authors).to_lowercase();
-            words.iter().all(|w| hay.contains(w.as_str()))
-                && match f.show {
-                    Show::All => true,
-                    Show::On => r.on,
-                    Show::Off => !r.on,
-                }
-                && (f.makes.is_empty() || r.make.is_some_and(|m| f.makes.contains(&m)))
-        })
-        .collect()
 }
 
 // ---------------------------------------------------------------- batches

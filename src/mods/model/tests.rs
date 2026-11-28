@@ -55,84 +55,7 @@ fn entry(id: &str, version: &str, native: bool, sha: &str) -> Entry {
 }
 
 #[test]
-fn installed_source_label_distinguishes_catalogue_receipts_and_direct_github() {
-    use sunrise_launcher::github_mods::{AddedFrom, Origin, SourceOrigin, SourceTrack};
-    let idx = index(vec![], vec![]);
-    let none = HashSet::new();
-    let github = Origin {
-        id: "lantern".into(),
-        version: "1.0.0".into(),
-        owner: "Workshop".into(),
-        repo: "Lantern".into(),
-        commit: "1".repeat(40),
-        sha256: A.into(),
-        tag: None,
-        asset: None,
-        source: None,
-        added_from: None,
-    };
-    let locals = [Local {
-        id: github.id.clone(),
-        file: "sunrise-native-mods/lantern.smod".into(),
-        name: "Lantern".into(),
-        version: github.version.clone(),
-        github: Some(github),
-        native: true,
-        served_by: None,
-        unreadable: false,
-    }];
-    let mut row = rows(
-        &[],
-        &World {
-            local: &locals,
-            ..world(&idx, &none, &none)
-        },
-    )
-    .remove(0);
-    assert_eq!(row.source_label(), tr("From GitHub"));
-    row.collection = Some(CollectionGroup {
-        id: "collection-a".into(),
-        name: "Collection A".into(),
-    });
-    let origin = row.local.as_mut().unwrap().github.as_mut().unwrap();
-    origin.source = Some(SourceOrigin {
-        repo_id: 42,
-        manifest: "sunrise-mod.toml".into(),
-        track: SourceTrack::Branch("main".into()),
-        published_at: None,
-    });
-    assert_eq!(row.source_label(), tr("Source"));
-    for (added_from, expected) in [
-        (AddedFrom::Github, tr("From GitHub")),
-        (AddedFrom::Discover, tr("Sunrise mods")),
-        (
-            AddedFrom::Collection {
-                id: "collection-b".into(),
-                name: "Collection B".into(),
-            },
-            "Collection B",
-        ),
-    ] {
-        row.local
-            .as_mut()
-            .unwrap()
-            .github
-            .as_mut()
-            .unwrap()
-            .added_from = Some(added_from);
-        assert_eq!(row.source_label(), expected);
-    }
-    row.local.as_mut().unwrap().github = None;
-    assert_eq!(row.source_label(), tr("Local file"));
-    let registry = rows(
-        &[entry("registry", "1.0.0", true, A)],
-        &world(&idx, &none, &none),
-    );
-    assert_eq!(registry[0].source_label(), tr("Sunrise mods"));
-}
-
-#[test]
-fn installed_sections_keep_collection_members_together_and_leave_loose_rows_untitled() {
+fn installed_sections_keep_collection_members_together() {
     let idx = index(vec![], vec![]);
     let none = HashSet::new();
     let entries = [
@@ -153,43 +76,10 @@ fn installed_sections_keep_collection_members_together_and_leave_loose_rows_unti
     rows[3].collection = collection("zoo");
     rows[2].need = Some(Need::Build);
     group_installed(&mut rows);
-    let visible = visible(&rows, &RowFilter::default());
-    assert_eq!(
-        installed_groups(&rows, &visible).collect::<Vec<_>>(),
-        [
-            (Some("Wildlife"), &[0, 1][..]),
-            (Some("Wildlife"), &[2][..]),
-            (None, &[3][..])
-        ]
-    );
     assert_eq!(
         rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
         ["cat", "ant", "dog", "bird"]
     );
-    assert_eq!(
-        installed_groups(&rows, &[3]).collect::<Vec<_>>(),
-        [(None, &[3][..])]
-    );
-}
-
-#[test]
-fn installed_filters_hide_zero_counts_and_drop_a_hidden_selection() {
-    let idx = index(vec![], vec![]);
-    let on = HashSet::from(["lantern".into()]);
-    let rows = rows(
-        &[entry("lantern", "1.0.0", true, A)],
-        &world(&idx, &on, &HashSet::new()),
-    );
-    let mut filter = RowFilter {
-        show: Show::Off,
-        makes: BTreeSet::from([Make::Content]),
-        ..RowFilter::default()
-    };
-    let counts = counted_filters(&rows, &mut filter);
-    assert_eq!(counts.shows, [(Show::All, 1), (Show::On, 1)]);
-    assert_eq!(counts.kinds, [(Make::Native, 1)]);
-    assert_eq!(filter, RowFilter::default());
-    assert_eq!(visible(&rows, &filter), [0]);
 }
 
 const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -384,49 +274,6 @@ fn only_registry_mods_are_rows_packs_are_left_alone() {
 }
 
 #[test]
-fn filters_narrow_the_shown_rows_and_never_reorder_them() {
-    let (idx, entries) = pack();
-    let on: HashSet<String> = ["quiet", "zoom"].map(String::from).into();
-    let none = HashSet::new();
-    let r = rows(&entries, &world(&idx, &on, &none));
-    let ids = |f: &RowFilter| {
-        visible(&r, f)
-            .into_iter()
-            .map(|i| r[i].id.clone())
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(ids(&RowFilter::default()), ["bad", "deep", "zoom", "quiet"]);
-    assert_eq!(
-        ids(&RowFilter {
-            show: Show::On,
-            ..Default::default()
-        }),
-        ["zoom", "quiet"]
-    );
-    assert_eq!(
-        ids(&RowFilter {
-            show: Show::Off,
-            ..Default::default()
-        }),
-        ["bad", "deep"]
-    );
-    assert_eq!(
-        ids(&RowFilter {
-            makes: [Make::Native].into(),
-            ..Default::default()
-        }),
-        ["deep"]
-    );
-    assert_eq!(
-        ids(&RowFilter {
-            text: "QUI".into(),
-            ..Default::default()
-        }),
-        ["quiet"]
-    );
-}
-
-#[test]
 fn update_all_includes_off_and_native_rows_but_not_a_player_pin() {
     let (idx, entries) = pack();
     let none = HashSet::new();
@@ -513,20 +360,9 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
     let content = r.iter().find(|r| r.id == "by_hand").expect("listed");
     assert_eq!((content.title.as_str(), content.on), ("By Hand", true));
     assert_eq!((content.make, &content.need), (Some(Make::Content), &None));
-    let mut filter = RowFilter {
-        makes: BTreeSet::from([Make::Content]),
-        ..RowFilter::default()
-    };
-    let counts = counted_filters(&r, &mut filter);
-    let contents = visible(&r, &filter);
-    assert!(contents.iter().any(|&i| r[i].id == "by_hand"));
-    assert!(contents.iter().all(|&i| r[i].make == Some(Make::Content)));
-    assert!(counts.kinds.contains(&(Make::Content, contents.len())));
     assert!(content.local.is_some() && content.entry.is_none());
     assert!(!bulk_updatable(mine));
-    let shown = visible(&r, &RowFilter::default());
-    assert_eq!(shown.len(), 6, "four managed mods and two hand-added mods");
-    assert_eq!(visible_count(&r, &shown), "6 of 6 mods shown");
+    assert_eq!(r.len(), 6, "four managed mods and two hand-added mods");
 }
 
 #[test]
@@ -919,25 +755,20 @@ fn manual_mods_get_badges_and_never_enter_bulk_updates() {
         find("github_mod").manual_badge(),
         Some(ManualBadge::FromSource)
     );
-    assert!(find("github_mod").is_manual());
     assert!(!bulk_updatable(find("github_mod")));
 
     assert_eq!(
         find("folder_mod").manual_badge(),
         Some(ManualBadge::FromSource)
     );
-    assert!(find("folder_mod").is_manual());
     assert!(!bulk_updatable(find("folder_mod")));
 
     assert_eq!(find("local_smod").manual_badge(), Some(ManualBadge::Local));
-    assert!(find("local_smod").is_manual());
     assert!(!bulk_updatable(find("local_smod")));
 
     assert_eq!(find("discover_src").manual_badge(), None);
-    assert!(!find("discover_src").is_manual());
 
     assert_eq!(find("zoom").manual_badge(), None);
-    assert!(!find("zoom").is_manual());
     assert!(bulk_updatable(find("zoom")));
 }
 

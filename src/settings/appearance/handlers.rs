@@ -2,7 +2,6 @@
 //! folder again.
 use super::state::Look;
 use super::*;
-use sunrise_launcher::appearance;
 use sunrise_launcher::theme_files::{self, Entry};
 
 impl Launcher {
@@ -40,12 +39,9 @@ impl Launcher {
 
     /// The look changed, by a choice or by Reload: what was worked out from the old one is
     /// worked out again.
-    fn appearance_changed(&mut self, window: &Window) {
+    pub(super) fn appearance_changed(&mut self, window: &Window) {
         self.theme = self.settings_theme(window);
-        let state = &mut self.ui.settings.appearance;
-        state.choices = None;
-        state.behind = None;
-        state.accent.set(appearance::accent(&self.settings).name());
+        self.ui.settings.appearance.behind = None;
     }
 
     /// Reads the themes folder again: a repaired theme is back, an edited one is as edited.

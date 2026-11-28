@@ -25,16 +25,19 @@ A copy to start from is in [`themes/tidepool`](themes/tidepool/theme.toml).
 | `version` | Required. The number `1`. |
 | `name` | Required. 1 to 64 characters of plain text on one line. |
 | `background` | Optional. The name of one PNG, JPEG or still WebP picture in the same folder, shown in the Home banner. Without it, the pages show Dawn's scene. |
-| `[palette]` | Required, with at least one of the six colours below. A colour you leave out is Dawn's. |
+| `look` | Optional. `"dark"` (the default) or `"light"`: whether the scene and glass around your colours are Sunrise's night or its day. |
+| `[palette]` | Required, with at least one of the colours below. A colour you leave out is Dawn's. |
 | `palette.background` | The page behind the scenery. |
 | `palette.card` | The tint of the panels on a page. |
 | `palette.chrome` | The tint of the sidebar and the top bar. |
 | `palette.text`, `palette.muted` | Text, and quieter text. |
 | `palette.accent` | The accent: Play's fill, marks and progress. |
+| `palette.line` | Dividers and outlines. Left out, the text's colour. |
+| `palette.success`, `palette.danger` | The colours of done and of wrong. |
 
 A colour is written `"#RRGGBB"`.
 
-What a theme can't set: opacity, blur, fonts, sizes, corners, or the label on Play. Play is a solid fill with a white label in every theme; under a pale accent only Play's fill is darkened until white reads on it. Hover, selection, field, edge, focus and status colours are worked out from your six, and each ink is adjusted if it would not read on its surface.
+What a theme can't set: opacity, blur, fonts, sizes, corners, or the label on Play. Play is a solid fill with a white label in every theme; under a pale accent only Play's fill is darkened until white reads on it. Hover, selection, field, edge, focus and status colours are worked out from your colours, and each ink is adjusted if it would not read on its surface.
 
 ## When a theme is refused
 
@@ -65,3 +68,7 @@ sunrise-launcher settings reduced-graphics on    # keep the background, reduce e
 
 **Reduced graphics** in Settings › Appearance leaves your chosen background in place. The
 separate **Show background** switch controls whether you see it.
+
+## Sharing themes
+
+Settings › Appearance edits these same colours, keeps the themes you save in this folder, and turns any of them into a share code (`SUN1-…`) that another player pastes under Import. A code holds only names and colours, never a picture.

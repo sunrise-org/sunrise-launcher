@@ -259,20 +259,6 @@ impl Launcher {
         cx.notify();
     }
 
-    /// The ids of the rows Installed shows now (its filters and search applied) that can be
-    /// ticked.
-    fn installed_shown_ids(&self) -> Vec<String> {
-        let (rows, _) = self.labeled_installed_rows();
-        let visible = model::visible(&rows, &self.mods_state.row_filter);
-        visible
-            .iter()
-            .filter_map(|&i| {
-                let row = &rows[i];
-                (row.archive_file().is_some() && row.selectable_archive()).then(|| row.id.clone())
-            })
-            .collect()
-    }
-
     /// The files of the packs the shelf shows now (its search applied).
     pub(crate) fn shown_pack_files(&self, kind: PackKind) -> Vec<String> {
         let query = self.mods_state.have.text().trim().to_lowercase();
@@ -328,11 +314,6 @@ impl Launcher {
 
     fn untick_all(&mut self) -> bool {
         match self.ui.page {
-            Page::Installed if !self.mods_state.selection.is_empty() => {
-                self.mods_state.selection.clear();
-                self.mods_state.anchor = None;
-                true
-            }
             Page::Packs if !self.mods_state.pack_selection.is_empty() => {
                 self.mods_state.pack_selection.clear();
                 true
@@ -357,15 +338,6 @@ impl Launcher {
 
     fn tick_all(&mut self) -> bool {
         match self.ui.page {
-            Page::Installed => {
-                let ids = self.installed_shown_ids();
-                if ids.is_empty() {
-                    return false;
-                }
-                self.mods_state.selection = ids.into_iter().collect();
-                self.mods_state.anchor = None;
-                true
-            }
             Page::Packs => {
                 let Some(kind) = self.mods_state.shelf.kind() else {
                     return false;

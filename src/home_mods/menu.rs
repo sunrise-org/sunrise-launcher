@@ -6,7 +6,7 @@ use crate::home::tabs::{Flip, ItemAction, MenuEntry};
 use crate::mods::selection::PackOp;
 
 impl Launcher {
-    fn home_item(&self, packs: bool, key: &str) -> Option<Item> {
+    pub(super) fn home_item(&self, packs: bool, key: &str) -> Option<Item> {
         let snapshot = self.ui.home.mods.snapshot.as_ref()?;
         let list = if packs {
             &snapshot.tabs.resources
@@ -22,7 +22,7 @@ impl Launcher {
     }
 
     /// The folder of the selected profile.
-    fn home_item_home(&self) -> Option<PathBuf> {
+    pub(super) fn home_item_home(&self) -> Option<PathBuf> {
         self.selected_instance()
             .map(|instance| instance.home.clone())
     }
@@ -205,7 +205,7 @@ impl Launcher {
 
     /// Remove… on a pack: ticks it alone and asks once, so the selection bar offers "Confirm:
     /// remove 1", as it does for ticked packs.
-    fn home_pack_remove(&mut self, key: &str) {
+    pub(super) fn home_pack_remove(&mut self, key: &str) {
         let order = self.home_list_ids(true);
         let picks = self.home_pick(true);
         picks.clear();

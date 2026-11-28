@@ -11,7 +11,7 @@
 //! the Appearance page shows beside the folder's name. A file that fails is never rewritten,
 //! and never stops another theme from loading.
 use crate::i18n::{tr, trf};
-use crate::themes::DAWN_DARK;
+use crate::themes::{DAWN_DARK, DAWN_LIGHT};
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::Dir;
 use std::fs;
@@ -39,9 +39,21 @@ const DEVICES: [&str; 22] = [
     "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
     "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
 ];
-const ROLES: [&str; 6] = ["background", "card", "chrome", "text", "muted", "accent"];
+const ROLES: [&str; 9] = [
+    "background",
+    "card",
+    "chrome",
+    "text",
+    "muted",
+    "accent",
+    "line",
+    "success",
+    "danger",
+];
 
-/// The six colours of a theme file, each `0xRRGGBB`: the file's, else Dawn's.
+/// The nine colours of a theme file, each `0xRRGGBB`: the file's, else Dawn's (the lines, the
+/// text's own colour), and the look they sit on. Everything else the launcher paints is
+/// worked out from these.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Roles {
     pub background: u32,
@@ -50,6 +62,12 @@ pub struct Roles {
     pub text: u32,
     pub muted: u32,
     pub accent: u32,
+    /// Dividers and outlines.
+    pub line: u32,
+    pub success: u32,
+    pub danger: u32,
+    /// Whether the scene and the glass around the colours are Sunrise's day, not its night.
+    pub light: bool,
 }
 
 impl Roles {
@@ -60,6 +78,24 @@ impl Roles {
         text: DAWN_DARK.ink,
         muted: DAWN_DARK.muted,
         accent: DAWN_DARK.accent,
+        line: DAWN_DARK.ink,
+        success: DAWN_DARK.success,
+        danger: DAWN_DARK.danger,
+        light: false,
+    };
+
+    /// Sunrise's day: what the light look starts from.
+    pub const DAWN_LIGHT: Roles = Roles {
+        background: DAWN_LIGHT.page,
+        card: DAWN_LIGHT.card,
+        chrome: DAWN_LIGHT.side,
+        text: DAWN_LIGHT.ink,
+        muted: DAWN_LIGHT.muted,
+        accent: DAWN_LIGHT.accent,
+        line: DAWN_LIGHT.stroke,
+        success: DAWN_LIGHT.success,
+        danger: DAWN_LIGHT.danger,
+        light: true,
     };
 
     /// White or black: the end the inks are moved toward when they don't read as given.
@@ -74,7 +110,7 @@ impl Roles {
     /// The launcher fits each ink toward white or black until it reads, so a palette works
     /// unless even that end fails on one of its surfaces, hovered or not: that pair is the
     /// reason.
-    fn readable(&self) -> Result<(), Reason> {
+    pub fn readable(&self) -> Result<(), Reason> {
         let end = self.ink_end();
         for (name, surface) in [
             ("card", self.card),
@@ -93,23 +129,26 @@ impl Roles {
     }
 
     /// The colours as the launcher's palettes are made from them: Dawn's glass, scenery and
-    /// status colours around the file's six.
+    /// warning colour (its day's when `light`) around the file's nine.
     pub fn night(&self) -> Night {
         let end = self.ink_end();
+        let base = if self.light { DAWN_LIGHT } else { DAWN_DARK };
         Night {
             page: self.background,
             side: self.chrome,
             card: self.card,
             card_hi: over(end, 0.08, self.card),
-            stroke: self.text,
+            stroke: self.line,
             ink: self.text,
             ink_soft: self.text,
             muted: self.muted,
             accent: self.accent,
             accent_hi: self.accent,
             on_accent: 0xffffff,
+            success: self.success,
+            danger: self.danger,
             dark: end == 0xffffff,
-            ..DAWN_DARK
+            ..base
         }
     }
 }
@@ -405,7 +444,7 @@ fn picture_name_ok(name: &str) -> bool {
 }
 
 /// Characters that turn the text around them, which a name must not hide behind.
-fn turns_text(c: char) -> bool {
+pub(crate) fn turns_text(c: char) -> bool {
     matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200e}' | '\u{200f}' | '\u{061c}')
 }
 
@@ -426,7 +465,7 @@ pub fn parse(text: &str) -> Result<Parsed, Reason> {
         .map_err(|e: toml::de::Error| Reason::Toml(e.message().to_string()))?;
     if let Some(key) = table
         .keys()
-        .find(|k| !["version", "name", "background", "palette"].contains(&k.as_str()))
+        .find(|k| !["version", "name", "look", "background", "palette"].contains(&k.as_str()))
     {
         return Err(Reason::Unknown(key.clone()));
     }
@@ -446,6 +485,11 @@ pub fn parse(text: &str) -> Result<Parsed, Reason> {
     {
         return Err(Reason::Name);
     }
+    let light = match table.get("look").map(|v| v.as_str()) {
+        None | Some(Some("dark")) => false,
+        Some(Some("light")) => true,
+        Some(_) => return Err(Reason::NotString("look".into())),
+    };
     let picture = match table.get("background") {
         None => None,
         Some(value) => {
@@ -473,13 +517,19 @@ pub fn parse(text: &str) -> Result<Parsed, Reason> {
         Some(value) => colour(value, &format!("palette.{key}")),
         None => Ok(dawn),
     };
+    let ink = role("text", Roles::DAWN.text)?;
     let roles = Roles {
         background: role("background", Roles::DAWN.background)?,
         card: role("card", Roles::DAWN.card)?,
         chrome: role("chrome", Roles::DAWN.chrome)?,
-        text: role("text", Roles::DAWN.text)?,
+        text: ink,
         muted: role("muted", Roles::DAWN.muted)?,
         accent: role("accent", Roles::DAWN.accent)?,
+        // A file that says nothing of its lines gets the text's colour, as it always did.
+        line: role("line", ink)?,
+        success: role("success", Roles::DAWN.success)?,
+        danger: role("danger", Roles::DAWN.danger)?,
+        light,
     };
     roles.readable()?;
     Ok(Parsed {

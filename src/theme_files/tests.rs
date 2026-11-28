@@ -48,6 +48,9 @@ fn the_example_file_is_six_colours_and_a_name() {
             text: 0xf0f8f4,
             muted: 0xc3d7d2,
             accent: 0x8edbcb,
+            // Left out, the lines are the text's colour.
+            line: 0xf0f8f4,
+            ..Roles::DAWN
         }
     );
     // The published example is this file, with its picture line commented out.
@@ -548,4 +551,39 @@ fn a_folder_named_with_control_characters_reaches_a_terminal_as_text() {
     assert!(shown.contains("local:tidepool"), "the rest reads as before");
     // Line breaks in a message stay line breaks.
     assert_eq!(for_terminal("one\ntwo\ttab"), "one\ntwo\\u{9}tab");
+}
+
+#[test]
+fn lines_success_danger_and_the_look_are_read_and_default_sensibly() {
+    let full = parse(
+        "version = 1\nname = \"x\"\nlook = \"light\"\n[palette]\ntext = \"#111111\"\nline = \"#abcdef\"\nsuccess = \"#00aa00\"\ndanger = \"#cc0000\"\n",
+    )
+    .unwrap();
+    assert_eq!(full.roles.line, 0xabcdef);
+    assert_eq!(full.roles.success, 0x00aa00);
+    assert_eq!(full.roles.danger, 0xcc0000);
+    assert!(full.roles.light);
+    assert_eq!(full.roles.night().stroke, 0xabcdef);
+    assert_eq!(full.roles.night().danger, 0xcc0000);
+    // Said nothing of: the lines follow the text, the look is the night.
+    let plain = parse("version = 1\nname = \"x\"\n[palette]\ntext = \"#f0f8f4\"\n").unwrap();
+    assert_eq!(plain.roles.line, 0xf0f8f4);
+    assert!(!plain.roles.light);
+    assert_eq!(plain.roles.success, Roles::DAWN.success);
+    // The look is the day or the night, and only those.
+    let look = |v: &str| {
+        why(&format!(
+            "version = 1\nname = \"x\"\nlook = {v}\n[palette]\ntext = \"#111111\"\n"
+        ))
+    };
+    assert_eq!(look("\"dusk\""), Reason::NotString("look".into()));
+    assert_eq!(look("1"), Reason::NotString("look".into()));
+}
+
+#[test]
+fn sunrises_day_is_a_palette_that_reads() {
+    assert!(Roles::DAWN.readable().is_ok());
+    assert!(Roles::DAWN_LIGHT.readable().is_ok());
+    assert!(!Roles::DAWN_LIGHT.night().dark);
+    assert_eq!(Roles::DAWN_LIGHT.night().page, DAWN_LIGHT.page);
 }

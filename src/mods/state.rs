@@ -126,9 +126,6 @@ pub(crate) struct ModsState {
     /// The worlds' data packs and the world picker (`data_packs`).
     pub(super) data: data_packs::DataState,
     pub(super) selection: BTreeSet<String>,
-    /// The selection a Remove was asked for on Installed; pressing Remove again on the same
-    /// selection confirms it.
-    pub(super) remove_armed: Option<BTreeSet<String>>,
     /// The shelf's ticked packs, by file.
     pub(super) pack_selection: super::selection::Selection,
     /// A bulk change was started from Home, where no notice shows: say its result as a toast.
@@ -139,8 +136,8 @@ pub(crate) struct ModsState {
     pub(super) home_mod_labels: Option<HomeModLabels>,
     /// The mods folder's fingerprint, kept between frames (`native_status::Fingerprints`).
     pub(super) fingerprints: native_status::Fingerprints,
-    /// What the last frame of Installed drew, for the benchmark (`installed_bench_target`).
-    pub(super) drawn: Option<InstalledDrawn>,
+    /// "Check for updates" on Home's Mods tab, and the sheet of what it found.
+    pub(crate) update_check: super::updates::Check,
     pub(super) open: Option<Open>,
     pub(super) page_request: u64,
     pub(super) nightly: nightly::State,
@@ -161,13 +158,6 @@ pub(crate) struct ModsState {
     pub(crate) build: Option<build_run::Run>,
     /// Build was pressed and the build has not started yet.
     pub(crate) build_wanted: bool,
-    /// Whether a mod page's Details (who made it, how it is checked) is open.
-    /// Discover or Installed, as the player last chose on Mods and on Packs this session.
-    pub(super) last_mods: Option<Page>,
-    pub(super) last_packs: Option<Page>,
-    /// The row another page opened Installed at, and whether it was scrolled to yet.
-    pub(super) reveal: Option<search::Reveal>,
-    pub(super) revealed: Rc<std::cell::Cell<bool>>,
     /// A gallery picture enlarged over the window.
     pub(super) viewer: Option<viewer::Viewer>,
     /// What the refused-Add modal shows (`refused`).
@@ -217,14 +207,13 @@ impl Default for ModsState {
             packs: Default::default(),
             data: Default::default(),
             selection: BTreeSet::new(),
-            remove_armed: None,
             pack_selection: Default::default(),
             bulk_toast: false,
             anchor: None,
             snapshot: None,
             home_mod_labels: None,
             fingerprints: Default::default(),
-            drawn: None,
+            update_check: Default::default(),
             open: None,
             page_request: 0,
             nightly: Default::default(),
@@ -237,10 +226,6 @@ impl Default for ModsState {
             unfit_details: false,
             build: None,
             build_wanted: false,
-            last_mods: None,
-            last_packs: None,
-            reveal: None,
-            revealed: Default::default(),
             viewer: None,
             refused: None,
             release_builds: None,
@@ -312,7 +297,7 @@ impl Launcher {
             });
         }
         let snapshot = self.mods_state.snapshot.as_ref();
-        if matches!(self.ui.page, Page::Installed | Page::Project)
+        if matches!(self.ui.page, Page::Home | Page::Project)
             && snapshot.is_some_and(|s| {
                 s.rows.local.iter().any(|local| {
                     local

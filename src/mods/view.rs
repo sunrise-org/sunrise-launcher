@@ -17,10 +17,6 @@ impl Launcher {
             .find_focus
             .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
             .clone();
-        let have_focus = m
-            .have_focus
-            .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
-            .clone();
         match self.ui.page {
             Page::Project if self.mods_state.nightly.collection.is_some() => {
                 self.source_collection(cx)
@@ -42,8 +38,9 @@ impl Launcher {
                     if open.installed.is_some()
                         && (scope.profile != open.scope.profile || scope.home != open.scope.home)
                     {
-                        self.ui.page = Page::Installed;
-                        return self.installed(window, &have_focus, cx);
+                        // A profile change leaves an installed mod's page for Home.
+                        self.leave_details_to(Page::Home);
+                        return div().into_any_element();
                     }
                     if open.v2 {
                         self.mods_load_v2_page(open.id, open.from);
@@ -54,6 +51,11 @@ impl Launcher {
                         now.parent = open.parent;
                     }
                 }
+                let from = self
+                    .mods_state
+                    .open
+                    .as_ref()
+                    .map_or(Page::Home, |open| open.from);
                 let listing = self.mods_state.open.as_ref().and_then(|open| {
                     let Some(InstalledProject::Local(file)) = &open.installed else {
                         return None;
@@ -68,7 +70,7 @@ impl Launcher {
                         .as_ref()
                         .is_none_or(|open| open.source != source)
                     {
-                        self.inspect_nightly_from(source, false, Page::Installed);
+                        self.inspect_nightly_from(source, false, from, true);
                     }
                     self.nightly_project(cx)
                 } else {
@@ -76,7 +78,6 @@ impl Launcher {
                     self.project(cx)
                 }
             }
-            Page::Installed => self.installed(window, &have_focus, cx),
             Page::PackFind => self.pack_find(window, &find_focus, cx),
             Page::PackProject => self.pack_project(cx),
             _ => self.discover(window, &find_focus, cx),

@@ -51,7 +51,7 @@ pub(super) struct InstalledRows {
 #[derive(Debug)]
 pub(super) enum InstalledReadError {
     GameInstall(installed::GameInstallProblem),
-    Other(String),
+    Other,
 }
 
 pub(super) type InstalledRead = Result<Option<(InstalledRows, Option<String>)>, InstalledReadError>;
@@ -61,12 +61,12 @@ impl InstalledRows {
         use sunrise_launcher::managed_play::{try_display_active, DisplayActiveError};
 
         // Resolve the hard game journal before the advisory or the visible rows.
-        let _lock = sunrise_launcher::browser::lock_home(home)
-            .map_err(|error| InstalledReadError::Other(error.to_string()))?;
+        let _lock =
+            sunrise_launcher::browser::lock_home(home).map_err(|_| InstalledReadError::Other)?;
         installed::recover_game_install(home).map_err(InstalledReadError::GameInstall)?;
         let backup_notice = sunrise::auto::recover(home).err();
         let entries = installed::Installed::read(home)
-            .map_err(InstalledReadError::Other)?
+            .map_err(|_| InstalledReadError::Other)?
             .entries;
         // Display metadata only; catalogue status and action authority still use their own proofs.
         let mut archives: HashMap<_, _> = entries
@@ -96,7 +96,7 @@ impl InstalledRows {
         let active = match try_display_active(home) {
             Ok(active) => active,
             Err(DisplayActiveError::Publishing) => return Ok(None),
-            Err(DisplayActiveError::Read(error)) => return Err(InstalledReadError::Other(error)),
+            Err(DisplayActiveError::Read(_)) => return Err(InstalledReadError::Other),
         };
         let switch_held = active
             .iter()
@@ -131,46 +131,6 @@ impl InstalledRows {
             },
             backup_notice,
         )))
-    }
-}
-
-/// What a frame of Installed drew: its rows read afresh, or something the benchmark mustn't time.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum InstalledDrawn {
-    /// A read is under way: nothing, or the rows of the read before it.
-    Reading,
-    /// The read failed: its error, over any rows from before it.
-    Failed,
-    /// Read, and the profile has no mods to list.
-    Empty,
-    /// Read, and its rows drawn.
-    Rows,
-}
-
-impl InstalledDrawn {
-    pub(super) fn of(reading: bool, failed: bool, rows: usize) -> Self {
-        match (reading, failed, rows) {
-            (true, _, _) => Self::Reading,
-            (_, true, _) => Self::Failed,
-            (_, _, 0) => Self::Empty,
-            _ => Self::Rows,
-        }
-    }
-}
-
-/// The benchmark's view of Installed after a frame that drew it as `drawn`, with its list's
-/// offset and how far it scrolls (`laid`) when that frame drew the list. Only rows read afresh
-/// are timed; a read still under way is waited for.
-pub(super) fn installed_target(
-    drawn: Option<InstalledDrawn>,
-    laid: Option<(f32, f32)>,
-) -> crate::perf::Target {
-    use crate::perf::Target;
-    match (drawn, laid) {
-        (Some(InstalledDrawn::Failed), _) => Target::Failed,
-        (Some(InstalledDrawn::Empty), _) => Target::Empty,
-        (Some(InstalledDrawn::Rows), Some((offset, max))) => Target::Laid { offset, max },
-        _ => Target::LayingOut,
     }
 }
 
@@ -211,24 +171,6 @@ impl Snapshot {
 
     pub(super) fn ready(&self) -> bool {
         !self.reading && self.error.is_none()
-    }
-}
-
-pub(super) enum InstalledRefresh<'a> {
-    Reading,
-    Failed(&'a InstalledReadError, &'a Path),
-    Ready,
-}
-
-impl InstalledRefresh<'_> {
-    pub(super) fn of(snapshot: Option<&Snapshot>) -> InstalledRefresh<'_> {
-        match snapshot {
-            Some(snapshot) if !snapshot.reading => match &snapshot.error {
-                Some(error) => InstalledRefresh::Failed(error, &snapshot.home),
-                None => InstalledRefresh::Ready,
-            },
-            _ => InstalledRefresh::Reading,
-        }
     }
 }
 
@@ -309,24 +251,11 @@ impl Launcher {
             .clone()
     }
 
-    /// `sunrise-launcher benchmark` with `SUNRISE_LAUNCHER_BENCH_LIST=installed`: how the last
-    /// frame left the Installed list, and where a wheel step goes over it.
+    /// `SUNRISE_LAUNCHER_BENCH_LIST=installed` named the Mods › Installed list, which is gone:
+    /// the benchmark finds nothing to time.
     pub(crate) fn installed_bench_target(
         &self,
     ) -> (crate::perf::Target, gpui::Bounds<gpui::Pixels>) {
-        use crate::perf::Target;
-        if self.ui.page != Page::Installed {
-            return (Target::Closed, gpui::Bounds::default());
-        }
-        // What the last frame drew, with the list's handle from that same frame.
-        let handle = crate::frame::drawn_scroll("installed");
-        let laid = handle.as_ref().map(|handle| {
-            (
-                f32::from(handle.offset().y),
-                f32::from(handle.max_offset().y),
-            )
-        });
-        let bounds = handle.map_or_else(gpui::Bounds::default, |handle| handle.bounds());
-        (installed_target(self.mods_state.drawn, laid), bounds)
+        (crate::perf::Target::Closed, gpui::Bounds::default())
     }
 }

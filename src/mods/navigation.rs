@@ -51,6 +51,9 @@ impl Launcher {
         self.mods_show_v2_project(id);
     }
 
+    /// An installed mod's page, opened from Home: a registry mod's page with its installed
+    /// controls, or the installed row's own page for a local or from-source mod. Back returns
+    /// to the page it was opened from.
     pub(super) fn mods_show_installed_project(&mut self, row: &Row) {
         // A signed registry mod has the same page as in Discover, with its installed controls.
         if let Some(entry) = row.entry.as_ref().filter(|_| row.v2_installed()) {
@@ -69,9 +72,10 @@ impl Launcher {
                 InstalledProject::Registry,
             ),
         };
+        let from = self.ui.page.details_origin();
         self.ui.enter_details();
         self.ui.page = Page::Project;
-        self.mods_load_page(id, Page::Installed, Some(installed));
+        self.mods_load_page(id, from, Some(installed));
     }
 
     /// The page of a mod just removed from `home` has nothing left to show: go back to where it
@@ -133,10 +137,8 @@ impl Launcher {
     /// waiting for input. True when the page has something new to read; an unchanged folder asks
     /// for no frame.
     pub(crate) fn mods_check_due(&mut self, now: std::time::Instant) -> bool {
-        if !matches!(
-            self.ui.page,
-            Page::Installed | Page::Discover | Page::Project
-        ) || !self.mods_state.fingerprints.due(now)
+        if !matches!(self.ui.page, Page::Discover | Page::Project)
+            || !self.mods_state.fingerprints.due(now)
         {
             return false;
         }
@@ -148,12 +150,9 @@ impl Launcher {
             .is_some_and(|snapshot| snapshot.home == home && snapshot.key != key)
     }
 
-    /// The play bar's quiet line about them: Mods › Installed, where each says why.
+    /// The play bar's quiet line about them: Home's Mods tab, where each says why.
     pub(crate) fn show_installed_mods(&mut self) {
-        self.mods_state.drawn = None;
-        self.leave_section(false);
-        self.mods_refresh();
-        self.choose_view(Page::Installed);
+        self.show_home_tab(false);
     }
 
     /// Mods › Discover itself, whatever Mods last showed.
@@ -162,21 +161,10 @@ impl Launcher {
         self.choose_view(Page::Discover);
     }
 
-    /// The sidebar's Discover: Mods › Discover. Installed is reached from Home's Manage buttons
-    /// and Discover's own Installed button, not by being remembered here.
+    /// The sidebar's Discover: Mods › Discover.
     pub(crate) fn open_mods(&mut self) {
         self.leave_section(false);
-        self.mods_state.last_mods = Some(Page::Discover);
         self.ui.page = Page::Discover;
-    }
-
-    /// The Packs tab: where the player last was this session, else Installed.
-    pub(crate) fn open_packs(&mut self) {
-        self.leave_section(true);
-        self.ui.page = self.mods_state.last_packs.unwrap_or_else(|| {
-            self.load_packs_list(self.mods_home());
-            Page::Packs
-        });
     }
 
     /// Mods and Packs share their search fields: going from one to the other starts them empty.
@@ -185,10 +173,7 @@ impl Launcher {
             self.ui.page,
             Page::Packs | Page::PackFind | Page::PackProject
         );
-        let in_mods = matches!(
-            self.ui.page,
-            Page::Discover | Page::Installed | Page::Project
-        );
+        let in_mods = matches!(self.ui.page, Page::Discover | Page::Project);
         if (to_packs && in_packs) || (!to_packs && in_mods) {
             return;
         }
@@ -201,19 +186,14 @@ impl Launcher {
         m.data = Default::default();
     }
 
-    /// Discover or Installed, chosen on the header's switch: remembered for the session.
+    /// A Discover or Packs page, chosen on the header's switch.
     pub(super) fn choose_view(&mut self, page: Page) {
         let m = &mut self.mods_state;
         m.nightly.open = None;
         m.nightly.collection = None;
-        match page {
-            Page::Discover | Page::Installed => m.last_mods = Some(page),
-            _ => m.last_packs = Some(page),
-        }
         m.selection.clear();
         m.anchor = None;
         m.menu = None;
-        m.reveal = None;
         self.game_packs.confirm_remove = None;
         // Packs keeps the kind across the switch.
         match page {

@@ -402,8 +402,6 @@ pub enum Target {
     Loading,
     /// Loaded, and the list has not one row.
     Empty,
-    /// Installed's read of the profile's mods failed: there is no list to scroll.
-    Failed,
     /// Loaded, but the window hasn't drawn the list with its loaded rows yet.
     LayingOut,
     /// Drawn with its loaded rows: its offset (GPUI's sign, negative below the top) and how far
@@ -420,7 +418,6 @@ enum Skip {
     Fits,
     ReleasesLate,
     NotLaidOut,
-    Failed,
     NeverMoved,
 }
 
@@ -430,7 +427,6 @@ impl Skip {
             Skip::NoProfile => "no profile is selected, so there is no list",
             Skip::Closed => "the list was closed before it could be scrolled",
             Skip::Empty => "the list had no rows",
-            Skip::Failed => "the list couldn't be read",
             Skip::Fits => "the list fits without scrolling",
             Skip::ReleasesLate => "the release list didn't load in time",
             Skip::NotLaidOut => "the list didn't draw its rows in time",
@@ -581,11 +577,10 @@ impl Bench {
                 }
                 return None;
             }
-            Target::NoProfile | Target::Closed | Target::Empty | Target::Failed => {
+            Target::NoProfile | Target::Closed | Target::Empty => {
                 scroll.skip(match target {
                     Target::NoProfile => Skip::NoProfile,
                     Target::Closed => Skip::Closed,
-                    Target::Failed => Skip::Failed,
                     _ => Skip::Empty,
                 });
                 return None;

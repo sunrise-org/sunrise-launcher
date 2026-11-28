@@ -212,7 +212,8 @@ enum Cmd {
     /// violet|blue|teal|green|amber|red|pink|#rrggbb|DEGREES (a named accent, any colour, or any
     /// hue; "theme" goes back to the theme's own), background PATH (your picture in the Home banner;
     /// "default" goes back to the theme's), scenery on|off (whether the Home banner shows its
-    /// scene or picture), reduced-graphics on|off (a still scene and no decorative motion)
+    /// scene or picture), reduced-graphics on|off (a still scene and no decorative motion),
+    /// header-align left|right|center-panel|center-window (where the Home header stands in its banner)
     #[command(after_help = tr("worlds rows|tiles: how Home lists the worlds under Continue playing."))]
     Settings {
         #[arg(value_parser = SETTING_KEYS)]

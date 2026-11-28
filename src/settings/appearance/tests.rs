@@ -32,15 +32,10 @@ fn scratch_child(test: &str) -> Option<std::path::PathBuf> {
     None
 }
 
-#[test]
-fn a_typed_accent_is_taken_when_the_field_is_left_without_enter() {
-    use sunrise_launcher::appearance;
-    use sunrise_launcher::backend::Settings;
-    use sunrise_launcher::themes::Accent;
-    if scratch_child("a_typed_accent_is_taken_when_the_field_is_left_without_enter").is_none() {
-        return;
-    }
-    let mut app = gpui::TestAppContext::single();
+/// Opens Settings › Appearance in a test window.
+fn appearance_window(
+    app: &mut gpui::TestAppContext,
+) -> (gpui::Entity<crate::Launcher>, &mut gpui::VisualTestContext) {
     let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
     let launcher = shell.read_with(cx, |shell, _| shell.launcher());
     launcher.update(cx, |l, cx| {
@@ -49,19 +44,67 @@ fn a_typed_accent_is_taken_when_the_field_is_left_without_enter() {
         cx.notify();
     });
     cx.run_until_parked();
-    // The field is below the fold of the test window: give it the keyboard directly.
-    let focus = launcher.read_with(cx, |l, _| {
-        let focus = l.ui.settings.appearance.accent_focus.clone();
-        focus.expect("the accent field is drawn")
+    (launcher, cx)
+}
+
+/// A colour set in the editor is painted at once, saved in the settings and kept as the working
+/// theme's file, which reads back as the colours that were set.
+#[test]
+fn a_colour_set_in_the_editor_is_painted_and_kept_in_a_theme_file() {
+    use sunrise_launcher::backend::Settings;
+    use sunrise_launcher::themes::library;
+    use sunrise_launcher::{appearance, theme_files};
+    if scratch_child("a_colour_set_in_the_editor_is_painted_and_kept_in_a_theme_file").is_none() {
+        return;
+    }
+    let mut app = gpui::TestAppContext::single();
+    let (launcher, cx) = appearance_window(&mut app);
+    cx.update(|window, cx| {
+        launcher.update(cx, |l, cx| {
+            l.colour_set(library::ACCENT, 0x123456, window);
+            cx.notify();
+        })
     });
-    cx.update(|window, cx| window.focus(&focus, cx));
-    cx.simulate_keystrokes("ctrl-a t e a l");
     cx.run_until_parked();
-    let accent = || appearance::accent(&Settings::load());
-    assert_ne!(accent(), Accent::TEAL, "not taken before the field is left");
-    cx.update(|window, cx| window.blur(cx));
+    let saved = Settings::load();
+    assert_eq!(saved.theme.as_deref(), Some(library::WORKING_ID));
+    assert_eq!(appearance::accent(&saved).rgb(), 0x123456);
+    let file = theme_files::dir()
+        .join(library::WORKING)
+        .join(theme_files::FILE);
+    let text = std::fs::read_to_string(file).unwrap();
+    assert!(text.contains("accent = \"#123456\""), "{text}");
+    launcher.read_with(cx, |l, _| {
+        assert_eq!(l.editor_roles().accent, 0x123456);
+        assert!(l.ui.settings.appearance.draft.is_none());
+    });
+}
+
+/// Colours that can't be read on each other are shown in the editor but not painted, and the
+/// editor goes on from them, so a dark theme can be turned light one colour at a time.
+#[test]
+fn colours_that_cannot_be_read_yet_stay_in_the_editor_unpainted() {
+    use sunrise_launcher::backend::Settings;
+    use sunrise_launcher::themes::library::SLOTS;
+    if scratch_child("colours_that_cannot_be_read_yet_stay_in_the_editor_unpainted").is_none() {
+        return;
+    }
+    let mut app = gpui::TestAppContext::single();
+    let (launcher, cx) = appearance_window(&mut app);
+    cx.update(|window, cx| {
+        launcher.update(cx, |l, cx| {
+            // Mid grey page under white text: not readable, so not painted.
+            l.colour_set(0, 0x777777, window);
+            cx.notify();
+        })
+    });
     cx.run_until_parked();
-    assert_eq!(accent(), Accent::TEAL);
+    assert_eq!(Settings::load().theme, None, "nothing is painted or saved");
+    launcher.read_with(cx, |l, _| {
+        let state = &l.ui.settings.appearance;
+        assert!(state.draft.is_some() && state.note.is_some());
+        assert_eq!((SLOTS[0].get)(&l.editor_roles()), 0x777777);
+    });
 }
 
 /// The player's own picture is behind every page, not Home's alone: on Settings it is read
@@ -101,12 +144,4 @@ fn the_players_picture_is_behind_pages_other_than_home() {
             "the picture is decoded for the backdrop on Settings"
         );
     });
-}
-
-#[test]
-fn the_theme_grid_takes_its_columns_from_the_width_it_is_given() {
-    use super::rows::theme_columns;
-    assert_eq!(theme_columns(0.), 1);
-    assert_eq!(theme_columns(300.), 1);
-    assert_eq!(theme_columns(760.), 4);
 }

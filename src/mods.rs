@@ -1,4 +1,4 @@
-//! Mods: Discover, Installed and a mod's page.
+//! Mods: Discover, a mod's page and the update check (Home lists what is installed).
 //!
 //! **Real:** the registry list, search, categories, fit, kind and sort (`browser::sunrise`'s index,
 //! read in a worker); a mod's page from the index (versions and their fit, size, licence,
@@ -48,6 +48,7 @@ mod release_builds;
 mod search;
 pub(crate) mod selection;
 mod ui;
+pub(crate) mod updates;
 pub(crate) use data_packs::names;
 pub(crate) use search::Installed;
 mod viewer;
@@ -61,8 +62,8 @@ mod state;
 mod view;
 
 use catalog::*;
+pub(crate) use installed_model::HomeModFacts;
 use installed_model::*;
-pub(crate) use installed_model::{HomeModFacts, InstalledDrawn};
 use messages::*;
 pub(crate) use state::ModsState;
 use state::*;
@@ -98,7 +99,7 @@ mod enabled_tests {
             v2: false,
             request: 2,
             scope: scope("current", "new-build", "26.3"),
-            from: Page::Installed,
+            from: Page::Home,
             v2_page: None,
             parent: None,
             removing: Vec::new(),
@@ -157,37 +158,6 @@ mod installed_refresh_tests {
     use super::*;
 
     #[test]
-    fn the_benchmark_times_installed_only_once_rows_read_afresh_are_drawn() {
-        use crate::perf::Target;
-        let laid = Some((-10., 400.));
-        // A refresh draws the last read's rows while it reads: they are waited past, not timed.
-        let retained = InstalledDrawn::of(true, false, 12);
-        assert_eq!(retained, InstalledDrawn::Reading);
-        assert_eq!(installed_target(Some(retained), laid), Target::LayingOut);
-        // Then the fresh rows: timed from the frame that drew them.
-        let fresh = InstalledDrawn::of(false, false, 14);
-        assert_eq!(fresh, InstalledDrawn::Rows);
-        assert_eq!(
-            installed_target(Some(fresh), laid),
-            Target::Laid {
-                offset: -10.,
-                max: 400.
-            }
-        );
-        assert_eq!(installed_target(Some(fresh), None), Target::LayingOut);
-        // An empty profile draws no list: it stops at once, saying so, not at the timeout.
-        let empty = InstalledDrawn::of(false, false, 0);
-        assert_eq!(empty, InstalledDrawn::Empty);
-        assert_eq!(installed_target(Some(empty), None), Target::Empty);
-        // A failed read over the rows from before it stops too, with its own reason.
-        let failed = InstalledDrawn::of(false, true, 12);
-        assert_eq!(failed, InstalledDrawn::Failed);
-        assert_eq!(installed_target(Some(failed), laid), Target::Failed);
-        // Not drawn yet.
-        assert_eq!(installed_target(None, laid), Target::LayingOut);
-    }
-
-    #[test]
     fn busy_publication_keeps_the_settled_hold_and_disables_actions_until_refresh() {
         use sunrise_launcher_smod::{
             locks::{LockMode, Release},
@@ -225,10 +195,6 @@ mod installed_refresh_tests {
         };
         assert!(!snapshot.finish(InstalledRows::read(&home)));
         assert!(!snapshot.ready());
-        assert!(matches!(
-            InstalledRefresh::of(Some(&snapshot)),
-            InstalledRefresh::Reading
-        ));
         assert!(snapshot.switch_held.contains_key("ruby"));
         assert!(
             snapshot.key.is_empty(),
@@ -257,27 +223,16 @@ mod installed_refresh_tests {
             error: None,
             backup_notice: None,
         };
-        assert!(matches!(
-            InstalledRefresh::of(None),
-            InstalledRefresh::Reading
-        ));
-        assert!(matches!(
-            InstalledRefresh::of(Some(&snapshot)),
-            InstalledRefresh::Reading
-        ));
         snapshot.finish(InstalledRows::read(home.path()));
         assert!(snapshot.enabled.contains("ruby"));
         assert!(matches!(
-            InstalledRefresh::of(Some(&snapshot)),
-            InstalledRefresh::Failed(InstalledReadError::GameInstall(_), _)
+            snapshot.error,
+            Some(InstalledReadError::GameInstall(_))
         ));
         assert_eq!(std::fs::read(&journal).unwrap(), b"not a journal");
         std::fs::remove_file(journal).unwrap();
         snapshot.finish(InstalledRows::read(home.path()));
-        assert!(matches!(
-            InstalledRefresh::of(Some(&snapshot)),
-            InstalledRefresh::Ready
-        ));
+        assert!(snapshot.ready());
         assert!(snapshot.enabled.is_empty());
     }
 
