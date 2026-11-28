@@ -221,3 +221,13 @@ pub(super) fn nothing_here(source: Source, open: AnyElement) -> Div {
     };
     empty_state_icon(Some(glyph), title, body, Some(open))
 }
+
+/// The empty state of the whole tab: no source has anything, with `open` (Open logs folder) under it.
+pub(super) fn no_logs_yet(open: AnyElement) -> Div {
+    empty_state_icon(
+        Some("computer-terminal-01"),
+        tr("No logs yet"),
+        tr("Logs from playing, building and crashes show up here."),
+        Some(open),
+    )
+}

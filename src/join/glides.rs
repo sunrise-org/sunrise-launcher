@@ -18,6 +18,8 @@ pub(crate) struct Seen {
     pub(crate) name: String,
     pub(crate) address: String,
     pub(crate) icon: Option<Arc<gpui::Image>>,
+    /// The bundled picture of a featured server.
+    pub(crate) badge: Option<super::Badge>,
 }
 
 /// A removed server's card, folding shut after the server `anchor` (None: the list's start).
@@ -50,7 +52,8 @@ struct Tracker {
 }
 
 thread_local! {
-    static TRACKER: RefCell<Tracker> = RefCell::new(Tracker::default());
+    /// One tracker for each list that animates (`note`'s scope).
+    static TRACKER: RefCell<HashMap<&'static str, Tracker>> = RefCell::new(HashMap::new());
 }
 
 /// A key for each server in `list`, in order: its name and address, numbered when the same pair
@@ -85,11 +88,11 @@ impl Playing {
     }
 }
 
-/// Notes the saved servers drawn now (`now`: each one's key and what it shows), `step` px a
-/// place apart, and says what animates: a swap of two neighbours glides, new servers arrive and
-/// removed ones leave a ghost. A different profile's list, or a rename, just changes.
-pub(crate) fn note(now: Vec<(String, Seen)>, step: f32) -> Playing {
-    TRACKER.with_borrow_mut(|tracker| tracker.note(now, step))
+/// Notes the servers of the list `scope` drawn now (`now`: each one's key and what it shows),
+/// `step` px a place apart, and says what animates: a swap of two neighbours glides, new servers
+/// arrive and removed ones leave a ghost. A different profile's list, or a rename, just changes.
+pub(crate) fn note(scope: &'static str, now: Vec<(String, Seen)>, step: f32) -> Playing {
+    TRACKER.with_borrow_mut(|all| all.entry(scope).or_default().note(now, step))
 }
 
 impl Tracker {
@@ -190,6 +193,7 @@ mod tests {
                 name: name.to_string(),
                 address: String::new(),
                 icon: None,
+                badge: None,
             },
         )
     }

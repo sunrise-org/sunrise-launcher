@@ -145,7 +145,8 @@ pub(crate) fn ghost_card(ghost: &glides::Ghost, query: &str) -> Option<AnyElemen
     }
     let picture = server_picture(
         seen.icon.clone(),
-        featured_at(&seen.address).map(|f| f.badge),
+        seen.badge
+            .or_else(|| featured_at(&seen.address).map(|f| f.badge)),
         (&seen.address, &seen.name),
         ICON,
     );
@@ -292,8 +293,8 @@ impl Launcher {
         Self::watch_hover(card, &id, cx)
     }
 
-    /// The featured server `n` (of [`featured`]) as a card: no tick box, and no Join (and no
-    /// menu) for one that has no address yet.
+    /// The featured server `n` (of [`featured`]) as a card: no tick box, and no Join for one that
+    /// has no address yet. Its "…" menu takes it off the tab.
     pub(crate) fn featured_server_card(
         &mut self,
         n: usize,
@@ -310,18 +311,15 @@ impl Launcher {
             tr(server.inert).to_string()
         };
         let (words, ink) = reach_line(reach, asking);
-        let (join, more) = match server.address {
-            Some(address) => (
-                Some(join_button(
-                    format!("join-featured-{n}-join"),
-                    address.to_string(),
-                    reach == Some(Reach::Offline),
-                    cx,
-                )),
-                Some(self.card_menu_button(&id, (n, true), cx)),
-            ),
-            None => (None, None),
-        };
+        let join = server.address.map(|address| {
+            join_button(
+                format!("join-featured-{n}-join"),
+                address.to_string(),
+                reach == Some(Reach::Offline),
+                cx,
+            )
+        });
+        let more = self.card_menu_button(&id, (n, true), cx);
         // The picture the server sends wins; until it does, the bundled one.
         let picture = server_picture(
             server
@@ -331,10 +329,11 @@ impl Launcher {
             (server.address.unwrap_or(server.name), server.name),
             ICON,
         );
-        let buttons = match (join, more) {
-            (Some(join), Some(more)) => vec![join.into_any_element(), more.into_any_element()],
-            _ => Vec::new(),
-        };
+        let buttons = join
+            .into_iter()
+            .map(IntoElement::into_any_element)
+            .chain([more.into_any_element()])
+            .collect();
         server_row(
             id,
             RowParts {

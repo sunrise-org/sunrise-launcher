@@ -27,33 +27,12 @@ pub(crate) fn import_into(home: &Path, source: &Path) -> Result<World, String> {
         )
     };
     fs::create_dir_all(&saves).map_err(|e| failed(&e))?;
-    let meta = fs::symlink_metadata(source).map_err(|e| failed(&e))?;
-    if crate::native_cache::linked(&meta) {
-        return Err(failed(&io::Error::from(io::ErrorKind::InvalidData)));
-    }
     let stage = tempfile::Builder::new()
         .prefix(".world-import-")
         .tempdir_in(&saves)
         .map_err(|e| failed(&e))?;
     let candidate = stage.path().join(".candidate");
-    let base = if meta.is_dir() {
-        if !has_readable_level_dat(source) {
-            return Err(not_a_world(source));
-        }
-        copy_dir(source, &candidate).map_err(|e| failed(&e))?;
-        file_stem(source, false)
-    } else if meta.is_file() {
-        let folder = unzip_world(source, &candidate).map_err(|e| match e {
-            Unzip::NotAWorld => not_a_world(source),
-            Unzip::Io(e) => failed(&e),
-        })?;
-        folder.unwrap_or_else(|| file_stem(source, true))
-    } else {
-        return Err(not_a_world(source));
-    };
-    if !has_readable_level_dat(&candidate) {
-        return Err(not_a_world(source));
-    }
+    let base = extract_world(source, &candidate)?;
     // The name made safe for every file system, as the stage is empty but for the candidate.
     let safe = free_name(stage.path(), &base, "", 0);
     let taken = saves.join(&safe).exists();
@@ -71,6 +50,46 @@ pub(crate) fn import_into(home: &Path, source: &Path) -> Result<World, String> {
         .and_then(|()| durable::move_new_directory(&candidate, &to))
         .map_err(|e| failed(&e))?;
     read(&to).ok_or_else(|| not_a_world(source))
+}
+
+/// Extracts the world at `source` (a folder with a level.dat, or a .zip holding one at its root
+/// or inside a single folder) into `to`, which must not exist yet, and returns the name the world
+/// goes by: its folder's, or the zip's inner folder or file name. Nothing is left in `to` when it
+/// fails to hold a readable level.dat. A new server's world comes in through this too.
+pub fn extract_world(source: &Path, to: &Path) -> Result<String, String> {
+    let failed = |e: &dyn std::fmt::Display| {
+        trf(
+            "Could not add the world {path}: {error}",
+            &[
+                ("path", &source.display().to_string()),
+                ("error", &e.to_string()),
+            ],
+        )
+    };
+    let meta = fs::symlink_metadata(source).map_err(|e| failed(&e))?;
+    if crate::native_cache::linked(&meta) {
+        return Err(failed(&io::Error::from(io::ErrorKind::InvalidData)));
+    }
+    let base = if meta.is_dir() {
+        if !has_readable_level_dat(source) {
+            return Err(not_a_world(source));
+        }
+        copy_dir(source, to).map_err(|e| failed(&e))?;
+        file_stem(source, false)
+    } else if meta.is_file() {
+        let folder = unzip_world(source, to).map_err(|e| match e {
+            Unzip::NotAWorld => not_a_world(source),
+            Unzip::Io(e) => failed(&e),
+        })?;
+        folder.unwrap_or_else(|| file_stem(source, true))
+    } else {
+        return Err(not_a_world(source));
+    };
+    if !has_readable_level_dat(to) {
+        let _ = fs::remove_dir_all(to);
+        return Err(not_a_world(source));
+    }
+    Ok(base)
 }
 
 fn not_a_world(source: &Path) -> String {

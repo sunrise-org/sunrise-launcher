@@ -8,19 +8,34 @@ use crate::line_edit::{self, Key, LineEdit};
 use crate::widgets::button::{button, primary, secondary, Look, Size, Style};
 use crate::widgets::feedback::{banner, empty_state, empty_state_icon, Tone};
 use menus::Menu;
-use sources::nothing_here;
+use recent::{Auto, Fact};
 pub(crate) use sources::Source;
+use sources::{no_logs_yet, nothing_here};
 use sunrise_launcher::game_log::{self, Shared};
 use tail::{FileLog, Tail};
 use view::severity;
 
 mod menus;
+mod recent;
 mod share;
 mod sources;
 mod tail;
+impl Logs {
+    /// The tab was opened (picked in the tab strip, not by `show_logs`): it reads every source
+    /// again and shows the one written last.
+    pub(crate) fn opened(&mut self) {
+        self.auto.reset();
+        self.scan = None;
+        self.scan_checked = None;
+    }
+}
+
 #[cfg(test)]
 mod tests;
 mod view;
+
+/// How often what each source has is read again.
+const RESCAN: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// The log an error on Home came from, if it left one: what its "View logs" opens. Mirrors the
 /// order `Facts::view` picks the problem it says in.
@@ -60,6 +75,9 @@ impl Launcher {
         tabs.selected = super::Tab::Logs;
         tabs.logs.switch(source);
         tabs.logs.chosen = None;
+        // On purpose, so the most recent source doesn't take it back.
+        tabs.logs.auto.reset();
+        tabs.logs.auto.pinned = true;
         tabs.logs.seen.set((u64::MAX, 0));
     }
 }
@@ -93,6 +111,16 @@ pub(super) struct Logs {
     shared: Option<Result<Shared, String>>,
     /// Which of the row's menus is open.
     menu: Option<Menu>,
+    /// What each source has, read off the UI thread, and for which profile.
+    scan: Option<(std::path::PathBuf, Vec<Fact>)>,
+    scan_checked: Option<std::time::Instant>,
+    scanning: bool,
+    /// The sources the dropdown lists: those with something in them.
+    sources: Vec<Source>,
+    auto: Auto,
+    /// The revision of the session's lines at the last draw, and when it last moved.
+    run_revision: Option<u64>,
+    run_at: Option<std::time::SystemTime>,
 }
 
 impl Default for Logs {
@@ -117,6 +145,13 @@ impl Default for Logs {
             sharing: false,
             shared: None,
             menu: None,
+            scan: None,
+            scan_checked: None,
+            scanning: false,
+            sources: Vec::new(),
+            auto: Auto::default(),
+            run_revision: None,
+            run_at: None,
         }
     }
 }
@@ -176,9 +211,79 @@ struct Shown<'a> {
 impl Launcher {
     /// Whether the lines to show are this session's run of the profile (else a file).
     fn log_is_run(&self, home: &std::path::Path) -> bool {
-        self.ui.home.tabs.logs.source == Source::Game
-            && (!self.prepare_log.is_empty() || self.client.is_some())
+        self.ui.home.tabs.logs.source == Source::Game && self.has_run_lines(home)
+    }
+
+    /// Whether this session has game output for the profile at `home`.
+    fn has_run_lines(&self, home: &std::path::Path) -> bool {
+        (!self.prepare_log.is_empty() || self.client.is_some())
             && self.client_home.as_deref().is_none_or(|run| run == home)
+    }
+
+    /// Decides which source the tab shows from what each has, and keeps what each has read.
+    /// `false` while the first read of it is still running.
+    fn choose_source(&mut self, home: &std::path::Path, cx: &mut Context<Self>) -> bool {
+        let revision = self.log_revision;
+        let logs = &mut self.ui.home.tabs.logs;
+        // The time of the session's last line is when it came, as far as this tab has seen.
+        if logs.run_revision.is_some_and(|seen| seen != revision) {
+            logs.run_at = Some(std::time::SystemTime::now());
+        }
+        logs.run_revision = Some(revision);
+        self.scan_sources(home, cx);
+        let live = self.has_run_lines(home);
+        let logs = &mut self.ui.home.tabs.logs;
+        let Some((_, facts)) = logs.scan.as_ref().filter(|(of, _)| of == home) else {
+            return false;
+        };
+        let mut facts = facts.clone();
+        if let Some(game) = facts.iter_mut().find(|f| f.source == Source::Game) {
+            if live {
+                game.populated = true;
+                game.at = logs.run_at.or(game.at);
+            }
+        }
+        let current = logs.source;
+        if let Some(next) = logs.auto.decide(home, current, &facts) {
+            logs.switch(next);
+        }
+        let keep = logs.auto.pinned.then_some(logs.source);
+        logs.sources = recent::listed(&facts, keep);
+        true
+    }
+
+    /// Reads what each source has off the UI thread, again every few seconds while the tab is
+    /// drawn. Each result redraws, and a pause before the next draw keeps the tab looking again.
+    fn scan_sources(&mut self, home: &std::path::Path, cx: &mut Context<Self>) {
+        let logs = &mut self.ui.home.tabs.logs;
+        let due = logs.scan_checked.is_none_or(|at| at.elapsed() > RESCAN)
+            || logs.scan.as_ref().is_some_and(|(of, _)| of != home);
+        if !due || logs.scanning {
+            return;
+        }
+        logs.scanning = true;
+        logs.scan_checked = Some(std::time::Instant::now());
+        let home = home.to_path_buf();
+        let task = cx.background_executor().spawn({
+            let home = home.clone();
+            async move {
+                let launcher_logs = Source::Launcher.folder(&home);
+                let build_log = sunrise_launcher::native_mods::log_path();
+                recent::scan(&home, &launcher_logs, &build_log)
+            }
+        });
+        cx.spawn(async move |this, cx| {
+            let facts = task.await;
+            let _ = this.update(cx, |this, cx| {
+                let logs = &mut this.ui.home.tabs.logs;
+                logs.scanning = false;
+                logs.scan = Some((home, facts));
+                cx.notify();
+            });
+            cx.background_executor().timer(RESCAN).await;
+            let _ = this.update(cx, |_, cx| cx.notify());
+        })
+        .detach();
     }
 
     /// Reads the end of `latest` off the UI thread, and again only when it changed.
@@ -235,8 +340,19 @@ impl Launcher {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Div {
+        if !self.choose_source(&instance.home, cx) {
+            // What each source has is still being read.
+            return logs_panel(strip, inset, div().flex_1(), None, None);
+        }
         let source = self.ui.home.tabs.logs.source;
         let folder = source.folder(&instance.home);
+        if self.ui.home.tabs.logs.sources.is_empty() {
+            let logs_folder = Source::Game.folder(&instance.home);
+            let open = folder_button("home-logs-folder-empty")
+                .on_click(move |_, _, cx| open_logs(cx, &logs_folder))
+                .into_any_element();
+            return logs_panel(strip, inset, no_logs_yet(open), None, None);
+        }
         if !self.log_is_run(&instance.home) {
             self.follow_source(&instance.home, &folder, cx);
         }
@@ -250,23 +366,8 @@ impl Launcher {
             .clone();
         let LogBox { body, has_lines } = self.log_box(&instance.home, &folder, cx);
         let toolbar = self.log_toolbar(&focus, &instance.home, &folder, has_lines, window, cx);
-        // Open logs folder is in the "…" menu and the empty state, so the tabs' row has no action.
-        div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .overflow_hidden()
-            .px(px(inset))
-            .pt(px(10.))
-            .pb(px(20.))
-            .child(div().flex().flex_none().items_center().child(strip))
-            .child(toolbar)
-            .children(
-                self.share_panel(&instance.home, cx)
-                    .map(|panel| panel.mb(px(12.))),
-            )
-            .child(body)
+        let share = self.share_panel(&instance.home, cx);
+        logs_panel(strip, inset, body, Some(toolbar), share)
     }
 
     /// The lines the level and search leave of what the source has.
@@ -372,6 +473,31 @@ impl Launcher {
             ),
         }
     }
+}
+
+/// The panel the other tabs stand in: the tabs, the row under them (when there is one), the share
+/// panel and `body`. Open logs folder is in the "…" menu and the empty state, so the tabs' row has
+/// no action.
+fn logs_panel(
+    strip: Stateful<Div>,
+    inset: f32,
+    body: Div,
+    toolbar: Option<Div>,
+    share: Option<Div>,
+) -> Div {
+    div()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .overflow_hidden()
+        .px(px(inset))
+        .pt(px(10.))
+        .pb(px(20.))
+        .child(div().flex().flex_none().items_center().child(strip))
+        .children(toolbar)
+        .children(share.map(|panel| panel.mb(px(12.))))
+        .child(body)
 }
 
 /// The Open logs folder button: a folder icon and its label.

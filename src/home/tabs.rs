@@ -262,7 +262,11 @@ impl Launcher {
         let this = cx.entity();
         crate::widgets::nav::tabs("home-profile-tabs", &items, active, move |tab, _, cx| {
             this.update(cx, |view, cx| {
-                view.ui.home.tabs.selected = tab;
+                let tabs = &mut view.ui.home.tabs;
+                if tab == Tab::Logs && tabs.selected != Tab::Logs {
+                    tabs.logs.opened();
+                }
+                tabs.selected = tab;
                 cx.notify();
             });
         })

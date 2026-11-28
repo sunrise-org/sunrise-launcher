@@ -23,6 +23,15 @@ impl Launcher {
         if self.servers.create.is_none() || self.servers.creating {
             return false;
         }
+        // An open dropdown of the Create dialog goes first.
+        if self
+            .servers
+            .create
+            .as_mut()
+            .is_some_and(|c| c.menu.take().is_some())
+        {
+            return true;
+        }
         self.servers.create = None;
         self.servers.problem = None;
         true

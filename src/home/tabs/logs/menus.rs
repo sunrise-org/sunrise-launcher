@@ -151,7 +151,8 @@ impl Launcher {
     /// Which log: the game's output, `latest.log`, crash reports, the launcher's or the build's.
     fn source_picker(&self, cx: &mut Context<Self>) -> Div {
         let current = self.ui.home.tabs.logs.source;
-        let choices = Source::ALL
+        let listed = self.ui.home.tabs.logs.sources.clone();
+        let choices = listed
             .iter()
             .map(|source| Choice::new(source.label(), *source == current))
             .collect();
@@ -161,9 +162,11 @@ impl Launcher {
             Menu::Source,
             Some("computer-terminal-01"),
             choices,
-            |this, n| {
-                if let Some(source) = Source::ALL.get(n) {
-                    this.ui.home.tabs.logs.switch(*source);
+            move |this, n| {
+                if let Some(source) = listed.get(n) {
+                    let logs = &mut this.ui.home.tabs.logs;
+                    logs.switch(*source);
+                    logs.auto.picked_by_hand();
                 }
             },
         )

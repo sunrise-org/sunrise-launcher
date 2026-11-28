@@ -35,6 +35,8 @@ pub(super) struct Multiplayer {
     pub(super) dialog: Option<ServerDialog>,
     /// The "…" menu of a saved server, while it is open.
     pub(super) menu: Option<ServerMenu>,
+    /// The featured servers this profile took away (`join::hidden`).
+    pub(super) hidden: Vec<String>,
 }
 
 /// What is open over the Servers tab.
@@ -43,6 +45,9 @@ pub(super) enum ServerDialog {
     Form { edit: Option<usize> },
     /// The question before these saved servers (place and name) are removed.
     Remove(Vec<(usize, String)>),
+    /// The question before a featured server (its key in `join::hidden`, and its name) is taken
+    /// off the tab.
+    RemoveFeatured { key: String, name: String },
 }
 
 /// The "…" menu of the saved server at `index` (or, `featured`, of the bundled one), hung from
@@ -153,6 +158,7 @@ impl Launcher {
     pub(super) fn load_servers(&mut self, home: PathBuf) {
         if self.multiplayer.home.as_ref() != Some(&home) {
             self.multiplayer = Multiplayer {
+                hidden: crate::join::hidden::load(&home),
                 home: Some(home.clone()),
                 ..Multiplayer::default()
             };
@@ -203,6 +209,27 @@ impl Launcher {
             }
             Ok(())
         });
+    }
+
+    /// Takes the featured server `key` off this profile's Servers tab.
+    pub(super) fn hide_featured(&mut self, key: String) {
+        if !self.multiplayer.hidden.contains(&key) {
+            self.multiplayer.hidden.push(key);
+        }
+        self.save_hidden();
+    }
+
+    /// Puts every featured server back on this profile's Servers tab.
+    pub(super) fn show_featured_again(&mut self) {
+        self.multiplayer.hidden.clear();
+        self.save_hidden();
+    }
+
+    fn save_hidden(&mut self) {
+        let Some(home) = self.multiplayer.home.clone() else {
+            return;
+        };
+        self.multiplayer.error = crate::join::hidden::save(&home, &self.multiplayer.hidden).err();
     }
 
     /// Closes the dialog over the Servers tab, and what was typed in it.

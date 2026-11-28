@@ -194,7 +194,7 @@ impl Launcher {
             ));
         }
         grid = grid.child(self.new_theme_tile(cx));
-        let import = secondary("alt-library-import", tr("Import code")).on_click(cx.listener(
+        let import = secondary("alt-library-import", tr("Import theme")).on_click(cx.listener(
             |this, _: &ClickEvent, _, cx| {
                 this.dialog_open(Dialog::Import);
                 cx.notify();

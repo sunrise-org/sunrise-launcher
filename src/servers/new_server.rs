@@ -9,6 +9,9 @@ pub enum World {
     New { seed: String },
     /// A copy of one of the player's worlds (its folder).
     Copy(PathBuf),
+    /// A world from a file: a .zip of a world, or a world folder anywhere. It is extracted into
+    /// the server, with the same checks as adding a world to a profile.
+    Import(PathBuf),
 }
 
 /// What the Create dialog asks; [`NewServer::default`] alone makes a working server.
@@ -81,12 +84,19 @@ fn ports_taken() -> Vec<u16> {
 /// The player's worlds (`saves/` in the game folder `home`), the last played first: their name
 /// as the game's list shows it and their folder.
 pub fn player_worlds(home: &Path) -> Vec<(String, PathBuf)> {
+    player_world_list(home)
+        .into_iter()
+        .map(|w| (w.name, w.path))
+        .collect()
+}
+
+/// [`player_worlds`] with what the worlds list shows of each: its mode and when it was played.
+pub fn player_world_list(home: &Path) -> Vec<worlds::World> {
     worlds::list(home)
         .into_iter()
         // Only a readable level.dat is a world to copy; the Worlds page also keeps folders with
         // just a level.dat_old or a damaged level.dat, so they can be backed up.
         .filter(|w| worlds::has_readable_level_dat(&w.path))
-        .map(|w| (w.name, w.path))
         .collect()
 }
 
@@ -199,6 +209,25 @@ pub fn create(spec: &NewServer, tag: Option<&str>, log: &dyn Fn(String)) -> Resu
                 ))
             })?;
             world
+        }
+        World::Import(from) => {
+            log(trf(
+                "Importing the world {folder}",
+                &[("folder", &from.display().to_string())],
+            ));
+            // Extracted beside where it ends up, so a world that fails the checks leaves no
+            // half-made folder for the server to find.
+            let staged = dir.join(".world-import");
+            let result = worlds::extract_world(from, &staged).and_then(|base| {
+                let world = slug(&base);
+                fs::rename(&staged, dir.join(&world))
+                    .map(|()| world)
+                    .map_err(|e| e.to_string())
+            });
+            result.map_err(|e| {
+                let _ = fs::remove_dir_all(&dir);
+                Problem::plain(e)
+            })?
         }
     };
     let taken = ports_taken();

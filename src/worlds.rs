@@ -23,7 +23,7 @@ pub(crate) mod switch;
 mod import;
 mod rename;
 mod seed;
-pub use import::import;
+pub use import::{extract_world, import};
 pub use rename::rename;
 pub use seed::seed;
 

@@ -2976,7 +2976,7 @@
   "Updated {count} packs.": "Updated {count} packs.",
   "Refreshing…": "Refreshing…",
   "Themes": "Themes",
-  "Import code": "Import code",
+  "Import theme": "Import theme",
   "Share {count}…": "Share {count}…",
   "New theme": "New theme",
   "Share": "Share",
@@ -3033,5 +3033,13 @@
   "Jump to latest": "Jump to latest",
   "Copy all": "Copy all",
   "Crash · {when}": "Crash · {when}",
-  "Launch failure · {when}": "Launch failure · {when}"
+  "Launch failure · {when}": "Launch failure · {when}",
+  "No logs yet": "No logs yet",
+  "Logs from playing, building and crashes show up here.": "Logs from playing, building and crashes show up here.",
+  "Import a world file…": "Import a world file…",
+  "A .zip of a world, or a world folder": "A .zip of a world, or a world folder",
+  "Importing the world {folder}": "Importing the world {folder}",
+  "It stops showing under Featured for this profile. Add server brings it back.": "It stops showing under Featured for this profile. Add server brings it back.",
+  "Show featured servers again": "Show featured servers again",
+  "Featured servers are showing again": "Featured servers are showing again"
 }

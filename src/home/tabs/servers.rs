@@ -5,7 +5,7 @@
 //! (`crate::join`, `crate::servers_page`) have Join or Start and a "…" menu, and a saved
 //! server's tick for the bar's Remove.
 use super::*;
-use crate::join::{featured, featured_at, glides, section, Featured};
+use crate::join::{featured, featured_at, glides, hidden, section, Featured};
 use crate::widgets::button::{button, icon_only, Look, Size, Style};
 use crate::widgets::glide::{arrive, glide};
 use gpui::{AnimationExt, Hsla};
@@ -23,7 +23,14 @@ impl Launcher {
     ) -> Content {
         self.load_servers(instance.home.clone());
         self.ping_servers(cx);
-        for address in featured().into_iter().filter_map(|f| f.address) {
+        // The featured servers this profile kept, each with its place in the bundled list: the
+        // menu and the card ids work by it.
+        let kept: Vec<(usize, Featured)> = featured()
+            .into_iter()
+            .enumerate()
+            .filter(|(_, server)| !self.multiplayer.hidden.contains(&hidden::key(server)))
+            .collect();
+        for address in kept.iter().filter_map(|(_, f)| f.address) {
             self.ask_server(address.to_string(), cx);
         }
         let query = self.ui.home.tabs.query_of(Tab::Servers);
@@ -37,14 +44,14 @@ impl Launcher {
             .enumerate()
             .filter(|(_, (server, _))| featured_at(&server.ip).is_none())
             .collect();
-        let count = featured().len() + listed.len() + self.hosted_count();
+        let count = kept.len() + listed.len() + self.hosted_count();
         let none_saved = listed.is_empty();
-        let shown: Vec<(usize, Featured)> = featured()
-            .into_iter()
-            .enumerate()
+        let shown: Vec<usize> = kept
+            .iter()
             .filter(|(_, server)| {
                 search::matches(&query, &[tr(server.name), server.address.unwrap_or("")])
             })
+            .map(|(n, _)| *n)
             .collect();
         // Each match keeps its place in the saved list: the menu and the ticks work by it.
         let found: Vec<usize> = listed
@@ -58,16 +65,14 @@ impl Launcher {
         // A server the search hides drops out of the ticks.
         self.multiplayer.picks.retain(&order);
         let hosted = self.hosted_section(&query, cx);
-        let items = if shown.is_empty() && found.is_empty() && hosted.is_none() {
+        let featured_cards = self.featured_list(kept, &shown, cx);
+        let nothing = shown.is_empty() && found.is_empty() && hosted.is_none();
+        let items = if nothing && !(query.is_empty() && none_saved) {
             search::no_matches()
         } else {
             let mut items = div().flex().flex_col().gap(px(18.));
             if !shown.is_empty() {
-                let mut cards = div().flex().flex_col().gap(px(GAP));
-                for (n, server) in shown {
-                    cards = cards.child(self.featured_server_card(n, server, cx));
-                }
-                items = items.child(section(tr("Featured"), cards));
+                items = items.child(section(tr("Featured"), featured_cards));
             }
             if !found.is_empty() {
                 let cards = self.saved_server_list(listed, &query, &order, cx);
@@ -222,12 +227,13 @@ impl Launcher {
                         name: server.name.clone(),
                         address: server.ip.clone(),
                         icon: icon.clone(),
+                        badge: None,
                     },
                 )
             })
             .collect();
         let step = crate::join::ROW + GAP;
-        let playing = glides::note(seen, step);
+        let playing = glides::note("saved", seen, step);
         let mut cards = div().flex().flex_col().gap(px(GAP));
         for ghost in playing.after(None) {
             cards = cards.children(crate::join::ghost_card(ghost, query));
@@ -244,6 +250,63 @@ impl Launcher {
             }
             for ghost in playing.after(Some(key.as_str())) {
                 cards = cards.children(crate::join::ghost_card(ghost, query));
+            }
+        }
+        cards
+    }
+
+    /// "Featured": the servers `kept` (not hidden by this profile, each with its place in the
+    /// bundled list) whose places are in `shown`, as cards. One taken off leaves a ghost that
+    /// folds shut, as a saved server does (`join::glides`).
+    fn featured_list(
+        &mut self,
+        kept: Vec<(usize, Featured)>,
+        shown: &[usize],
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let query = self.ui.home.tabs.query_of(Tab::Servers);
+        let names: Vec<(String, String)> = kept
+            .iter()
+            .map(|(_, server)| (tr(server.name).to_string(), hidden::key(server)))
+            .collect();
+        let keys = glides::keys(&names);
+        let seen = kept
+            .iter()
+            .zip(&keys)
+            .map(|((_, server), key)| {
+                let note = if server.address.is_some() {
+                    server.note
+                } else {
+                    server.inert
+                };
+                (
+                    key.clone(),
+                    glides::Seen {
+                        name: tr(server.name).to_string(),
+                        address: tr(note).to_string(),
+                        icon: server
+                            .address
+                            .and_then(|address| self.multiplayer.icons.get(address).cloned()),
+                        badge: Some(server.badge),
+                    },
+                )
+            })
+            .collect();
+        let playing = glides::note("featured", seen, crate::join::ROW + GAP);
+        let mut cards = div().flex().flex_col().gap(px(GAP));
+        for ghost in playing.after(None) {
+            cards = cards.children(crate::join::ghost_card(ghost, &query));
+        }
+        for ((n, server), key) in kept.into_iter().zip(keys) {
+            if shown.contains(&n) {
+                let card = self.featured_server_card(n, server, cx);
+                cards = cards.child(match playing.born.get(&key) {
+                    Some(born) => arrive(card, "featured-glide", &key, *born, 10.),
+                    None => card.into_any_element(),
+                });
+            }
+            for ghost in playing.after(Some(key.as_str())) {
+                cards = cards.children(crate::join::ghost_card(ghost, &query));
             }
         }
         cards

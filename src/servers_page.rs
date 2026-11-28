@@ -150,9 +150,11 @@ enum PublicLookup {
 
 /// The Create dialog's answers.
 pub(super) struct Create {
-    new_world: bool,
-    copy: Option<PathBuf>,
-    worlds: Vec<(String, PathBuf)>,
+    world: WorldChoice,
+    /// The player's worlds in every profile, the last played first.
+    worlds: Vec<CreateWorld>,
+    /// The dropdown that is open.
+    menu: Option<CreateMenu>,
     mode: &'static str,
     difficulty: &'static str,
     max_players: u32,
@@ -164,6 +166,36 @@ pub(super) struct Create {
     /// The glass dialog's friends let in, the first an operator (the light one types them in
     /// `Field::Players`).
     friends: Vec<String>,
+}
+
+/// What the new server's world is made from.
+#[derive(Clone, PartialEq)]
+enum WorldChoice {
+    New,
+    /// A copy of one of the player's worlds (its folder).
+    Copy(PathBuf),
+    /// A world file or folder the player picked.
+    Import(PathBuf),
+}
+
+/// One of the player's worlds, as the dialog's World dropdown lists it.
+struct CreateWorld {
+    /// Its name in the game's list.
+    name: String,
+    /// The profile it is in.
+    profile: String,
+    path: PathBuf,
+    /// Its mode and when it was last played.
+    hint: String,
+}
+
+/// The dropdowns of the Create dialog.
+#[derive(Clone, Copy, PartialEq)]
+enum CreateMenu {
+    World,
+    Mode,
+    Difficulty,
+    Who,
 }
 
 pub(super) fn stop_on_quit() {

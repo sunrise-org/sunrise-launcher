@@ -51,6 +51,9 @@ impl Launcher {
         match self.multiplayer.dialog.as_ref() {
             Some(ServerDialog::Form { edit }) => Some(self.server_form_sheet(*edit, window, cx)),
             Some(ServerDialog::Remove(servers)) => Some(self.server_remove_sheet(servers, cx)),
+            Some(ServerDialog::RemoveFeatured { key, name }) => {
+                Some(self.featured_remove_sheet(key, name, cx))
+            }
             None => self.server_menu_sheet(self.multiplayer.menu.as_ref()?, cx),
         }
     }
@@ -262,6 +265,7 @@ impl Launcher {
             .child(title(heading.to_string()))
             .children(name)
             .child(address)
+            .children(self.show_featured_link(edit.is_none(), cx))
             .children(hint.map(|(text, ink)| {
                 div()
                     .text_size(px(tokens::SMALL))
@@ -278,6 +282,24 @@ impl Launcher {
                     .child(div().flex().gap(px(8.)).child(cancel).child(save)),
             );
         modal_frame("server-form", 450., body, cx, Self::close_server_dialog)
+    }
+
+    /// "Show featured servers again", a small link under the fields of a new server's form, while
+    /// this profile has hidden any.
+    fn show_featured_link(&self, new: bool, cx: &mut Context<Self>) -> Option<Div> {
+        (new && !self.multiplayer.hidden.is_empty()).then(|| {
+            div().flex().child(
+                crate::widgets::button::link(
+                    "server-form-show-featured",
+                    tr("Show featured servers again"),
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.show_featured_again();
+                    crate::toast::say(tr("Featured servers are showing again"));
+                    cx.notify();
+                })),
+            )
+        })
     }
 
     /// The question before `servers` (place and name) leave the list.
@@ -300,6 +322,36 @@ impl Launcher {
                 tr("They leave this profile's server list.").to_string(),
             ),
         };
+        Self::remove_sheet((heading, line), cx, move |this| {
+            this.remove_servers(places.clone())
+        })
+    }
+
+    /// The same question before a featured server leaves the tab: it is only hidden, and Add
+    /// server brings it back.
+    fn featured_remove_sheet(
+        &self,
+        key: &str,
+        name: &str,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let heading = trf("Remove {name}?", &[("name", name)]);
+        let line =
+            tr("It stops showing under Featured for this profile. Add server brings it back.")
+                .to_string();
+        let key = key.to_string();
+        Self::remove_sheet((heading, line), cx, move |this| {
+            this.hide_featured(key.clone())
+        })
+    }
+
+    /// The removal question: `heading` over `line`, Cancel and a danger Remove that closes the
+    /// question and runs `remove`.
+    fn remove_sheet(
+        (heading, line): (String, String),
+        cx: &mut Context<Self>,
+        remove: impl Fn(&mut Launcher) + 'static,
+    ) -> Stateful<Div> {
         let body =
             div()
                 .flex()
@@ -320,7 +372,7 @@ impl Launcher {
                         .child(danger("server-remove-confirm", tr("Remove")).on_click(
                             cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 this.multiplayer.dialog = None;
-                                this.remove_servers(places.clone());
+                                remove(this);
                                 cx.notify();
                             }),
                         )),
@@ -353,21 +405,35 @@ impl Launcher {
         ))
     }
 
-    /// The rows of a featured server's menu, and how many hairlines they hold.
+    /// The rows of a featured server's menu, and how many hairlines they hold: Join, Copy
+    /// address and Refresh status for one with an address, and Remove, set apart, for every one.
     fn featured_menu_rows(
         &self,
         index: usize,
         cx: &mut Context<Self>,
     ) -> Option<(Vec<AnyElement>, usize)> {
         let server = featured().into_iter().nth(index)?;
-        let address = server.address?;
-        // A featured server stays under Featured: there is no adding it to the saved list.
-        let rows = vec![
-            self.join_row(address.to_string(), cx),
-            self.copy_address_row(address.to_string(), true, cx),
-            self.refresh_row(address.to_string(), false, cx),
-        ];
-        Some((rows, 1))
+        let (key, name) = (hidden::key(&server), tr(server.name).to_string());
+        let mut rows = Vec::new();
+        if let Some(address) = server.address {
+            rows.push(self.join_row(address.to_string(), cx));
+            rows.push(self.copy_address_row(address.to_string(), true, cx));
+            rows.push(self.refresh_row(address.to_string(), false, cx));
+        }
+        // A danger row brings its own hairline, so a menu of Remove alone has one too.
+        let hairlines = if rows.is_empty() { 1 } else { 2 };
+        rows.push(menu::row(
+            Row::new("server-menu-remove", "delete-02", tr("Remove…")).danger(),
+            cx.listener(move |this, _, _, cx| {
+                this.multiplayer.menu = None;
+                this.multiplayer.dialog = Some(ServerDialog::RemoveFeatured {
+                    key: key.clone(),
+                    name: name.clone(),
+                });
+                cx.notify();
+            }),
+        ));
+        Some((rows, hairlines))
     }
 
     /// The rows of the saved server's menu at `index`, and how many hairlines they hold.

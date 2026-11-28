@@ -119,3 +119,17 @@ fn a_name_that_is_taken_gets_a_number_in_its_folder_and_level_name() {
     fs::remove_dir_all(from).unwrap();
     fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn a_world_extracts_to_the_given_folder_and_a_non_world_leaves_nothing() {
+    let from = scratch("extract-from");
+    let at = scratch("extract-at");
+    let dir = world(&from, "Pal", vec![("LevelName", name("Pal"))]);
+    let to = at.join("out");
+    assert_eq!(extract_world(&dir, &to).unwrap(), "Pal");
+    assert!(to.join("level.dat").is_file());
+    let empty = at.join("empty");
+    fs::create_dir_all(&empty).unwrap();
+    assert!(extract_world(&empty, &at.join("none")).is_err());
+    assert!(!at.join("none").exists());
+}

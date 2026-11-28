@@ -208,7 +208,7 @@ impl Launcher {
     pub(super) fn open_create(&mut self, cx: &mut Context<Self>) {
         self.focus_handle(Field::Name, cx);
         self.servers.focus_soon = Some(Field::Name);
-        let worlds = servers::player_worlds(&backend::game_home());
+        let worlds = self.create_worlds();
         let name = if self.servers.list.is_empty() {
             "My server".to_string()
         } else {
@@ -235,9 +235,9 @@ impl Launcher {
         self.servers.problem = servers::create_blocked(self.selected().map(String::as_str));
         self.servers.create_scroll = Scrollbar::default();
         self.servers.create = Some(Create {
-            new_world: true,
-            copy: worlds.first().map(|w| w.1.clone()),
+            world: WorldChoice::New,
             worlds,
+            menu: None,
             mode: "survival",
             difficulty: "normal",
             max_players: 10,
@@ -247,6 +247,69 @@ impl Launcher {
             eula_missing: false,
             friends,
         });
+    }
+
+    /// The worlds of every profile the dialog can copy from, the last played first. A profile's
+    /// world is told by its name and the profile's.
+    fn create_worlds(&self) -> Vec<CreateWorld> {
+        let mut homes: Vec<(String, PathBuf)> = self
+            .instances
+            .list
+            .iter()
+            .map(|i| (i.name.clone(), i.home.clone()))
+            .collect();
+        if homes.is_empty() {
+            homes.push((String::new(), backend::game_home()));
+        }
+        let mut seen: Vec<PathBuf> = Vec::new();
+        let mut found = Vec::new();
+        for (profile, home) in homes {
+            if seen.contains(&home) {
+                continue;
+            }
+            seen.push(home.clone());
+            for w in servers::player_world_list(&home) {
+                let hint = format!(
+                    "{} · {}",
+                    tr(w.mode),
+                    crate::worlds_page::ago(w.last_played)
+                );
+                found.push((
+                    w.last_played,
+                    CreateWorld {
+                        name: w.name,
+                        profile: profile.clone(),
+                        path: w.path,
+                        hint,
+                    },
+                ));
+            }
+        }
+        found.sort_by_key(|(played, _)| std::cmp::Reverse(*played));
+        found.into_iter().map(|(_, world)| world).collect()
+    }
+
+    /// Asks for a world file or folder, and makes it the new server's world.
+    pub(super) fn pick_create_world(&mut self, cx: &mut Context<Self>) {
+        let pick = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: true,
+            multiple: false,
+            prompt: Some(tr("Add world").into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = pick.await {
+                if let Some(path) = paths.into_iter().next() {
+                    let _ = this.update(cx, |this, cx| {
+                        if let Some(c) = this.servers.create.as_mut() {
+                            c.world = WorldChoice::Import(path);
+                        }
+                        cx.notify();
+                    });
+                }
+            }
+        })
+        .detach();
     }
 
     pub(super) fn create_server(&mut self) {
@@ -269,9 +332,10 @@ impl Launcher {
         let Some(c) = self.servers.create.as_ref() else {
             return;
         };
-        let world = match (&c.copy, c.new_world) {
-            (Some(dir), false) => World::Copy(dir.clone()),
-            _ => World::New {
+        let world = match &c.world {
+            WorldChoice::Copy(dir) => World::Copy(dir.clone()),
+            WorldChoice::Import(path) => World::Import(path.clone()),
+            WorldChoice::New => World::New {
                 seed: self.servers.value(Field::Seed).to_string(),
             },
         };
