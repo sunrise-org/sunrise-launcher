@@ -10,9 +10,7 @@ use sunrise_launcher_theme as tokens;
 pub use tokens::night::{self, Night};
 #[cfg_attr(not(windows), allow(unused_imports))] // the Windows setup window
 pub use tokens::MICRO;
-pub use tokens::{Step, UI};
-pub const FONT: &str = night::FONT;
-pub const DISPLAY_FONT: &str = night::DISPLAY_FONT;
+pub use tokens::UI;
 pub const MONO: &str = tokens::MONO;
 
 /// Shapes and controls, shared with the game's menus and the website.

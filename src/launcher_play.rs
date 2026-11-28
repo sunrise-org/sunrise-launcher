@@ -327,6 +327,13 @@ impl Launcher {
         stop: Option<native_mods::Cancellation>,
     ) {
         sunrise_launcher::mojang::CANCEL.store(false, Ordering::Relaxed);
+        // A preparation nothing else owns gets a stop of its own, for the strip and Play. A
+        // build switch passes its own, which its Cancel pulls.
+        let stop = stop.or_else(|| {
+            let own = native_mods::Cancellation::default();
+            self.prepare_stop = Some(own.clone());
+            Some(own)
+        });
         let minecraft = self
             .settings
             .minecraft_dir

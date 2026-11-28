@@ -2844,5 +2844,15 @@
   "Search worlds": "Search worlds",
   "Search packs": "Search packs",
   "Search servers": "Search servers",
-  "{shown} of {total}": "{shown} of {total}"
+  "{shown} of {total}": "{shown} of {total}",
+  "Settings weren't saved": "Settings weren't saved",
+  "Your changes are still in this window. Retry to save them.": "Your changes are still in this window. Retry to save them.",
+  "View logs": "View logs",
+  "Delete {count} worlds?": "Delete {count} worlds?",
+  "These worlds will move to the Trash. You can restore them from there.": "These worlds will move to the Trash. You can restore them from there.",
+  "Delete worlds": "Delete worlds",
+  "Deleted 1 world": "Deleted 1 world",
+  "Deleted {count} worlds": "Deleted {count} worlds",
+  "Duplicated 1 world": "Duplicated 1 world",
+  "Duplicated {count} worlds": "Duplicated {count} worlds"
 }

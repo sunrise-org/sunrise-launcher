@@ -11,6 +11,12 @@ impl Launcher {
                 match job {
                     Job::Prepare => {
                         self.preparing = false;
+                        // Stopped by the player: nothing failed, and Play doesn't carry on.
+                        let stopped = (self.prepare_stop.take()).is_some_and(|s| s.is_stopped());
+                        if stopped {
+                            self.play_when_prepared = None;
+                        }
+                        let error = error.filter(|_| !stopped);
                         self.refresh_open_storage_builds();
                         // Play pressed before the version was prepared plays now.
                         if let Some((tag, intent)) = self.play_when_prepared.take() {

@@ -2,12 +2,13 @@
 #![allow(dead_code)] // Used by the shell and pages that the next redesign steps move over; removed in the final sweep.
 use super::*;
 
+use super::button::{button, icon_only, Look, Size, Style};
 use super::focus::{c, mix};
 use crate::glass_ui::icon;
 use crate::motion;
 use crate::paint::{palette, Palette};
 use crate::tokens::{r, BODY, HEADING, LABEL, R_CARD, R_CONTROL, R_SMALL};
-use gpui::{Animation, AnimationExt, FontWeight, Hsla};
+use gpui::{Animation, AnimationExt, FontWeight, Hsla, IntoElement};
 use std::time::Duration;
 
 /// What the feedback says, and so its colour and icon.
@@ -54,42 +55,204 @@ fn label_line(line: SharedString) -> SharedString {
     SharedString::from(line.trim_end_matches(['.', '。', '।']).to_owned())
 }
 
-/// A notice strip: a tone icon, a title in the tone's colour and an optional body line.
-/// Its fill is the tone at 15 % over the card colour; its edge the tone at 50 %.
+/// The most buttons a banner carries on its right.
+const MAX_ACTIONS: usize = 2;
+
+/// A banner's height at least: one line of title, or a title and a line of detail.
+const BANNER_HEIGHT: f32 = 44.;
+
+/// `text` with the home folder `home` written as `~`, as the mockup writes folders. Only a whole
+/// folder name counts, so `/home/danielle/x` is not touched by `/home/daniel`.
+fn tilde_with(text: &str, home: Option<&str>) -> String {
+    match home
+        .map(|h| h.trim_end_matches('/'))
+        .filter(|h| !h.is_empty())
+    {
+        Some(home) => text.replace(&format!("{home}/"), "~/"),
+        None => text.to_owned(),
+    }
+}
+
+/// `text` with the player's home folder written as `~`.
+pub(crate) fn tilde_in(text: &str) -> String {
+    tilde_with(text, std::env::var("HOME").ok().as_deref())
+}
+
+/// The short reason at the end of a system error (`/path/settings.json: Disk quota exceeded
+/// (os error 122)` says "Disk quota exceeded"), for a banner's one detail line. None when the
+/// error has no such tail.
+pub(crate) fn os_reason(error: &str) -> Option<String> {
+    let (_, reason) = error.trim().rsplit_once(": ")?;
+    let reason = match reason.rfind(" (os error ") {
+        Some(at) => &reason[..at],
+        None => reason,
+    }
+    .trim();
+    (!reason.is_empty()).then(|| reason.to_owned())
+}
+
+/// A title that came with its detail below it on further lines: the first line is the title and
+/// the rest the detail, unless a detail was given.
+fn split_title(
+    title: SharedString,
+    detail: Option<SharedString>,
+) -> (SharedString, Option<SharedString>) {
+    if detail.is_none() {
+        if let Some((first, rest)) = title.split_once('\n') {
+            let (first, rest) = (first.trim(), rest.trim());
+            if !first.is_empty() && !rest.is_empty() {
+                return (first.to_owned().into(), Some(rest.to_owned().into()));
+            }
+        }
+    }
+    (title, detail)
+}
+
+/// A notice strip, calm and one card high: a tone icon, a short title in the text colour, an
+/// optional detail line under it, up to two compact buttons and a dismiss on the right. Its fill
+/// is the tone at 8 % over the card colour and its edge the tone at 30 %. A long technical text
+/// does not belong in the detail line: it goes behind a Details button that opens the notice
+/// sheet (`Launcher::open_notice`).
+pub(crate) struct Banner {
+    tone: Tone,
+    title: SharedString,
+    detail: Option<SharedString>,
+    wrap_detail: bool,
+    actions: Vec<AnyElement>,
+    dismiss: Option<AnyElement>,
+}
+
+impl Banner {
+    pub(crate) fn new(tone: Tone, title: impl Into<SharedString>) -> Self {
+        Self {
+            tone,
+            title: title.into(),
+            detail: None,
+            wrap_detail: false,
+            actions: Vec::new(),
+            dismiss: None,
+        }
+    }
+
+    /// One muted line under the title, cut with "…" where it runs out.
+    pub(crate) fn detail(mut self, detail: impl Into<SharedString>) -> Self {
+        self.detail = Some(detail.into());
+        self.wrap_detail = false;
+        self
+    }
+
+    /// A muted note under the title that wraps and is read whole: for a sentence of plain words,
+    /// not a path or a system's error.
+    pub(crate) fn note(mut self, note: impl Into<SharedString>) -> Self {
+        self.detail = Some(note.into());
+        self.wrap_detail = true;
+        self
+    }
+
+    /// A button on the right (see [`banner_button`]). A banner carries two at most; a third is
+    /// left out.
+    pub(crate) fn action(mut self, button: impl IntoElement) -> Self {
+        if self.actions.len() < MAX_ACTIONS {
+            self.actions.push(button.into_any_element());
+        }
+        self
+    }
+
+    /// The × at the right end (see [`banner_dismiss`]), for a banner that can be put away.
+    pub(crate) fn dismiss(mut self, button: impl IntoElement) -> Self {
+        self.dismiss = Some(button.into_any_element());
+        self
+    }
+
+    pub(crate) fn build(self) -> Div {
+        let p = palette();
+        let ink: Hsla = c(self.tone.colour(&p));
+        let mut text = div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap(px(1.))
+            .child(
+                div()
+                    .text_size(px(BODY))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(c(p.text))
+                    .child(tilde_in(&self.title)),
+            );
+        if let Some(detail) = self.detail {
+            let line = div()
+                .text_size(px(LABEL))
+                .text_color(c(p.muted))
+                .child(tilde_in(&detail));
+            text = text.child(if self.wrap_detail {
+                line
+            } else {
+                line.truncate()
+            });
+        }
+        let actions = (!self.actions.is_empty()).then(|| {
+            div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .children(self.actions)
+        });
+        div()
+            .w_full()
+            .min_h(px(BANNER_HEIGHT))
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .px(px(14.))
+            .py(px(8.))
+            .rounded(r(R_CONTROL))
+            .border_1()
+            .border_color(ink.opacity(0.3))
+            .bg(mix(c(p.card_color), ink, 0.08))
+            .child(div().flex_none().child(icon(self.tone.icon(), 20., ink)))
+            .child(text)
+            .children(actions)
+            .children(self.dismiss)
+    }
+}
+
+/// A banner's compact button (Secondary, Small). The caller attaches `on_click`.
+pub(crate) fn banner_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+) -> Stateful<Div> {
+    button(id, label, Look::new(Style::Secondary, Size::Small))
+}
+
+/// A banner's quiet text button (Ghost, Small), for its Details.
+pub(crate) fn banner_link(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+) -> Stateful<Div> {
+    button(id, label, Look::new(Style::Ghost, Size::Small))
+}
+
+/// A banner's × (a square Ghost button). The caller attaches `on_click`.
+pub(crate) fn banner_dismiss(id: impl Into<ElementId>) -> Stateful<Div> {
+    icon_only(id, Look::new(Style::Ghost, Size::Small).icon("cancel-01"))
+}
+
+/// A notice strip with a title and an optional body line that wraps: [`Banner`] with no buttons.
+/// A title of several lines is its first line and a body.
 pub(crate) fn banner(
     tone: Tone,
     title: impl Into<SharedString>,
     body: Option<SharedString>,
 ) -> Div {
-    let p = palette();
-    let ink: Hsla = c(tone.colour(&p));
-    let text = div()
-        .flex_1()
-        .min_w_0()
-        .flex()
-        .flex_col()
-        .gap(px(2.))
-        .child(
-            div()
-                .text_size(px(BODY))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(ink)
-                .child(title.into()),
-        )
-        .children(body.map(|b| div().text_size(px(LABEL)).text_color(c(p.text)).child(b)));
-    div()
-        .w_full()
-        .flex()
-        .items_start()
-        .gap(px(12.))
-        .px(px(16.))
-        .py(px(12.))
-        .rounded(r(R_CONTROL))
-        .border_1()
-        .border_color(ink.opacity(0.5))
-        .bg(mix(c(p.card_color), ink, 0.15))
-        .child(icon(tone.icon(), 20., ink))
-        .child(text)
+    let (title, body) = split_title(title.into(), body);
+    let strip = Banner::new(tone, title);
+    let strip = match body {
+        Some(body) => strip.note(body),
+        None => strip,
+    };
+    strip.build()
 }
 
 /// A thin track with a fill: `fraction` of the way (`None`: no known end, so a 30 % segment

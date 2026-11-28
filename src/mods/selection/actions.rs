@@ -342,10 +342,11 @@ impl Launcher {
                 if self.close_item_menu() {
                     return true;
                 }
-                let Some(packs) = self.home_pick_scope() else {
-                    return false;
+                let picks = match self.home_pick_scope() {
+                    Some(packs) => self.home_pick(packs),
+                    None if self.home_on_worlds() => self.home_worlds_pick(),
+                    None => return false,
                 };
-                let picks = self.home_pick(packs);
                 let any = !picks.is_empty();
                 picks.clear();
                 any
@@ -374,6 +375,11 @@ impl Launcher {
                 !files.is_empty()
             }
             Page::Home => {
+                if self.home_on_worlds() {
+                    let ids = self.home_world_ids();
+                    self.home_worlds_pick().select_all(&ids);
+                    return !ids.is_empty();
+                }
                 let Some(packs) = self.home_pick_scope() else {
                     return false;
                 };

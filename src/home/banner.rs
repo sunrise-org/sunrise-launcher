@@ -5,7 +5,7 @@ use super::*;
 use crate::launch_state::{Act, Main, View};
 use crate::sheets::Sheet;
 use crate::widgets::button::{button, icon_button_opening, Look, Size, Style};
-use crate::widgets::feedback::{banner, progress, Tone};
+use crate::widgets::feedback::{banner_button, progress, Banner, Tone};
 use gpui::rgb;
 
 /// The banner's height when nothing under the buttons adds to it (Figma: the art's 208).
@@ -51,9 +51,10 @@ impl Launcher {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let view = self.launch_facts().view();
+        let facts = self.launch_facts();
+        let view = facts.view();
         let banner = self.profile_banner(instance, compact, &view, window, cx);
-        let state = profile_state(&view, cx);
+        let state = profile_state(&view, crate::home::tabs::error_log(&facts), cx);
         div()
             .flex()
             .flex_col()
@@ -332,6 +333,31 @@ impl Launcher {
     /// Play: a Primary button at Play's height. It is still the one entry point for Play's
     /// state, label, tooltip and enabled flag; the cat sleeps on it when it is idle.
     fn play_button(&mut self, view: &View, compact: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+        // Work Play waits for that can stop (a download, a preparation, the start): the button
+        // is its Stop, and the status strip above carries the progress.
+        if let Some(halt) = view.halt {
+            let stopping = view.stopping;
+            let label: SharedString = if stopping {
+                tr("Stopping…").into()
+            } else {
+                tr("Stop").into()
+            };
+            let look = Look::new(Style::Secondary, Size::Medium).disabled(stopping);
+            let stop = button("alt-play", label, look)
+                .h(px(tokens::PLAY))
+                .min_w(px(if compact { 132. } else { PLAY_WIDTH }))
+                .px(px(if compact { 12. } else { 20. }))
+                .text_size(px(tokens::LEAD))
+                .font_weight(FontWeight::SEMIBOLD);
+            return if stopping {
+                stop
+            } else {
+                stop.on_click(cx.listener(move |this, _, _, cx| {
+                    this.halt(halt);
+                    cx.notify();
+                }))
+            };
+        }
         // The play glyph stands before what starts the game, signing in first included.
         let idle = matches!(
             view.main,
@@ -571,44 +597,50 @@ fn recovering(view: &View) -> bool {
     )
 }
 
-/// The banner under the profile banner for a problem or an update (with its one action), or
-/// the action alone. None when the profile has neither.
-fn profile_state(view: &View, cx: &mut Context<Launcher>) -> Option<Div> {
+/// The banner under the profile banner for a problem or an update, with its one action and, for
+/// a problem that left a log, View logs; or the action alone. None when the profile has
+/// neither. `log` is the log the problem left (`tabs::error_log`).
+fn profile_state(
+    view: &View,
+    log: Option<crate::home::tabs::LogSource>,
+    cx: &mut Context<Launcher>,
+) -> Option<Div> {
     let tone = state_tone(view);
-    let notice = tone
-        .zip(view.said.clone())
-        .map(|(tone, said)| banner(tone, said, None));
-    let act = view
-        .act
-        .clone()
-        .filter(|act| *act != Act::StopBuild)
-        .map(|act| act_button(act, cx));
-    if notice.is_none() && act.is_none() {
-        return None;
+    let act = view.act.clone().filter(|act| *act != Act::StopBuild);
+    if let Some((tone, said)) = tone.zip(view.said.clone()) {
+        let mut strip = Banner::new(tone, said);
+        if let Some(act) = act {
+            strip = strip.action(act_button_sized(act, Size::Small, cx));
+        }
+        if let Some(source) = log.filter(|_| tone == Tone::Danger) {
+            strip = strip.action(banner_button("alt-view-logs", tr("View logs")).on_click(
+                cx.listener(move |this, _, _, cx| {
+                    this.show_logs(source);
+                    cx.notify();
+                }),
+            ));
+        }
+        return Some(strip.build());
     }
-    Some(
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(10.))
-            .children(notice)
-            .children(act),
-    )
+    act.map(|act| div().child(act_button(act, cx)))
 }
 
 /// The one action a state offers, under its own name. A held update's and an update's are the
 /// accent; the rest are secondary.
 fn act_button(act: Act, cx: &mut Context<Launcher>) -> Stateful<Div> {
+    act_button_sized(act, Size::Medium, cx)
+}
+
+/// [`act_button`] at `size`: Small inside a banner.
+fn act_button_sized(act: Act, size: Size, cx: &mut Context<Launcher>) -> Stateful<Div> {
     let (id, style) = match act {
         Act::StopBuild => ("alt-build-stop", Style::Secondary),
         Act::Update => ("alt-update", Style::Primary),
         _ => ("alt-fix", Style::Secondary),
     };
     let label = act.label();
-    button(id, label, Look::new(style, Size::Medium)).on_click(cx.listener(
-        move |this, _, _, cx| {
-            this.launch_act(&act);
-            cx.notify();
-        },
-    ))
+    button(id, label, Look::new(style, size)).on_click(cx.listener(move |this, _, _, cx| {
+        this.launch_act(&act);
+        cx.notify();
+    }))
 }

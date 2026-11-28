@@ -6,9 +6,13 @@ impl Launcher {
     /// Add file on Home's Mods tab: opens Add from source and goes straight to its `.smod`
     /// picker, so the file is read, warned about as unreviewed code and installed the way every
     /// local file is.
-    pub(crate) fn add_smod_file(&mut self, cx: &mut Context<Self>) {
+    /// "Add file": the source sheet, set to a local .smod file. The file picker opens only
+    /// once the player presses Continue, after reading the sheet's warning.
+    pub(crate) fn add_smod_file(&mut self, _cx: &mut Context<Self>) {
         self.open_add_from_source();
-        self.pick_local_smod(cx);
+        if matches!(self.github.stage, Stage::Choose(_)) {
+            self.github.stage = Stage::Choose(SourceChoice::LocalFile);
+        }
     }
 
     pub(super) fn pick_local_smod(&mut self, cx: &mut Context<Self>) {

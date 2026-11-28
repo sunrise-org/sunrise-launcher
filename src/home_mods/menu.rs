@@ -116,8 +116,8 @@ impl Launcher {
             tr("Details"),
             ItemAction::Details,
         )];
+        // On and off is the card's own switch, so the menu leaves it out.
         let remove = if packs {
-            rows.push(change(self.home_toggle_entry(&item, true)));
             let folder = self
                 .home_item_home()
                 .map(|home| home.join(PackKind::Resource.folder()).join(&item.id));
@@ -126,9 +126,6 @@ impl Launcher {
         } else {
             let facts = self.home_card_facts(self.ui.home.mods.revision);
             let fact = facts.get(&item.id);
-            if fact.is_none_or(|fact| fact.switchable) {
-                rows.push(change(self.home_toggle_entry(&item, false)));
-            }
             if fact.is_some_and(|fact| fact.update.is_some()) {
                 rows.push(change(Self::menu_row(
                     "home-menu-update",
@@ -180,24 +177,6 @@ impl Launcher {
         )
     }
 
-    /// Enable or Disable, by what the item is now.
-    fn home_toggle_entry(&self, item: &Item, packs: bool) -> MenuEntry {
-        let (id, label) = match (packs, item.on) {
-            (false, true) => ("home-menu-off", tr("Disable")),
-            (false, false) => ("home-menu-on", tr("Enable")),
-            (true, true) => ("home-menu-pack-off", tr("Disable")),
-            (true, false) => ("home-menu-pack-on", tr("Enable")),
-        };
-        MenuEntry {
-            id,
-            icon: if item.on { "view-off-slash" } else { "view" },
-            label: label.into(),
-            danger: false,
-            off: None,
-            action: ItemAction::Toggle,
-        }
-    }
-
     /// Does what a row of the card's menu says.
     pub(crate) fn home_item_run(
         &mut self,
@@ -213,7 +192,6 @@ impl Launcher {
                     self.open_home_item(item.open);
                 }
             }
-            ItemAction::Toggle => self.home_item_toggle(packs, key, cx),
             ItemAction::Update => self.home_mod_update(key),
             ItemAction::ShowFile(path) => cx.reveal_path(&path),
             ItemAction::CopyName(name) => {

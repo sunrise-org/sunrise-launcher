@@ -800,3 +800,68 @@ fn play_build_account_error_shows_the_account_refusal_instead_of_publish_fallbac
         assert_eq!(stop.action, None);
     }
 }
+
+#[test]
+fn work_that_can_stop_gets_a_stop_in_the_strip_and_on_play() {
+    let downloading = Facts {
+        step: Some(backend::PlayStep::Download),
+        starting: true,
+        start_stoppable: true,
+        ..idle()
+    }
+    .view();
+    assert_eq!(downloading.halt, Some(Halt::Start));
+    assert_eq!(
+        downloading.strip(),
+        Some(("Downloading the game…".into(), StripAct::Stop(Halt::Start)))
+    );
+    assert_eq!(StripAct::Stop(Halt::Start).label(), "Stop");
+    assert!(!downloading.stopping);
+
+    let winding_down = Facts {
+        stopping: true,
+        ..Facts {
+            installing: Some(0.3),
+            install_stoppable: true,
+            ..idle()
+        }
+    }
+    .view();
+    assert_eq!(winding_down.halt, Some(Halt::Install));
+    assert!(winding_down.stopping);
+
+    let preparing = Facts {
+        preparing: true,
+        prepare_stoppable: true,
+        ..idle()
+    }
+    .view();
+    assert_eq!(
+        preparing.strip(),
+        Some(("Preparing…".into(), StripAct::Stop(Halt::Prepare)))
+    );
+}
+
+#[test]
+fn work_without_a_stop_has_none_and_a_stop_alone_changes_nothing() {
+    // A pack's legacy start holds no stop: the strip keeps pointing Home.
+    let legacy = Facts {
+        starting: true,
+        ..idle()
+    }
+    .view();
+    assert_eq!(legacy.halt, None);
+    assert_eq!(legacy.strip().map(|(_, act)| act), Some(StripAct::Home));
+    // A stop with no work under way is nothing to show.
+    let idle_with_stop = Facts {
+        install_stoppable: true,
+        prepare_stoppable: true,
+        start_stoppable: true,
+        stopping: true,
+        ..idle()
+    }
+    .view();
+    assert_eq!(idle_with_stop.halt, None);
+    assert!(!idle_with_stop.stopping);
+    assert_eq!(idle_with_stop.strip(), None);
+}

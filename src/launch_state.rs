@@ -26,6 +26,12 @@ pub(crate) struct Facts {
     pub mutating: bool,
     pub registry: Option<InstallProgress>,
     pub registry_accepts_play: bool,
+    /// What the download, preparation and start under way can be stopped by.
+    pub install_stoppable: bool,
+    pub prepare_stoppable: bool,
+    pub start_stoppable: bool,
+    /// A stop was asked and the work is winding down.
+    pub stopping: bool,
     /// The game runs.
     pub running: bool,
     /// An account is selected, or the developer's offline Play is on.
@@ -91,6 +97,15 @@ pub(crate) enum Act {
     Update,
 }
 
+/// Work Play waits for that Stop ends: a game download, a preparation, or the start of the
+/// game (its download, preparation and mod build).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Halt {
+    Install,
+    Prepare,
+    Start,
+}
+
 /// What the strip's one button does, off Home.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum StripAct {
@@ -99,6 +114,8 @@ pub(crate) enum StripAct {
     StopGame,
     /// Stop an active registry install or native build-tools download.
     StopInstall,
+    /// Stop the game download, preparation or start Play waits for.
+    Stop(Halt),
     /// Nothing can be done from here: Home has Play and the whole story.
     Home,
 }
@@ -113,6 +130,10 @@ pub(crate) struct View {
     /// That sentence is a problem.
     pub failed: bool,
     pub act: Option<Act>,
+    /// What stops the work under way, when it can be stopped.
+    pub halt: Option<Halt>,
+    /// The work was asked to stop and is winding down.
+    pub stopping: bool,
     /// "2 mods not on this build": said only when nothing else is.
     pub mods_off: Option<usize>,
 }
@@ -313,8 +334,16 @@ impl Facts {
         // Mods the game was made without are no problem to raise: one quiet line, at most.
         let mods_off =
             (said.is_none() && !self.building && self.mods_off > 0).then_some(self.mods_off);
+        let halt = match main {
+            Main::Installing(_) if self.install_stoppable => Some(Halt::Install),
+            Main::Preparing if self.prepare_stoppable => Some(Halt::Prepare),
+            Main::Starting | Main::Step(_) if self.start_stoppable => Some(Halt::Start),
+            _ => None,
+        };
         View {
             main,
+            halt,
+            stopping: halt.is_some() && self.stopping,
             enabled: location_allows_action(
                 self.located,
                 busy && !matches!(main, Main::RegistryInstall(_, true)),
@@ -399,7 +428,7 @@ impl StripAct {
     pub(crate) fn label(&self) -> &'static str {
         match self {
             StripAct::Act(act) => act.label(),
-            StripAct::StopGame | StripAct::StopInstall => tr("Stop"),
+            StripAct::StopGame | StripAct::StopInstall | StripAct::Stop(_) => tr("Stop"),
             StripAct::Home => tr("Go to Home"),
         }
     }
@@ -421,7 +450,7 @@ impl View {
                 {
                     StripAct::StopInstall
                 }
-                _ => StripAct::Home,
+                _ => self.halt.map_or(StripAct::Home, StripAct::Stop),
             };
             return Some((self.main.label(), act));
         }
@@ -472,7 +501,43 @@ impl Launcher {
             registry: self.registry_stage(),
             registry_accepts_play: self.registry_accepts_play(),
             running: self.client.is_some(),
+            install_stoppable: self.install_stop.is_some(),
+            prepare_stoppable: self.prepare_stop.is_some(),
+            // Only the admitted worker (not a pack's legacy start) holds a stop.
+            start_stoppable: self.starting_client.is_some() && self.native_cancellation.is_some(),
+            stopping: self.halting(),
             ..Facts::default()
+        }
+    }
+
+    /// A stop was asked of the game download, preparation or start under way.
+    pub(crate) fn halting(&self) -> bool {
+        [
+            &self.install_stop,
+            &self.prepare_stop,
+            &self.native_cancellation,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|stop| stop.is_stopped())
+    }
+
+    /// Stops what Play waits for. Nothing asks first: what was downloaded stays for next time.
+    pub(crate) fn halt(&mut self, halt: Halt) {
+        match halt {
+            Halt::Install => {
+                if let Some(stop) = &self.install_stop {
+                    stop.stop();
+                }
+            }
+            Halt::Prepare => {
+                if let Some(stop) = &self.prepare_stop {
+                    stop.stop();
+                }
+            }
+            // The start's worker holds the same stop as a native build: its download, its
+            // preparer and its build all check it, and the game never opens after it.
+            Halt::Start => self.stop_build(),
         }
     }
 
@@ -544,6 +609,7 @@ impl Launcher {
                 }
             }
             StripAct::StopInstall => self.stop_registry_install(),
+            StripAct::Stop(halt) => self.halt(*halt),
             StripAct::Home => self.navigate(crate::frame::Page::Home),
         }
     }

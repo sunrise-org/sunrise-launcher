@@ -22,6 +22,8 @@ pub(crate) enum WorldAction {
     },
     /// Delete's question.
     Confirm(World),
+    /// Delete's question for the worlds ticked on Home.
+    ConfirmMany(Vec<World>),
     /// The new name's field (its text is `Worlds::rename`).
     Rename { world: World, focus: FocusHandle },
 }
@@ -79,7 +81,7 @@ fn menu_row(
 
 impl Launcher {
     /// Why a world can't be copied, renamed or deleted now: the game holds its profile's worlds.
-    fn world_lock(&self) -> Option<SharedString> {
+    pub(crate) fn world_lock(&self) -> Option<SharedString> {
         (self.client.is_some()
             && self.worlds.home.is_some()
             && self.client_home.as_ref() == self.worlds.home.as_ref())
@@ -136,6 +138,7 @@ impl Launcher {
         match self.worlds.action.as_ref()? {
             WorldAction::Menu { world, button } => Some(self.world_menu(world, *button, cx)),
             WorldAction::Confirm(world) => Some(self.world_delete_sheet(world, cx)),
+            WorldAction::ConfirmMany(worlds) => Some(self.worlds_delete_sheet(worlds, cx)),
             WorldAction::Rename { world, focus } => {
                 Some(self.world_rename_sheet(world, focus, window, cx))
             }
@@ -339,6 +342,48 @@ impl Launcher {
         )
     }
 
+    /// The one question for deleting every ticked world.
+    fn worlds_delete_sheet(&self, worlds: &[World], cx: &mut Context<Self>) -> Stateful<Div> {
+        let doomed = worlds.to_vec();
+        let count = worlds.len().to_string();
+        let body =
+            div()
+                .flex()
+                .flex_col()
+                .child(title(trf("Delete {count} worlds?", &[("count", &count)])))
+                .child(div().text_color(rgb(palette().muted)).child(tr(
+                    "These worlds will move to the Trash. You can restore them from there.",
+                )))
+                .child(
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap(px(8.))
+                        .child(secondary("worlds-delete-cancel", tr("Cancel")).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.close_world_action();
+                                cx.notify();
+                            }),
+                        ))
+                        .child(
+                            danger("worlds-delete-confirm", tr("Delete worlds")).on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.worlds.action = None;
+                                    this.delete_worlds(doomed.clone(), cx);
+                                    cx.notify();
+                                }),
+                            ),
+                        ),
+                );
+        modal_frame(
+            "worlds-delete-sheet",
+            450.,
+            body,
+            cx,
+            Self::close_world_action,
+        )
+    }
+
     fn world_rename_sheet(
         &self,
         world: &World,
@@ -463,6 +508,107 @@ impl Launcher {
             cx,
             move || worlds::delete(&instance, &world.folder),
             |gone| Some(trf("{world} is in the Trash", &[("world", &gone.name)])),
+        );
+    }
+
+    /// The worlds ticked on Home's Worlds tab, as the list has them.
+    fn picked_worlds(&mut self) -> Vec<World> {
+        let keys = self.home_worlds_pick().keys().clone();
+        self.worlds
+            .list
+            .iter()
+            .filter(|world| keys.contains(&world.folder))
+            .cloned()
+            .collect()
+    }
+
+    /// Copies every ticked world beside itself, as one background job with one toast.
+    pub(crate) fn copy_picked_worlds(&mut self, cx: &mut Context<Self>) {
+        if self.world_lock().is_some() {
+            return;
+        }
+        let picked = self.picked_worlds();
+        let Some(instance) = self.world_profile() else {
+            return;
+        };
+        if picked.is_empty() {
+            return;
+        }
+        self.home_worlds_pick().clear();
+        self.world_batch(cx, instance, picked, false);
+    }
+
+    /// Asks once before every ticked world goes to the Trash.
+    pub(crate) fn ask_delete_picked_worlds(&mut self) {
+        if self.world_lock().is_some() {
+            return;
+        }
+        let picked = self.picked_worlds();
+        if picked.is_empty() {
+            return;
+        }
+        self.close_menus();
+        self.worlds.action = Some(WorldAction::ConfirmMany(picked));
+    }
+
+    /// Moves `worlds` to the system's trash, as one background job with one toast.
+    fn delete_worlds(&mut self, worlds: Vec<World>, cx: &mut Context<Self>) {
+        if self.world_lock().is_some() {
+            return;
+        }
+        let Some(instance) = self.world_profile() else {
+            return;
+        };
+        self.home_worlds_pick().clear();
+        self.world_batch(cx, instance, worlds, true);
+    }
+
+    /// Copies (or, with `trash`, deletes) each of `worlds` one after another in one job. A world
+    /// that fails doesn't stop the rest; one toast says how many were done and which weren't.
+    fn world_batch(
+        &mut self,
+        cx: &mut Context<Self>,
+        instance: instances::Instance,
+        worlds: Vec<World>,
+        trash: bool,
+    ) {
+        self.world_job(
+            cx,
+            move || {
+                let mut done = 0usize;
+                let mut failed: Vec<String> = Vec::new();
+                for world in &worlds {
+                    let result = if trash {
+                        worlds::delete(&instance, &world.folder)
+                    } else {
+                        worlds::copy(&instance, &world.folder)
+                    };
+                    match result {
+                        Ok(_) => done += 1,
+                        Err(why) => failed.push(format!("{}: {why}", world.name)),
+                    }
+                }
+                Ok((done, failed))
+            },
+            move |(done, failed): (usize, Vec<String>)| {
+                let count = done.to_string();
+                let said = match (trash, done) {
+                    (_, 0) => String::new(),
+                    (true, 1) => tr("Deleted 1 world").to_string(),
+                    (true, _) => trf("Deleted {count} worlds", &[("count", &count)]),
+                    (false, 1) => tr("Duplicated 1 world").to_string(),
+                    (false, _) => trf("Duplicated {count} worlds", &[("count", &count)]),
+                };
+                if failed.is_empty() {
+                    return Some(said);
+                }
+                let list = failed.join("; ");
+                Some(
+                    format!("{said} {}", trf("Not done: {list}", &[("list", &list)]))
+                        .trim()
+                        .to_owned(),
+                )
+            },
         );
     }
 

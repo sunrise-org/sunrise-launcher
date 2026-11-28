@@ -9,7 +9,8 @@ use crate::widgets::check::switch;
 use crate::widgets::feedback::{banner, empty_state, empty_state_icon, Tone};
 use crate::widgets::focus::c;
 use crate::widgets::motion_bits::copy_button;
-use sources::{nothing_here, Source};
+use sources::nothing_here;
+pub(crate) use sources::Source;
 use sunrise_launcher::game_log::{self, Shared};
 use tail::{FileLog, Tail};
 
@@ -18,6 +19,48 @@ mod sources;
 mod tail;
 #[cfg(test)]
 mod tests;
+
+/// The log an error on Home came from, if it left one: what its "View logs" opens. Mirrors the
+/// order `Facts::view` picks the problem it says in.
+///
+/// - the game's preparer: this session's game output (`Game`), which holds the preparer's own
+///   lines while it runs
+/// - a native mods build: the build log (`Build`)
+/// - a game that stopped: the crash reports, newest first (`Crashes`)
+/// - a start that failed: the launcher's diagnostics (`Launcher`)
+/// - a download or install: none
+pub(crate) fn error_log(facts: &crate::launch_state::Facts) -> Option<Source> {
+    if facts.install_recovery.is_some() || facts.building {
+        return None;
+    }
+    if facts.client_error.is_some() {
+        Some(Source::Launcher)
+    } else if facts.prepare_error.is_some() {
+        Some(Source::Game)
+    } else if facts.build_result.is_some() || (facts.native_error.is_some() && facts.held.is_none())
+    {
+        Some(Source::Build)
+    } else if facts.install_error.is_some() {
+        None
+    } else if facts.crash.is_some() {
+        Some(Source::Crashes)
+    } else {
+        None
+    }
+}
+
+impl Launcher {
+    /// Shows Home's Logs tab with `source` selected, from any page: the "View logs" of an error.
+    /// A list source (crash reports, launcher diagnostics) opens on its newest file.
+    pub(crate) fn show_logs(&mut self, source: Source) {
+        self.navigate(crate::frame::Page::Home);
+        let tabs = &mut self.ui.home.tabs;
+        tabs.selected = super::Tab::Logs;
+        tabs.logs.switch(source);
+        tabs.logs.chosen = None;
+        tabs.logs.seen.set((u64::MAX, 0));
+    }
+}
 
 /// A line of the log. Fixed, so a long log builds only the lines near the view.
 const LINE: f32 = 20.;

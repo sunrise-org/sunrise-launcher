@@ -98,10 +98,12 @@ impl Launcher {
             StripAct::Act(Act::StopBuild) => "alt-strip-stop-build",
             StripAct::StopGame => "alt-strip-stop",
             StripAct::StopInstall => "alt-strip-stop-install",
+            StripAct::Stop(_) => "alt-strip-stop-work",
             StripAct::Act(_) => "alt-strip-fix",
             StripAct::Home => "alt-strip-home",
         };
-        let stopping_install = act == StripAct::StopInstall && self.registry_install_stopping();
+        let stopping_install = (act == StripAct::StopInstall && self.registry_install_stopping())
+            || (matches!(act, StripAct::Stop(_)) && view.stopping);
         let line = if stopping_install {
             div().truncate().child(tr("Stopping…")).into_any_element()
         } else {

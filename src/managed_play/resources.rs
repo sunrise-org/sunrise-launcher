@@ -53,12 +53,16 @@ impl Resources {
         base: &str,
         profile: ProfileHandoff<'_>,
         log: &dyn Fn(String),
+        stop: Option<&crate::native_mods::Cancellation>,
     ) -> Result<Self, String> {
         let preparation = backend::prepare_lock(base)?;
         if let Some(resources) = Self::current(&backend::version_dir(base))? {
             return Ok(resources);
         }
-        let handoff = preparation.handoff(Some(profile));
+        let handoff = match stop {
+            Some(stop) => preparation.handoff_cancellable(Some(profile), stop),
+            None => preparation.handoff(Some(profile)),
+        };
         if !backend::check_prepared(base) {
             backend::reuse_prepared(&backend::versions_dir(), base);
             if !backend::check_prepared(base) {
@@ -77,7 +81,7 @@ impl Resources {
                 preparer::run_staged(command, &handoff, log)?;
             }
         }
-        Self::seal_prepared(base, &preparation, &handoff, None, None)
+        Self::seal_prepared(base, &preparation, &handoff, stop, None)
     }
 
     /// Finish the shared preparation under its existing lock, before a profile needs it.

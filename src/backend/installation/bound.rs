@@ -297,10 +297,23 @@ impl GameDownload {
         proof: &GameProof,
         progress: impl Fn(f32),
     ) -> Result<(), String> {
-        let outcome = self.publish(
+        self.install_cancellable(tag, proof, None, progress)
+    }
+
+    /// [`Self::install`], which stops at the next safe point once `stop` is asked: nothing
+    /// half unpacked is published, and what was downloaded stays resumable.
+    pub(crate) fn install_cancellable(
+        &self,
+        tag: &str,
+        proof: &GameProof,
+        stop: Option<&crate::native_mods::Cancellation>,
+        progress: impl Fn(f32),
+    ) -> Result<(), String> {
+        let outcome = self.publish_cancellable(
             tag,
             proof,
             InstallIntent::Exact,
+            stop,
             progress,
             crate::signed::asset_url,
         )?;
@@ -346,6 +359,7 @@ impl GameDownload {
         })
     }
 
+    #[cfg(test)]
     fn publish(
         &self,
         tag: &str,

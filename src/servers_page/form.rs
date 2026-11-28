@@ -147,6 +147,7 @@ impl Launcher {
                         this.save_instance(cx)
                     }
                     Key::Enter => this.field_enter(f),
+                    Key::Escape if f == Field::NewGroup => this.close_new_group(),
                     Key::Escape => {
                         this.servers.confirm_delete = false;
                         if this.servers.create.is_some() && !this.servers.creating {
@@ -191,6 +192,7 @@ impl Launcher {
             Field::Port => self.save_port(),
             Field::Token => self.save_token(),
             Field::Email => self.invite_friend(),
+            Field::NewGroup => self.commit_new_group(),
             Field::InstanceName | Field::InstanceGroup | Field::DeleteServer | Field::AccentHex => {
             }
             Field::PreLaunch | Field::Wrapper | Field::LaunchEnv | Field::PostExit => {

@@ -59,6 +59,22 @@ impl Launcher {
                 cx.notify();
             })),
         });
+        // The log the problem left, if it did: the same one Home's banner offers.
+        // (A settings error that could not be saved is no play problem and has none.)
+        let play_log = self
+            .settings_save_error
+            .is_none()
+            .then(|| crate::home::tabs::error_log(&self.launch_facts()))
+            .flatten();
+        let logs = play_log.map(|source| {
+            secondary("alt-notice-logs", tr("View logs")).on_click(cx.listener(
+                move |this, _: &ClickEvent, _, cx| {
+                    this.close_sheet();
+                    this.show_logs(source);
+                    cx.notify();
+                },
+            ))
+        });
         let body = div()
             .flex()
             .flex_col()
@@ -85,6 +101,7 @@ impl Launcher {
                             },
                         )),
                     )
+                    .children(logs)
                     .children(way_out),
             );
         frame("alt-notice", 560., body, cx)

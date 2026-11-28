@@ -78,18 +78,9 @@ pub(crate) fn installed_in(versions: &Path) -> Vec<String> {
     tags.into_iter().map(|(tag, _)| tag).collect()
 }
 
-/// Downloads `url` into `to`; the file is kept only if its SHA-256 is `sha256`, the signed (or
-/// pinned) one. A `size` of 0 takes the server's Content-Length for the progress.
-pub(crate) fn download(
-    url: &str,
-    size: u64,
-    sha256: &str,
-    to: &Path,
-    progress: &impl Fn(f32),
-) -> Result<(), String> {
-    download_cancellable(url, size, sha256, to, None, progress)
-}
-
+/// Downloads `url` into `to`, stopping when `stop` is asked; the file is kept only if its
+/// SHA-256 is `sha256`, the signed (or pinned) one. A `size` of 0 takes the server's
+/// Content-Length for the progress.
 pub(crate) fn download_cancellable(
     url: &str,
     size: u64,

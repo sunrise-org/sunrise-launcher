@@ -105,3 +105,49 @@ fn play_says_how_far_its_download_is_and_what_its_preparation_does() {
         },
     );
 }
+
+#[test]
+fn starting_the_game_and_preparing_it_can_be_stopped_from_every_page() {
+    in_scratch_launcher(
+        "status_strip::tests::starting_the_game_and_preparing_it_can_be_stopped_from_every_page",
+        |launcher| {
+            launcher.starting_client = Some(TAG.into());
+            launcher.native_cancellation = Some(Default::default());
+            for page in [Page::Home, Page::Discover, Page::Settings] {
+                launcher.navigate(page);
+                let jobs = launcher.jobs();
+                assert_eq!(jobs.len(), 1, "on {page:?}");
+                assert_eq!(jobs[0].stop, Some(JobAct::StopStart));
+                assert!(!jobs[0].stopping);
+            }
+            launcher.job_act(JobAct::StopStart);
+            assert!(launcher.native_cancellation.as_ref().unwrap().is_stopped());
+            let jobs = launcher.jobs();
+            assert!(jobs[0].stopping);
+            assert_eq!(jobs[0].step.as_deref(), Some("Stopping…"));
+
+            launcher.starting_client = None;
+            launcher.native_cancellation = None;
+            launcher.preparing = true;
+            launcher.prepare_stop = Some(Default::default());
+            let jobs = launcher.jobs();
+            assert_eq!(jobs[0].stop, Some(JobAct::StopPrepare));
+            launcher.job_act(JobAct::StopPrepare);
+            assert!(launcher.prepare_stop.as_ref().unwrap().is_stopped());
+            assert!(launcher.jobs()[0].stopping);
+        },
+    );
+}
+
+#[test]
+fn a_start_without_a_stop_of_its_own_offers_none() {
+    in_scratch_launcher(
+        "status_strip::tests::a_start_without_a_stop_of_its_own_offers_none",
+        |launcher| {
+            launcher.starting_client = Some(TAG.into());
+            let jobs = launcher.jobs();
+            assert_eq!(jobs.len(), 1);
+            assert_eq!(jobs[0].stop, None);
+        },
+    );
+}

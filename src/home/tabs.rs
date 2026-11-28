@@ -15,6 +15,7 @@ mod servers;
 mod worlds;
 
 pub(crate) use cards::{Card, ItemAction, MenuEntry, GAP};
+pub(crate) use logs::{error_log, Source as LogSource};
 pub(crate) use search::{matches as matches_query, no_matches};
 
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
@@ -84,8 +85,11 @@ pub(crate) struct Tabs {
     opener: Option<FocusHandle>,
     /// Stable even as a virtual row is recycled. Cleared when leaving the selected profile.
     rows: HashMap<SharedString, FocusHandle>,
-    /// The ticked rows of the Mods tab and of the Packs tab, in that order.
-    picks: [Selection; 2],
+    /// The ticked rows of the Mods tab, the Packs tab and the Worlds tab, in that order.
+    picks: [Selection; 3],
+    /// The hover of each card, easing in and out, by card id: a card's tick box fades up while
+    /// the pointer is on the card.
+    fades: HashMap<SharedString, crate::motion::Fade>,
     /// The bar of the list drawn this frame, if rows are ticked: set while the rows are built,
     /// taken when the panel is.
     bar: Option<AnyElement>,
@@ -129,6 +133,24 @@ impl Tabs {
                 ..Self::default()
             };
         }
+    }
+
+    /// The pointer entered (`on`) or left the card `id`: its fade turns around from where it was.
+    fn warm(&mut self, id: &SharedString, on: bool) {
+        let fade =
+            crate::motion::Fade::toward(self.fades.get(id).copied(), on, std::time::Instant::now());
+        self.fades.insert(id.clone(), fade);
+    }
+
+    /// The fade of the card `id`, while there is something to draw; one that has ended off is
+    /// dropped.
+    fn lit(&mut self, id: &SharedString) -> Option<crate::motion::Fade> {
+        let fade = self.fades.get(id).copied()?;
+        if fade.rested(std::time::Instant::now()) {
+            self.fades.remove(id);
+            return None;
+        }
+        Some(fade)
     }
 
     pub(crate) fn remember(&mut self, opener: Option<FocusHandle>) {
@@ -293,7 +315,11 @@ impl Launcher {
                 div()
                     .flex()
                     .flex_none()
-                    .h(px(38.))
+                    // 15 px under the tabs and 12 before the first card, around the 32 px field;
+                    // the same on every tab that has a search.
+                    .pt(px(15.))
+                    .pb(px(12.))
+                    .h(px(if searchable { 59. } else { 38. }))
                     .items_center()
                     .gap(px(10.))
                     .children(search)
@@ -369,6 +395,16 @@ impl Launcher {
     /// The ticked rows of the Packs tab (true) or the Mods tab (false).
     pub(crate) fn home_pick(&mut self, packs: bool) -> &mut Selection {
         &mut self.ui.home.tabs.picks[usize::from(packs)]
+    }
+
+    /// The ticked rows of the Worlds tab.
+    pub(crate) fn home_worlds_pick(&mut self) -> &mut Selection {
+        &mut self.ui.home.tabs.picks[2]
+    }
+
+    /// Whether Home is showing the Worlds tab, whose rows tick as the Mods tab's do.
+    pub(crate) fn home_on_worlds(&self) -> bool {
+        self.ui.page == Page::Home && self.ui.home.tabs.selected == Tab::Worlds
     }
 
     /// Hands the bar of the list being built to the panel that holds it.

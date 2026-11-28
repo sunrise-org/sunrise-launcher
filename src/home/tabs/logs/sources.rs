@@ -11,7 +11,7 @@ const MAX_FILES: usize = 6;
 const RELIST: std::time::Duration = std::time::Duration::from_secs(3);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) enum Source {
+pub(crate) enum Source {
     /// This session's run, as it comes; the profile's `latest.log` while there is none.
     #[default]
     Game,

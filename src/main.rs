@@ -59,7 +59,6 @@ mod packs_page;
 mod paint;
 mod perf;
 mod picture_cache;
-mod plate;
 mod profile_builds;
 mod profile_delete;
 mod profile_dialog;
@@ -215,6 +214,11 @@ struct Launcher {
     installing: Option<(String, f32)>,
     /// Stops the game build download under way: its own, or the build switch's it serves.
     install_stop: Option<native_mods::Cancellation>,
+    /// Stops the preparation under way that the player started (Prepare in Play's menu). A build
+    /// switch's own preparation is stopped by the switch.
+    prepare_stop: Option<native_mods::Cancellation>,
+    /// Stops the launcher's own update download.
+    update_stop: Option<native_mods::Cancellation>,
     /// The status strip's list of work under way: open or folded, and the time left it measures.
     jobs: status_strip::Jobs,
     /// The confirmed builds whose removal is in progress.

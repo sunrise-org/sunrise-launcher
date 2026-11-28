@@ -35,6 +35,7 @@ impl Launcher {
             discarding: false,
             menu: None,
             pinning: false,
+            naming_group: false,
         });
         cx.notify();
     }
@@ -62,6 +63,7 @@ impl Launcher {
             discarding: false,
             menu: None,
             pinning: false,
+            naming_group: false,
         });
         cx.notify();
     }
@@ -132,7 +134,18 @@ impl Launcher {
             }))
             .child(div().flex_1())
             .child(self.profile_dialog_foot(editing, busy, ready, cx));
-        let plate = div().flex().child(side).child(right);
+        let naming = self
+            .instances
+            .dialog
+            .as_ref()
+            .is_some_and(|d| d.naming_group);
+        let popup = naming.then(|| self.new_group_popup(cx));
+        let plate = div()
+            .relative()
+            .flex()
+            .child(side)
+            .child(right)
+            .children(popup);
         Some(crate::sheets::modal_plate(
             "new-profile",
             720.,
@@ -262,7 +275,104 @@ impl Launcher {
                     }
                 },
             )
+            .on_offer({
+                let this = cx.entity();
+                move |_, cx| {
+                    this.update(cx, |this, cx| {
+                        this.open_new_group(cx);
+                        cx.notify();
+                    })
+                }
+            })
             .build()
+    }
+
+    /// Opens the "New group" popup over the dialog, its name field empty and focused.
+    fn open_new_group(&mut self, cx: &mut Context<Self>) {
+        let Some(d) = self.instances.dialog.as_mut() else {
+            return;
+        };
+        d.menu = None;
+        d.naming_group = true;
+        self.servers.text(Field::NewGroup).set(String::new());
+        self.focus_handle(Field::NewGroup, cx);
+        self.servers.focus_soon = Some(Field::NewGroup);
+    }
+
+    pub(super) fn close_new_group(&mut self) {
+        if let Some(d) = self.instances.dialog.as_mut() {
+            d.naming_group = false;
+        }
+        self.servers.focus_soon = Some(Field::InstanceName);
+    }
+
+    /// Create in the popup: the dialog's group becomes the name typed.
+    pub(super) fn commit_new_group(&mut self) {
+        let name = self.servers.value(Field::NewGroup).trim().to_string();
+        if name.is_empty() {
+            return;
+        }
+        self.servers.text(Field::InstanceGroup).set(name);
+        self.close_new_group();
+    }
+
+    /// The popup laid over the dialog while a new group is named: a dim layer, and a small card
+    /// with the name field and Cancel / Create.
+    fn new_group_popup(&mut self, cx: &mut Context<Self>) -> Div {
+        let p = palette();
+        let field = self.field(Field::NewGroup, tr("Group name"), 260., cx);
+        let ready = !self.servers.value(Field::NewGroup).trim().is_empty();
+        let card = div()
+            .id("new-group-popup")
+            .w(px(320.))
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .p(px(20.))
+            .rounded(tokens::r(tokens::R_PANEL))
+            .border_1()
+            .border_color(rgb(p.line))
+            .bg(rgb(p.raised))
+            .shadow_lg()
+            .occlude()
+            .child(
+                div()
+                    .text_size(px(tokens::HEADING))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(tr("New group")),
+            )
+            .child(field.w_full())
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        secondary("new-group-cancel", tr("Cancel")).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.close_new_group();
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        primary("new-group-create", tr("Create group"))
+                            .when(!ready, |d| d.opacity(0.5))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.commit_new_group();
+                                cx.notify();
+                            })),
+                    ),
+            );
+        div()
+            .absolute()
+            .inset_0()
+            .rounded(tokens::r(tokens::R_PANEL))
+            .bg(gpui::Hsla::from(rgb(0x000000)).opacity(0.35))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(card)
     }
 
     /// The question a close asks once it found edits not saved: Keep editing goes back to the

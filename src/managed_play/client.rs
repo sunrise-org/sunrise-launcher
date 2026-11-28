@@ -328,6 +328,7 @@ impl Client<'_> {
                         old.base(),
                         profile.handoff(),
                         &|line| progress(Progress::Line(line)),
+                        Some(cancellation),
                     )?)
                 }
                 Err(issue) => return Err(issue.message(|| unsettled!()).into()),
@@ -351,12 +352,15 @@ impl Client<'_> {
         }
 
         let ready = (|| {
-            let first = profile.begin_first(choose, |fraction| {
-                progress(Progress::Download(fraction));
-            })?;
+            let first = profile.begin_first_cancellable(
+                choose,
+                |fraction| progress(Progress::Download(fraction)),
+                Some(cancellation),
+            )?;
             check_build(first.base(), first.variant().as_ref())?;
             progress(Progress::Prepare);
-            first.prepare(&|line| progress(Progress::Line(line)))?;
+            first
+                .prepare_cancellable(&|line| progress(Progress::Line(line)), Some(cancellation))?;
             let (image, notices) = {
                 let _manifest = game_lock(&home)?;
                 super::recover_game_install(&home).map_err(StartError::Journal)?;

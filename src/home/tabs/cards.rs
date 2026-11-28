@@ -1,7 +1,8 @@
 //! The Mods and Packs tabs' rows, drawn as the Worlds tab draws its own: a bordered card of one
 //! height with a picture, a name over a muted line, and on the right a switch and a "…" menu.
 //! Pressing the card opens the item; the switch and the menu take their own presses. The tick
-//! box of a multi-selection has a column left of the picture, shown under the pointer.
+//! box of a multi-selection has a column left of the picture, always drawn faintly and at full
+//! strength under the pointer.
 use super::*;
 use crate::widgets::button::{icon_button_opening, Style};
 use crate::widgets::check::switch;
@@ -16,14 +17,18 @@ pub(crate) const GAP: f32 = WORLD_ROW_GAP;
 /// The menu's width, and how close to the window's edge it may come.
 const MENU_WIDTH: f32 = 210.;
 const MENU_EDGE: f32 = 8.;
-/// The column of the tick box: as wide as the box, fixed so the card doesn't shift.
+/// The column of the tick box: as wide as the box (18 px); the card's 12 px gap after it is the
+/// breathing room before the picture.
 const CHECK_SLOT: f32 = 18.;
+/// How strongly an unticked box shows when the pointer is not on its card, and while something
+/// in the list is ticked (the boxes are then what the player is working with).
+const CHECK_REST: f32 = 0.45;
+const CHECK_WHILE_TICKING: f32 = 0.7;
 
 /// One thing a card's "…" menu can do.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ItemAction {
     Details,
-    Toggle,
     Update,
     ShowFile(PathBuf),
     CopyName(String),
@@ -237,35 +242,72 @@ impl Launcher {
         .into_any_element()
     }
 
-    /// The tick box, in a column of its own left of the picture so the card's content stays put
-    /// when it shows: under the pointer, and on every card once one is ticked.
-    fn card_check(
+    /// The tick box, in a column of its own left of the picture. An unticked box is drawn faintly
+    /// so it reads as something to tick, eases up to full strength while the pointer is on the
+    /// card `id`, and a ticked one is always full (the accent, with its tick). `any`: something
+    /// in the list is ticked, so the faint boxes are a little stronger. `press` takes the box's
+    /// own click.
+    pub(crate) fn tick_column(
         &mut self,
         id: &SharedString,
-        group: &SharedString,
-        pick: &Pick,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let (packs, key, order) = (pick.packs, pick.key.clone(), pick.order.clone());
-        div()
+        ticked: bool,
+        any: bool,
+        press: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> AnyElement {
+        let column = div()
             .flex_none()
             .w(px(CHECK_SLOT))
             .flex()
             .items_center()
-            .opacity(if pick.any || pick.ticked { 1. } else { 0. })
-            .group_hover(group.clone(), |s| s.opacity(1.))
             .child(
                 checkbox(
                     SharedString::from(format!("{id}-pick")),
-                    if pick.ticked { Tick::On } else { Tick::Off },
+                    if ticked { Tick::On } else { Tick::Off },
                 )
-                .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
-                    cx.stop_propagation();
-                    this.home_pick(packs)
-                        .click(&order, &key, ev.modifiers().shift);
-                    cx.notify();
-                })),
-            )
+                .on_click(press),
+            );
+        if ticked {
+            return column.into_any_element();
+        }
+        let rest = if any { CHECK_WHILE_TICKING } else { CHECK_REST };
+        match self.ui.home.tabs.lit(id) {
+            Some(fade) => fade.play(
+                &SharedString::from(format!("{id}-fade")),
+                column,
+                move |d, lit| d.opacity(rest + (1. - rest) * lit),
+            ),
+            None => column.opacity(rest).into_any_element(),
+        }
+    }
+
+    /// `card` (named `id`) telling the tabs when the pointer enters or leaves it, so its tick
+    /// box can ease.
+    pub(crate) fn watch_hover(
+        card: Stateful<Div>,
+        id: &SharedString,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let id = id.clone();
+        card.on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+            this.ui.home.tabs.warm(&id, *hovered);
+            cx.notify();
+        }))
+    }
+
+    /// A mod or pack card's tick box.
+    fn card_check(&mut self, id: &SharedString, pick: &Pick, cx: &mut Context<Self>) -> AnyElement {
+        let (packs, key, order) = (pick.packs, pick.key.clone(), pick.order.clone());
+        self.tick_column(
+            id,
+            pick.ticked,
+            pick.any,
+            cx.listener(move |this, ev: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                this.home_pick(packs)
+                    .click(&order, &key, ev.modifiers().shift);
+                cx.notify();
+            }),
+        )
     }
 
     /// The card's switch and "…" button.
@@ -328,9 +370,8 @@ impl Launcher {
         open: impl Fn(&mut Self, &mut Context<Self>) + 'static,
     ) -> Stateful<Div> {
         let id = card.id.clone();
-        let group = SharedString::from(format!("{id}-group"));
         let focus = self.ui.home.tabs.focus_for(id.clone(), cx);
-        let check = self.card_check(&id, &group, &card.pick, cx);
+        let check = self.card_check(&id, &card.pick, cx);
         let controls = self.card_controls(&id, &card, cx);
         let Card {
             picture,
@@ -348,9 +389,9 @@ impl Launcher {
             .child(title.clone())
             .tooltip(crate::glass_ui::tip(title));
         let ticked = pick.ticked;
-        crate::home::card()
+        let lit = id.clone();
+        let card = crate::home::card()
             .id(id)
-            .group(group)
             .track_focus(&focus)
             .reach()
             .cursor_pointer()
@@ -385,6 +426,7 @@ impl Launcher {
                 this.ui.home.tabs.remember(Some(focus.clone()));
                 open(this, cx);
                 cx.notify();
-            }))
+            }));
+        Self::watch_hover(card, &lit, cx)
     }
 }

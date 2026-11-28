@@ -367,13 +367,17 @@ impl Launcher {
                 }
                 let release = offer.release.clone();
                 self.self_update = SelfUpdate::Downloading(release.clone(), 0.);
+                let stop = native_mods::Cancellation::default();
+                self.update_stop = Some(stop.clone());
                 let tx = self.tx.clone();
                 std::thread::spawn(move || {
                     let progress = |p| {
                         let _ = tx.send(Msg::LauncherProgress(p));
                     };
-                    let _ = tx.send(Msg::LauncherUpdated(backend::stage_update(
-                        &release, progress,
+                    let _ = tx.send(Msg::LauncherUpdated(backend::stage_update_cancellable(
+                        &release,
+                        Some(&stop),
+                        progress,
                     )));
                 });
             }
@@ -389,6 +393,17 @@ impl Launcher {
         &mut self,
         result: Result<Option<backend::Staged>, backend::StageUpdateError>,
     ) {
+        let stopped = (self.update_stop.take()).is_some_and(|stop| stop.is_stopped());
+        if stopped && matches!(self.self_update, SelfUpdate::Downloading(..)) {
+            // Stopped by the player: the offer stays as it was, to start again.
+            if let Ok(Some(staged)) = &result {
+                backend::remove_stage(&backend::update_work_dir(), &staged.payload);
+            }
+            self.self_update = SelfUpdate::Idle;
+            self.restart_for_launcher_update = false;
+            self.reconcile_launcher_offer();
+            return;
+        }
         if self.self_update.finish_download(
             &mut self.updates,
             &mut self.restart_for_launcher_update,

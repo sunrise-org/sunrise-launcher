@@ -1,7 +1,7 @@
 //! The launcher replacing itself: finding what runs, staging a signed update beside it, placing
 //! it, and restarting.
 use super::{
-    compare_versions, data_dir, download, fetch_small, launcher_version, plain, unpack,
+    compare_versions, data_dir, download_cancellable, fetch_small, launcher_version, plain, unpack,
     LauncherCheckError, Release, LAUNCHER_APPIMAGE_ASSET, LAUNCHER_ASSET, LAUNCHER_BINARY, VERSION,
 };
 use std::fs;
@@ -491,11 +491,31 @@ pub fn stage_update(
     release: &Release,
     progress: impl Fn(f32),
 ) -> Result<Option<Staged>, StageUpdateError> {
-    stage_update_with(release, progress, fetch_small)
+    stage_update_cancellable(release, None, progress)
 }
 
+/// [`stage_update`], which ends with the cancelled error once `stop` is asked. The stage
+/// folder is removed then, so nothing half downloaded is left to place.
+pub fn stage_update_cancellable(
+    release: &Release,
+    stop: Option<&crate::native_mods::Cancellation>,
+    progress: impl Fn(f32),
+) -> Result<Option<Staged>, StageUpdateError> {
+    stage_update_stoppable(release, stop, progress, fetch_small)
+}
+
+#[cfg(test)]
 pub(super) fn stage_update_with(
     release: &Release,
+    progress: impl Fn(f32),
+    fetch_manifest: impl Fn(&str) -> Result<Option<Vec<u8>>, String>,
+) -> Result<Option<Staged>, StageUpdateError> {
+    stage_update_stoppable(release, None, progress, fetch_manifest)
+}
+
+fn stage_update_stoppable(
+    release: &Release,
+    stop: Option<&crate::native_mods::Cancellation>,
     progress: impl Fn(f32),
     fetch_manifest: impl Fn(&str) -> Result<Option<Vec<u8>>, String>,
 ) -> Result<Option<Staged>, StageUpdateError> {
@@ -520,7 +540,7 @@ pub(super) fn stage_update_with(
     let work = update_work_dir();
     remove_abandoned_stages(&work, std::time::SystemTime::now(), process_alive);
     let stage = new_stage_folder(&work).map_err(StageUpdateError::Download)?;
-    let staged = fill_stage(&stage, &release.tag, url, *size, &sha256, &progress);
+    let staged = fill_stage(&stage, &release.tag, (url, *size, &sha256), stop, &progress);
     if staged.is_err() {
         let _ = fs::remove_dir_all(&stage);
     }
@@ -530,13 +550,12 @@ pub(super) fn stage_update_with(
 fn fill_stage(
     stage: &Path,
     tag: &str,
-    url: &str,
-    size: u64,
-    sha256: &str,
+    (url, size, sha256): (&str, u64, &str),
+    stop: Option<&crate::native_mods::Cancellation>,
     progress: &impl Fn(f32),
 ) -> Result<Staged, String> {
     let archive = stage.join(archive_name(url));
-    download(url, size, sha256, &archive, progress)?;
+    download_cancellable(url, size, sha256, &archive, stop, progress)?;
     let staged = |payload| {
         Ok(Staged {
             tag: tag.to_owned(),
@@ -557,7 +576,7 @@ fn fill_stage(
         return staged(archive);
     }
     let unpacked = stage.join(UNPACKED);
-    unpack(&archive, url, &unpacked, None)?;
+    unpack(&archive, url, &unpacked, stop)?;
     // A launcher inside Sunrise.app replaces the whole bundle (its Info.plist, icon and
     // signature belong with the binary); a bare binary, as older launchers are, only the binary,
     // which the macOS archive also holds (Sunrise.app/Contents/MacOS/sunrise-launcher).

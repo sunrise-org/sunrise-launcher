@@ -663,6 +663,9 @@ struct Create {
     offer: &'static str,
     hint: &'static str,
     made: Made,
+    /// What the offer row does instead of asking for the name in the filter: a caller's own
+    /// way to name it (a popup).
+    offered: Option<Close>,
 }
 
 /// What making a new option does with its name.
@@ -758,7 +761,17 @@ impl Dropdown {
             offer,
             hint,
             made: Rc::new(f),
+            offered: None,
         });
+        self
+    }
+
+    /// The offer row of [`Self::on_create`] runs `f` (and closes the menu) instead of turning
+    /// the filter into the place to type the name.
+    pub(crate) fn on_offer(mut self, f: impl Fn(&mut Window, &mut App) + 'static) -> Dropdown {
+        if let Some(create) = self.create.as_mut() {
+            create.offered = Some(Rc::new(f));
+        }
         self
     }
 
@@ -901,6 +914,7 @@ impl Dropdown {
             let naming = id.clone();
             // The offer's words without their "…" are the name to type over.
             let seed = tr(made.offer).trim_end_matches('…').trim().to_string();
+            let (offered, shut) = (made.offered.clone(), close.clone());
             let owner = Owner::default();
             let redraw = owner.clone();
             let p = palette();
@@ -924,6 +938,11 @@ impl Dropdown {
                     .child(tr(made.offer))
                     // The name is typed where the filter is: it starts as a name to type over.
                     .on_click(move |_, window, cx| {
+                        if let Some(offered) = &offered {
+                            offered(window, cx);
+                            shut(window, cx);
+                            return;
+                        }
                         NAMING.with_borrow_mut(|n| {
                             n.insert(naming.clone());
                         });

@@ -31,6 +31,8 @@ pub(super) struct InstanceDialog {
     pub(super) menu: Option<DialogMenu>,
     /// The version list under Game build is showing.
     pub(super) pinning: bool,
+    /// The "New group" popup is open over the dialog.
+    pub(super) naming_group: bool,
 }
 
 /// The dropdowns of the profile dialog.

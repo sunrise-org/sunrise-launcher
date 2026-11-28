@@ -1,7 +1,6 @@
 //! The launcher's state set up (`Launcher::new`), its settings saved, page changes, the
 //! launcher's own updates and the release list.
 use super::*;
-use crate::widgets::button::secondary;
 
 impl Launcher {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -105,6 +104,8 @@ impl Launcher {
             known_nightly,
             installing: None,
             install_stop: None,
+            prepare_stop: None,
+            update_stop: None,
             jobs: Default::default(),
             removing: Vec::new(),
             storage_builds: Default::default(),
@@ -292,45 +293,42 @@ impl Launcher {
         self.settings_save_error.is_none()
     }
 
+    /// The banner at the top of the window while the settings could not be written: the short
+    /// reason in its line, the whole error (with `~` for the home folder) behind Details.
     pub(crate) fn settings_save_notice(&self, cx: &mut Context<Self>) -> Option<Div> {
+        use crate::widgets::feedback::{
+            banner_button, banner_link, os_reason, tilde_in, Banner, Tone,
+        };
         let error = self.settings_save_error.as_ref()?;
-        let t = self.theme;
+        let mut strip = Banner::new(Tone::Danger, tr("Settings weren't saved"));
+        if let Some(reason) = os_reason(error) {
+            strip = strip.detail(reason);
+        }
+        let full = tilde_in(error);
+        let strip = strip
+            .action(
+                banner_link("settings-save-details", tr("Details")).on_click(cx.listener(
+                    move |this, _: &ClickEvent, _, cx| {
+                        let lead = tr("Your changes are still in this window. Retry to save them.");
+                        this.open_notice(format!("{lead}\n{full}"), None);
+                        cx.notify();
+                    },
+                )),
+            )
+            .action(
+                banner_button("settings-save-retry", tr("Retry")).on_click(cx.listener(
+                    |this, _: &ClickEvent, _, cx| {
+                        this.save_settings();
+                        cx.notify();
+                    },
+                )),
+            );
         Some(
             div()
                 .flex_none()
                 .px(px(theme::PAGE_GUTTER))
                 .py(px(12.))
-                .child(
-                    crate::plate::plate(&t.night)
-                        .flex()
-                        .items_center()
-                        .gap(px(16.))
-                        .p(px(16.))
-                        .child(
-                            div()
-                                .relative()
-                                .flex_1()
-                                .min_w_0()
-                                .child(
-                                    shell::text(theme::night::UI, t.danger)
-                                        .child(tr("Settings were not saved.")),
-                                )
-                                .child(
-                                    shell::text(theme::night::CAPTION, t.ink_soft).child(crate::selectable::selectable(trf(
-                                        "Your changes are still in this window. Retry to save them. {error}",
-                                        &[("error", error)],
-                                    ))),
-                                ),
-                        )
-                        .child(
-                            secondary("settings-save-retry",
-                                "Retry")
-                                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    this.save_settings();
-                                    cx.notify();
-                                })),
-                        ),
-                ),
+                .child(strip.build()),
         )
     }
 

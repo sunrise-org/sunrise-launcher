@@ -493,6 +493,16 @@ impl Profile {
         choose: impl FnOnce() -> Result<FirstBuild, String>,
         progress: impl Fn(f32),
     ) -> Result<FirstAttempt<'_>, String> {
+        self.begin_first_cancellable(choose, progress, None)
+    }
+
+    /// [`Self::begin_first`], whose download stops once `stop` is asked.
+    pub fn begin_first_cancellable(
+        &mut self,
+        choose: impl FnOnce() -> Result<FirstBuild, String>,
+        progress: impl Fn(f32),
+        stop: Option<&native_mods::Cancellation>,
+    ) -> Result<FirstAttempt<'_>, String> {
         let home = self.home().to_path_buf();
         let mut admitted = None;
         let initial = {
@@ -531,15 +541,16 @@ impl Profile {
         let mut bound = admitted.map_or_else(|| Bound::from_record(initial), Ok)?;
         if let Selection::Download { archive } = &bound.selection {
             if bound.proof.is_none() {
-                let proof = archive.prove(&bound.base)?;
+                let proof = archive.prove_cancellable(&bound.base, stop)?;
                 let _references = ReferencePublication::begin(&home)?;
                 self.0
                     .prove_bootstrap(|_| serde_json::to_value(&proof).map_err(|e| e.to_string()))?;
                 bound.proof = Some(proof);
             }
-            archive.install(
+            archive.install_cancellable(
                 &bound.base,
                 bound.proof.as_ref().expect("saved download proof"),
+                stop,
                 progress,
             )?;
         }
@@ -603,7 +614,16 @@ impl FirstAttempt<'_> {
     }
 
     pub fn prepare(&self, log: &dyn Fn(String)) -> Result<(), String> {
-        Resources::for_play(self.base(), self.handoff(), log).map(drop)
+        self.prepare_cancellable(log, None)
+    }
+
+    /// [`Self::prepare`], whose preparer is stopped once `stop` is asked.
+    pub fn prepare_cancellable(
+        &self,
+        log: &dyn Fn(String),
+        stop: Option<&native_mods::Cancellation>,
+    ) -> Result<(), String> {
+        Resources::for_play(self.base(), self.handoff(), log, stop).map(drop)
     }
 
     pub fn exact_image(

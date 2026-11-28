@@ -75,6 +75,11 @@ impl Job {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum JobAct {
     StopGameDownload,
+    /// Stops the preparation the player started.
+    StopPrepare,
+    /// Stops Play on its way to the game (its download, preparation and mod build).
+    StopStart,
+    StopLauncherUpdate,
     StopRegistryInstall,
     StopSourceBuild,
     StopNativeBuild,
@@ -146,12 +151,20 @@ impl Launcher {
         // A build switch prepares its build itself, and its own row says each step.
         let switching = jobs.iter().any(|job| job.key == "switch");
         if self.preparing && !switching {
-            jobs.push(prepare_job(
-                tr("Preparing the game"),
-                ["prepare", "prepare-java"],
-            ));
+            let job = prepare_job(tr("Preparing the game"), ["prepare", "prepare-java"]);
+            jobs.push(match &self.prepare_stop {
+                Some(stop) => stoppable(job, JobAct::StopPrepare, stop),
+                None => job,
+            });
         } else if self.starting_client.is_some() || self.play_admission.is_some() {
-            jobs.push(self.start_job());
+            let job = self.start_job();
+            // Only the admitted worker holds a stop; a pack's older start has none.
+            jobs.push(
+                match (&self.native_cancellation, self.starting_client.is_some()) {
+                    (Some(stop), true) => stoppable(job, JobAct::StopStart, stop),
+                    _ => job,
+                },
+            );
         }
     }
 
@@ -291,6 +304,13 @@ impl Launcher {
                 .measured(*fraction)
                 .show(JobAct::ShowLauncherUpdate),
             );
+            if let (Some(job), Some(stop)) = (jobs.last_mut(), &self.update_stop) {
+                job.stop = Some(JobAct::StopLauncherUpdate);
+                job.stopping = stop.is_stopped();
+                if job.stopping {
+                    job.step = Some(tr("Stopping…").into());
+                }
+            }
         }
         for tag in &self.removing {
             jobs.push(
@@ -329,6 +349,13 @@ impl Launcher {
                     stop.stop();
                 }
             }
+            JobAct::StopPrepare => self.halt(crate::launch_state::Halt::Prepare),
+            JobAct::StopStart => self.halt(crate::launch_state::Halt::Start),
+            JobAct::StopLauncherUpdate => {
+                if let Some(stop) = &self.update_stop {
+                    stop.stop();
+                }
+            }
             JobAct::StopRegistryInstall => self.stop_registry_install(),
             JobAct::StopSourceBuild => self.stop_source(),
             JobAct::StopNativeBuild => self.stop_build(),
@@ -339,6 +366,17 @@ impl Launcher {
             JobAct::ShowLauncherUpdate => self.open_sheet(crate::sheets::Sheet::LauncherUpdate),
             JobAct::Go(page) => self.navigate(page),
         }
+    }
+}
+
+/// `job` with its Stop, which says "Stopping…" once `stop` has been asked.
+fn stoppable(job: Job, act: JobAct, stop: &native_mods::Cancellation) -> Job {
+    let stopping = stop.is_stopped();
+    let job = job.stop(act, stopping);
+    if stopping {
+        job.step(tr("Stopping…"))
+    } else {
+        job
     }
 }
 
