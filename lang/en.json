@@ -2897,7 +2897,7 @@
   "Deleted.": "Deleted.",
   "Added {count} to your themes.": "Added {count} to your themes.",
   "Paste a theme code.": "Paste a theme code.",
-  "That isn't a theme code. A code starts with {prefix}-.": "That isn't a theme code. A code starts with {prefix}-.",
+  "That isn't a theme code. It should start with {prefix}": "That isn't a theme code. It should start with {prefix}",
   "This code is from a newer launcher. Update to read it.": "This code is from a newer launcher. Update to read it.",
   "A theme code has no {character}. Check what was copied.": "A theme code has no {character}. Check what was copied.",
   "This code doesn't add up: a character is wrong, or the end is missing.": "This code doesn't add up: a character is wrong, or the end is missing.",
@@ -2937,5 +2937,6 @@
   "Deleted {name}": "Deleted {name}",
   "Deleted {count} themes": "Deleted {count} themes",
   "Before": "Before",
-  "Now": "Now"
+  "Now": "Now",
+  "Theme {n}": "Theme {n}"
 }

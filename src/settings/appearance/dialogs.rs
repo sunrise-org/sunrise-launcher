@@ -177,11 +177,11 @@ impl Launcher {
         };
         let shown = div()
             .id("alt-export-code")
-            .flex_1()
-            .min_w_0()
             .max_h(px(120.))
             .overflow_y_scroll()
             .p(px(10.))
+            // Room on the right for the copy icon in the corner.
+            .pr(px(44.))
             .rounded(tokens::r(tokens::R_SMALL))
             .bg(rgb(palette().background))
             .border_1()
@@ -194,22 +194,19 @@ impl Launcher {
             .flex_col()
             .gap(px(12.))
             .child(title(heading))
-            // Copy code beside the code it copies.
+            // The copy icon in the code box's top-right corner.
             .child(
-                div()
-                    .flex()
-                    .items_start()
-                    .gap(px(8.))
-                    .child(shown)
-                    .child(
-                        div()
-                            .flex_none()
-                            .child(crate::widgets::motion_bits::copy_button(
-                                "alt-export-copy",
-                                tr("Copy code"),
-                                code,
-                            )),
-                    ),
+                div().relative().child(shown).child(
+                    div()
+                        .absolute()
+                        // The icon's own -4 px margin keeps a toast line's height: 6 px in here.
+                        .top(px(10.))
+                        .right(px(6.))
+                        .child(crate::widgets::motion_bits::copy_icon(
+                            "alt-export-copy",
+                            code,
+                        )),
+                ),
             )
             .child(theme_list("alt-export", themes))
             .child(
