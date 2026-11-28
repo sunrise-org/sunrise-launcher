@@ -394,10 +394,27 @@ pub(crate) fn write_file(path: &Path, data: &[u8]) -> Result<(), String> {
         .tempfile_in(folder)
         .map_err(error)?;
     partial.write_all(data).map_err(error)?;
-    partial
-        .persist(path)
-        .map(|_| ())
-        .map_err(|e| error(e.error))
+    persist_temp(partial, path).map_err(error)
+}
+
+#[cfg(windows)]
+fn persist_temp(mut partial: tempfile::NamedTempFile, to: &Path) -> std::io::Result<()> {
+    for _ in 0..16 {
+        match partial.persist(to) {
+            Ok(_) => return Ok(()),
+            Err(e) if e.error.kind() == std::io::ErrorKind::PermissionDenied => {
+                partial = e.file;
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(e) => return Err(e.error),
+        }
+    }
+    partial.persist(to).map(|_| ()).map_err(|e| e.error)
+}
+
+#[cfg(not(windows))]
+fn persist_temp(partial: tempfile::NamedTempFile, to: &Path) -> std::io::Result<()> {
+    partial.persist(to).map(|_| ()).map_err(|e| e.error)
 }
 
 /// Copies `from` to `to` in one pass through a unique sibling temporary file, persisting only when
@@ -454,15 +471,32 @@ pub(crate) fn copy_checked(
     if actual != expected_sha1 {
         return Ok(false);
     }
-    partial.persist(to).map_err(|e| e.error)?;
+    persist_temp(partial, to)?;
     Ok(true)
 }
 
+/// A symlink, or on Windows any reparse point (including a directory junction).
+fn is_link(meta: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    meta.file_type().is_symlink()
+}
+
 /// Safely removes a legacy `linked-minecraft` folder left by an earlier launcher version,
-/// unlinking `libraries` and `assets` symlinks/junctions first so target launcher folders are
-/// never touched.
+/// unlinking `linked` itself when it is a symlink/junction and otherwise unlinking `libraries` and
+/// `assets` symlinks/junctions first so target launcher folders are never touched.
 pub(crate) fn remove_legacy_linked(linked: &Path) {
-    if fs::symlink_metadata(linked).is_err() {
+    let Ok(meta) = fs::symlink_metadata(linked) else {
+        return;
+    };
+    if is_link(&meta) {
+        let _ = unlink(linked);
         return;
     }
     for dir in ["libraries", "assets"] {
@@ -472,14 +506,12 @@ pub(crate) fn remove_legacy_linked(linked: &Path) {
 }
 
 /// Removes a link left by an earlier preparation; never a real folder's contents.
-fn unlink(path: &Path) -> Result<(), String> {
+fn unlink(path: &Path) -> std::io::Result<()> {
     if fs::symlink_metadata(path).is_err() {
         return Ok(());
     }
     // A Windows junction, or a directory symlink, is removed as a directory.
-    fs::remove_file(path)
-        .or_else(|_| fs::remove_dir(path))
-        .map_err(|e| format!("{}: {e}", path.display()))
+    fs::remove_file(path).or_else(|_| fs::remove_dir(path))
 }
 
 #[cfg(any(windows, test))]

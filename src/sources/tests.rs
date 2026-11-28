@@ -239,6 +239,27 @@ fn remove_legacy_linked_unlinks_without_deleting_targets() {
 }
 
 #[test]
+fn remove_legacy_linked_unlinks_symlinked_root_without_touching_target() {
+    let s = Scratch::new("legacy-linked-root");
+    let target = s.0.join("OtherLauncher");
+    let jar = s.write("OtherLauncher/versions/26.3/26.3.jar", CLIENT);
+    let lib = s.write("OtherLauncher/libraries/org/lib/1/lib-1.jar", b"lib");
+    let index = s.write("OtherLauncher/assets/indexes/34.json", b"{}");
+    let linked = s.0.join("linked-minecraft");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&target, &linked).unwrap();
+    #[cfg(windows)]
+    junction(&target, &linked).unwrap();
+
+    remove_legacy_linked(&linked);
+    assert!(fs::symlink_metadata(&linked).is_err());
+    assert!(target.is_dir(), "target install folder must survive");
+    assert_eq!(fs::read(&jar).unwrap(), CLIENT);
+    assert_eq!(fs::read(&lib).unwrap(), b"lib");
+    assert_eq!(fs::read(&index).unwrap(), b"{}");
+}
+
+#[test]
 fn each_system_has_its_launcher_folders() {
     let linux = Folders {
         home: "/home/r".into(),

@@ -658,25 +658,17 @@ fn signed_in_owner_prepares_from_pinned_store_copying_matching_and_downloading_d
 
     let options = PrepareStoreOptions {
         os: "linux",
-        reused: false,
         allow_local_without_owner: false,
         local_sources: &[],
     };
-    let folder = prepare_store_with(
-        &pins,
-        &store,
-        &options,
-        &cancel,
-        &|| {
-            mojang::download(&pins, &store, "linux", 2, &fetch, &cancel, &|_| {}).map_err(|e| {
-                OwnerDownloadError {
-                    verified_owner: true,
-                    message: e,
-                }
-            })
-        },
-        &|_| {},
-    )
+    let folder = prepare_store_with(&pins, &store, &options, &cancel, &|| {
+        mojang::download(&pins, &store, "linux", 2, &fetch, &cancel, &|_| {}).map_err(|e| {
+            OwnerDownloadError {
+                verified_owner: true,
+                message: e,
+            }
+        })
+    })
     .unwrap();
     assert_eq!(folder, own);
     assert_eq!(
@@ -730,7 +722,6 @@ fn signed_in_owner_prepares_from_pinned_store_copying_matching_and_downloading_d
         &fresh_store,
         &PrepareStoreOptions {
             os: "linux",
-            reused: false,
             allow_local_without_owner: false,
             local_sources: &other_sources,
         },
@@ -741,7 +732,6 @@ fn signed_in_owner_prepares_from_pinned_store_copying_matching_and_downloading_d
                 message: "\n  • Sign in with the Microsoft account that owns Minecraft: Sunrise then downloads 26.3 from Mojang itself.".into(),
             })
         },
-        &|_| {},
     )
     .unwrap_err();
     assert!(
@@ -760,7 +750,6 @@ fn signed_in_owner_prepares_from_pinned_store_copying_matching_and_downloading_d
         &fresh_store,
         &PrepareStoreOptions {
             os: "linux",
-            reused: false,
             allow_local_without_owner: true,
             local_sources: &other_sources,
         },
@@ -771,7 +760,6 @@ fn signed_in_owner_prepares_from_pinned_store_copying_matching_and_downloading_d
                 message: "\n  • Sign in with the Microsoft account that owns Minecraft: Sunrise then downloads 26.3 from Mojang itself.".into(),
             })
         },
-        &|_| {},
     )
     .unwrap();
     assert_eq!(dev_folder, fresh_own);
@@ -865,7 +853,6 @@ fn reused_import_refills_partial_store_for_owner() {
         &store,
         &PrepareStoreOptions {
             os: "linux",
-            reused: true,
             allow_local_without_owner: false,
             local_sources: &[],
         },
@@ -878,7 +865,6 @@ fn reused_import_refills_partial_store_for_owner() {
                 }
             })
         },
-        &|_| {},
     )
     .unwrap();
     assert_eq!(folder, own);
@@ -892,6 +878,79 @@ fn reused_import_refills_partial_store_for_owner() {
         .unwrap(),
         sound
     );
+}
+
+#[test]
+fn failed_local_assembly_returns_err_instead_of_unchecked_external_folder() {
+    let root = tempfile::tempdir().unwrap();
+    let own = root.path().join("own");
+    let external = root.path().join("ExternalLauncher");
+    let client = b"fake 26.3 client jar";
+    let manifest = serde_json::json!({
+        "id": "26.3",
+        "downloads": {"client": {
+            "sha1": sources::sha1_hex(client),
+            "size": client.len(),
+            "url": "https://piston-data.mojang.com/client.jar",
+        }},
+        "libraries": [],
+    })
+    .to_string();
+    let manifest_sha1 = sources::sha1_hex(manifest.as_bytes());
+    let pins = sources::Pins::read(&serde_json::json!({"minecraft": {
+        "version": "26.3",
+        "client_sha1": sources::sha1_hex(client),
+        "manifest_sha1": manifest_sha1,
+    }}))
+    .unwrap();
+
+    // External folder has only an unchecked/incomplete setup (manifest, no matching client jar).
+    fs::create_dir_all(external.join("versions/26.3")).unwrap();
+    fs::write(external.join("versions/26.3/26.3.json"), &manifest).unwrap();
+    let local_sources = [external.clone()];
+    let store = sources::Store {
+        dir: &own,
+        sources: &local_sources,
+    };
+    let no_owner = || {
+        Err(OwnerDownloadError {
+            verified_owner: false,
+            message: "\n  • Sign in to download.".into(),
+        })
+    };
+
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let err = prepare_store_with(
+        &pins,
+        &store,
+        &PrepareStoreOptions {
+            os: "linux",
+            allow_local_without_owner: true,
+            local_sources: &local_sources,
+        },
+        &cancel,
+        &no_owner,
+    )
+    .unwrap_err();
+    assert!(err.contains("Missing pinned Minecraft 26.3 file"), "{err}");
+    assert!(err.contains("Sign in to download."), "{err}");
+
+    // Cancellation also returns Err directly rather than falling back to Ok.
+    let cancelled = std::sync::atomic::AtomicBool::new(true);
+    let cancel_err = prepare_store_with(
+        &pins,
+        &store,
+        &PrepareStoreOptions {
+            os: "linux",
+            allow_local_without_owner: true,
+            local_sources: &local_sources,
+        },
+        &cancelled,
+        &no_owner,
+    )
+    .unwrap_err();
+    assert!(cancel_err.contains("cancelled"), "{cancel_err}");
+    assert!(!cancel_err.contains("Sign in to download."), "{cancel_err}");
 }
 
 #[test]
@@ -2860,23 +2919,172 @@ fn any_missing_extra_sends_the_store_refill_once_per_run() {
         &["languages"],
     ] {
         let asked = AtomicBool::new(false);
-        assert!(
-            refill_wanted(true, Some(&lacks(kinds)), &asked),
-            "{kinds:?}"
-        );
+        assert!(refill_wanted(Some(&lacks(kinds)), &asked), "{kinds:?}");
         // Asked once: the second call in the run says no.
-        assert!(
-            !refill_wanted(true, Some(&lacks(kinds)), &asked),
-            "{kinds:?}"
-        );
+        assert!(!refill_wanted(Some(&lacks(kinds)), &asked), "{kinds:?}");
     }
-    // Nothing missing, no answer from the preparer, or no asset index: not asked, and a
-    // refusal does not use up the run's one ask.
+    // Nothing missing or no answer from the preparer: not asked, and a refusal does not use up
+    // the run's one ask.
     let asked = AtomicBool::new(false);
-    assert!(!refill_wanted(true, Some(&lacks(&[])), &asked));
-    assert!(!refill_wanted(true, None, &asked));
-    assert!(!refill_wanted(false, Some(&lacks(&["fonts"])), &asked));
-    assert!(refill_wanted(true, Some(&lacks(&["fonts"])), &asked));
+    assert!(!refill_wanted(Some(&lacks(&[])), &asked));
+    assert!(!refill_wanted(None, &asked));
+    assert!(refill_wanted(Some(&lacks(&["fonts"])), &asked));
+}
+
+#[test]
+fn refill_own_store_runs_without_asset_index_and_with_unrelated_index() {
+    use std::sync::atomic::AtomicBool;
+    let root = tempfile::tempdir().unwrap();
+    let version = root.path().join("versions/v1");
+    fs::create_dir_all(&version).unwrap();
+    fs::write(
+        version.join("research-lock.json"),
+        serde_json::json!({"minecraft": {
+            "version": "26.3",
+            "client_sha1": "aa",
+            "manifest_sha1": "bb",
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let lacks: crate::preparer::Extras = vec![("sounds".into(), "The sounds".into())];
+
+    // Partial own store without any `assets/indexes` directory still triggers a refill once.
+    let own_without_index = root.path().join("own-empty");
+    let asked = AtomicBool::new(false);
+    let calls = std::cell::RefCell::new(Vec::<(String, PathBuf)>::new());
+    let record = |pins: &sources::Pins, own: &Path| {
+        calls
+            .borrow_mut()
+            .push((pins.version.clone(), own.to_path_buf()));
+    };
+    refill_own_store_with(&version, &own_without_index, Some(&lacks), &asked, &record);
+    refill_own_store_with(&version, &own_without_index, Some(&lacks), &asked, &record);
+    assert_eq!(
+        *calls.borrow(),
+        vec![("26.3".to_string(), own_without_index)]
+    );
+
+    // Own store with an unrelated index directory also triggers a refill once.
+    let own_unrelated = root.path().join("own-unrelated");
+    fs::create_dir_all(own_unrelated.join("assets/indexes")).unwrap();
+    fs::write(own_unrelated.join("assets/indexes/old.json"), "{}").unwrap();
+    let asked = AtomicBool::new(false);
+    calls.borrow_mut().clear();
+    refill_own_store_with(&version, &own_unrelated, Some(&lacks), &asked, &record);
+    assert_eq!(*calls.borrow(), vec![("26.3".to_string(), own_unrelated)]);
+}
+
+#[test]
+fn minecraft_folders_in_only_returns_own_store() {
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("launcher");
+    let external = root.path().join("ExternalMinecraft");
+    fs::create_dir_all(&data).unwrap();
+    fs::create_dir_all(&external).unwrap();
+    let settings = Settings {
+        minecraft_dir: Some(external),
+        ..Default::default()
+    };
+    settings.save_to(&data).unwrap();
+
+    // Without Sunrise's own store, no external folder is returned.
+    assert!(minecraft_folders_in(&data).is_empty());
+
+    // Once Sunrise's own store exists, only it is returned.
+    let own = data.join("minecraft");
+    fs::create_dir_all(&own).unwrap();
+    assert_eq!(minecraft_folders_in(&data), vec![own]);
+}
+
+#[cfg(unix)]
+#[test]
+fn complete_assets_never_passes_external_folder_to_extras() {
+    use std::os::unix::fs::PermissionsExt;
+    const CHILD: &str = "SUNRISE_COMPLETE_ASSETS_OWN_ONLY_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let home = tempfile::tempdir().unwrap();
+        let external = home.path().join("ExternalLauncher");
+        fs::create_dir_all(&external).unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "backend::tests::complete_assets_never_passes_external_folder_to_extras",
+            ])
+            .env(CHILD, "1")
+            .env("SUNRISE_LAUNCHER_HOME", home.path().join("launcher"))
+            .env("SUNRISE_HOME", home.path().join("game"))
+            .env("SUNRISE_MINECRAFT_DIR", &external)
+            .env("XDG_DATA_HOME", home.path().join("xdg-data"))
+            .env("XDG_CONFIG_HOME", home.path().join("xdg-config"))
+            .env(
+                "SUNRISE_LAUNCHER_LOCATION_FILE",
+                home.path().join("location"),
+            )
+            .env("SUNRISE_LAUNCHER_TRASH", home.path().join("trash"))
+            .env("SUNRISE_LAUNCHER_CLIPBOARD", home.path().join("clipboard"))
+            .env("SUNRISE_LAUNCHER_DESKTOP", home.path().join("desktop"))
+            .env("SUNRISE_NO_KEYCHAIN", "1")
+            .env("SUNRISE_LAUNCHER_NO_SELF_UPDATE", "1")
+            .env("SUNRISE_NO_AUDIO", "1")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+
+    let external = PathBuf::from(std::env::var_os("SUNRISE_MINECRAFT_DIR").unwrap());
+    let settings = Settings {
+        minecraft_dir: Some(external.clone()),
+        ..Default::default()
+    };
+    settings.save().unwrap();
+
+    let setup_version = |tag: &str| {
+        let root = version_dir(tag);
+        let resources = resources_at(&root);
+        fs::create_dir_all(&resources).unwrap();
+        fs::write(resources.join(RESOURCES_MANIFEST), b"{}").unwrap();
+        let binary = root.join(crate::preparer::BINARY);
+        fs::write(
+            &binary,
+            "#!/bin/sh\nset -eu\ncase \"$1\" in\n\
+             missing-extras) printf '%s\\n' '{\"format\":1,\"prepared\":true,\"missing\":[{\"kind\":\"sounds\",\"what\":\"The sounds\"}]}' ;;\n\
+             extras) printf '%s\\n' \"$@\" > \"$(dirname \"$0\")/extras-args\"; printf '%s\\n' '{\"format\":1,\"added\":[],\"failed\":[]}' ;;\n\
+             *) exit 2 ;;\n\
+             esac\n",
+        )
+        .unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        root
+    };
+
+    // With no own store present, `extras` receives no `--minecraft-dir` at all.
+    let v1 = setup_version("v1");
+    complete_assets("v1");
+    let v1_args = fs::read_to_string(v1.join("extras-args")).unwrap();
+    assert!(!v1_args.contains("--minecraft-dir"), "{v1_args}");
+    assert!(
+        !v1_args.contains(external.to_string_lossy().as_ref()),
+        "{v1_args}"
+    );
+
+    // With an empty own store present, `extras` receives only Sunrise's own store.
+    let own = data_dir().join("minecraft");
+    fs::create_dir_all(&own).unwrap();
+    let v2 = setup_version("v2");
+    complete_assets("v2");
+    let v2_args: Vec<String> = fs::read_to_string(v2.join("extras-args"))
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    let passed: Vec<&str> = v2_args
+        .windows(2)
+        .filter(|pair| pair[0] == "--minecraft-dir")
+        .map(|pair| pair[1].as_str())
+        .collect();
+    assert_eq!(passed, [own.to_str().unwrap()], "{v2_args:?}");
 }
 
 #[test]

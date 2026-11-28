@@ -481,7 +481,6 @@ pub(crate) fn preparer_staged(
         };
         let options = PrepareStoreOptions {
             os: mojang_os(),
-            reused,
             allow_local_without_owner: explicit_minecraft.is_some() || dev_offline,
             local_sources: &local_sources,
         };
@@ -551,7 +550,6 @@ pub(crate) fn preparer_staged(
 
 pub(in crate::backend) struct PrepareStoreOptions<'a> {
     pub os: &'a str,
-    pub reused: bool,
     /// Only true for the developer route (`prepare --minecraft <folder>` or an eligible unsigned
     /// developer build with `SUNRISE_LAUNCHER_DEVELOPER_OFFLINE=1`): ordinary players who are not
     /// signed in never borrow another launcher's install.
@@ -571,14 +569,9 @@ fn prepare_store(
     cancel: &std::sync::atomic::AtomicBool,
     log: &dyn Fn(String),
 ) -> Result<PathBuf, String> {
-    prepare_store_with(
-        pins,
-        store,
-        options,
-        cancel,
-        &|| download_for_owner(pins, store, fetch, Some(cancel), log),
-        log,
-    )
+    prepare_store_with(pins, store, options, cancel, &|| {
+        download_for_owner(pins, store, fetch, Some(cancel), log)
+    })
 }
 
 pub(in crate::backend) fn prepare_store_with(
@@ -587,7 +580,6 @@ pub(in crate::backend) fn prepare_store_with(
     options: &PrepareStoreOptions<'_>,
     cancel: &std::sync::atomic::AtomicBool,
     owner_download: &dyn Fn() -> Result<(), OwnerDownloadError>,
-    log: &dyn Fn(String),
 ) -> Result<PathBuf, String> {
     match owner_download() {
         Ok(()) => Ok(store.dir.to_path_buf()),
@@ -601,22 +593,7 @@ pub(in crate::backend) fn prepare_store_with(
             };
             match mojang::assemble_local(pins, &local, options.os, cancel) {
                 Ok(()) => Ok(store.dir.to_path_buf()),
-                Err(why) if options.reused => {
-                    log(format!(
-                        "Minecraft {}'s assets were not found in any launcher folder: the game \
-                         will be silent and the title screen plain ({why})",
-                        pins.version
-                    ));
-                    Ok(if store.dir.is_dir() {
-                        store.dir.to_path_buf()
-                    } else {
-                        options
-                            .local_sources
-                            .first()
-                            .cloned()
-                            .unwrap_or_else(|| store.dir.to_path_buf())
-                    })
-                }
+                Err(why) if cancel.load(std::sync::atomic::Ordering::Relaxed) => Err(why),
                 Err(why) => Err(format!("{why}{}{}", sources::prepare_advice(), e.message)),
             }
         }

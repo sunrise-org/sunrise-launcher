@@ -4,7 +4,7 @@ use super::{
     resources_at, resources_owner, server_profile, set_prepare_step, PrepareStep,
     RESOURCES_MANIFEST,
 };
-use crate::backend::{data_dir, get, prepare_lock, read_json, version_dir, versions_dir, Settings};
+use crate::backend::{data_dir, get, prepare_lock, read_json, version_dir, versions_dir};
 use crate::managed_play::Resources;
 use crate::{account, mojang, sources};
 use std::fs;
@@ -48,16 +48,14 @@ pub(crate) fn complete_assets_lacking_staged(
     );
 }
 
-/// Whether Sunrise's own store is asked to download again: it has an asset index, the version
-/// lacks some extra (any kind: the download fetches the whole asset index, which holds the
-/// sounds, languages, fonts, panorama and built-in packs) and it was not asked this run yet.
+/// Whether Sunrise's own store is asked to download again: the version lacks some extra (any kind:
+/// the download fetches the whole asset index, which holds the sounds, languages, fonts, panorama
+/// and built-in packs) and it was not asked this run yet.
 pub(in crate::backend) fn refill_wanted(
-    has_index: bool,
     missing: Option<&crate::preparer::Extras>,
     asked: &std::sync::atomic::AtomicBool,
 ) -> bool {
-    has_index
-        && missing.is_some_and(|m| !m.is_empty())
+    missing.is_some_and(|m| !m.is_empty())
         && !asked.swap(true, std::sync::atomic::Ordering::Relaxed)
 }
 
@@ -86,30 +84,43 @@ pub(in crate::backend) fn probe_missing_extras(
 pub(in crate::backend) fn refill_own_store(tag: &str, missing: Option<&crate::preparer::Extras>) {
     static ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let own = data_dir().join("minecraft");
-    if !refill_wanted(own.join("assets/indexes").is_dir(), missing, &ASKED) {
+    refill_own_store_with(&version_dir(tag), &own, missing, &ASKED, &|pins, own| {
+        let fetch = |url: &str| -> Result<Vec<u8>, String> {
+            let mut body = Vec::new();
+            get(url)?
+                .into_reader()
+                .read_to_end(&mut body)
+                .map_err(|e| e.to_string())?;
+            Ok(body)
+        };
+        let candidates = candidate_sources(None, own);
+        let store = sources::Store {
+            dir: own,
+            sources: &candidates,
+        };
+        if let Err(e) = download_for_owner(pins, &store, &fetch, None, &|line| eprintln!("{line}"))
+        {
+            eprintln!("{tag}: the missing assets were not downloaded: {e}");
+        }
+    });
+}
+
+pub(in crate::backend) fn refill_own_store_with(
+    dir: &Path,
+    own: &Path,
+    missing: Option<&crate::preparer::Extras>,
+    asked: &std::sync::atomic::AtomicBool,
+    download: &dyn Fn(&sources::Pins, &Path),
+) {
+    if !refill_wanted(missing, asked) {
         return;
     }
-    let Some(pins) = read_json(&version_dir(tag).join("research-lock.json"))
-        .and_then(|l| sources::Pins::read(&l))
+    let Some(pins) =
+        read_json(&dir.join("research-lock.json")).and_then(|l| sources::Pins::read(&l))
     else {
         return;
     };
-    let fetch = |url: &str| -> Result<Vec<u8>, String> {
-        let mut body = Vec::new();
-        get(url)?
-            .into_reader()
-            .read_to_end(&mut body)
-            .map_err(|e| e.to_string())?;
-        Ok(body)
-    };
-    let candidates = candidate_sources(None, &own);
-    let store = sources::Store {
-        dir: &own,
-        sources: &candidates,
-    };
-    if let Err(e) = download_for_owner(&pins, &store, &fetch, None, &|line| eprintln!("{line}")) {
-        eprintln!("{tag}: the missing assets were not downloaded: {e}");
-    }
+    download(&pins, own);
 }
 
 /// `folders`: where to look, asked only when the version lacks something.
@@ -193,29 +204,15 @@ fn complete_assets_with(
     }
 }
 
-/// The Minecraft folders whose asset store can hold what a prepared version lacks: Sunrise's own
-/// store first, then the folder chosen in the launcher, the official launcher's (or
-/// SUNRISE_MINECRAFT_DIR) and every launcher's default folder.
+/// Sunrise's own pinned Minecraft store when present; `extras` never reads another launcher's
+/// folder directly.
+pub(in crate::backend) fn minecraft_folders_in(data: &Path) -> Vec<PathBuf> {
+    let own = data.join("minecraft");
+    own.is_dir().then_some(own).into_iter().collect()
+}
+
 fn minecraft_folders() -> Vec<PathBuf> {
-    let mut folders: Vec<PathBuf> = vec![data_dir().join("minecraft")];
-    if let Some(chosen) = Settings::load().minecraft_dir {
-        folders.push(chosen);
-    }
-    folders.push(crate::preparer::minecraft_dir(None));
-    folders.extend(
-        sources::Folders::current()
-            .map(|f| sources::known_folders(sources::Os::current(), &f))
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(_, dir)| dir),
-    );
-    let mut found: Vec<PathBuf> = Vec::new();
-    for folder in folders {
-        if folder.is_dir() && !found.contains(&folder) {
-            found.push(folder);
-        }
-    }
-    found
+    minecraft_folders_in(&data_dir())
 }
 
 /// Candidate base folders from other launchers to copy hash-matching files from before
