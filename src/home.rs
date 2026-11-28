@@ -286,11 +286,10 @@ impl Launcher {
         )
     }
 
-    /// One world as a tile: its picture, with the row's controls on it. A tick box stands at its
-    /// top-left (faint until the pointer is over the tile, always there while ticked), the "…"
-    /// menu at the bottom-left and Play at the bottom-right, both 32 px and 8 px from the edges.
-    /// Under it, what the world is. A press ticks while anything is ticked (or with Ctrl or
-    /// Shift), and plays otherwise.
+    /// One world as a tile: its picture, clean until the pointer is on it, then its tick box at
+    /// the top-left and Play in its middle (the tick box stays while anything is ticked). Under
+    /// it, what the world is, with the row's "…" menu beside the name. A press on the picture
+    /// ticks while anything is ticked (or with Ctrl or Shift), and plays otherwise.
     fn world_tile(
         &mut self,
         world: &World,
@@ -298,6 +297,7 @@ impl Launcher {
         order: &Rc<Vec<String>>,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        const GROUP: &str = "world-tile";
         let folder = world.folder.clone();
         let focus = self
             .worlds
@@ -308,26 +308,9 @@ impl Launcher {
         let id = SharedString::from(format!("alt-world:{}", world.folder));
         let (ticked, any) = (ticks.contains(&world.folder), !ticks.is_empty());
         let radius = crate::tokens::r(crate::tokens::R_CONTROL);
-        // Translucent dark squares with a white glyph, so they read on any picture.
-        let control = |id: SharedString, glyph: &'static str| {
-            div()
-                .id(id)
-                .absolute()
-                .bottom(px(8.))
-                .size(px(32.))
-                .rounded(radius)
-                .flex()
-                .items_center()
-                .justify_center()
-                .cursor_pointer()
-                .occlude()
-                .bg(gpui::hsla(0., 0., 0., 0.55))
-                .hover(|s| s.bg(gpui::hsla(0., 0., 0., 0.75)))
-                .child(blocks::icon(glyph, 16., gpui::white()))
-        };
         let (key, order_of) = (world.folder.clone(), order.clone());
         let picture = div()
-            .id("alt-world-play")
+            .id("alt-world-picture")
             .track_focus(&focus)
             .relative()
             .cursor_pointer()
@@ -335,10 +318,6 @@ impl Launcher {
             .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
             .seen()
             .child(self.world_icon(world, WORLD_TILE))
-            .tooltip(crate::glass_ui::tip(trf(
-                "Play {world}",
-                &[("world", &world.name)],
-            )))
             .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
                 let gesture = crate::mods::selection::Gesture::of(&ev.modifiers());
                 if gesture.selects() || any {
@@ -349,45 +328,42 @@ impl Launcher {
                 }
                 cx.notify();
             }));
+        // Play in the picture's middle, in the accent, only while the pointer is on the tile.
         let play_folder = world.folder.clone();
-        let play = control(
-            SharedString::from(format!("alt-world-play-{}", world.folder)),
-            "play",
-        )
-        .right(px(8.))
-        .tooltip(crate::glass_ui::tip(trf(
-            "Play {world}",
-            &[("world", &world.name)],
-        )))
-        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-            cx.stop_propagation();
-            this.play_to("--world", play_folder.clone());
-            cx.notify();
-        }));
-        // Where the "…" was drawn, for the menu that hangs from it.
-        let drawn = Rc::new(std::cell::Cell::new(gpui::Bounds::<gpui::Pixels>::default()));
-        let (write, read) = (drawn.clone(), drawn);
-        let menu_of = world.clone();
-        let more = control(
-            SharedString::from(format!("alt-world-more-{}", world.folder)),
-            "more-horizontal",
-        )
-        .left(px(8.))
-        .child(
-            gpui::canvas(move |bounds, _, _| write.set(bounds), |_, _, _, _| {})
-                .absolute()
-                .inset_0(),
-        );
-        let more = (if self.world_menu_open(&world.folder) {
-            more
-        } else {
-            more.tooltip(crate::glass_ui::tip(tr("More actions")))
-        })
-        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-            cx.stop_propagation();
-            this.open_world_menu(&menu_of, read.get());
-            cx.notify();
-        }));
+        let play = div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .opacity(0.)
+            .group_hover(GROUP, |s| s.opacity(1.))
+            .child(
+                div()
+                    .id(SharedString::from(format!(
+                        "alt-world-play-{}",
+                        world.folder
+                    )))
+                    .size(px(44.))
+                    .rounded_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .occlude()
+                    .bg(rgb(palette().accent))
+                    .shadow_md()
+                    .child(crate::glass_ui::icon("play", 20., gpui::white()))
+                    .tooltip(crate::glass_ui::tip(trf(
+                        "Play {world}",
+                        &[("world", &world.name)],
+                    )))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.play_to("--world", play_folder.clone());
+                        cx.notify();
+                    })),
+            );
         let (pick_key, pick_order) = (world.folder.clone(), order.clone());
         let check = self.tick_column(&id, ticked, any, {
             cx.listener(move |this, ev: &ClickEvent, _, cx| {
@@ -397,17 +373,18 @@ impl Launcher {
                 cx.notify();
             })
         });
+        // On a small backing so it reads on any picture; out of sight until it is wanted.
         let check = div()
             .absolute()
             .left(px(8.))
             .top(px(8.))
-            .size(px(24.))
+            .p(px(4.))
             .rounded(radius)
-            .flex()
-            .items_center()
-            .justify_center()
             .occlude()
-            .bg(gpui::hsla(0., 0., 0., 0.45))
+            .bg(gpui::hsla(0., 0., 0., 0.4))
+            .when(!(ticked || any), |d| {
+                d.opacity(0.).group_hover(GROUP, |s| s.opacity(1.))
+            })
             .child(check);
         let tile = div()
             .relative()
@@ -420,13 +397,57 @@ impl Launcher {
                     .rounded(radius)
                     .when(ticked, |d| d.border_2().border_color(rgb(palette().focus))),
             )
-            .child(check)
-            .child(more)
-            .child(play);
+            .child(play)
+            .child(check);
+        // The row's "…" menu, beside the name.
+        let drawn = Rc::new(std::cell::Cell::new(gpui::Bounds::<gpui::Pixels>::default()));
+        let (write, read) = (drawn.clone(), drawn);
+        let menu_of = world.clone();
+        let more = crate::widgets::button::icon_button_opening(
+            SharedString::from(format!("alt-world-more-{}", world.folder)),
+            "more-horizontal",
+            tr("More actions"),
+            crate::widgets::button::Style::Ghost,
+            self.world_menu_open(&world.folder),
+        )
+        .flex_none()
+        .child(
+            gpui::canvas(move |bounds, _, _| write.set(bounds), |_, _, _, _| {})
+                .absolute()
+                .inset_0(),
+        )
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            cx.stop_propagation();
+            this.open_world_menu(&menu_of, read.get());
+            cx.notify();
+        }));
+        let caption = div()
+            .flex()
+            .items_start()
+            .gap(px(4.))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .text_size(px(tokens::BODY))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(palette().text))
+                            .truncate()
+                            .child(world.name.clone()),
+                    )
+                    .child(muted(Self::world_facts(world)).truncate()),
+            )
+            .child(more);
         let lit = id.clone();
         let outer = div()
             // The tile's own id scopes what is in it: no world's control is another's.
             .id(id)
+            .group(GROUP)
             .flex_none()
             .w(px(WORLD_TILE))
             .h(px(TILE_TALL))
@@ -434,24 +455,7 @@ impl Launcher {
             .flex_col()
             .gap(px(8.))
             .child(tile)
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.))
-                    .child(
-                        // A long name is cut at the picture's width: the tooltip has all of it.
-                        div()
-                            .id("alt-world-name")
-                            .text_size(px(tokens::BODY))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(palette().text))
-                            .truncate()
-                            .child(world.name.clone())
-                            .tooltip(crate::glass_ui::tip(world.name.clone())),
-                    )
-                    .child(muted(Self::world_facts(world))),
-            );
+            .child(caption);
         Self::watch_hover(outer, &lit, cx)
     }
 

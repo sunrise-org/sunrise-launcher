@@ -7,6 +7,26 @@ use crate::titlebar;
 use crate::widgets::button::{icon_only, Look, Size, Style};
 use gpui::{div, prelude::*, px, Div, FontWeight, Stateful};
 
+thread_local! {
+    /// Where the account button's left edge was last drawn, in the window.
+    static CHIP_LEFT: std::cell::Cell<Option<f32>> = const { std::cell::Cell::new(None) };
+}
+
+/// Records where the account button is drawn; a move draws the bar again.
+fn chip_edge() -> gpui::Canvas<()> {
+    gpui::canvas(
+        |bounds, window, _| {
+            let left = f32::from(bounds.left()).round();
+            if CHIP_LEFT.replace(Some(left)) != Some(left) {
+                window.refresh();
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .inset_0()
+}
+
 impl Launcher {
     pub(super) fn title_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let p = palette();
@@ -25,9 +45,14 @@ impl Launcher {
         );
         let account = self.account_chip(compact_account, cx);
         let drag = titlebar::drag_area(window, cx);
-        let over_page =
-            self.settings.header_align == sunrise_launcher::backend::HeaderAlign::CenterPanel;
         let rail = crate::rail::rail_width(self.rail_open());
+        // Over the page only while it clears the account (where that was last drawn): on a
+        // narrow window it stays in the window's middle, where the bar keeps room for it.
+        let width = self.window_width;
+        let right_edge = (rail + width) / 2. + crate::command_search::search_width(width) / 2.;
+        let over_page = self.settings.header_align
+            == sunrise_launcher::backend::HeaderAlign::CenterPanel
+            && right_edge + 8. <= CHIP_LEFT.get().unwrap_or(width);
         div()
             .relative()
             .flex()
@@ -67,7 +92,7 @@ impl Launcher {
             )
             .child(brand().ml(px(6.)))
             .child(drag)
-            .child(account)
+            .child(div().relative().child(account).child(chip_edge()))
             .children(controls)
     }
 
