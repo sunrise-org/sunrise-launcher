@@ -1,6 +1,7 @@
 //! The bar under a list while rows are ticked: how many, a Select all / Clear toggle, and the
-//! buttons for what applies to them. It rises in on the quick curve, and is simply there under
-//! reduced motion.
+//! buttons for what applies to them. A card of its own, as wide as the list's cards and lifted
+//! off the panel's edge; it rises in on the quick curve, and is simply there under reduced
+//! motion.
 use crate::frame::Reach as _;
 use crate::paint::palette;
 use crate::tokens;
@@ -51,18 +52,24 @@ pub(crate) fn bar(count: usize, toggle: Stateful<Div>, actions: Vec<AnyElement>)
         .id("selection-bar")
         .flex_none()
         .overflow_hidden()
+        // Room for the card's shadow, and a gap under it to the panel's edge.
+        .pt(px(8.))
+        .pb(px(12.))
         .child(
             div()
                 .flex()
                 .flex_wrap()
                 .items_center()
                 .gap(px(10.))
-                .px(px(14.))
+                .pl(px(16.))
+                .pr(px(8.))
                 .py(px(8.))
-                .min_h(px(48.))
-                .border_t_1()
-                .border_color(palette().rule())
-                .bg(rgb(palette().chrome_raised))
+                .min_h(px(52.))
+                .rounded(tokens::r(tokens::R_CARD))
+                .border_1()
+                .border_color(rgb(palette().line))
+                .bg(rgb(palette().raised))
+                .shadow_md()
                 .child(
                     div()
                         .flex_none()
@@ -79,7 +86,7 @@ pub(crate) fn bar(count: usize, toggle: Stateful<Div>, actions: Vec<AnyElement>)
             crate::motion::eased(sunrise_launcher_theme::QUICK),
             |bar, progress| {
                 if progress < 1. {
-                    bar.max_h(px(160. * progress)).opacity(progress)
+                    bar.max_h(px(180. * progress)).opacity(progress)
                 } else {
                     bar.opacity(1.)
                 }
