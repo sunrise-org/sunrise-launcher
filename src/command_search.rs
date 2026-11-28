@@ -215,6 +215,7 @@ impl Launcher {
                     self.switch_profile(&profile, cx);
                 }
             }
+            Target::SavedServers => self.show_saved_servers(),
             Target::World => self.navigate(Page::Home),
             Target::Mod(title) => {
                 if !self.open_mod_named(&title) {
@@ -574,7 +575,7 @@ mod tests {
                 "Home",
                 "Mods",
                 "Packs",
-                "Servers › Join",
+                "Servers › Saved servers",
                 "Servers › Host",
                 "Skins",
                 "Settings",
@@ -722,7 +723,7 @@ mod tests {
                 "Home",
                 "Mods",
                 "Packs",
-                "Servers › Join",
+                "Servers › Saved servers",
                 "Servers › Host",
                 "Skins",
                 "Settings"
@@ -789,7 +790,11 @@ mod tests {
             assert!(press(&mut search, key) == Press::Stay);
         }
         assert_eq!(search.query.text(), "ser");
-        assert_eq!(on(&search), "Servers › Join", "the first row again");
+        assert_eq!(
+            on(&search),
+            "Servers › Saved servers",
+            "the first row again"
+        );
         press(&mut search, "down");
         assert!(press(&mut search, "enter") == Press::Open(Target::Page(Page::Hosting)));
         // Backspace is the field's too, and lists again.

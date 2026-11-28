@@ -1,6 +1,6 @@
-use super::look::{action_column, card, head, muted, note, section};
+use super::look::{card, head, muted, note, section};
 use super::*;
-use crate::widgets::button::{primary, secondary};
+use crate::widgets::button::{button, primary, secondary, Look, Size, Style};
 use crate::widgets::chip::{self, tag};
 
 impl Launcher {
@@ -10,7 +10,6 @@ impl Launcher {
         page: Div,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        use super::model::SourceLink;
         use sunrise_launcher::browser::details::category_label;
 
         let p = palette();
@@ -320,7 +319,8 @@ impl Launcher {
                     &[("from", &row.version), ("to", to)],
                 ),
             )
-            .w_full();
+            .w_full()
+            .h(px(48.));
             if busy {
                 dim(b).into_any_element()
             } else {
@@ -335,150 +335,33 @@ impl Launcher {
             super::discover::install_fact(version, pending).into_any_element()
         } else if vp.will_install.is_some() {
             let id = vp.id.clone();
-            primary("alt-project-add", self.registry_install_label())
-                .w_full()
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.add_v2(id.clone());
-                    cx.notify();
-                }))
-                .into_any_element()
+            button(
+                "alt-project-add",
+                self.registry_install_label(),
+                Look::new(Style::Primary, Size::Medium).icon("download-04"),
+            )
+            .w_full()
+            .h(px(48.))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.add_v2(id.clone());
+                cx.notify();
+            }))
+            .into_any_element()
         } else {
             dim(secondary("alt-project-add", tr("Install")))
                 .w_full()
                 .into_any_element()
         };
 
-        let meta_sub = match &vp.will_install {
-            Some(v) => trf(
-                "{version} · {size}",
-                &[("version", &v.version), ("size", &model::size(v.size))],
-            ),
-            None => vp.fit.reason().unwrap_or_default(),
-        };
-        let repo_href = vp.repository_url.as_ref().map(|link| match link {
-            SourceLink::GitHub(url) | SourceLink::Other(url) => url.clone(),
-        });
-        let published_from_text = trf(
-            "Published from github.com/{repo}",
-            &[("repo", &vp.repository_name)],
-        );
-        let published_row = {
-            let row = div()
-                .id("alt-project-publisher")
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .text_size(px(tokens::SMALL))
-                .text_color(c(p.muted))
-                .child(crate::glass_ui::icon("github", 14., c(p.muted)))
-                .child(div().min_w_0().truncate().child(published_from_text));
-            if let Some(url) = repo_href {
-                row.cursor_pointer()
-                    .hover(|s| s.text_color(c(p.accent_ink)))
-                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-                        Self::open_url(&url, cx);
-                    }))
-            } else {
-                row
-            }
-        };
-
-        let link_url = |link: &Option<SourceLink>| -> Option<String> {
-            link.as_ref().map(|l| match l {
-                SourceLink::GitHub(url) | SourceLink::Other(url) => url.clone(),
-            })
-        };
-        let source_url = link_url(&vp.source).or_else(|| link_url(&vp.repository_url));
-        let homepage_url = link_url(&vp.homepage);
-        let issues_url = link_url(&vp.issues);
-
-        // The action column: the one action, what it will change, then the secondary link.
-        let action_col = action_column()
-            .child(muted(meta_sub))
-            .children(vp.will_install.as_ref().map(|line| {
-                div()
-                    .text_size(px(tokens::CAPTION))
-                    .text_color(c(p.success))
-                    .child(line.verdict.fit_label())
-            }))
-            .child(primary_control)
-            .children(self.registry_card_outcome(&vp.id, cx))
-            .children(installed_id.and_then(|id| self.registry_card_outcome(id, cx)))
-            .when(vp.will_install.is_none(), |d| {
-                d.children(vp.fit.reason().map(note))
-            })
-            .children(controls)
-            .children(source_url.clone().map(|url| {
-                secondary("alt-v2-source-open", tr("Open source")).on_click(cx.listener(
-                    move |_, _: &ClickEvent, _, cx| {
-                        Self::open_url(&url, cx);
-                    },
-                ))
-            }));
-
-        let reviewed = div()
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .text_size(px(tokens::SMALL))
-            .text_color(c(p.muted))
-            .child(crate::glass_ui::icon("tick-02", 14., c(p.muted)))
-            .child(tr("Reviewed by Sunrise"));
-
-        let mut about = card()
-            .p(px(16.))
-            .flex()
-            .flex_col()
-            .gap(px(2.))
-            .child(
-                div()
-                    .pb(px(6.))
-                    .text_size(px(tokens::CAPTION))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(c(p.muted))
-                    .child(tr("ABOUT")),
-            )
-            .child(about_row(tr("In-game ID"), vp.mod_id.clone()))
-            .when(!vp.updated.is_empty(), |d| {
-                d.child(about_row(tr("Updated"), vp.updated.clone()))
-            })
-            .when(!vp.license.is_empty(), |d| {
-                d.child(about_row(tr("Licence"), vp.license.clone()))
-            })
-            .child(div().h(px(1.)).my(px(8.)).bg(p.rule()))
-            .child(reviewed)
-            .child(published_row);
-
-        if let Some(url) = homepage_url {
-            about = about.child(about_link("alt-v2-homepage", tr("Homepage")).on_click(
-                cx.listener(move |_, _: &ClickEvent, _, cx| {
-                    Self::open_url(&url, cx);
-                }),
-            ));
-        }
-        if let Some(url) = issues_url {
-            about = about.child(
-                about_link("alt-v2-issues", tr("Issues")).on_click(cx.listener(
-                    move |_, _: &ClickEvent, _, cx| {
-                        Self::open_url(&url, cx);
-                    },
-                )),
-            );
-        }
-
-        let side = div()
-            .flex()
-            .flex_col()
-            .gap(px(12.))
-            .child(about)
-            .child(card().p(px(16.)).child(self.rating_block(&vp.id, cx)));
+        let install = self.install_block(&vp, primary_control, installed_id, controls, cx);
+        let side = self.project_side(&vp, install, cx);
 
         self.project_layout(
             "project",
             super::Layout {
                 header,
                 head: header_block,
-                action: Some(action_col),
+                action: None,
                 gallery,
                 side: Some(side),
             },

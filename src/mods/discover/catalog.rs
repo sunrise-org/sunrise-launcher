@@ -120,7 +120,7 @@ impl Launcher {
                 profile: &profile_name,
                 build: build_label.as_deref(),
             };
-            page = page.child(count_line(count, f.sort.summary_label()));
+            page = page.child(count_line(count));
         }
         let (grid, ungrouped_cards) = self.discover_list(&shown, &cards, &collections, cx);
         // Competing ports sharing an in-game ID render as alternatives, never as one install.
@@ -492,7 +492,8 @@ struct CountLine<'a> {
 }
 
 /// The count line above the list, with the sort's summary on the right.
-fn count_line(count: CountLine<'_>, sort_summary: &str) -> Div {
+/// How many there are. The sort is the dropdown's to say, not a line of its own.
+fn count_line(count: CountLine<'_>) -> Div {
     let line = summary_count_line(
         count.total,
         count.fitting,
@@ -501,15 +502,7 @@ fn count_line(count: CountLine<'_>, sort_summary: &str) -> Div {
         count.profile,
         count.build,
     );
-    div()
-        .flex()
-        .flex_none()
-        .flex_wrap()
-        .items_center()
-        .justify_between()
-        .gap(px(8.))
-        .child(muted(line))
-        .child(muted(sort_summary.to_owned()))
+    div().flex().flex_none().child(muted(line))
 }
 
 /// A card-shaped notice above the list: its text in the warning colour, and one action.

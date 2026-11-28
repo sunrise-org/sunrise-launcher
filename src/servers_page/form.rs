@@ -198,7 +198,6 @@ impl Launcher {
             Field::PreLaunch | Field::Wrapper | Field::LaunchEnv | Field::PostExit => {
                 self.save_launch()
             }
-            Field::ServerName | Field::ServerAddress => self.add_server(),
         }
     }
 

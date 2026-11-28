@@ -28,6 +28,20 @@ pub(super) struct SettingsOutcome {
     pub(super) saved: HashMap<String, String>,
 }
 
+/// What is open over the Host page's list.
+pub(super) enum HostDialog {
+    /// The new name's field (its text is `Servers::rename`).
+    Rename { dir: PathBuf, focus: FocusHandle },
+    /// The question before the server is moved to the trash.
+    Delete { dir: PathBuf, name: String },
+}
+
+/// The "…" menu of the server in `dir`, hung from its button (window coordinates).
+pub(super) struct HostMenu {
+    pub(super) dir: PathBuf,
+    pub(super) button: gpui::Bounds<gpui::Pixels>,
+}
+
 pub(crate) struct Servers {
     pub(super) list: Vec<Entry>,
     pub(super) loaded: bool,
@@ -46,6 +60,11 @@ pub(crate) struct Servers {
     /// The action under way, and what it printed.
     pub(super) busy: Option<String>,
     pub(super) job_log: VecDeque<String>,
+    /// The server the action under way is on, when the list started it (its card says so).
+    pub(super) job_dir: Option<PathBuf>,
+    pub(super) menu: Option<HostMenu>,
+    pub(super) dialog: Option<HostDialog>,
+    pub(super) rename: LineEdit,
     pub(super) problem: Option<Problem>,
     pub(super) note: Option<String>,
     pub(crate) create: Option<Create>,
@@ -108,10 +127,10 @@ impl Servers {
                 .any(|s| matches!(s.phase.as_str(), "running" | "starting" | "stopping"))
     }
 
-    /// A stopped server's line in the list: "Survival · stopped", as the mockup's. The open
-    /// server's mode is the one its settings show now, once read; the others' (and the open one's
-    /// until then) come from their files.
-    pub(super) fn stopped_line(&mut self, dir: &std::path::Path) -> String {
+    /// The game mode a listed server is set to, as people read it. The open server's mode is
+    /// the one its settings show now, once read; the others' (and the open one's until then)
+    /// come from their files.
+    pub(super) fn mode_label(&mut self, dir: &std::path::Path) -> Option<String> {
         let open = Some(self.shown("world", "game_mode"))
             .filter(|m| !m.is_empty() && self.open.as_deref() == Some(dir));
         let mode = open.or_else(|| {
@@ -119,17 +138,13 @@ impl Servers {
                 .entry(dir.to_path_buf())
                 .or_insert_with(|| servers::game_mode(dir))
                 .clone()
-        });
-        match mode {
-            Some(mode) => {
-                let label = MODES
-                    .iter()
-                    .find(|(id, _)| *id == mode)
-                    .map_or(mode.clone(), |(_, label)| tr(label).to_string());
-                trf("{mode} · stopped", &[("mode", &label)])
-            }
-            None => tr("Stopped").to_string(),
-        }
+        })?;
+        Some(
+            MODES
+                .iter()
+                .find(|(id, _)| *id == mode)
+                .map_or(mode.clone(), |(_, label)| tr(label).to_string()),
+        )
     }
 }
 
@@ -152,6 +167,10 @@ impl Servers {
             create_scroll: Scrollbar::default(),
             busy: None,
             job_log: VecDeque::new(),
+            job_dir: None,
+            menu: None,
+            dialog: None,
+            rename: LineEdit::default(),
             problem: None,
             note: None,
             create: None,
@@ -183,6 +202,12 @@ impl Servers {
             tx,
             rx,
         }
+    }
+
+    /// Shuts the Host page's menu and dialog, as the page is left.
+    pub(crate) fn close_layers(&mut self) {
+        self.menu = None;
+        self.dialog = None;
     }
 
     pub(crate) fn text(&mut self, f: Field) -> &mut LineEdit {
@@ -455,5 +480,17 @@ impl Launcher {
     /// `config` (and `backups --json`).
     pub(super) fn older_sunrise(&self) -> bool {
         self.servers.service.is_some() && self.servers.config.is_none()
+    }
+}
+
+impl Servers {
+    /// A Host dialog (rename, delete) is up.
+    pub(crate) fn dialog_open(&self) -> bool {
+        self.dialog.is_some()
+    }
+
+    /// Closes a server card's "…" menu, as opening any other menu does.
+    pub(crate) fn close_menu(&mut self) {
+        self.menu = None;
     }
 }

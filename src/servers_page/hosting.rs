@@ -8,7 +8,9 @@ use crate::widgets::check::switch;
 use crate::widgets::choice::choices;
 use gpui::rgb;
 
+mod cards;
 mod create;
+mod menu;
 mod page;
 mod settings;
 mod status;

@@ -1,9 +1,11 @@
-//! The selected instance's server list on Home (`sunrise_launcher::server_list`, the game's own
-//! `servers.dat`): each server with the picture the game last saw, Join (the game starts straight
-//! into it), Remove after a confirmation, and a line to add one.
+//! The selected instance's server list (`sunrise_launcher::server_list`, the game's own
+//! `servers.dat`): what Home's Saved servers tab shows, with each server's
+//! picture and the status ping the game's Multiplayer screen sends, and the edits the page makes
+//! (add, edit, move, remove).
 use super::*;
+use crate::line_edit::LineEdit;
+use crate::mods::selection::Selection;
 use gpui::{Image, ImageFormat};
-use servers_page::Field;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,34 +17,40 @@ pub(super) struct Multiplayer {
     home: Option<PathBuf>,
     pub(super) list: Vec<(Server, Option<Arc<Image>>)>,
     fresh: bool,
-    pub(super) adding: bool,
-    pub(super) confirm_remove: Option<usize>,
     pub(super) error: Option<String>,
-    /// The saved server whose Remove button is showing, and whether it was asked once.
-    pub(super) menu: Option<(usize, bool)>,
-    /// The saved row Home opened Join at.
-    pub(super) target: Option<Target>,
     /// What each address answered to the status ping, asked once per list.
     pub(super) reach: HashMap<String, Reach>,
+    /// How long each answer took, in milliseconds.
+    pub(super) latency: HashMap<String, u128>,
     /// The picture each address sent with that answer, for a server the game hasn't saved one
     /// for.
     pub(super) icons: HashMap<String, Arc<Image>>,
+    /// The name field of the server dialog, and its keyboard focus (the address field is
+    /// `Launcher::friend_code`).
+    pub(super) name: LineEdit,
+    pub(super) name_focus: Option<FocusHandle>,
+    /// The saved servers ticked, by their place in the list.
+    pub(super) picks: Selection,
+    /// The dialog over the page, if one is up.
+    pub(super) dialog: Option<ServerDialog>,
+    /// The "…" menu of a saved server, while it is open.
+    pub(super) menu: Option<ServerMenu>,
 }
 
-/// Saved servers have no ID and may share a name and address. Keep the list position,
-/// and check the name and address so a changed list doesn't reveal an unrelated row.
-pub(super) struct Target {
+/// What is open over the Saved servers tab.
+pub(super) enum ServerDialog {
+    /// The form of a new server, or of the saved server at this place.
+    Form { edit: Option<usize> },
+    /// The question before these saved servers (place and name) are removed.
+    Remove(Vec<(usize, String)>),
+}
+
+/// The "…" menu of the saved server at `index` (or, `featured`, of the bundled one), hung from
+/// its button (window coordinates).
+pub(super) struct ServerMenu {
     pub(super) index: usize,
-    pub(super) name: String,
-    pub(super) address: String,
-    pub(super) focus: FocusHandle,
-    pub(super) revealed: std::rc::Rc<std::cell::Cell<bool>>,
-}
-
-impl Target {
-    pub(super) fn matches(&self, index: usize, server: &Server) -> bool {
-        self.index == index && self.name == server.name && self.address == server.ip
-    }
+    pub(super) featured: bool,
+    pub(super) button: gpui::Bounds<gpui::Pixels>,
 }
 
 /// A saved server as its status ping found it.
@@ -62,30 +70,52 @@ impl Multiplayer {
 
 impl Launcher {
     /// Asks each listed server for its players once, as the game's Multiplayer list does when it
-    /// opens; the rows show the answer (the mockup's dot and "3 of 10" or "Offline").
+    /// opens; the cards show the answer ("3 of 10 playing", or "No answer").
     pub(super) fn ping_servers(&mut self, cx: &mut Context<Self>) {
         let asks: Vec<String> = self
             .multiplayer
             .list
             .iter()
             .map(|(s, _)| s.ip.clone())
-            .filter(|ip| !self.multiplayer.reach.contains_key(ip))
             .collect();
         for ip in asks {
-            self.multiplayer.reach.insert(ip.clone(), Reach::Asking);
-            let address = ip.clone();
-            let task = cx
-                .background_executor()
-                .spawn(async move { sunrise_launcher::telemetry::server_status(&address) });
-            cx.spawn(async move |this, cx| {
-                let answer = task.await;
-                let _ = this.update(cx, |this, cx| {
-                    this.server_answered(ip, answer);
-                    cx.notify();
-                });
-            })
-            .detach();
+            self.ask_server(ip, cx);
         }
+    }
+
+    /// Asks `address` for its players, unless it was asked already.
+    pub(super) fn ask_server(&mut self, address: String, cx: &mut Context<Self>) {
+        if self.multiplayer.reach.contains_key(&address) {
+            return;
+        }
+        self.multiplayer
+            .reach
+            .insert(address.clone(), Reach::Asking);
+        let asked = address.clone();
+        let task = cx.background_executor().spawn(async move {
+            let started = Instant::now();
+            let answer = sunrise_launcher::telemetry::server_status(&asked);
+            (answer, started.elapsed())
+        });
+        cx.spawn(async move |this, cx| {
+            let (answer, took) = task.await;
+            let _ = this.update(cx, |this, cx| {
+                if answer.is_some() {
+                    this.multiplayer
+                        .latency
+                        .insert(address.clone(), took.as_millis());
+                }
+                this.server_answered(address, answer);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Forgets every answer, so the next frame asks each server again.
+    pub(super) fn refresh_servers(&mut self) {
+        self.multiplayer.reach.clear();
+        self.multiplayer.latency.clear();
     }
 
     /// Records what `address` answered to the status ping: its players and its picture.
@@ -135,6 +165,11 @@ impl Launcher {
                 (s, icon)
             })
             .collect();
+        // A server the game removed drops out of the ticks.
+        let every: Vec<String> = (0..self.multiplayer.list.len())
+            .map(|i| i.to_string())
+            .collect();
+        self.multiplayer.picks.retain(&every);
         self.multiplayer.fresh = true;
     }
 
@@ -147,20 +182,58 @@ impl Launcher {
         };
         let mut list = server_list::List::load(&home);
         self.multiplayer.error = edit(&mut list).and_then(|()| list.save(&home)).err();
-        self.multiplayer.confirm_remove = None;
-        self.multiplayer.target = None;
+        // The places the ticks hold have moved.
+        self.multiplayer.picks.clear();
         self.multiplayer.stale();
     }
 
-    /// Enter in the address field, or Add.
-    pub(super) fn add_server(&mut self) {
-        let name = self.servers.value(Field::ServerName).to_string();
-        let address = self.servers.value(Field::ServerAddress).to_string();
-        self.edit_servers(|list| list.add(&name, &address));
-        if self.multiplayer.error.is_none() {
-            self.servers.text(Field::ServerName).set(String::new());
-            self.servers.text(Field::ServerAddress).set(String::new());
-            self.multiplayer.adding = false;
+    /// Moves the saved server at `index` one place up (`down` false) or down.
+    pub(super) fn move_server(&mut self, index: usize, down: bool) {
+        let other = if down {
+            index + 1
+        } else {
+            index.saturating_sub(1)
+        };
+        self.edit_servers(|list| list.swap(index, other));
+    }
+
+    /// Removes the saved servers at `places`, whatever order they are given in.
+    pub(super) fn remove_servers(&mut self, mut places: Vec<usize>) {
+        places.sort_unstable_by(|a, b| b.cmp(a));
+        self.edit_servers(|list| {
+            for place in places {
+                list.remove(place)?;
+            }
+            Ok(())
+        });
+    }
+
+    /// Closes the dialog over the Saved servers tab, and what was typed in it.
+    pub(super) fn close_server_dialog(&mut self) {
+        self.multiplayer.dialog = None;
+        self.multiplayer.error = None;
+    }
+
+    /// Shuts the menus and dialogs of the Servers pages, as a page is left.
+    pub(super) fn close_server_layers(&mut self) {
+        self.multiplayer.menu = None;
+        self.multiplayer.dialog = None;
+        self.servers.close_layers();
+    }
+
+    /// Escape on the Saved servers tab: the "…" menu or the dialog goes first, then the ticks.
+    /// True when it closed or cleared something.
+    pub(crate) fn join_escape(&mut self) -> bool {
+        if self.multiplayer.menu.take().is_some() {
+            crate::glass_ui::menus_changed();
+            return true;
         }
+        if self.multiplayer.dialog.is_some() {
+            self.close_server_dialog();
+            return true;
+        }
+        let any = !self.multiplayer.picks.is_empty();
+        self.multiplayer.picks.clear();
+        any
     }
 }

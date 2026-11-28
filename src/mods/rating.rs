@@ -110,37 +110,36 @@ impl Launcher {
         }
     }
 
-    /// The ratings block of mod `id`'s page.
+    /// The ratings block of mod `id`'s page: its title with the count beside it, then the stars.
     pub(super) fn rating_block(&self, id: &str, cx: &mut Context<Self>) -> Div {
         let p = palette();
         let r = &self.mods_state.ratings;
-        let summary = match r.totals.as_ref().map(|t| t.get(id)) {
+        let beside = match r.totals.as_ref().map(|t| t.get(id)) {
             None if r.totals_failed => None,
-            None => Some(muted(tr("Loading ratings…"))),
-            Some(Some(t)) if t.count > 0 => {
-                let count = if t.count == 1 {
-                    tr("1 rating").to_owned()
-                } else {
+            None => Some(tr("Loading ratings…").to_owned()),
+            Some(Some(t)) if t.count > 0 => Some(if t.count == 1 {
+                format!("{:.1} · {}", t.average, tr("1 rating"))
+            } else {
+                format!(
+                    "{:.1} · {}",
+                    t.average,
                     trf("{count} ratings", &[("count", &t.count.to_string())])
-                };
-                Some(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(6.))
-                        .child(crate::glass_ui::icon("star-filled", 14., c(p.accent)))
-                        .child(
-                            div()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_size(px(tokens::LABEL))
-                                .child(format!("{:.1}", t.average)),
-                        )
-                        .child(muted(count)),
                 )
-            }
-            Some(_) => Some(muted(tr("No ratings yet"))),
+            }),
+            Some(_) => Some(tr("none yet").to_owned()),
         };
-        let mut block = div().flex().flex_col().gap(px(8.)).children(summary);
+        let heading = div()
+            .flex()
+            .items_baseline()
+            .gap(px(8.))
+            .child(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_size(px(tokens::LABEL))
+                    .child(tr("Ratings")),
+            )
+            .children(beside.map(muted));
+        let mut block = div().flex().flex_col().gap(px(8.)).child(heading);
         let account = self.accounts.selected().map(|a| &a.uuid);
         if account.is_none() {
             return block.child(muted(tr("Sign in to rate this mod.")));
@@ -150,7 +149,7 @@ impl Launcher {
             false => 0,
         };
         let sending = r.sending.as_deref() == Some(id);
-        let mut stars = div().flex().items_center().gap(px(2.));
+        let mut stars = div().flex().items_center().gap(px(4.));
         for n in 1..=5u8 {
             let lit = n <= mine;
             let star = div()
@@ -159,7 +158,7 @@ impl Launcher {
                 .rounded(crate::tokens::r(crate::tokens::R_SMALL))
                 .child(crate::glass_ui::icon(
                     if lit { "star-filled" } else { "star" },
-                    18.,
+                    28.,
                     c(if lit { p.accent } else { p.muted }),
                 ));
             stars = stars.child(if sending {
@@ -174,21 +173,13 @@ impl Launcher {
                     }))
             });
         }
-        block = block.child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(px(8.))
-                .child(muted(if sending {
-                    tr("Sending…")
-                } else if mine > 0 {
-                    tr("Your rating")
-                } else {
-                    tr("Rate this mod")
-                }))
-                .child(stars),
-        );
+        block = block.child(stars).child(muted(if sending {
+            tr("Sending…")
+        } else if mine > 0 {
+            tr("Your rating")
+        } else {
+            tr("Rate this mod")
+        }));
         match &r.error {
             Some((mod_id, why)) if mod_id == id => block.child(note(why.clone())),
             _ => block,

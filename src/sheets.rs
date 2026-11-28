@@ -179,7 +179,11 @@ impl Launcher {
             || self.instances.dialog.is_some()
             || self.ui.sheets.profile_action.is_some()
             || self.worlds.action.is_some()
-            || (self.ui.page == crate::frame::Page::Hosting && self.servers.create.is_some())
+            || (self.ui.page == crate::frame::Page::Hosting
+                && (self.servers.create.is_some() || self.servers.dialog_open()))
+            || (self.ui.page == crate::frame::Page::Home
+                && self.multiplayer.dialog.is_some()
+                && self.home_on_servers())
     }
 
     /// Opens `sheet`. A pending question opens its own sheet.
@@ -216,6 +220,7 @@ impl Launcher {
         self.worlds.close_menu();
         self.mods_state.close_menu();
         self.multiplayer.menu = None;
+        self.servers.close_menu();
         if let Some(dialog) = self.instances.dialog.as_mut() {
             dialog.menu = None;
         }
@@ -445,6 +450,9 @@ impl Launcher {
         }
         if let Some(world_action) = self.world_action_sheet(window, cx) {
             return Some(world_action);
+        }
+        if let Some(servers_action) = self.server_action_sheet(window, cx) {
+            return Some(servers_action);
         }
         match self.ui.sheet {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),

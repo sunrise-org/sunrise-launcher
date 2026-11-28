@@ -75,6 +75,21 @@ pub fn add(entry: Entry) -> Result<(), String> {
     save_list(&all)
 }
 
+/// Gives the server in `dir` on this computer a new name in the list; its folder keeps its own.
+pub fn rename(dir: &Path, name: &str) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(tr("A server needs a name.").into());
+    }
+    let mut all = list();
+    let entry = all
+        .iter_mut()
+        .find(|e| e.host.is_none() && e.dir == dir)
+        .ok_or_else(|| tr("This server is no longer in the launcher’s list."))?;
+    entry.name = name.to_string();
+    save_list(&all)
+}
+
 /// Takes a server on this computer off the list; its folder stays.
 pub fn forget(dir: &Path) -> Result<(), String> {
     let mut all = list();

@@ -2,13 +2,20 @@
 use super::widgets::*;
 use super::*;
 use crate::widgets::button::secondary;
-use crate::widgets::feedback::empty_state_icon;
 use crate::widgets::{chip, nav};
 use gpui::SharedString;
 
 impl Launcher {
-    /// Escape closes the Create dialog, or takes back a delete that was being confirmed.
+    /// Escape closes the card menu or its dialog, the Create dialog, or takes back a delete that
+    /// was being confirmed.
     pub(crate) fn hosting_escape(&mut self) -> bool {
+        if self.servers.menu.take().is_some() {
+            crate::glass_ui::menus_changed();
+            return true;
+        }
+        if self.servers.dialog.take().is_some() {
+            return true;
+        }
         if self.servers.confirm_delete {
             self.servers.confirm_delete = false;
             return true;
@@ -71,7 +78,7 @@ impl Launcher {
             .into_any_element()
     }
 
-    fn host_problem(&self, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn host_problem(&self, cx: &mut Context<Self>) -> Option<Div> {
         let (p, settings_for) = if let Some(problem) = &self.servers.problem {
             (problem.clone(), None)
         } else {
@@ -117,164 +124,6 @@ impl Launcher {
             }
             fix => self.fix(fix, cx),
         }
-    }
-
-    fn host_list(&mut self, cx: &mut Context<Self>) -> Div {
-        let problem = self
-            .host_problem(cx)
-            .filter(|_| self.servers.create.is_none());
-        if self.servers.list.is_empty() {
-            return self.host_empty(problem, cx);
-        }
-        let mut rows = Vec::new();
-        for (i, e) in self.servers.list.clone().into_iter().enumerate() {
-            rows.push(self.host_row(i, e.dir, e.name, cx));
-        }
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(14.))
-            .child(self.host_list_head(cx))
-            .children(problem)
-            .child(group(rows))
-    }
-
-    /// The two ways to add a server: a folder that holds servers, and a new one.
-    fn host_add_create(&mut self, cx: &mut Context<Self>) -> (Stateful<Div>, Stateful<Div>) {
-        let creating = self.servers.creating;
-        let add = self.host_button(
-            "host-add",
-            tr("Add a server folder…"),
-            !creating,
-            cx,
-            |this, cx| this.add_server_folder(cx),
-        );
-        let create = self.host_primary(
-            "host-create",
-            tr("Create a server"),
-            true,
-            cx,
-            |this, cx| this.open_create(cx),
-        );
-        (add, create)
-    }
-
-    /// The page's first line: what hosting is, and the two ways to add a server.
-    fn host_list_head(&mut self, cx: &mut Context<Self>) -> Div {
-        let (add, create) = self.host_add_create(cx);
-        div()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .justify_between()
-            .gap(px(12.))
-            .child(hint(tr(
-                "Host a world for your friends on this computer. Create a server, press Start, and give them the address.",
-            )))
-            .child(div().flex().items_center().gap(px(8.)).child(add).child(create))
-    }
-
-    /// No server yet: the empty state carries the two actions, so the page has no separate row
-    /// of them.
-    fn host_empty(&mut self, problem: Option<Div>, cx: &mut Context<Self>) -> Div {
-        let (add, create) = self.host_add_create(cx);
-        let actions = div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(px(12.))
-            .child(add)
-            .child(create)
-            .into_any_element();
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(14.))
-            .children(problem)
-            .child(empty_state_icon(
-                Some("server-stack"),
-                tr("No server yet.").trim_end_matches('.'),
-                tr("Host a world for your friends on this computer. Create a server, press Start, and give them the address."),
-                Some(actions),
-            ))
-    }
-
-    /// One server of the list: its name and players, its status tag, Start or Stop, and Open.
-    /// Start and Stop act on the server they sit beside: it opens first, so the job's progress
-    /// shows on its page.
-    fn host_row(&mut self, i: usize, dir: PathBuf, name: String, cx: &mut Context<Self>) -> Div {
-        let idle = self.servers.busy.is_none();
-        let status = self
-            .servers
-            .statuses
-            .get(&dir)
-            .cloned()
-            .unwrap_or_else(Status::stopped);
-        let running = status.running();
-        let detail = if running {
-            trf(
-                "{online} of {max} players",
-                &[
-                    ("online", &status.players.len().to_string()),
-                    ("max", &status.max_players.unwrap_or(0).to_string()),
-                ],
-            )
-        } else {
-            format!("{} · {}", self.servers.stopped_line(&dir), short(&dir))
-        };
-        let kind = if running {
-            chip::Kind::Selected
-        } else {
-            chip::Kind::Neutral
-        };
-        let tag = chip::tag(phase_label(&status), kind);
-        let (start_dir, stop_dir, open_dir) = (dir.clone(), dir.clone(), dir);
-        let power = if running {
-            self.host_button(
-                ElementId::named_usize("host-row-stop", i),
-                tr("Stop"),
-                idle,
-                cx,
-                move |this, _| {
-                    this.open_server(stop_dir.clone());
-                    this.stop_server();
-                },
-            )
-        } else {
-            self.host_button(
-                ElementId::named_usize("host-row-start", i),
-                tr("Start"),
-                idle && status.phase == "stopped",
-                cx,
-                move |this, _| {
-                    this.open_server(start_dir.clone());
-                    this.start_server();
-                },
-            )
-        };
-        div()
-            .flex()
-            .items_center()
-            .gap(px(12.))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(name))
-                    .child(hint(detail)),
-            )
-            .child(tag)
-            .child(power)
-            .child(self.host_button(
-                ElementId::named_usize("host-open", i),
-                tr("Open"),
-                true,
-                cx,
-                move |this, _| this.open_server(open_dir.clone()),
-            ))
     }
 
     fn host_server(&mut self, dir: &Path, cx: &mut Context<Self>) -> Div {

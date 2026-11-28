@@ -20,14 +20,6 @@ impl V2Sort {
             V2Sort::Name => tr("Name"),
         }
     }
-
-    pub(in crate::mods) fn summary_label(self) -> &'static str {
-        match self {
-            V2Sort::Relevance => tr("Ranked by relevance"),
-            V2Sort::Updated => tr("Sorted by recently updated"),
-            V2Sort::Name => tr("Sorted by name"),
-        }
-    }
 }
 
 /// Active Discover filters. `show_all` defaults to `false`: only mods with a fitting release for

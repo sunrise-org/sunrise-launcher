@@ -13,7 +13,6 @@ pub(crate) enum Page {
     /// A pack's page, opened from Packs › Discover.
     PackProject,
     Project,
-    Join,
     Hosting,
     /// The Skins tab (`skins_page`): the look of the account that plays.
     Skins,
@@ -24,20 +23,14 @@ impl Page {
     /// The pages `sunrise-launcher benchmark` switches through, as a player clicks them: the
     /// header's tabs, then Settings. Not Skins: opening it reads the account's profile (the
     /// keychain, Microsoft, Mojang) and keeps the skin worn, and a benchmark touches no account.
-    pub(crate) const BENCH: [Page; 5] = [
-        Page::Home,
-        Page::Discover,
-        Page::Packs,
-        Page::Join,
-        Page::Settings,
-    ];
+    pub(crate) const BENCH: [Page; 4] = [Page::Home, Page::Discover, Page::Packs, Page::Settings];
 
     /// The tab that stays selected on a subpage.
     pub(crate) fn active_tab(self) -> Self {
         match self {
             Self::Project => Self::Discover,
             Self::PackFind | Self::PackProject => Self::Packs,
-            Self::Hosting => Self::Join,
+            Self::Hosting => Self::Home,
             other => other,
         }
     }
@@ -106,7 +99,6 @@ pub(crate) struct State {
     pub sheets: crate::sheets::SheetsState,
     pub settings: crate::settings::SettingsView,
     pub cat: crate::cat::CatState,
-    pub last_server: Option<Page>,
     pub after_install: Option<(crate::launcher_play::PlayIntent, String)>,
     /// A Play (including a destination) that explicitly asked for the sign-in now under way.
     pub after_sign_in: Option<crate::launcher_play::PlayIntent>,

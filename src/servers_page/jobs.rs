@@ -40,6 +40,7 @@ impl Servers {
 
     pub(super) fn finish_job(&mut self, result: Result<String, Problem>) {
         self.busy = None;
+        self.job_dir = None;
         self.polled = None;
         match result {
             Ok(note) if !note.is_empty() => self.note = Some(note),

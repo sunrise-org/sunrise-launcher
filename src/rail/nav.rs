@@ -66,19 +66,6 @@ impl Launcher {
             this.navigate(Page::Discover);
             cx.notify();
         }));
-        let servers = nav_item(
-            open,
-            "nav-servers",
-            "server-stack",
-            tr("Servers"),
-            active == Page::Join,
-            false,
-        )
-        .on_click(cx.listener(|this, _, _, cx| {
-            let to = this.ui.last_server.unwrap_or(Page::Join);
-            this.navigate(to);
-            cx.notify();
-        }));
         let skins = nav_item(
             open,
             "nav-skins",
@@ -99,7 +86,6 @@ impl Launcher {
             // The toggle's centre is 24 px down the 48 px bar; this row's is 40 px under it.
             .mt(px(-2.))
             .child(discover)
-            .child(servers)
             .child(skins)
     }
 

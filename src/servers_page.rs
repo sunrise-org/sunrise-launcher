@@ -65,9 +65,6 @@ pub(super) enum Field {
     InstanceGroup,
     /// The new-profile dialog's "New group" popup.
     NewGroup,
-    /// Home's Multiplayer section's (`multiplayer_page.rs`).
-    ServerName,
-    ServerAddress,
     /// The Launch panel's (`launch_page.rs`).
     PreLaunch,
     Wrapper,

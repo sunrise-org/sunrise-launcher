@@ -40,7 +40,6 @@ impl Launcher {
     /// Shows `page` without remembering the one left (`navigate` and Back do that).
     fn open_page(&mut self, page: Page) {
         let before = self.ui.page;
-        self.multiplayer.target = None;
         match page {
             Page::Discover => self.open_mods(),
             // The profile's resource packs are Home's Packs tab; the shelf of the data packs
@@ -48,10 +47,6 @@ impl Launcher {
             Page::Packs => {
                 self.select_home_tab(crate::home::tabs::Collection::Resource);
                 self.ui.page = Page::Home;
-            }
-            Page::Join | Page::Hosting => {
-                self.ui.last_server = Some(page);
-                self.ui.page = page;
             }
             Page::Skins => {
                 self.skins_open();
@@ -67,6 +62,7 @@ impl Launcher {
             if before == Page::Hosting {
                 self.servers.reset_public_lookup();
             }
+            self.close_server_layers();
             self.storage_builds.confirm = None;
             self.refresh_open_storage_builds();
         }
@@ -145,7 +141,6 @@ impl Launcher {
         crate::glass::set_panel(self.theme.look.plate);
         self.modal_before(window, cx);
         self.servers.note_focus(window, cx);
-        self.friend_focused = self.friend_focus.is_focused(window);
         if window.focused(cx).is_none() {
             window.focus(&self.root_focus, cx);
         }
@@ -160,48 +155,46 @@ impl Launcher {
             Page::Settings => self.settings(window, cx),
             Page::Skins => self.skins_page(window, cx).into_any_element(),
             Page::Home => self.home(window, cx),
-            Page::Join | Page::Hosting => {
-                let body = if page == Page::Hosting {
-                    self.hosting(cx)
-                } else {
-                    self.join(cx)
-                };
-                // Join and Host as underline sub-tabs, matching Mods and Packs.
-                let this = cx.entity();
-                let strip = crate::widgets::nav::tabs(
-                    "servers-tabs",
-                    &[
-                        (Page::Join, tr("Join").into()),
-                        (Page::Hosting, tr("Host").into()),
-                    ],
-                    if page == Page::Join {
-                        Page::Join
-                    } else {
-                        Page::Hosting
-                    },
-                    move |page, _, cx| {
-                        this.update(cx, |view, cx| {
-                            view.navigate(page);
-                            cx.notify();
-                        });
-                    },
-                )
-                .seen();
-                let tabs = div()
+            Page::Hosting => {
+                let body = self.hosting(cx);
+                let actions = self.host_actions(cx);
+                // Back to Home, where the servers are joined from, over "Host" and its actions.
+                let back = div()
+                    .id("host-back-home")
+                    .reach()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(6.))
+                    .text_size(px(tokens::LABEL))
+                    .text_color(rgb(palette().muted))
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(rgb(palette().text)))
+                    .child(crate::glass_ui::icon(
+                        "arrow-left-01",
+                        16.,
+                        crate::widgets::focus::c(palette().muted),
+                    ))
+                    .child(tr("Back to Home"))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.show_saved_servers();
+                        cx.notify();
+                    }));
+                let head = div()
                     .px(px(24.))
                     .pt(px(20.))
                     .flex()
                     .flex_col()
                     .gap(px(8.))
-                    .child(crate::widgets::nav::page_head(tr("Servers"), None))
-                    .child(crate::widgets::nav::tab_row(strip, None));
+                    .child(div().flex().child(back))
+                    .child(crate::widgets::nav::page_head(tr("Host"), actions));
                 div()
                     .flex()
                     .flex_col()
                     .flex_1()
                     .min_h_0()
                     .text_color(rgb(palette().text))
-                    .child(tabs)
+                    .child(head)
                     .child(body)
                     .into_any_element()
             }
@@ -347,6 +340,7 @@ impl Launcher {
                         this.instance_escape();
                     }
                     "escape" if this.ui.page == Page::Hosting && this.hosting_escape() => {}
+                    "escape" if this.servers_escape() => {}
                     // Ticked mods or packs: Escape clears them, Ctrl/Cmd+A ticks every row shown.
                     "escape" | "a" if this.selection_key(ev, window) => {}
                     _ => return,

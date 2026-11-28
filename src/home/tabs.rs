@@ -247,15 +247,6 @@ pub(crate) fn empty(title: &'static str, line: &'static str, action: Option<Stat
     crate::widgets::feedback::empty_state(title, line, action.map(|a| a.into_any_element()))
 }
 
-pub(crate) fn row_name(name: impl Into<SharedString>) -> Div {
-    div()
-        .min_w_0()
-        .text_size(px(tokens::LABEL))
-        .font_weight(FontWeight::SEMIBOLD)
-        .truncate()
-        .child(name.into())
-}
-
 impl Launcher {
     /// The profile's tabs: the shared underline tabs, picked by a click or the arrow keys.
     fn profile_tab_strip(&mut self, active: Tab, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -276,7 +267,6 @@ impl Launcher {
         &mut self,
         instance: &instances::Instance,
         inset: f32,
-        compact: bool,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -288,7 +278,7 @@ impl Launcher {
             items,
         } = match active {
             Tab::Logs => return self.home_logs(strip, instance, inset, window, cx),
-            Tab::Servers => self.home_servers(instance, compact, cx),
+            Tab::Servers => self.home_servers(instance, cx),
             Tab::Worlds => self.home_worlds(instance, window, cx),
             Tab::Packs | Tab::Shaders | Tab::Mods => {
                 let collection = active.collection().unwrap_or(Collection::Mods);

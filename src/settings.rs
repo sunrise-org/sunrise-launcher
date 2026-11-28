@@ -447,7 +447,7 @@ impl Launcher {
             "installed" => return self.show_home_tab(crate::home::tabs::Collection::Mods),
             "packs" => crate::frame::Page::Packs,
             "pack-find" => crate::frame::Page::PackFind,
-            "join" => crate::frame::Page::Join,
+            "join" => return self.show_saved_servers(),
             "hosting" => crate::frame::Page::Hosting,
             "skins" => crate::frame::Page::Skins,
             "settings" => crate::frame::Page::Settings,

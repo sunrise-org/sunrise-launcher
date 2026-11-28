@@ -2,7 +2,7 @@
 //! screen reads and writes the same file. Its format is vanilla's (`ServerList.load`/`save`,
 //! `ServerData.read`/`write`): uncompressed NBT, `servers` a list of compounds with `name`, `ip`,
 //! an optional `icon` (a PNG in base64), `acceptTextures`, `acceptedCodeOfConduct` and `hidden`.
-//! The launcher only adds and removes entries: every other field of every entry is written back
+//! The launcher adds, edits, moves and removes entries: every other field of every entry is written back
 //! as it was read.
 use crate::i18n::{tr, trf};
 use base64::alphabet::STANDARD as ALPHABET;
@@ -59,6 +59,31 @@ fn entry(name: &str, ip: &str) -> Compound {
     .collect()
 }
 
+/// A name and address as the game's Add Server screen takes them: trimmed, the address a valid
+/// one, and a name of "Minecraft Server" when none was given.
+fn checked<'a>(name: &'a str, ip: &'a str) -> Result<(&'a str, &'a str), String> {
+    let (name, ip) = (name.trim(), ip.trim());
+    if ip.is_empty() {
+        return Err(tr("A server needs an address.").into());
+    }
+    if !valid_address(ip) {
+        return Err(tr("That is not a server address: use a name or IP address, then an optional port from 0 to 65535.").into());
+    }
+    let name = if name.is_empty() {
+        "Minecraft Server"
+    } else {
+        name
+    };
+    Ok((name, ip))
+}
+
+fn missing(index: usize) -> String {
+    trf(
+        "There is no server {number}.",
+        &[("number", &(index + 1).to_string())],
+    )
+}
+
 impl List {
     /// The list in `home`; empty when there is none or it can't be read, as the game does.
     pub fn load(home: &Path) -> List {
@@ -112,24 +137,42 @@ impl List {
 
     /// Adds a server at the end of the shown ones, as the game's Add Server does.
     pub fn add(&mut self, name: &str, ip: &str) -> Result<(), String> {
-        let (name, ip) = (name.trim(), ip.trim());
-        if ip.is_empty() {
-            return Err(tr("A server needs an address.").into());
-        }
-        if !valid_address(ip) {
-            return Err(tr("That is not a server address: use a name or IP address, then an optional port from 0 to 65535.").into());
-        }
-        let name = if name.is_empty() {
-            "Minecraft Server"
-        } else {
-            name
-        };
+        let (name, ip) = checked(name, ip)?;
         let at = self
             .entries
             .iter()
             .rposition(|e| !hidden(e))
             .map_or(0, |i| i + 1);
         self.entries.insert(at, entry(name, ip));
+        Ok(())
+    }
+
+    /// Where the `index`th shown server sits among all the entries.
+    fn slot(&self, index: usize) -> Option<usize> {
+        (0..self.entries.len())
+            .filter(|&i| !hidden(&self.entries[i]))
+            .nth(index)
+    }
+
+    /// Gives the `index`th shown server a new name and address, as the game's Edit Server does:
+    /// every other field stays, except the picture of a server that moved to another address.
+    pub fn edit(&mut self, index: usize, name: &str, ip: &str) -> Result<(), String> {
+        let (name, ip) = checked(name, ip)?;
+        let at = self.slot(index).ok_or_else(|| missing(index))?;
+        let entry = &mut self.entries[at];
+        if text(entry, "ip") != ip {
+            entry.remove(&key("icon"));
+        }
+        entry.insert(key("name"), Tag::String(name.into()));
+        entry.insert(key("ip"), Tag::String(ip.into()));
+        Ok(())
+    }
+
+    /// Swaps the `a`th and the `b`th shown servers: how one moves up or down the list.
+    pub fn swap(&mut self, a: usize, b: usize) -> Result<(), String> {
+        let first = self.slot(a).ok_or_else(|| missing(a))?;
+        let second = self.slot(b).ok_or_else(|| missing(b))?;
+        self.entries.swap(first, second);
         Ok(())
     }
 

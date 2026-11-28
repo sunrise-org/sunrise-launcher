@@ -73,16 +73,24 @@ impl Launcher {
     }
 
     pub(super) fn start_server(&mut self) {
-        let Some(dir) = self.servers.open.clone() else {
+        if let Some(dir) = self.servers.open.clone() {
+            self.start_server_in(dir);
+        }
+    }
+
+    /// Starts the server in `dir`, open or not: its card on the list shows how it goes.
+    pub(super) fn start_server_in(&mut self, dir: PathBuf) {
+        if self.servers.busy.is_some() {
             return;
-        };
+        }
         recover(&STARTED_HERE).push(dir.clone());
         if let Some(outcome) = self.servers.settings_outcomes.get_mut(&dir) {
             outcome.restart.clear();
         }
         let tx = self.tx.clone();
+        let job = dir.clone();
         self.servers.start_job("Starting", move |log| {
-            if let Some(api) = servers::Api::open(&dir) {
+            if let Some(api) = servers::Api::open(&job) {
                 if let Ok(status) = api.call("GET", "/api/v1/status", None) {
                     if status["phase"] == "stopped"
                         && api.call("POST", "/api/v1/start", None).is_ok()
@@ -92,24 +100,34 @@ impl Launcher {
                 }
             }
             log(tr("A new world takes a minute the first time").into());
-            run_managed_server(&tx, &dir, &["start"], log).map(|_| String::new())
+            run_managed_server(&tx, &job, &["start"], log).map(|_| String::new())
         });
+        self.servers.job_dir = Some(dir);
     }
 
     pub(super) fn stop_server(&mut self) {
-        let Some(dir) = self.servers.open.clone() else {
+        if let Some(dir) = self.servers.open.clone() {
+            self.stop_server_in(dir);
+        }
+    }
+
+    /// Stops the server in `dir`, open or not.
+    pub(super) fn stop_server_in(&mut self, dir: PathBuf) {
+        if self.servers.busy.is_some() {
             return;
-        };
+        }
+        let job = dir.clone();
         self.servers.start_job("Stopping", move |log| {
             // The running server's API first; when it can't be reached or refuses, the CLI,
             // whose error is the job's.
-            let via_api = servers::Api::open(&dir)
+            let via_api = servers::Api::open(&job)
                 .is_some_and(|api| api.call("POST", "/api/v1/stop", None).is_ok());
             if via_api {
                 return Ok(String::new());
             }
-            servers::run_streamed(&dir, &["stop"], log).map(|_| String::new())
+            servers::run_streamed(&job, &["stop"], log).map(|_| String::new())
         });
+        self.servers.job_dir = Some(dir);
     }
 
     pub(super) fn restart_server(&mut self) {

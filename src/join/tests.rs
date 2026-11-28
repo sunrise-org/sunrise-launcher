@@ -20,35 +20,6 @@ fn the_box_tells_an_address_from_an_invite_code() {
 }
 
 #[test]
-fn a_home_target_matches_only_the_saved_row_that_was_pressed() {
-    let app = gpui::TestAppContext::single();
-    app.update(|cx| {
-        let target = multiplayer_page::Target {
-            index: 2,
-            name: "Second copy".into(),
-            address: "localhost:25566".into(),
-            focus: cx.focus_handle(),
-            revealed: Default::default(),
-        };
-        let mut server = sunrise_launcher::server_list::Server {
-            name: target.name.clone(),
-            ip: target.address.clone(),
-            icon: None,
-        };
-        assert!(target.matches(2, &server));
-        assert!(
-            !target.matches(1, &server),
-            "even an exact duplicate is a different row"
-        );
-        server.name = "First copy".into();
-        assert!(
-            !target.matches(2, &server),
-            "a different row moved into that position"
-        );
-    });
-}
-
-#[test]
 fn a_tile_shows_the_first_letter_in_capitals() {
     assert_eq!(initial("  éclair"), "É");
     assert_eq!(initial(""), "?");

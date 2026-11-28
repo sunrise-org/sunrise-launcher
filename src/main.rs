@@ -339,7 +339,6 @@ struct Launcher {
     play_when_prepared: Option<(String, launcher_play::PlayIntent)>,
     /// Join a friend: the code typed on the Play page.
     friend_code: line_edit::LineEdit,
-    friend_focused: bool,
     friend_focus: FocusHandle,
     window_width: f32,
     window_height: f32,

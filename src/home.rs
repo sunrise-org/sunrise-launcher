@@ -228,7 +228,7 @@ impl Launcher {
         let compact = self.window_width < 960. || self.window_height < 680.;
         let inset = if compact { 16. } else { INSET };
         let header = self.profile_header(&instance, compact, window, cx);
-        let body = self.profile_tabs(&instance, inset, compact, window, cx);
+        let body = self.profile_tabs(&instance, inset, window, cx);
         div()
             .id("alt-home")
             .flex_1()

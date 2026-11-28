@@ -390,7 +390,7 @@ impl Launcher {
         );
         let look = Look::new(Style::Primary, Size::Medium).disabled(!view.enabled);
         // Figma: the play glyph before the label, while Play (or Sign in & play) is what it does.
-        // Signed out, the button is the account chip's "Sign in" and does what that does.
+        // Signed out, the button says Sign in, with the account's glyph.
         let signing_in = view.main == Main::SignIn;
         let look = match (idle, signing_in) {
             (_, true) => look.icon("user"),
@@ -415,11 +415,9 @@ impl Launcher {
         if view.enabled {
             play.on_click(cx.listener(move |this, _, _, cx| {
                 this.cat_off_play();
-                if signing_in {
-                    this.account_action(crate::account_chip::Action::Add);
-                } else {
-                    this.press_play();
-                }
+                // Signed out, Play signs in first and then plays (`play_game`): the sign-in
+                // stands alone, and closing it leaves the page as it was.
+                this.press_play();
                 cx.notify();
             }))
         } else {

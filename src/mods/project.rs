@@ -11,6 +11,7 @@ use sunrise_launcher::browser::images;
 mod data;
 pub(in crate::mods) mod look;
 mod page;
+mod side;
 
 use crate::widgets::feedback::{banner, Tone};
 use look::{action_column, head, muted, note};
@@ -166,24 +167,6 @@ pub(super) fn about_row(key: &'static str, value: String) -> Div {
         .text_size(px(tokens::LABEL))
         .child(div().flex_none().text_color(c(palette().muted)).child(key))
         .child(div().min_w_0().truncate().child(value))
-}
-
-/// The line of an About card that opens a web page.
-pub(super) fn about_link(id: &'static str, key: &'static str) -> Stateful<Div> {
-    div()
-        .id(id)
-        .reach()
-        .flex()
-        .justify_between()
-        .py(px(5.))
-        .text_size(px(tokens::LABEL))
-        .cursor_pointer()
-        .child(div().text_color(c(palette().muted)).child(key))
-        .child(
-            div()
-                .text_color(c(palette().accent_ink))
-                .child(tr("Open ↗")),
-        )
 }
 
 pub(super) fn project_frame() -> Div {
