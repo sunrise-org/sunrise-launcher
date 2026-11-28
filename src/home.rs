@@ -29,7 +29,7 @@ const INSET: f32 = 24.;
 
 /// What stands in the profile banner.
 pub(crate) enum Art {
-    /// The design's own art, which fades into the panel on its left by itself.
+    /// The design's own art, which fades into the panel at its left edge by itself.
     Fading(Div),
     /// A scene or a player's picture: the banner washes its left part with the panel.
     Scene(Div),
@@ -41,6 +41,9 @@ pub(crate) struct HomeState {
     picker: Rc<Cell<Option<Bounds<gpui::Pixels>>>>,
     /// Where the profile menu's button was last drawn: the menu opens under it.
     menu: Rc<Cell<Option<Bounds<gpui::Pixels>>>>,
+    /// Where the profile banner's left edge was last drawn, in the window: its header stands on
+    /// the window's middle.
+    pub(crate) banner_left: Rc<Cell<Option<f32>>>,
     /// The current frame's unboxed profile, measured before the backdrop is painted.
     hero: Rc<Cell<Option<Bounds<gpui::Pixels>>>>,
     /// The art the frame drew for this frame's banner, taken by the banner.

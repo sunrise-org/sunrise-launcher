@@ -63,9 +63,9 @@ impl Launcher {
             .children(state)
     }
 
-    /// The banner (Figma "Profile · …"): the scenery on its right, fading into the panel; the
-    /// mark, name and build line with Change build; under them Play and Profile settings, and
-    /// the cat's lane beside them. Under the banner: a build under way and what the profile says.
+    /// The banner (Figma "Profile · …"): the scenery across it, fading into the panel at its
+    /// left edge; on the window's middle the mark and name, the play time, then Play and Profile
+    /// settings with the build under them, and the cat's lane beside them. Under the banner: a build under way and what the profile says.
     fn profile_banner(
         &mut self,
         instance: &instances::Instance,
@@ -109,7 +109,11 @@ impl Launcher {
         // The cat walks the ground along the art's bottom edge, right of the buttons.
         let (lane, _) = self.cat(true, false, window, cx);
         let pad = if compact { 16. } else { 24. };
-        let banner_left = crate::rail::rail_width(self.rail_open()) + tokens::FRAME_INSET;
+        // Where the banner was last drawn; before the first frame, where the sidebar puts it.
+        let measured = self.ui.home.banner_left.clone();
+        let banner_left = measured
+            .get()
+            .unwrap_or_else(|| crate::rail::rail_width(self.rail_open()) + tokens::FRAME_INSET);
         let banner_width = self.window_width - banner_left - tokens::FRAME_INSET;
         // The name, Play and the build stand on the window's middle (the top bar's search is
         // there too), sidebar included; where that leaves them too little room on the left,
@@ -136,14 +140,17 @@ impl Launcher {
             .rounded_t(crate::tokens::r(crate::tokens::R_PANEL))
             .when_some(art, |d, art| match art {
                 crate::home::Art::Fading(art) => d.child(art),
-                // A scene stands on the right; the panel's colour washes over its left part so
-                // the name and the buttons read on the panel, not on the picture.
+                // A scene runs across the banner under an even veil of the panel, so the name
+                // and the buttons in its middle read on any picture; the left edge fades into
+                // the panel as the design's own art does.
                 crate::home::Art::Scene(art) => {
+                    let veil = gpui::Hsla::from(rgb(panel));
                     d.child(art)
+                        .child(div().absolute().inset_0().bg(veil.opacity(0.4)))
                         .child(div().absolute().inset_0().bg(gpui::linear_gradient(
                             90.,
-                            gpui::linear_color_stop(rgb(panel), 0.3),
-                            gpui::linear_color_stop(gpui::Hsla::from(rgb(panel)).opacity(0.), 0.7),
+                            gpui::linear_color_stop(veil.opacity(0.6), 0.),
+                            gpui::linear_color_stop(veil.opacity(0.), 0.3),
                         )))
                 }
             })
@@ -163,6 +170,7 @@ impl Launcher {
                     .children(self.says(instance, view, false, cx)),
             )
             .child(ground)
+            .child(left_edge(measured, cx))
     }
 
     /// The profile's mark beside its name, centred together, and under them, centred, when it
@@ -566,6 +574,29 @@ impl Launcher {
 
 /// The line under the profile's name: "Last played today · Time played 3 h", or "Not played
 /// yet".
+/// Records where the banner's left edge is drawn; a move (the sidebar opening, a resize)
+/// draws again, so the header follows within a frame.
+fn left_edge(
+    at: std::rc::Rc<std::cell::Cell<Option<f32>>>,
+    cx: &mut Context<Launcher>,
+) -> gpui::Canvas<()> {
+    let this = cx.weak_entity();
+    gpui::canvas(
+        move |bounds, _, cx| {
+            let left = f32::from(bounds.left());
+            if at.replace(Some(left)) != Some(left) {
+                let this = this.clone();
+                cx.defer(move |cx| {
+                    this.update(cx, |_, cx| cx.notify()).ok();
+                });
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .inset_0()
+}
+
 /// Where in a banner `width` wide the header's middle goes: `wanted` (the window's middle, from
 /// the banner's left), unless that leaves less than `HALF` on a side; then the banner's middle.
 fn centre_in_banner(wanted: f32, width: f32) -> f32 {
