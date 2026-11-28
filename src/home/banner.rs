@@ -165,22 +165,24 @@ impl Launcher {
             .child(ground)
     }
 
-    /// The profile's mark, its name and, under the name, when it was last played and for how
-    /// long.
+    /// The profile's mark beside its name, centred together, and under them, centred, when it
+    /// was last played and for how long.
     fn identity(&mut self, instance: &instances::Instance) -> Div {
         let p = palette();
         div()
             .min_w_0()
             .flex()
+            .flex_col()
             .items_center()
-            .gap(px(16.))
-            .child(self.profile_mark(instance, 60.))
+            .gap(px(8.))
             .child(
                 div()
                     .min_w_0()
+                    .max_w_full()
                     .flex()
-                    .flex_col()
-                    .gap(px(2.))
+                    .items_center()
+                    .gap(px(16.))
+                    .child(self.profile_mark(instance, 60.))
                     .child(
                         div()
                             .min_w_0()
@@ -190,15 +192,16 @@ impl Launcher {
                             .font_weight(FontWeight::BOLD)
                             .text_color(rgb(p.text))
                             .child(instance.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(tokens::LABEL))
-                            .text_color(rgb(p.muted))
-                            .child(identity_line(instance)),
                     ),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .max_w_full()
+                    .truncate()
+                    .text_size(px(tokens::LABEL))
+                    .text_color(rgb(p.muted))
+                    .child(identity_line(instance)),
             )
     }
 
