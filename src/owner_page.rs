@@ -215,7 +215,8 @@ fn said(text: impl Into<SharedString>, size: f32, color: u32) -> Div {
 fn code_part(card: Stateful<Div>, uri: &str, user_code: &str) -> Stateful<Div> {
     let (open_uri, private_uri, link_uri) = (uri.to_string(), uri.to_string(), uri.to_string());
     let has_private = microsoft::has_private_window();
-    // Copy code, Open link and the third way in one row, in the order Tab takes them.
+    // Copy code, Open link, Copy link (for when no browser opens) and the private window, in
+    // one row in the order Tab takes them.
     let actions = div()
         .flex()
         .flex_wrap()
@@ -229,14 +230,15 @@ fn code_part(card: Stateful<Div>, uri: &str, user_code: &str) -> Stateful<Div> {
         .child(
             primary("owner-open", tr("Open link")).on_click(move |_, _, cx| cx.open_url(&open_uri)),
         )
-        .child(if has_private {
+        .child(crate::widgets::motion_bits::copy_button(
+            "owner-copy-link",
+            tr("Copy link"),
+            link_uri,
+        ))
+        .children(has_private.then(|| {
             secondary("owner-private", tr("Open in private window"))
                 .on_click(move |_, _, cx| microsoft::open_private(&private_uri, cx))
-                .into_any_element()
-        } else {
-            crate::widgets::motion_bits::copy_button("owner-copy-link", tr("Copy link"), link_uri)
-                .into_any_element()
-        });
+        }));
     card.child(
         div()
             .flex()
