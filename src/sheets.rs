@@ -90,6 +90,8 @@ pub(crate) struct SheetsState {
     details: bool,
     /// What the Notice sheet says, and the way out it offers.
     notice: String,
+    /// The notice's own title when it isn't a problem (`open_info`).
+    notice_title: Option<String>,
     way_out: Option<WayOut>,
     versions: versions::State,
     pub(super) switching: switching::State,
@@ -183,7 +185,14 @@ impl Launcher {
     pub(crate) fn open_notice(&mut self, text: String, way_out: Option<WayOut>) {
         self.open_sheet(Sheet::Notice);
         self.ui.sheets.notice = text;
+        self.ui.sheets.notice_title = None;
         self.ui.sheets.way_out = way_out;
+    }
+
+    /// The notice sheet for something to read that isn't a problem, under `title`.
+    pub(crate) fn open_info(&mut self, title: String, text: String) {
+        self.open_notice(text, None);
+        self.ui.sheets.notice_title = Some(title);
     }
 
     pub(crate) fn reset_install_question_sheet(&mut self) {

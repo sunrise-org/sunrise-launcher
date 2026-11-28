@@ -18,6 +18,12 @@ pub(crate) fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -
     button_base(id, label).hover(|s| s.bg(rgb(palette().hover)))
 }
 
+/// A [`button`] that draws its own label (the launcher update's, with its icon): no text child,
+/// which would take a share of the gap and push what it draws off centre.
+pub(crate) fn button_drawn(id: impl Into<ElementId>) -> Stateful<Div> {
+    button_frame(id).hover(|s| s.bg(rgb(palette().hover)))
+}
+
 /// What makes a clickable thing that is not a button reachable by keyboard: a Tab stop that shows
 /// the ring. Enter and Space press it, as a click does.
 pub(crate) trait Reach {
@@ -282,6 +288,11 @@ pub(crate) fn button_base(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
 ) -> Stateful<Div> {
+    button_frame(id).child(label.into())
+}
+
+/// Every button's box, without what it says.
+fn button_frame(id: impl Into<ElementId>) -> Stateful<Div> {
     div()
         .id(id)
         .tab_index(0)
@@ -300,7 +311,6 @@ pub(crate) fn button_base(
         .cursor_pointer()
         .focus_visible(|s| s.border_color(rgb(palette().focus)))
         .seen()
-        .child(label.into())
 }
 
 /// Every text input's box: one fill, one faint outline, the focus colour while typed in, its

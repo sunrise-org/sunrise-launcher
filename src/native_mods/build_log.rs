@@ -26,9 +26,9 @@ pub(crate) fn snapshot() -> Option<Arc<str>> {
     if bytes.is_empty() {
         return None;
     }
-    let text = String::from_utf8_lossy(&bytes);
+    let text = crate::launcher_log::scrub(&String::from_utf8_lossy(&bytes));
     Some(if skip == 0 {
-        Arc::from(text.as_ref())
+        Arc::from(text)
     } else {
         Arc::from(format!(
             "{}\n\n{text}",
@@ -54,6 +54,11 @@ pub fn append_log(message: &str) -> Result<(), String> {
     writeln!(log, "{message}").map_err(|e| e.to_string())
 }
 
+/// Appends scrubbed `message` to the build log while keeping [`append_log`] identical to the game's copy.
+pub(crate) fn append_scrubbed(message: &str) -> Result<(), String> {
+    append_log(&crate::launcher_log::scrub(message))
+}
+
 /// Appends `text` to the build log, the way a compiler warning reads.
 pub fn log_warning(text: &str) {
     if let Ok(mut log) = fs::OpenOptions::new()
@@ -61,7 +66,8 @@ pub fn log_warning(text: &str) {
         .append(true)
         .open(log_path())
     {
-        let _ = writeln!(log, "{}", trf("warning: {text}", &[("text", text)]));
+        let line = crate::launcher_log::scrub(&trf("warning: {text}", &[("text", text)]));
+        let _ = writeln!(log, "{line}");
     }
 }
 
@@ -144,8 +150,6 @@ pub fn compiling(id: &str) -> String {
 /// Why a build can't use the prebuilt game.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Refusal {
-    /// A mod has a build script, which the prebuilt route doesn't run.
-    BuildScript { mod_id: String },
     /// A mod declares Cargo features, or asks the mod API for features of its own.
     Features { mod_id: String },
 }
@@ -153,10 +157,6 @@ pub enum Refusal {
 impl std::fmt::Display for Refusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let text = match self {
-            Self::BuildScript { mod_id } => trf(
-                "E_NATIVE_BUILD_SCRIPT: {mod} has a build script; remove it and ship generated source in the mod",
-                &[("mod", mod_id)],
-            ),
             Self::Features { mod_id } => trf(
                 "E_NATIVE_FEATURES: {mod} requests Cargo features; use the pinned SDK feature set",
                 &[("mod", mod_id)],
@@ -170,10 +170,6 @@ impl Refusal {
     /// What the player reads about it; the code and its remedy for the mod's author stay in the build log.
     pub fn plain(&self) -> String {
         let why = match self {
-            Self::BuildScript { mod_id } => trf(
-                "{mod} can't be built here: it brings build steps of its own, which Sunrise doesn't run.",
-                &[("mod", mod_id)],
-            ),
             Self::Features { mod_id } => trf(
                 "{mod} can't be built here: it asks for build options Sunrise's game doesn't offer.",
                 &[("mod", mod_id)],

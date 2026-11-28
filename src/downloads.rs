@@ -28,6 +28,13 @@ pub use metrics::*;
 pub use runtime::*;
 pub use transfer::*;
 
+pub(crate) fn host_of(url: &str) -> String {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+        .unwrap_or_else(|| "an unknown host".into())
+}
+
 pub const CANCELLED: &str = "Download cancelled. Download again to go on where it stopped.";
 
 #[cfg(test)]

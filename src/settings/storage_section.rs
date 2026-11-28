@@ -14,16 +14,16 @@ impl Launcher {
             }),
         );
 
-        let busy = self.storage_pending;
-        let total = self
-            .storage_report
-            .as_ref()
-            .map(|report| report.rows.iter().map(|r| r.remaining_bytes).sum::<u64>());
-        let nothing = busy
-            || self
-                .storage_report
-                .as_ref()
-                .is_none_or(|report| report.rows.iter().all(|row| row.clearable_bytes() == 0));
+        let busy = self.ui.settings.storage_busy();
+        // The total waits for every row; a row shows its own size as soon as it is counted.
+        let complete = self.storage_report.as_ref().filter(|r| r.is_complete());
+        let total =
+            complete.map(|report| report.rows.iter().map(|r| r.remaining_bytes).sum::<u64>());
+        // Clear needs no size: a row not counted yet can be cleared like any other.
+        let offered = storage_report::clear_offered(
+            self.ui.settings.storage_work.as_ref(),
+            self.location_unavailable,
+        );
         // Counting that failed is not still counting.
         let uncounted = if self.storage_error.is_some() && !busy {
             tr("Not counted")
@@ -44,58 +44,51 @@ impl Launcher {
         let mut cache = vec![row(
             tr("Downloads kept for reuse"),
             detail,
-            div()
-                .child(
-                    button("alt-storage-recount", tr("Recount")).on_click(cx.listener(
-                        |this, _: &ClickEvent, _, cx| {
-                            this.refresh_storage(None, false);
-                            cx.notify();
-                        },
-                    )),
-                )
-                .child(if nothing {
-                    off(clear_all)
-                } else {
+            div().child(
+                if offered
+                    && complete.is_none_or(|r| {
+                        r.rows
+                            .iter()
+                            .any(|row| storage_report::row_clearable(Some(row)))
+                    })
+                {
                     clear_all.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.storage_confirm = Some(None);
                         cx.notify();
                     }))
-                }),
+                } else {
+                    off(clear_all)
+                },
+            ),
         )];
-        // A problem no row owns is said once, quietly, under the total.
-        if let Some(error) = self.storage_error.clone() {
-            let total = cache.remove(0);
-            cache.push(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .child(total)
-                    .child(hint(error)),
-            );
-        }
+        // Neither starting nor finishing an automatic count replaces Clear feedback.
+        cache.extend(self.storage_error.as_ref().map(|error| hint(error.clone())));
+        let cleared = match &self.ui.settings.storage_clear {
+            Some(Ok(report)) => Some(report),
+            Some(Err(error)) => {
+                cache.push(hint(error.clone()));
+                None
+            }
+            None => None,
+        };
         if let Some(asked) = self.storage_confirm {
-            let bytes: u64 = self
+            // The size to free is offered only for rows that are counted.
+            let counted: Vec<_> = self
                 .storage_report
                 .iter()
                 .flat_map(|report| &report.rows)
                 .filter(|r| asked.is_none_or(|category| r.category == category))
-                .map(storage::Row::clearable_bytes)
-                .sum();
-            let size = storage::format_bytes(bytes);
-            let question = match asked {
-                None => trf(
-                    "Clear everything kept for reuse? Up to {size} is freed. Files a game or build is using stay.",
-                    &[("size", &size)],
-                ),
-                Some(category) => trf(
-                    "Clear {category}? Up to {size} is freed. Files a game or build is using stay.",
-                    &[
-                        ("category", tr(storage_report::category_label(category))),
-                        ("size", &size),
-                    ],
-                ),
+                .collect();
+            let wanted = if asked.is_none() {
+                Category::ALL.len()
+            } else {
+                1
             };
+            let bytes = (counted.len() == wanted
+                && counted.iter().all(|r| r.measured_bytes().is_some()))
+            .then(|| counted.iter().map(|r| r.clearable_bytes()).sum())
+            .filter(|&bytes| bytes > 0);
+            let question = storage_report::clear_question(asked, bytes);
             cache.push(
                 div()
                     .flex()
@@ -125,54 +118,41 @@ impl Launcher {
                 .storage_report
                 .as_ref()
                 .and_then(|report| report.rows.iter().find(|r| r.category == category));
-            let size = found.map_or_else(
-                || uncounted.to_string(),
-                |r| storage::format_bytes(r.remaining_bytes),
-            );
-            let empty = busy || found.is_none_or(|r| r.clearable_bytes() == 0);
+            let size = found
+                .and_then(storage::Row::measured_bytes)
+                .map_or_else(|| uncounted.to_string(), storage::format_bytes);
             let clear = button(ElementId::named_usize("alt-storage-clear", n), tr("Clear…"));
             let mut line = row(
                 trf(
                     "{category} · {size}",
-                    &[
-                        ("category", tr(storage_report::category_label(category))),
-                        ("size", &size),
-                    ],
+                    &[("category", category.label()), ("size", &size)],
                 ),
-                tr(storage_report::category_about(category)),
-                div().child(if empty {
-                    off(clear)
-                } else {
+                storage_report::category_about(category),
+                div().child(if offered && storage_report::row_clearable(found) {
                     clear.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.storage_confirm = Some(Some(category));
                         cx.notify();
                     }))
+                } else {
+                    off(clear)
                 }),
             );
-            let kept: Vec<Div> = found
-                .iter()
-                .flat_map(|r| &r.kept)
-                .map(|k| {
-                    // A unit that was refused whole was not counted either.
-                    if k.bytes == 0 {
-                        return hint(k.reason.clone());
-                    }
-                    hint(trf(
-                        "Space it couldn't free: {bytes}. {reason}",
-                        &[
-                            ("bytes", &storage::format_bytes(k.bytes)),
-                            ("reason", &k.reason),
-                        ],
-                    ))
-                })
-                .collect();
-            if !kept.is_empty() {
+            let feedback = cleared.and_then(|report| {
+                report
+                    .rows
+                    .iter()
+                    .find(|r| r.category == category && r.after_clear)
+            });
+            if let Some(kept) = feedback
+                .and_then(storage_report::kept_line)
+                .or_else(|| found.and_then(storage_report::kept_line))
+            {
                 line = div()
                     .flex()
                     .flex_col()
                     .gap(px(6.))
                     .child(line)
-                    .children(kept);
+                    .child(hint(kept));
             }
             cache.push(line);
         }

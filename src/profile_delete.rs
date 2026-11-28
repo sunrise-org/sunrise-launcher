@@ -373,7 +373,7 @@ mod tests {
         settings.instance = Some(cabin.id.clone());
         settings.save().unwrap();
         let mut app = gpui::TestAppContext::single();
-        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
         let launcher = shell.read_with(cx, |shell, _| shell.launcher());
         cx.run_until_parked();
         let row = |cx: &mut gpui::VisualTestContext, id: &str| {
@@ -424,7 +424,7 @@ mod tests {
         settings.instance = Some(first.id.clone());
         settings.save().unwrap();
         let mut app = gpui::TestAppContext::single();
-        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
         let launcher = shell.read_with(cx, |shell, _| shell.launcher());
         cx.run_until_parked();
         let rows = |cx: &mut gpui::VisualTestContext| {
@@ -485,7 +485,7 @@ mod tests {
         settings.prune_old_versions = Some(false);
         settings.save().unwrap();
         let mut app = gpui::TestAppContext::single();
-        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
         let launcher = shell.read_with(cx, |shell, _| shell.launcher());
         let window = cx.update(|window, _| window.window_handle());
         launcher.update(cx, |launcher, cx| {
@@ -498,16 +498,54 @@ mod tests {
                 Some(Action::Deleting(_))
             ));
 
+            const TAG: &str = "26.3-0.1.1";
+            use backend::InstallPhase;
+            launcher.installing = Some((TAG.into(), InstallPhase::Downloading(0.25)));
+            launcher.play_detail = Some("Transfer detail".into());
+            launcher
+                .tx
+                .send(Msg::Progress("other".into(), InstallPhase::Finishing))
+                .unwrap();
             launcher
                 .tx
                 .send(Msg::Installed(
-                    "26.3-0.1.1".into(),
+                    "other".into(),
+                    Err("Unrelated install failure".into()),
+                ))
+                .unwrap();
+            launcher.drain(window, cx);
+            assert_eq!(
+                launcher.installing,
+                Some((TAG.into(), InstallPhase::Downloading(0.25)))
+            );
+            assert!(launcher.install_error.is_none());
+            launcher
+                .tx
+                .send(Msg::Progress(TAG.into(), InstallPhase::Downloading(0.50)))
+                .unwrap();
+            launcher.drain(window, cx);
+            assert_eq!(launcher.play_detail.as_deref(), Some("Transfer detail"));
+            launcher
+                .tx
+                .send(Msg::Progress(TAG.into(), InstallPhase::Finishing))
+                .unwrap();
+            launcher.drain(window, cx);
+            assert_eq!(
+                launcher.installing,
+                Some((TAG.into(), InstallPhase::Finishing))
+            );
+            assert!(launcher.play_detail.is_none());
+            launcher
+                .tx
+                .send(Msg::Installed(
+                    TAG.into(),
                     Ok(backend::InstallOutcome::Installed(None)),
                 ))
                 .unwrap();
             launcher.drain(window, cx);
             let live = Settings::load();
-            assert_eq!(live.selected.as_deref(), Some("26.3-0.1.1"));
+            assert!(launcher.installing.is_none());
+            assert_eq!(live.selected.as_deref(), Some(TAG));
             assert_eq!(live.instance.as_ref(), Some(&profile.id));
 
             let trashed = instances::trash_confirmed(profile.clone());
@@ -536,7 +574,7 @@ mod tests {
         let settings_path = root.join("launcher/settings.json");
 
         let mut app = gpui::TestAppContext::single();
-        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
         let launcher = shell.read_with(cx, |shell, _| shell.launcher());
         launcher.update(cx, |launcher, cx| {
             launcher.self_update = SelfUpdate::Ready(Release {

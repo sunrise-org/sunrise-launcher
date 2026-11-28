@@ -364,3 +364,99 @@ fn failed_exec_leaves_no_tree_or_gate_owner() {
     gate.try_lock().unwrap();
     gate.unlock().unwrap();
 }
+
+/// A piped preparer runs in a job of its own from creation: when its leader exits and leaves a
+/// child running, ending the job, as a stop or its escalation does, ends that child too, where
+/// the leader's PID alone wouldn't reach it (review of #670). Only Windows CI runs this.
+#[cfg(windows)]
+#[test]
+fn a_piped_preparers_job_ends_what_its_leader_left_running() {
+    use std::time::{Duration, Instant};
+    let lock = tempfile::tempfile().unwrap();
+    let command = super::job_fixture_leader(1, false);
+    let mut child = super::spawn_preparer(command, Some(&lock), None, true).unwrap();
+    let job = child
+        .preparer_job()
+        .expect("a piped preparer runs in a job of its own");
+    let _ = child.wait();
+    let active = || job.accounting().unwrap().ActiveProcesses;
+    let waiting = Instant::now();
+    while active() == 0 && waiting.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        active() >= 1,
+        "setup: the leader ended and left its helper running in its job"
+    );
+    child.kill().unwrap();
+    let waiting = Instant::now();
+    while active() != 0 && waiting.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        active(),
+        0,
+        "ending the job ended what the leader left running"
+    );
+}
+
+/// A quit ends a preparer's whole job, as a stop does, so nothing the leader started outlives the
+/// launcher holding the preparation's lock (review of #670). Only Windows CI runs this.
+#[cfg(windows)]
+#[test]
+fn a_quit_ends_a_preparers_whole_job() {
+    use std::time::{Duration, Instant};
+    static OWN: crate::process::owned::Registry = crate::process::owned::Registry::new();
+    let lock = tempfile::tempfile().unwrap();
+    let command = super::job_fixture_leader(2, true);
+    let child = super::spawn_preparer(command, Some(&lock), None, true).unwrap();
+    let job = child
+        .preparer_job()
+        .expect("a piped preparer runs in a job of its own");
+    let owned = OWN.track_preparer(child);
+    let active = || job.accounting().unwrap().ActiveProcesses;
+    let waiting = Instant::now();
+    while active() < 3 && waiting.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        active() >= 3,
+        "setup: the leader and both its helpers run in its job ({} running)",
+        active()
+    );
+    OWN.stop_all();
+    let waiting = Instant::now();
+    while active() != 0 && waiting.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(active(), 0, "the quit ended the whole job");
+    drop(owned);
+}
+
+/// The leader of the Windows job fixtures ([`super::job_fixture_leader`]): run with its
+/// environment, it starts its helpers in its own job, then ends or stays. Alone, it does nothing.
+#[cfg(windows)]
+#[test]
+fn job_fixture_leader() {
+    use std::process::Stdio;
+    let Ok(helpers) = std::env::var(super::JOB_FIXTURE_HELPERS) else {
+        return;
+    };
+    let started: Vec<_> = (0..helpers.parse::<usize>().unwrap())
+        .map(|_| {
+            std::process::Command::new("ping")
+                .args(["-n", "30", "127.0.0.1"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    // Never waited on: the helpers are what the leader leaves running in its job, which the test
+    // that started it ends.
+    std::mem::forget(started);
+    if std::env::var_os(super::JOB_FIXTURE_HOLD).is_some() {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+    }
+}

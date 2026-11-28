@@ -170,7 +170,9 @@ fn first_play_proves_and_installs_the_two_sdk_slices() {
                 (names[1].as_str(), SLICES[1]),
             ];
             let game = version_dir(DEV);
+            let phases = std::cell::RefCell::new(Vec::new());
             let install = |files: &[(&str, &[u8])], sdk_rust: &str, tamper: bool| {
+                phases.borrow_mut().clear();
                 // A playable runtime does not need a matching launcher Rust toolchain.
                 let index = index_of(files, "1.0.0").to_json();
                 publish(
@@ -208,7 +210,28 @@ fn first_play_proves_and_installs_the_two_sdk_slices() {
                     InstallIntent::Exact,
                     crate::backend::installation::Transfer {
                         stop: None,
-                        progress: |_| {},
+                        progress: |phase| {
+                            if phase == InstallPhase::Finishing {
+                                let stage = fs::read_dir(versions_dir())
+                                    .unwrap()
+                                    .map(|entry| entry.unwrap())
+                                    .find(|entry| {
+                                        crate::backend::installation::private_stage(
+                                            &entry.file_name(),
+                                        )
+                                    })
+                                    .expect("SDK stage while finishing")
+                                    .path();
+                                let preparer = crate::preparer::BINARY;
+                                assert!(stage.join(Kind::Programs.name()).join(preparer).is_file());
+                                assert!(!stage
+                                    .join(Kind::Runtime.name())
+                                    .join("bin")
+                                    .join(preparer)
+                                    .exists());
+                            }
+                            phases.borrow_mut().push(phase);
+                        },
                     },
                     |_, _| unreachable!("SDK reads from the mirror"),
                     (&base, &keys),
@@ -240,6 +263,29 @@ fn first_play_proves_and_installs_the_two_sdk_slices() {
                 installed.unwrap(),
                 InstallOutcome::Installed(None)
             ));
+            assert_eq!(
+                *phases.borrow(),
+                [
+                    InstallPhase::Unpacking,
+                    InstallPhase::Unpacking,
+                    InstallPhase::Finishing
+                ],
+                "a local mirror extracts both slices without claiming a download"
+            );
+            let cached = download
+                .publish_with(
+                    DEV,
+                    &proof,
+                    InstallIntent::Exact,
+                    crate::backend::installation::Transfer {
+                        stop: None,
+                        progress: |phase| panic!("cache hit unexpectedly reported {phase:?}"),
+                    },
+                    |_, _| unreachable!("cache hit needs no assets"),
+                    (&base, &keys),
+                )
+                .unwrap();
+            assert!(matches!(cached, InstallOutcome::AlreadyInstalled(None)));
             assert!(download.is_installed(DEV, &proof));
             assert!(crate::managed_play::FirstBuild::installed(DEV).is_ok());
             let (library, std) = match std::env::consts::OS {
@@ -279,6 +325,48 @@ fn first_play_proves_and_installs_the_two_sdk_slices() {
                 .unwrap();
             assert!(native.join(crate::preparer::BINARY).is_file());
             assert!(!native.join(Artifact::SDK_RECEIPT).exists());
+            fs::remove_dir_all(&game).unwrap();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let remote = Base::Url(format!("http://{}", listener.local_addr().unwrap()));
+            let server = serve_sdk_files(listener, mirror);
+            let phases = std::cell::RefCell::new(Vec::new());
+            let installed = download
+                .publish_with(
+                    DEV,
+                    &proof,
+                    InstallIntent::Exact,
+                    crate::backend::installation::Transfer {
+                        stop: None,
+                        progress: |phase| phases.borrow_mut().push(phase),
+                    },
+                    |_, _| unreachable!("SDK reads from its base"),
+                    (&remote, &keys),
+                )
+                .unwrap();
+            assert!(matches!(installed, InstallOutcome::Installed(None)));
+            server.join().unwrap();
+            let phases = phases.into_inner();
+            let (finishing, transfers) = phases.split_last().unwrap();
+            assert_eq!(*finishing, InstallPhase::Finishing);
+            let slices_progress: Vec<_> =
+                transfers.split(|p| *p == InstallPhase::Unpacking).collect();
+            let [first, second, after_unpack] = slices_progress.as_slice() else {
+                panic!("expected two slice extractions: {phases:?}");
+            };
+            let total = (SLICES[0].len() + SLICES[1].len()) as f32;
+            let first_fraction = SLICES[0].len() as f32 / total;
+            assert_eq!(
+                first.last(),
+                Some(&InstallPhase::Downloading(first_fraction))
+            );
+            assert!(first.iter().all(
+                |p| matches!(p, InstallPhase::Downloading(f) if (0.0..=first_fraction).contains(f))
+            ));
+            assert_eq!(second.last(), Some(&InstallPhase::Downloading(1.0)));
+            assert!(second.iter().all(
+                |p| matches!(p, InstallPhase::Downloading(f) if (first_fraction..=1.0).contains(f))
+            ));
+            assert!(after_unpack.is_empty());
             fs::write(game.join(library), b"swapped library").unwrap();
             assert!(!download.is_installed(DEV, &proof));
             assert!(crate::managed_play::FirstBuild::installed(DEV).is_err());
@@ -286,71 +374,134 @@ fn first_play_proves_and_installs_the_two_sdk_slices() {
     );
 }
 
+fn serve_sdk_files(
+    listener: std::net::TcpListener,
+    mirror: PathBuf,
+) -> std::thread::JoinHandle<()> {
+    use std::io::{BufRead, BufReader, Write};
+    std::thread::spawn(move || {
+        // The game's index and facts, then the SDK's index, sums, signature and two slices.
+        for _ in 0..7 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            let mut reader = BufReader::new(&stream);
+            reader.read_line(&mut request).unwrap();
+            let path = request.split_whitespace().nth(1).unwrap();
+            let bytes = fs::read(mirror.join(path.strip_prefix('/').unwrap())).unwrap();
+            let mut header = String::new();
+            loop {
+                if reader.read_line(&mut header).unwrap() == 0 || header == "\r\n" {
+                    break;
+                }
+                header.clear();
+            }
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                bytes.len()
+            )
+            .unwrap();
+            stream.write_all(&bytes).unwrap();
+        }
+    })
+}
+
 #[test]
 fn player_archive_still_installs_when_the_index_is_listed() {
     isolated_case(
         "sdk_install::player_archive_still_installs_when_the_index_is_listed",
-        || {
-            let Some(asset) = ASSET else { return };
-            let release = game_releases(&[row(TAG, &[INDEX, asset])]).pop().unwrap();
-            let download = GameDownload::select(&release).unwrap();
-            assert_eq!(download.file, asset);
-            let bytes = if asset.ends_with(".zip") {
-                let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-                zip.start_file(CLIENT, zip::write::SimpleFileOptions::default())
-                    .unwrap();
-                zip.write_all(b"static client").unwrap();
-                zip.finish().unwrap().into_inner()
-            } else {
-                let mut tar = tar::Builder::new(flate2::write::GzEncoder::new(
-                    Vec::new(),
-                    flate2::Compression::fast(),
-                ));
-                let mut header = tar::Header::new_gnu();
-                header.set_size(13);
-                header.set_mode(0o755);
-                tar.append_data(&mut header, CLIENT, b"static client".as_slice())
-                    .unwrap();
-                tar.into_inner().unwrap().finish().unwrap()
-            };
-            let mirror = PathBuf::from(std::env::var_os(BASE_VAR).unwrap());
-            let (key, _) = SigningKey::generate().unwrap();
-            let keys = [key.public()];
-            let base = Base::from_env();
-            publish(
-                &mirror,
-                TAG,
-                TAG,
-                &key,
-                b"unused SDK index",
-                &[(asset, &bytes)],
-            );
-            let proof = download
-                .prove_with(TAG, &keys, |name| {
-                    base.release_file(TAG, TAG, name).map_err(|e| e.to_string())
-                })
-                .unwrap();
-            let (url, server) = serve_archive(asset, bytes);
-            download
-                .publish_with(
-                    TAG,
-                    &proof,
-                    InstallIntent::Exact,
-                    crate::backend::installation::Transfer {
-                        stop: None,
-                        progress: |_| {},
-                    },
-                    |_, _| url.clone(),
-                    (&base, &keys),
-                )
-                .unwrap();
-            server.join().unwrap();
-            let game = version_dir(TAG);
-            assert_eq!(fs::read(game.join(CLIENT)).unwrap(), b"static client");
-            assert!(game.join(Artifact::ARCHIVE_RECEIPT).is_file());
-            assert!(!game.join(Artifact::SDK_RECEIPT).exists());
-        },
+        || signed_player_archive(true),
     );
+}
+
+#[test]
+fn signed_archive_without_a_length_reports_indeterminate_downloading() {
+    isolated_case(
+        "sdk_install::signed_archive_without_a_length_reports_indeterminate_downloading",
+        || signed_player_archive(false),
+    );
+}
+
+fn signed_player_archive(content_length: bool) {
+    let Some(asset) = ASSET else { return };
+    let mut catalog = row(TAG, &[INDEX, asset]);
+    if !content_length {
+        catalog["assets"][1]["size"] = serde_json::json!(0);
+    }
+    let release = game_releases(&[catalog]).pop().unwrap();
+    let download = GameDownload::select(&release).unwrap();
+    assert_eq!(download.file, asset);
+    let bytes = if asset.ends_with(".zip") {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        zip.start_file(CLIENT, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"static client").unwrap();
+        zip.finish().unwrap().into_inner()
+    } else {
+        let mut tar = tar::Builder::new(flate2::write::GzEncoder::new(
+            Vec::new(),
+            flate2::Compression::fast(),
+        ));
+        let mut header = tar::Header::new_gnu();
+        header.set_size(13);
+        header.set_mode(0o755);
+        tar.append_data(&mut header, CLIENT, b"static client".as_slice())
+            .unwrap();
+        tar.into_inner().unwrap().finish().unwrap()
+    };
+    let mirror = PathBuf::from(std::env::var_os(BASE_VAR).unwrap());
+    let (key, _) = SigningKey::generate().unwrap();
+    let keys = [key.public()];
+    let base = Base::from_env();
+    publish(
+        &mirror,
+        TAG,
+        TAG,
+        &key,
+        b"unused SDK index",
+        &[(asset, &bytes)],
+    );
+    let proof = download
+        .prove_with(TAG, &keys, |name| {
+            base.release_file(TAG, TAG, name).map_err(|e| e.to_string())
+        })
+        .unwrap();
+    if !content_length {
+        assert_eq!(download.size, 0);
+    }
+    let (url, server) = serve_archive(asset, bytes, content_length);
+    let phases = std::cell::RefCell::new(Vec::new());
+    download
+        .publish_with(
+            TAG,
+            &proof,
+            InstallIntent::Exact,
+            crate::backend::installation::Transfer {
+                stop: None,
+                progress: |phase| phases.borrow_mut().push(phase),
+            },
+            |_, _| url.clone(),
+            (&base, &keys),
+        )
+        .unwrap();
+    server.join().unwrap();
+    let phases = phases.into_inner();
+    let [download @ .., InstallPhase::Unpacking, InstallPhase::Finishing] = phases.as_slice()
+    else {
+        panic!("expected transfer, extraction, then publication: {phases:?}");
+    };
+    if content_length {
+        assert!(download
+            .iter()
+            .all(|p| matches!(p, InstallPhase::Downloading(f) if (0.0..=1.0).contains(f))));
+        assert_eq!(download.last(), Some(&InstallPhase::Downloading(1.0)));
+    } else {
+        assert_eq!(download, [InstallPhase::DownloadingUnknownLength]);
+    }
+    let game = version_dir(TAG);
+    assert_eq!(fs::read(game.join(CLIENT)).unwrap(), b"static client");
+    assert!(game.join(Artifact::ARCHIVE_RECEIPT).is_file());
+    assert!(!game.join(Artifact::SDK_RECEIPT).exists());
 }
 
 #[test]

@@ -386,7 +386,7 @@ fn check_catalogue(
     let (saved, error) = match fresh {
         Ok(fresh) => {
             if let Err(error) = fresh.write(path) {
-                eprintln!("Nightly catalogue cache: {error}");
+                crate::elog!("Nightly catalogue cache: {error}");
             }
             (Some(fresh), None)
         }

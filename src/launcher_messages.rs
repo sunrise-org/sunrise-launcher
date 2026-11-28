@@ -18,6 +18,67 @@ pub(crate) fn settle_managed_play_error(
     cancelled
 }
 
+/// Once Play reaches verification, the native build and profile publication are complete.
+pub(crate) fn finish_play_build_at_handoff(
+    run: Option<&mut crate::mods::build_run::Run>,
+    step: backend::PlayStep,
+) -> bool {
+    if matches!(step, backend::PlayStep::Assets | backend::PlayStep::SignIn) {
+        if let Some(run) = run.filter(|run| run.for_play && run.running()) {
+            run.done();
+            return true;
+        }
+    }
+    false
+}
+
+/// Route a Play failure that arrived while the Play build sheet was still open.
+/// Returns `(captured_build_error, close_build_sheet)`: a cached-snapshot failure
+/// belongs to Start, not Build, so the build run finishes and closes its sheet.
+pub(crate) fn route_active_play_build_error(
+    run: &mut crate::mods::build_run::Run,
+    error: &StartError,
+    cancelled: bool,
+) -> (bool, bool) {
+    match error {
+        _ if cancelled => {
+            run.cancelled();
+            (false, false)
+        }
+        StartError::Native(error, build) => {
+            run.failed_build = build.clone();
+            run.native_failed(error, &[]);
+            (false, false)
+        }
+        StartError::Snapshot(_) => {
+            run.done();
+            (false, true)
+        }
+        StartError::Other(error) => {
+            run.stopped(
+                tr("The build could not finish. No game was started.").into(),
+                error.clone(),
+            );
+            (true, false)
+        }
+        StartError::Journal(error) => {
+            run.stopped(error.summary().into(), error.details());
+            (false, false)
+        }
+        StartError::Account(refused) => {
+            run.stopped(refused.in_window(), String::new());
+            (false, false)
+        }
+        _ => {
+            run.stopped(
+                tr("The build couldn't be saved. No game was started.").into(),
+                String::new(),
+            );
+            (false, false)
+        }
+    }
+}
+
 impl Launcher {
     pub(super) fn refresh_installed(&mut self) {
         (self.installed, self.known_nightly) =
@@ -26,7 +87,8 @@ impl Launcher {
     }
 
     pub(crate) fn drain(&mut self, window: gpui::AnyWindowHandle, cx: &mut Context<Self>) {
-        let mut changed = false;
+        let mut changed = self.pull_logs();
+        changed |= self.pull_switch_log();
         self.perf.tick();
         if self.bench.as_ref().is_some_and(perf::Bench::ready_for_idle) {
             // Finish one-time fallback font loading before the benchmark starts its idle sample.
@@ -113,6 +175,7 @@ impl Launcher {
                 Msg::Playing(_)
                 | Msg::PlayStep(_)
                 | Msg::PlayDownload(_)
+                | Msg::PlayDetail(_)
                 | Msg::ManagedBuild { .. }
                 | Msg::ManagedBuildLog(_)
                 | Msg::ManagedClient { .. }
@@ -124,9 +187,10 @@ impl Launcher {
                 | Msg::JarClient { .. }
                 | Msg::Line(_, _)
                 | Msg::ClientObservationLost(_) => self.on_session_message(msg, window, cx),
-                Msg::SwitchProgress(_) | Msg::SwitchQuestion(_, _) | Msg::Switched(_, _) => {
-                    self.on_switch_message(msg)
-                }
+                Msg::SwitchProgress(_)
+                | Msg::SwitchDetail(_)
+                | Msg::SwitchQuestion(_, _)
+                | Msg::Switched(_, _) => self.on_switch_message(msg),
                 Msg::ProviderSwitchProgress(_)
                 | Msg::ProviderSwitchQuestion(_, _)
                 | Msg::ProviderSwitched(_, _)
@@ -138,7 +202,7 @@ impl Launcher {
                 }
                 Msg::Removed(_)
                 | Msg::BuildInventory(_, _)
-                | Msg::Storage(_)
+                | Msg::Storage(_, _)
                 | Msg::Imported(_)
                 | Msg::Pruned(_) => self.on_storage_message(msg),
                 Msg::Updates(_)
@@ -215,6 +279,77 @@ impl Launcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verification_handoff_leaves_start_errors_out_of_the_build_sheet() {
+        use backend::PlayStep;
+        let mut run = crate::mods::build_run::Run::start(
+            "fixture".into(),
+            "fixture profile".into(),
+            "fixture".into(),
+            Vec::new(),
+            true,
+        );
+        assert!(!finish_play_build_at_handoff(
+            Some(&mut run),
+            PlayStep::Native
+        ));
+        assert!(run.running());
+        assert!(finish_play_build_at_handoff(
+            Some(&mut run),
+            PlayStep::Assets
+        ));
+        assert!(
+            !run.running(),
+            "a subsequent Other error belongs to Start, not Build"
+        );
+        assert!(matches!(run.end, Some(crate::mods::build_run::End::Done)));
+
+        // A cached snapshot failure arriving before the Verify step is processed must not be
+        // captured as a Build failure; it finishes the build sheet and surfaces on Start.
+        let mut pre_verify = crate::mods::build_run::Run::start(
+            "fixture".into(),
+            "fixture profile".into(),
+            "fixture".into(),
+            Vec::new(),
+            true,
+        );
+        let detail =
+            "Sunrise couldn't verify the profile's saved game build (managed_play/resources.rs:1)."
+                .to_owned();
+        let (captured, close_sheet) = route_active_play_build_error(
+            &mut pre_verify,
+            &StartError::Snapshot(detail.clone()),
+            false,
+        );
+        assert!(!captured);
+        assert!(close_sheet);
+        assert!(!pre_verify.running());
+        assert!(matches!(
+            pre_verify.end,
+            Some(crate::mods::build_run::End::Done)
+        ));
+
+        use crate::launch_state::{Act, Facts, Main};
+        let view = Facts {
+            client_error: Some(detail.clone()),
+            signed_in: true,
+            installed: true,
+            located: true,
+            ..Default::default()
+        }
+        .view();
+        assert_eq!(view.main, Main::Play);
+        assert!(view.enabled && view.failed);
+        assert_eq!(view.said.as_deref(), Some(tr("The game couldn't start.")));
+        assert_eq!(
+            view.act,
+            Some(Act::Notice {
+                text: detail,
+                way_out: None
+            })
+        );
+    }
 
     #[test]
     fn a_managed_play_build_failure_disarms_the_update_but_a_cancellation_does_not() {

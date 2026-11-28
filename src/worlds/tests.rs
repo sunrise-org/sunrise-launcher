@@ -48,7 +48,7 @@ fn copy_in(home: &Path, world: &str) -> Result<World, String> {
 fn active_worlds_cannot_be_backed_up_copied_or_deleted() {
     let home = scratch("active-lock");
     let dir = world(&home, "Active", vec![("LevelName", name("Active"))]);
-    let w = find(&home, "Active").unwrap();
+    let w = find_raw(&home, "Active").unwrap();
     let game = fs::File::options()
         .write(true)
         .open(dir.join(LOCK))
@@ -109,7 +109,7 @@ fn lists_what_each_world_is() {
     );
     fs::create_dir_all(home.join("saves/not a world")).unwrap();
 
-    let all = list(&home);
+    let all = list_raw(&home);
     let names: Vec<&str> = all.iter().map(|w| w.name.as_str()).collect();
     assert_eq!(names, ["Hard", "My survival", "Old"]);
     assert_eq!(all[0].mode, "Hardcore");
@@ -124,8 +124,8 @@ fn lists_what_each_world_is() {
     assert!(all[1].size >= 1000);
     // No LevelName: the folder's name.
     assert_eq!(all[2].mode, "Creative");
-    assert_eq!(find(&home, "my SURVIVAL").unwrap().folder, "Survival");
-    assert!(find(&home, "nope").is_err());
+    assert_eq!(find_raw(&home, "my SURVIVAL").unwrap().folder, "Survival");
+    assert!(find_raw(&home, "nope").is_err());
     fs::remove_dir_all(&home).unwrap();
 }
 
@@ -133,7 +133,7 @@ fn lists_what_each_world_is() {
 fn a_backup_is_named_and_laid_out_as_vanillas() {
     let home = scratch("backup");
     world(&home, "World", vec![("LevelName", name("World"))]);
-    let w = find(&home, "World").unwrap();
+    let w = find_raw(&home, "World").unwrap();
     let at = chrono::Local
         .with_ymd_and_hms(2026, 10, 27, 1, 2, 3)
         .unwrap();
@@ -169,7 +169,7 @@ fn a_copy_gets_the_next_free_name_in_its_folder_and_level_dat() {
         "Base",
         vec![("LevelName", name("Base")), ("GameType", Tag::Int(1))],
     );
-    let base = find(&home, "Base").unwrap();
+    let base = find_raw(&home, "Base").unwrap();
     let copy1 = copy_in(&home, "Base").unwrap();
     assert_eq!(copy1.folder, "Base (1)");
     assert_eq!(copy1.name, "Base (1)");
@@ -181,7 +181,7 @@ fn a_copy_gets_the_next_free_name_in_its_folder_and_level_dat() {
     );
     assert_eq!(copy_in(&home, "Base").unwrap().folder, "Base (2)");
     // The original is untouched.
-    assert_eq!(find(&home, "Base").unwrap(), base);
+    assert_eq!(find_raw(&home, "Base").unwrap(), base);
     // A name that can't be a folder name is made safe.
     assert_eq!(free_name(&home, "a/b: c?", "", 0), "a_b_ c_");
     // A world whose folder isn't its name: the copy still gets a new name.
@@ -241,7 +241,7 @@ fn the_mods_a_world_was_saved_with_are_read_and_matched() {
     .unwrap();
     fs::write(dir.join("level.dat"), bytes).unwrap();
     world(&home, "Plain", vec![("LevelName", name("Plain"))]);
-    let all = list(&home);
+    let all = list_raw(&home);
     let home_world = all.iter().find(|w| w.folder == "Home").unwrap();
     assert_eq!(home_world.mods, ["greeter", "bricks"]);
     let plain = all.iter().find(|w| w.folder == "Plain").unwrap();
@@ -299,7 +299,7 @@ fn a_last_played_too_far_ahead_for_a_system_time_is_clamped_not_a_panic() {
             ("LastPlayed", Tag::Long(i64::MAX)),
         ],
     );
-    let worlds = list(&home);
+    let worlds = list_raw(&home);
     assert_eq!(worlds.len(), 1);
     assert_eq!(
         worlds[0].last_played,
@@ -322,9 +322,9 @@ fn worlds_played_past_the_clamp_keep_the_newest_first() {
             ],
         );
     }
-    let folders: Vec<String> = list(&home).into_iter().map(|w| w.folder).collect();
+    let folders: Vec<String> = list_raw(&home).into_iter().map(|w| w.folder).collect();
     assert_eq!(folders, ["B", "A"]);
-    assert_eq!(find(&home, "twin").unwrap().folder, "B");
+    assert_eq!(find_raw(&home, "twin").unwrap().folder, "B");
     fs::remove_dir_all(home).unwrap();
 }
 
@@ -368,7 +368,7 @@ fn last_played_hardcore_and_game_type_read_any_number_tag() {
         vec![("hardcore", Tag::Double((-0.5f64).to_bits()))],
     );
     let at = |millis: u64| UNIX_EPOCH + Duration::from_millis(millis);
-    let by = |folder: &str| find(&home, folder).unwrap();
+    let by = |folder: &str| find_raw(&home, folder).unwrap();
     assert_eq!(by("float-negative").mode, "Survival");
     assert_eq!(by("double-negative").mode, "Hardcore");
     assert_eq!(by("double").last_played, at(1_700_000_000_000));
@@ -395,7 +395,7 @@ fn worlds_played_at_the_same_moment_are_ordered_by_folder_name() {
         "newest",
         vec![("LastPlayed", Tag::Long(1_800_000_000_000))],
     );
-    let folders: Vec<String> = list(&home).into_iter().map(|w| w.folder).collect();
+    let folders: Vec<String> = list_raw(&home).into_iter().map(|w| w.folder).collect();
     assert_eq!(folders, ["newest", "alpha", "bravo", "charlie", "delta"]);
     fs::remove_dir_all(home).unwrap();
 }

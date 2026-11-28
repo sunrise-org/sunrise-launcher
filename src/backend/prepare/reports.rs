@@ -8,7 +8,7 @@ use super::{
 };
 use crate::backend::{
     data_dir, fetch_bytes_cancellable, game_version, installed_in, installed_resources_owner,
-    prepare_lock_at, read_json, version_dir, Settings,
+    prepare_command, prepare_lock_at, read_json, version_dir, Settings,
 };
 use crate::managed_play::Resources;
 use crate::{mojang, sources};
@@ -606,6 +606,47 @@ pub fn finish_preparation(
     preparation: &crate::preparer::Preparation,
 ) -> Result<(), String> {
     finish_preparation_cancellable(tag, preparation, None)
+}
+
+pub fn run_preparation(
+    tag: &str,
+    cmd: Command,
+    preparation: &crate::preparer::Preparation,
+    stop: Option<&crate::native_mods::Cancellation>,
+    line: &dyn Fn(String),
+) -> Result<(), String> {
+    let handoff = match stop {
+        Some(stop) => preparation.handoff_cancellable(None, stop),
+        None => preparation.handoff(None),
+    };
+    run_preparer(cmd, &handoff, line, || {
+        finish_preparation_cancellable(tag, preparation, stop)
+    })
+}
+
+/// [`run_preparation`]'s child, logged as its step, then `then`.
+fn run_preparer(
+    cmd: Command,
+    handoff: &crate::preparer::Handoff<'_>,
+    line: &dyn Fn(String),
+    then: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    let step = crate::launcher_log::step("Preparing game files");
+    let stop = handoff.stop();
+    let result = stop
+        .map_or(Ok(()), crate::native_mods::Cancellation::check)
+        .and_then(|()| {
+            let (cmd, runtime) = prepare_command(cmd)?;
+            let result =
+                crate::preparer::run_staged_every_line(cmd, handoff, line).and_then(|()| then());
+            runtime.game_exited();
+            result
+        });
+    match &result {
+        Ok(()) => step.done(""),
+        Err(error) => step.failed(error),
+    }
+    result
 }
 
 pub(in crate::backend) fn finish_preparation_cancellable(

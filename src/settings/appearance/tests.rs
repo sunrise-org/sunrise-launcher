@@ -42,7 +42,7 @@ fn a_typed_accent_is_taken_when_the_field_is_left_without_enter() {
         return;
     }
     let mut app = gpui::TestAppContext::single();
-    let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+    let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
     let launcher = shell.read_with(cx, |shell, _| shell.launcher());
     launcher.update(cx, |l, cx| {
         l.navigate(crate::frame::Page::Settings);
@@ -82,7 +82,7 @@ fn the_players_picture_is_behind_pages_other_than_home() {
     appearance::set_background(&mut settings, &backend::data_dir(), &mine).unwrap();
     let kept = backend::data_dir().join(settings.background.as_deref().unwrap());
     let mut app = gpui::TestAppContext::single();
-    let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+    let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
     let launcher = shell.read_with(cx, |shell, _| shell.launcher());
     launcher.update(cx, |l, cx| {
         l.navigate(crate::frame::Page::Settings);

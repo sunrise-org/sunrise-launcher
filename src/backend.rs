@@ -196,7 +196,7 @@ pub fn links() -> Links {
     .map_or_else(Links::default, |text| Links::parse(&text))
 }
 
-pub use installation::{InstallOutcome, NightlyReceiptWarning};
+pub use installation::{InstallOutcome, InstallPhase, NightlyReceiptWarning};
 
 mod developer_play;
 pub use developer_play::client_as;
@@ -550,6 +550,9 @@ mod release_loading_tests;
 #[cfg(test)]
 #[path = "backend/java_tests.rs"]
 mod java_tests;
+
+#[cfg(test)]
+mod connection_reuse_tests;
 
 #[cfg(test)]
 mod tests;

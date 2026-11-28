@@ -9,8 +9,8 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
-/// The folder of a package that holds its runtime files.
-pub const RUNTIME_DIR: &str = "runtime";
+pub use crate::package::RUNTIME_DIR;
+
 /// The most one runtime file may weigh.
 pub const MAX_RUNTIME_FILE: u64 = 64 << 20;
 /// The most all of a package's runtime files may weigh together.

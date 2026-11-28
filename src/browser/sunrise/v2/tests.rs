@@ -588,3 +588,42 @@ fn a_change_whose_refetch_fails_uses_the_last_verified_index() {
     assert_eq!(catalog.index.serial, 41);
     assert!(catalog.from_cache);
 }
+
+/// Reading the loaded index's serial never waits on `LOADED`, which a refresh holds while it
+/// writes the verified index to disk, so a frame that asks for it (Home's suggestion, the
+/// picker's preview) doesn't stall on that write (review of #616).
+#[test]
+fn the_loaded_serial_is_read_without_the_refresh_lock() {
+    let held = LOADED.lock().unwrap_or_else(|e| e.into_inner());
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(loaded_serial());
+    });
+    let answer = rx.recv_timeout(Duration::from_secs(2));
+    drop(held);
+    assert!(answer.is_ok(), "loaded_serial waited on the refresh lock");
+}
+
+/// The serial reads back exactly across the whole `u64` range the index's schema allows: a
+/// refresh from the second-highest serial to the highest is seen as a change, and an answer a
+/// worker records at the highest serial still matches it afterwards, so the redraw that follows
+/// keeps it rather than starting the check again (review of #671).
+#[test]
+fn the_loaded_serial_reads_back_the_top_two_serials_exactly() {
+    publish_loaded_serial(u64::MAX - 1);
+    let before = loaded_serial();
+    assert_eq!(before, Some(u64::MAX - 1));
+    publish_loaded_serial(u64::MAX);
+    assert_ne!(
+        loaded_serial(),
+        before,
+        "the refresh to the top serial is a change"
+    );
+    // What Home's lookup and the picker's preview record with an answer at this index.
+    let recorded = Some(u64::MAX);
+    assert_eq!(
+        loaded_serial(),
+        recorded,
+        "an answer at the top serial stays current, so its redraw doesn't start the check again"
+    );
+}

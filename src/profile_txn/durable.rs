@@ -439,6 +439,15 @@ pub(crate) fn flush_tree(path: &Path) -> io::Result<()> {
     }
 }
 
+/// The directory half of [`flush_tree`] for one directory: its entries, not its contents.
+pub(crate) fn flush_directory(path: &Path) -> io::Result<()> {
+    #[cfg(not(windows))]
+    sync_directory(path)?;
+    #[cfg(windows)]
+    let _ = path;
+    Ok(())
+}
+
 /// Rename a prepared directory into an absent destination, or undo that move.
 pub(crate) fn move_new_directory(from: &Path, to: &Path) -> io::Result<()> {
     move_new_directory_at(from, to, || {})

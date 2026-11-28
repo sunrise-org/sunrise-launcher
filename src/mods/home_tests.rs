@@ -32,7 +32,7 @@ fn home_labels_follow_installed_replies_with_the_same_inventory() {
         "mods::home_tests::home_labels_follow_installed_replies_with_the_same_inventory",
         |launcher| {
             let home = launcher.mods_home();
-            let key = native_status::fingerprint(&home, None);
+            let (key, _, _) = launcher.mods_snapshot_key(&home, std::time::Instant::now());
             // The first Installed read has not answered.
             let inventory = 1;
             launcher.mods_state.snapshot = Some(Snapshot {
@@ -126,7 +126,7 @@ pub(crate) fn in_scratch_launcher(test: &str, run: impl FnOnce(&mut Launcher)) {
         return;
     }
     let mut app = gpui::TestAppContext::single();
-    let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+    let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
     let launcher = shell.read_with(cx, |shell, _| shell.launcher());
     launcher.update(cx, |launcher, _| run(launcher));
 }

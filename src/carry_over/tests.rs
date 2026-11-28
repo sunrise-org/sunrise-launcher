@@ -188,23 +188,16 @@ fn a_stage_with_everything_in_place_is_removed_and_nothing_is_kept() {
 }
 
 #[test]
-fn a_copy_stopped_before_either_rename_copies_again_and_the_saves_end_in_place() {
-    let Some(&(old_launcher, old_game, _)) = crate::identity::EARLIER.first() else {
-        return;
-    };
-    let (data, config, base) = scratch("again");
+fn a_complete_stage_resumes_without_source_or_either_target() {
+    let (data, config, base) = scratch("resume-without-source");
     let (stage, launcher, game) = finished_stage(&data);
-    // The first rename failed: nothing is in place, the stage is complete.
-    let from_game = data.join(old_game);
-    fs::create_dir_all(from_game.join("saves/World")).unwrap();
-    fs::write(from_game.join("saves/World/level.dat"), [4, 5]).unwrap();
-    fs::create_dir_all(data.join(old_launcher)).unwrap();
     assert_eq!(carry_over(&data, &config), Ok(true));
+    assert_eq!(fs::read(launcher.join("accounts.json")).unwrap(), b"{}");
     assert_eq!(
         fs::read(game.join("saves/World/level.dat")).unwrap(),
-        [4, 5]
+        [1, 2, 3]
     );
-    assert!(launcher.is_dir() && !stage.exists());
+    assert!(!stage.exists());
     let _ = fs::remove_dir_all(&base);
 }
 

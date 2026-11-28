@@ -133,7 +133,7 @@ MCP: `server`, `server_command`, `server_log`, `server_stop`.
 
 ## `sunrise-launcher storage`
 
-Show disposable storage by category as JSON, or clear a category by hand with `--clear`. Read-only reports never block builds; `--clear` requires builds to be idle.
+Show disposable storage by category as JSON, or clear a category by hand with `--clear`. Read-only reports never block builds; `--clear` requires builds to be idle. A report counts each row once and prints when done, with its progress on stderr; `--clear` needs no count first.
 
     sunrise-launcher storage
 

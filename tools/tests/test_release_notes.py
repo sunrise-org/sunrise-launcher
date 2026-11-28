@@ -46,6 +46,19 @@ class ReleaseNotes(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 notes.decide("main")
 
+    def test_unpublished_tags_are_skipped_and_noted(self):
+        previous, skipped = notes.previous_release(
+            ["v1.3.9", "v1.3.8", "v1.3.7", "v1.3.6"],
+            "v1.3.9",
+            {"v1.3.7", "v1.3.5"},
+        )
+        self.assertEqual(previous, "v1.3.7")
+        self.assertEqual(skipped, ["v1.3.8"])
+        title, body = notes.notes("v1.3.9", [pull(647, "Remove automatic cache cleanup")], skipped)
+        self.assertEqual(title, "Sunrise Launcher 1.3.9")
+        self.assertTrue(body.startswith("1.3.8 was not released.\n\n### Fixed and changed\n"))
+        self.assertIn("Remove automatic cache cleanup (#647)", body)
+
 
 if __name__ == "__main__":
     unittest.main()

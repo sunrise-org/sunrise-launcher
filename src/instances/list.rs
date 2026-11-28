@@ -4,20 +4,48 @@ use super::*;
 /// The instances, by the default game home and the launcher's data folder: Sunrise first, then
 /// by group and name.
 pub fn list() -> Vec<Instance> {
-    list_in(&backend::game_home(), &backend::data_dir())
+    let out = list_in(&backend::game_home(), &backend::data_dir());
+    register_profile_names(&out);
+    out
 }
 
 /// Read the atomic metadata snapshot without housekeeping or taking a profile gate.
 pub(crate) fn list_for_storage() -> Result<Vec<Instance>, String> {
+    Ok(list_for_storage_until(&crate::storage::Cancel::default())?
+        .expect("uncancellable storage profile snapshot"))
+}
+
+/// Like [`list_for_storage`], stopping early when `cancel` is set during profile or pack discovery.
+pub(crate) fn list_for_storage_until(
+    cancel: &crate::storage::Cancel,
+) -> Result<Option<Vec<Instance>>, String> {
+    if cancel.is_cancelled() {
+        return Ok(None);
+    }
     let data = backend::data_dir();
     let store = Store::read(&data)?;
-    Ok(list_snapshot(
-        &backend::game_home(),
-        &data,
-        store,
-        true,
-        false,
-    ))
+    let out = list_snapshot_until(&backend::game_home(), &data, store, true, false, &|| {
+        cancel.is_cancelled()
+    });
+    if let Some(instances) = &out {
+        register_profile_names(instances);
+    }
+    Ok(out)
+}
+
+pub(super) fn register_profile(instance: &Instance) {
+    if !(instance.kind == Kind::Default && instance.name.eq_ignore_ascii_case("Sunrise")) {
+        crate::launcher_log::hide_profile_name(&instance.name);
+    }
+    if instance.kind == Kind::Own {
+        crate::launcher_log::hide_profile_name(&instance.id);
+    }
+}
+
+pub(super) fn register_profile_names(instances: &[Instance]) {
+    for instance in instances {
+        register_profile(instance);
+    }
 }
 
 /// Read the profile directories without the migrations or housekeeping of `list`.
@@ -93,10 +121,25 @@ pub(super) fn list_with_snapshot(
 fn list_snapshot(
     game_home: &Path,
     data: &Path,
-    mut store: Store,
+    store: Store,
     admitted: bool,
     housekeeping: bool,
 ) -> Vec<Instance> {
+    list_snapshot_until(game_home, data, store, admitted, housekeeping, &|| false)
+        .expect("uncancellable profile snapshot")
+}
+
+pub(super) fn list_snapshot_until(
+    game_home: &Path,
+    data: &Path,
+    mut store: Store,
+    admitted: bool,
+    housekeeping: bool,
+    cancelled: &dyn Fn() -> bool,
+) -> Option<Vec<Instance>> {
+    if cancelled() {
+        return None;
+    }
     let mut found = vec![(
         DEFAULT.to_string(),
         "Sunrise".to_string(),
@@ -104,13 +147,22 @@ fn list_snapshot(
         game_home.to_path_buf(),
         game_home.to_path_buf(),
     )];
-    let mut own: Vec<_> = fs::read_dir(game_home.join(OWN))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|e| e.path().is_dir())
-        .filter_map(|e| e.file_name().into_string().ok())
-        .collect();
+    let mut own = Vec::new();
+    if let Ok(entries) = fs::read_dir(game_home.join(OWN)) {
+        for entry in entries {
+            if cancelled() {
+                return None;
+            }
+            let Ok(entry) = entry else {
+                continue;
+            };
+            if entry.path().is_dir() {
+                if let Ok(name) = entry.file_name().into_string() {
+                    own.push(name);
+                }
+            }
+        }
+    }
     own.sort();
     // Directory renames and metadata snapshots share the lock. Play/Delete need the initial
     // choices even after an interrupted create, but a refused request must not save the store.
@@ -127,6 +179,9 @@ fn list_snapshot(
         }
         let retained = store.instances.len();
         for id in &own {
+            if cancelled() {
+                return None;
+            }
             if !store.instances.contains_key(id) {
                 if let Some(meta) = initial_choices(&parent.join(id)) {
                     store.instances.insert(id.clone(), meta);
@@ -135,7 +190,7 @@ fn list_snapshot(
         }
         if housekeeping && (retained != before || store.instances.len() != retained) {
             if let Err(error) = store.save(data) {
-                eprintln!("Sunrise: instances.json is not saved: {error}");
+                crate::elog!("Sunrise: instances.json is not saved: {error}");
             }
         }
     }
@@ -146,12 +201,15 @@ fn list_snapshot(
         let dir = game_home.join(OWN).join(&slug);
         found.push((slug.clone(), slug, Kind::Own, dir.clone(), dir));
     }
-    for p in registry_pack::list_in(&game_home.join("sunrise-packs")) {
+    for p in registry_pack::list_in_until(&game_home.join("sunrise-packs"), cancelled)? {
         let home = registry_pack::home(&p.work);
         found.push((format!("pack:{}", p.id), p.name, Kind::Pack, p.work, home));
     }
     let mut recovered_choices = false;
     for (id, _, kind, _, home) in &found {
+        if cancelled() {
+            return None;
+        }
         if *kind == Kind::Pack {
             continue;
         }
@@ -175,7 +233,7 @@ fn list_snapshot(
     }
     if admitted && housekeeping && recovered_choices {
         if let Err(error) = store.save(data) {
-            eprintln!("Sunrise: instances.json is not saved: {error}");
+            crate::elog!("Sunrise: instances.json is not saved: {error}");
         }
     }
     let mut out: Vec<Instance> = found
@@ -207,7 +265,7 @@ fn list_snapshot(
         })
         .collect();
     out[1..].sort_by_key(|i| (i.group.clone(), i.name.to_lowercase()));
-    out
+    Some(out)
 }
 
 /// The instance an id, a name (any case) or a pack's folder name names.
@@ -234,6 +292,7 @@ pub(super) fn find_in(all: &[Instance], query: &str) -> Result<Instance, String>
 /// Resolve headless Play without repairing unrelated profile metadata on a refused request.
 pub fn for_play(query: Option<&str>) -> Result<Instance, String> {
     let all = list_with_snapshot(&backend::game_home(), &backend::data_dir(), false, || {});
+    register_profile_names(&all);
     let found = match query {
         Some(name) => find_in(&all, name),
         None => selection_in(&all, backend::Settings::load().instance.as_deref()),
@@ -278,6 +337,7 @@ pub fn retired_selection_message(id: &str) -> String {
 /// selection is an error naming it, so nothing is written to Sunrise's setup in its place.
 pub fn read_profile(query: Option<&str>) -> Result<Instance, String> {
     let all = list_with_snapshot(&backend::game_home(), &backend::data_dir(), false, || {});
+    register_profile_names(&all);
     match query {
         Some(name) => find_in(&all, name),
         None => selection_in(&all, backend::Settings::load().instance.as_deref()),

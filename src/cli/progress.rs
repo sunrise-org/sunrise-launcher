@@ -4,18 +4,63 @@ use sunrise_launcher::native_mods;
 
 /// Download progress on one terminal line, only when stderr is a terminal and the percentage moves.
 pub(super) fn progress(label: String) -> impl Fn(f32) {
-    let last = std::cell::Cell::new(-1);
-    let tty = std::io::stderr().is_terminal();
-    move |p| {
-        let pct = (p * 100.) as i32;
-        if !tty || pct == last.replace(pct) {
+    let stderr = std::io::stderr();
+    let line = DownloadLine::new(stderr.is_terminal(), stderr);
+    move |fraction| line.update(&label, fraction)
+}
+
+/// Install may return without the last measured fraction reaching one.
+pub(super) fn install_progress<T>(label: &str, install: impl FnOnce(&dyn Fn(f32)) -> T) -> T {
+    let stderr = std::io::stderr();
+    with_install_progress(label, stderr.is_terminal(), stderr, install)
+}
+
+fn with_install_progress<T>(
+    label: &str,
+    tty: bool,
+    stderr: impl Write,
+    install: impl FnOnce(&dyn Fn(f32)) -> T,
+) -> T {
+    let line = DownloadLine::new(tty, stderr);
+    let result = install(&|fraction| line.update(label, fraction));
+    if line.open.get() {
+        let mut stderr = line.stderr.borrow_mut();
+        let _ = writeln!(stderr);
+        let _ = stderr.flush();
+    }
+    result
+}
+
+struct DownloadLine<W> {
+    tty: bool,
+    stderr: std::cell::RefCell<W>,
+    last: std::cell::Cell<i32>,
+    open: std::cell::Cell<bool>,
+}
+
+impl<W: Write> DownloadLine<W> {
+    fn new(tty: bool, stderr: W) -> Self {
+        Self {
+            tty,
+            stderr: std::cell::RefCell::new(stderr),
+            last: std::cell::Cell::new(-1),
+            open: std::cell::Cell::new(false),
+        }
+    }
+
+    fn update(&self, label: &str, fraction: f32) {
+        let pct = (fraction * 100.) as i32;
+        if !self.tty || pct == self.last.replace(pct) {
             return;
         }
-        eprint!("\r{label} {pct:>3}%");
-        let _ = std::io::stderr().flush();
-        if p >= 1.0 {
-            eprintln!();
+        let mut stderr = self.stderr.borrow_mut();
+        let _ = write!(stderr, "\r{label} {pct:>3}%");
+        let open = fraction < 1.0;
+        if !open {
+            let _ = writeln!(stderr);
         }
+        self.open.set(open);
+        let _ = stderr.flush();
     }
 }
 
@@ -56,6 +101,37 @@ pub(super) fn native_progress(tty: bool) -> impl Fn(native_mods::Step) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn install_progress_terminates_the_partial_line_before_reporting_the_result() {
+        for (tty, last, result, expected) in [
+            (true, Some(0.75), Ok("build"), "\rInstalling build  75%\n"),
+            (true, Some(0.75), Err("failed"), "\rInstalling build  75%\n"),
+            (true, Some(1.0), Ok("build"), "\rInstalling build 100%\n"),
+            (true, None, Ok("build"), ""),
+            (false, Some(0.75), Ok("build"), ""),
+        ] {
+            let mut stderr = Vec::new();
+            let installed = with_install_progress("Installing build", tty, &mut stderr, |report| {
+                if let Some(last) = last {
+                    report(last);
+                }
+                result
+            });
+            assert_eq!(stderr, expected.as_bytes());
+            assert_eq!(installed, result);
+            let stdout = installed.map(|tag| {
+                serde_json::to_string_pretty(
+                    &serde_json::json!({ "installed": tag, "prepared": false }),
+                )
+                .unwrap()
+            });
+            assert_eq!(
+                stdout.as_deref().map_err(|error| *error),
+                result.map(|_| "{\n  \"installed\": \"build\",\n  \"prepared\": false\n}")
+            );
+        }
+    }
 
     #[test]
     fn native_progress_limits_redirected_rust_downloads_to_start_and_end() {

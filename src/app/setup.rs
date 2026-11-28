@@ -3,7 +3,11 @@
 use super::*;
 
 impl Launcher {
-    pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new_with_startup_checks(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        startup_checks: bool,
+    ) -> Self {
         crate::eta::preload_timings();
         // A press on something that then leaves the page (a row that opens its page, a tab)
         // would leave the keyboard on nothing, and Tab dead until the next click.
@@ -98,7 +102,6 @@ impl Launcher {
             architecture_reinstall: None,
             instance_install: None,
             install_next: None,
-            bar: (0., 0.),
             releases: Load::Loading,
             installed,
             known_nightly,
@@ -108,8 +111,6 @@ impl Launcher {
             removing: Vec::new(),
             storage_builds: Default::default(),
             storage_report: None,
-            storage_pending: false,
-            storage_clearing: false,
             storage_confirm: None,
             storage_error: None,
             install_error: None,
@@ -185,6 +186,7 @@ impl Launcher {
             starting_client: None,
             play_step: None,
             play_download: None,
+            play_detail: None,
             starting_play: None,
             play_when_prepared: None,
             friend_code: line_edit::LineEdit::new(String::new(), 256, 32),
@@ -275,8 +277,10 @@ impl Launcher {
         });
         this.load_profile_heads();
         this.load_auth_statuses(true);
-        this.check_updates(UpdateCheck::Startup);
-        this.fetch_links();
+        if startup_checks {
+            this.check_updates(UpdateCheck::Startup);
+            this.fetch_links();
+        }
         telemetry::send_in_background();
         telemetry::watch_playing(this.tx.clone());
         this
@@ -388,14 +392,24 @@ impl Launcher {
                     });
                     if let Some(list) = &final_releases {
                         if let Err(error) = backend::note_play_catalogue(list) {
-                            eprintln!("Could not remember the current installed Nightly: {error}");
+                            sunrise_launcher::elog!(
+                                "Could not remember the current installed Nightly: {error}"
+                            );
                         }
                     }
                     Msg::Updates(Box::new(updates))
                 }
                 UpdateCheck::Scheduled => Msg::Updates(Box::new(backend::check_updates())),
                 UpdateCheck::ManualLauncher => {
-                    Msg::LauncherChecked(Box::new(backend::refresh_launcher_update()))
+                    let step =
+                        sunrise_launcher::launcher_log::step("Checking for a launcher update");
+                    let checked = backend::refresh_launcher_update();
+                    match &checked {
+                        Ok(Some(release)) => step.done(format!("newest launcher {}", release.tag)),
+                        Ok(None) => step.done("up to date"),
+                        Err(error) => step.failed(error.to_string()),
+                    }
+                    Msg::LauncherChecked(Box::new(checked))
                 }
             };
             let _ = tx.send(message);

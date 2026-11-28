@@ -6,6 +6,7 @@ mod client;
 mod first;
 mod game;
 mod inputs;
+mod pool;
 mod resources;
 mod roots;
 mod target;
@@ -31,7 +32,7 @@ pub(crate) fn require_unreferenced_build(tag: &str) -> Result<(), crate::native_
         Ok(false) => Ok(()),
         Ok(true) => Err(Error::ReferencedProfile),
         Err(error) => {
-            eprintln!("profile artifact references: {error}");
+            crate::elog!("profile artifact references: {error}");
             Err(Error::UnprovenReferences)
         }
     }
@@ -118,7 +119,7 @@ pub(crate) fn unsettled_at(check: &str, error: Option<&dyn std::fmt::Display>) -
             &[("check", check)],
         ),
     };
-    eprintln!("{reason}");
+    crate::elog!("{reason}");
     reason
 }
 
@@ -803,7 +804,8 @@ impl Active {
         Ok(())
     }
 
-    pub fn verify_artifacts(&self) -> Result<(), String> {
+    /// Check the binaries and signed receipts without walking the prepared resource tree.
+    pub fn verify_binaries(&self) -> Result<(), String> {
         let base = match &self.variant {
             Some(variant) => variant.verify(self.base())?,
             None => Artifact::capture(self.base())?,
@@ -814,12 +816,17 @@ impl Active {
         {
             return Err(unsettled!());
         }
+        Ok(())
+    }
+
+    pub fn verify_artifacts(&self) -> Result<(), String> {
+        self.verify_binaries()?;
         self.resources.verify(self.base())
     }
 
     /// Capture a full immutable generation after owning the admitted profile and checking
     /// the chosen image. Only the journal's Switch arm may advance to a distinct base.
-    /// Verify the bound resources at the publication cutoff, not while assembling the pointer.
+    /// The caller owns resource verification at its cutoff; capture only records the selection.
     fn capture(
         base: &str,
         executable: &str,
@@ -900,6 +907,9 @@ impl Active {
         })
     }
 }
+
+#[cfg(test)]
+pub(crate) use resources::FULL_VERIFICATIONS;
 
 fn capture_mod_locks(home: &Path) -> Result<Vec<ModLock>, String> {
     let path = home.join(sunrise_launcher_smod::index::browser_state::MANIFEST);

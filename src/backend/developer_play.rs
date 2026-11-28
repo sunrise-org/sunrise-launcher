@@ -37,17 +37,17 @@ pub fn client_as(tag: &str, who: Option<&str>) -> Result<Command, String> {
     let mut cmd = client_command(tag);
     if let Some(session) = session {
         if let Some(e) = session.apply(&mut cmd) {
-            eprintln!(
+            crate::elog!(
                 "{}",
                 crate::i18n::trf("Playing offline: {reason}", &[("reason", &e)])
             );
         }
         if let Some(e) = account::take_unsaved() {
-            eprintln!("{e}");
+            crate::elog!("{e}");
         }
     } else {
         crate::developer_offline::mark(&mut cmd);
-        eprintln!("{}", crate::i18n::tr(crate::developer_offline::NOTICE));
+        crate::elog!("{}", crate::i18n::tr(crate::developer_offline::NOTICE));
     }
     append_game_args(&mut cmd);
     Ok(cmd)

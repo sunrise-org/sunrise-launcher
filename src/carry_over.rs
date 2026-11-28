@@ -69,7 +69,7 @@ pub fn at_start() -> Result<(), String> {
         return Ok(());
     };
     if let Err(error) = carry_over(&data, &config) {
-        eprintln!("Could not copy the earlier launcher's data: {error}");
+        log_startup_failure(&error);
         *STARTUP_ERROR
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error.clone());
@@ -78,51 +78,58 @@ pub fn at_start() -> Result<(), String> {
     Ok(())
 }
 
+/// Reports a startup carry-over failure locally on stderr and records only a path-free summary
+/// in the launcher log (carry-over runs before `launcher_log::init` registers private roots).
+fn log_startup_failure(error: &str) {
+    eprintln!("Could not copy the earlier launcher's data: {error}");
+    crate::launcher_log::line(format!(
+        "Could not copy the earlier launcher's data: {}",
+        crate::launcher_log::safe_error(error)
+    ));
+}
+
 /// Copies the data of the first earlier launcher that has any into this launcher's folders under
 /// `data`, when neither this launcher's data folder nor its game folder exists yet. Earlier
 /// launchers' folders are looked for under `data`, or where their `location.json` under `config`
 /// moved them. Returns whether anything was copied.
 ///
-/// Everything is copied into a folder beside the targets first and renamed into place at the
-/// end, so a start that stops halfway copies again, from the beginning, next time.
+/// Everything is copied into a stage beside the targets before publication. A later start
+/// resumes a finished stage and copies an unfinished one again from the beginning.
 pub fn carry_over(data: &Path, config: &Path) -> Result<bool, String> {
     let launcher = crate::identity::launcher_folder_in(data);
     let game = crate::identity::game_folder_in(data);
     let stage = launcher.with_file_name(".carry-over");
     let leftover = launcher.with_file_name(LEFTOVER);
-    if present(&launcher)? || present(&game)? {
-        // A copy that was finished but stopped between its two renames: the one folder that is
-        // still in the stage goes where the game reads it. Refuse links at the stage root, the
-        // marker, or either staged part before touching anything.
-        if refuse_link(&stage)?.is_some() {
-            let marker_meta = refuse_link(&stage.join(COMPLETE))?;
-            refuse_link(&stage.join("launcher"))?;
-            refuse_link(&stage.join("game"))?;
-            if marker_meta.is_some_and(|m| m.is_file())
-                || first_rename_done(&stage, &launcher, &game)
-            {
-                return resume(&stage, &launcher, &game, &leftover);
-            }
-            // A copy that reached both targets but could not remove its stage (a file appearing in
-            // it mid-delete) left it beside them; nothing reads it, so it goes on a later start.
-            if launcher.exists() && game.exists() {
-                settle(&stage);
-            }
+    // Lock-free fast paths so steady-state launches and clean installs with no earlier launcher
+    // never leave a `.carry-over.lock` dotfile behind. Check `game`/`launcher_in_use` before
+    // `!present(&stage)` so an in-progress publish that already renamed one target still takes
+    // the lock and rechecks everything underneath it.
+    if (present(&game)? || launcher_in_use(&launcher)?) && !present(&stage)? {
+        return Ok(false);
+    }
+    if !present(&stage)? && find_earlier_roots(data, config)?.is_none() {
+        return Ok(false);
+    }
+    // Shared startup leases allow two first-run launchers to enter carry-over together.
+    // Serialize the shared staging directory across read, copy, resume, publish, and cleanup.
+    let _lock =
+        data_location::lock_exclusive_blocking(&launcher.with_file_name(".carry-over.lock"))?;
+    if refuse_link(&stage)?.is_some() {
+        let marker = refuse_link(&stage.join(COMPLETE))?;
+        refuse_link(&stage.join("launcher"))?;
+        refuse_link(&stage.join("game"))?;
+        if marker.is_some_and(|m| m.is_file()) || first_rename_done(&stage, &launcher, &game) {
+            return resume(&stage, &launcher, &game, &leftover);
         }
-        // A start whose carry-over failed still makes the launcher folder for its lock and
-        // caches. That alone is no reason to stop copying: anything else in it is.
-        if present(&game)? || launcher_in_use(&launcher)? {
-            return Ok(false);
+        // A finished copy may have left an unmarked stage it couldn't remove.
+        if launcher.exists() && game.exists() {
+            settle(&stage);
         }
     }
-    let mut source = None;
-    for &(old_launcher, old_game, location) in crate::identity::EARLIER {
-        if let Some(roots) = earlier_roots(data, config, old_launcher, old_game, location)? {
-            source = Some(roots);
-            break;
-        }
+    if present(&game)? || launcher_in_use(&launcher)? {
+        return Ok(false);
     }
-    let Some(source) = source else {
+    let Some(source) = find_earlier_roots(data, config)? else {
         return Ok(false);
     };
     if refuse_link(&stage)?.is_some() {
@@ -158,8 +165,8 @@ pub fn carry_over(data: &Path, config: &Path) -> Result<bool, String> {
             return Ok(false);
         }
     };
-    // From here the stage holds the whole copy: a start that finds it with one target in place
-    // finishes the renames (`resume`) instead of leaving the other folder in it.
+    // From here the stage holds the whole copy: a later start finishes the renames (`resume`)
+    // even if the original folders are no longer available.
     // The marker is what a later start trusts: it must be on disk before a rename is.
     let marker = stage.join(COMPLETE);
     fs::File::create(&marker)
@@ -184,8 +191,8 @@ fn present(path: &Path) -> Result<bool, String> {
     }
 }
 
-/// Whether `launcher` holds anything but what a failed start makes ([`LEFT_BY_A_FAILED_START`]),
-/// so a copy must not replace it. A link there, even a broken one, is the player's doing.
+/// Whether `launcher` holds anything but failed-start leftovers or logs made by earlier versions.
+/// A link there, even a broken one, is treated as player data.
 fn launcher_in_use(launcher: &Path) -> Result<bool, String> {
     match fs::symlink_metadata(launcher) {
         Ok(meta) if crate::native_cache::linked(&meta) || !meta.is_dir() => return Ok(true),
@@ -196,9 +203,30 @@ fn launcher_in_use(launcher: &Path) -> Result<bool, String> {
     let entries = fs::read_dir(launcher).map_err(|e| format!("{}: {e}", launcher.display()))?;
     for entry in entries {
         let entry = entry.map_err(|e| format!("{}: {e}", launcher.display()))?;
-        if !LEFT_BY_A_FAILED_START
+        let name = entry.file_name();
+        if name == "logs" {
+            let path = entry.path();
+            let meta =
+                fs::symlink_metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            if !meta.is_dir() || crate::native_cache::linked(&meta) {
+                return Ok(true);
+            }
+            let logs = fs::read_dir(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            for log in logs {
+                let log = log.map_err(|e| format!("{}: {e}", path.display()))?;
+                let log_path = log.path();
+                let meta = fs::symlink_metadata(&log_path)
+                    .map_err(|e| format!("{}: {e}", log_path.display()))?;
+                if !meta.is_file()
+                    || crate::native_cache::linked(&meta)
+                    || !crate::launcher_log::is_rotation_file(&log.file_name())
+                {
+                    return Ok(true);
+                }
+            }
+        } else if !LEFT_BY_A_FAILED_START
             .iter()
-            .any(|name| entry.file_name() == *name)
+            .any(|allowed| name == *allowed)
         {
             return Ok(true);
         }
@@ -239,13 +267,28 @@ fn remove_leftover(leftover: &Path) {
         Ok(false) => {
             if let Err(error) = fs::remove_dir_all(leftover) {
                 eprintln!("Could not remove {}: {error}", leftover.display());
+                crate::launcher_log::line(format!(
+                    "Could not remove leftover carry-over folder: {}",
+                    crate::launcher_log::safe_error(&error.to_string())
+                ));
             }
         }
-        Ok(true) => eprintln!(
-            "Kept {}: something besides caches was written to it.",
-            leftover.display()
-        ),
-        Err(error) => eprintln!("{error}"),
+        Ok(true) => {
+            eprintln!(
+                "Kept {}: something besides caches was written to it.",
+                leftover.display()
+            );
+            crate::launcher_log::line(
+                "Kept leftover carry-over folder: something besides caches was written to it.",
+            );
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            crate::launcher_log::line(format!(
+                "Could not inspect leftover carry-over folder: {}",
+                crate::launcher_log::safe_error(&error)
+            ));
+        }
     }
 }
 
@@ -266,7 +309,6 @@ fn first_rename_done(stage: &Path, launcher: &Path, game: &Path) -> bool {
 /// already there stay as they are, and what is left in the stage is removed once both are there.
 fn resume(stage: &Path, launcher: &Path, game: &Path, leftover: &Path) -> Result<bool, String> {
     let mut moved = false;
-    let mut set_aside_here = false;
     for (part, target) in [("launcher", launcher), ("game", game)] {
         let from = stage.join(part);
         if !from.is_dir() {
@@ -274,8 +316,8 @@ fn resume(stage: &Path, launcher: &Path, game: &Path, leftover: &Path) -> Result
         }
         // A launcher folder that a failed start made after the copy was marked complete holds
         // nothing of the player's: the copy goes in its place, not into a kept stage.
-        if part == "launcher" && set_aside(target, leftover)? == Some(true) {
-            set_aside_here = true;
+        if part == "launcher" {
+            set_aside(target, leftover)?;
         }
         if !present(target)? {
             fs::rename(&from, target).map_err(|e| format!("{}: {e}", target.display()))?;
@@ -284,9 +326,9 @@ fn resume(stage: &Path, launcher: &Path, game: &Path, leftover: &Path) -> Result
     }
     if launcher.exists() && game.exists() {
         settle(stage);
-    }
-    if set_aside_here {
-        remove_leftover(leftover);
+        if leftover.exists() {
+            remove_leftover(leftover);
+        }
     }
     Ok(moved)
 }
@@ -307,12 +349,24 @@ fn settle(stage: &Path) {
         chrono::Utc::now().format("%Y%m%d-%H%M%S")
     ));
     match fs::rename(stage, &kept) {
-        Ok(()) => eprintln!(
-            "Kept {} ({}): the data folder it was copied for already existed, so it was not replaced.",
-            kept.display(),
-            left.join(", ")
-        ),
-        Err(error) => eprintln!("Could not keep {}: {error}", stage.display()),
+        Ok(()) => {
+            eprintln!(
+                "Kept {} ({}): the data folder it was copied for already existed, so it was not replaced.",
+                kept.display(),
+                left.join(", ")
+            );
+            crate::launcher_log::line(format!(
+                "Kept carry-over stage ({}): the data folder it was copied for already existed, so it was not replaced.",
+                left.join(", ")
+            ));
+        }
+        Err(error) => {
+            eprintln!("Could not keep {}: {error}", stage.display());
+            crate::launcher_log::line(format!(
+                "Could not keep carry-over stage: {}",
+                crate::launcher_log::safe_error(&error.to_string())
+            ));
+        }
     }
 }
 
@@ -329,6 +383,10 @@ fn discard(stage: &Path) {
                 ],
             )
         );
+        crate::launcher_log::line(format!(
+            "Could not remove carry-over stage; the next start tries again: {}",
+            crate::launcher_log::safe_error(&error.to_string())
+        ));
     }
 }
 
@@ -343,6 +401,15 @@ fn refuse_link(path: &Path) -> Result<Option<fs::Metadata>, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(format!("{}: {e}", path.display())),
     }
+}
+
+fn find_earlier_roots(data: &Path, config: &Path) -> Result<Option<Roots>, String> {
+    for &(old_launcher, old_game, location) in crate::identity::EARLIER {
+        if let Some(roots) = earlier_roots(data, config, old_launcher, old_game, location)? {
+            return Ok(Some(roots));
+        }
+    }
+    Ok(None)
 }
 
 /// An earlier launcher's folders, when its launcher or game folder exists: where its

@@ -9,7 +9,7 @@ fn a_game_download_is_one_job_that_a_page_switch_keeps_and_stop_winds_down() {
     in_scratch_launcher(
         "status_strip::tests::a_game_download_is_one_job_that_a_page_switch_keeps_and_stop_winds_down",
         |launcher| {
-            launcher.installing = Some((TAG.into(), 0.4));
+            launcher.installing = Some((TAG.into(), sunrise_launcher::backend::InstallPhase::Downloading(0.4)));
             launcher.install_stop = Some(Default::default());
             for page in [Page::Home, Page::Discover, Page::Hosting, Page::Settings] {
                 launcher.navigate(page);
@@ -17,7 +17,7 @@ fn a_game_download_is_one_job_that_a_page_switch_keeps_and_stop_winds_down() {
                 assert_eq!(jobs.len(), 1, "on {page:?}");
                 let job = &jobs[0];
                 assert_eq!(job.what, "Installing Nightly · Nov 20");
-                assert_eq!(job.step.as_deref(), Some("Downloading"));
+                assert_eq!(job.step.as_deref(), Some("Downloading the build"));
                 assert_eq!(job.fraction, Some(0.4));
                 assert_eq!(job.stop, Some(JobAct::StopGameDownload));
                 assert!(!job.stopping);
@@ -36,12 +36,12 @@ fn storage_work_shows_as_jobs_and_a_count_does_not() {
     in_scratch_launcher(
         "status_strip::tests::storage_work_shows_as_jobs_and_a_count_does_not",
         |launcher| {
-            launcher.storage_pending = true;
+            launcher.ui.settings.storage_work = Some(crate::storage_report::Work::count_for_test());
             assert!(
                 launcher.jobs().is_empty(),
                 "counting storage is not work to watch"
             );
-            launcher.storage_clearing = true;
+            launcher.ui.settings.storage_work = Some(crate::storage_report::Work::clear_for_test());
             launcher.importing_build = true;
             launcher.removing = vec![TAG.into()];
             let jobs = launcher.jobs();
@@ -69,8 +69,7 @@ fn the_list_folds_again_once_one_job_is_left() {
         "status_strip::tests::the_list_folds_again_once_one_job_is_left",
         |launcher| {
             launcher.importing_build = true;
-            launcher.storage_pending = true;
-            launcher.storage_clearing = true;
+            launcher.ui.settings.storage_work = Some(crate::storage_report::Work::clear_for_test());
             launcher.jobs.open = true;
             assert_eq!(launcher.jobs().len(), 2);
             assert!(launcher.jobs.open);

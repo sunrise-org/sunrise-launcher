@@ -33,6 +33,7 @@ fn v2_profile_switch_refuses_pack_without_fetching_index() {
         },
         confirm_publisher_change: None,
         pin_dir: None,
+        recover_held: false,
     };
     let target = Target::of(&instance).unwrap();
     let Err(err) = switch_profile_build_v2_with(

@@ -388,7 +388,7 @@ fn last_known_source_offer_stays_visible_while_offline_but_requires_fresh_catalo
             let key = native_status::fingerprint(home, Some(BASE));
 
             let mut app = gpui::TestAppContext::single();
-            let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+            let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
             let launcher = shell.read_with(cx, |shell, _| shell.launcher());
             launcher.update(cx, |launcher, _| {
                 let scope = launcher.mods_page_scope();

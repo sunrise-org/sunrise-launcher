@@ -37,8 +37,16 @@ const STATE_FILE: &str = "state.json";
 pub const PRODUCTION_KEY: &str = "RWTNJaFJ4AekHG/RgVrgmJpvy9B2EaeqbdSNuseKUx2XPxaOZkChLV0q";
 
 /// Built-in minisign public keys trusted to sign the v2 mod registry catalogue.
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "capture-registry-key")))]
 pub const REGISTRY_KEYS: &[&str] = &[PRODUCTION_KEY];
+
+/// A capture build (window screenshots against fixture data) trusts only the disposable key it
+/// was built with, never the production one, so it can't be mistaken for a player's launcher.
+#[cfg(all(not(test), feature = "capture-registry-key"))]
+pub const REGISTRY_KEYS: &[&str] = &[env!("SUNRISE_CAPTURE_REGISTRY_KEY")];
+
+#[cfg(all(feature = "capture-registry-key", not(debug_assertions)))]
+compile_error!("capture-registry-key is for debug capture builds only, never a release build");
 
 /// Disposable test-only minisign public key; never compiled into non-test builds.
 #[cfg(test)]
@@ -178,6 +186,32 @@ struct RefreshContext<'a> {
 }
 
 static LOADED: Mutex<Option<LoadedState>> = Mutex::new(None);
+
+/// [`loaded_serial`]'s value: the exact serial, and whether one is loaded. Published apart from
+/// [`LOADED`], whose lock a refresh holds while it writes the verified index to disk, so a frame
+/// that reads the serial never waits on that write (review of #616). The serial is the whole
+/// `u64` range, so "none" is the flag, not a value of it (review of #671).
+static LOADED_SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static SERIAL_LOADED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Publishes the serial of the catalogue [`LOADED`] now holds. The serial is stored before the
+/// flag, and [`LOADED`] is never emptied again, so a reader that sees the flag sees a serial that
+/// was loaded: this one or a later one, never a torn or made-up value.
+fn publish_loaded_serial(serial: u64) {
+    use std::sync::atomic::Ordering;
+    LOADED_SERIAL.store(serial, Ordering::Release);
+    SERIAL_LOADED.store(true, Ordering::Release);
+}
+
+/// The serial of the verified catalogue held in memory, if one is: what a cached answer drawn
+/// from the index (Home's build suggestion, the picker's preview) keys on, with no lock, file
+/// read or fetch.
+pub fn loaded_serial() -> Option<u64> {
+    use std::sync::atomic::Ordering;
+    SERIAL_LOADED
+        .load(Ordering::Acquire)
+        .then(|| LOADED_SERIAL.load(Ordering::Acquire))
+}
 /// The verified snapshot on disk, read by [`read_saved_index`] while nothing is loaded yet.
 static SAVED: Mutex<Option<Catalog>> = Mutex::new(None);
 /// Serializes on-disk serial-floor checks and cache publication across stores.
@@ -398,6 +432,9 @@ where
         catalog: catalog.clone(),
         highest_serial,
     });
+    if std::ptr::eq(loaded, &LOADED) {
+        publish_loaded_serial(catalog.index.serial);
+    }
     Ok(catalog)
 }
 

@@ -9,6 +9,11 @@ pub(crate) const CLIENT: &str = if cfg!(windows) {
     "sunrise-client"
 };
 
+/// How many of Mojang's files are fetched at once. [`agent`] keeps this many idle connections per
+/// host, so each worker's connection goes back to the pool instead of being closed (ureq keeps
+/// one by default, and the other workers would open a new TCP and TLS connection per file).
+pub(super) const DOWNLOAD_JOBS: usize = 8;
+
 /// The agent `url` is fetched with: the launcher's own user agent, through the player's proxy when
 /// one is set (`proxy`).
 pub(crate) fn agent(url: &str) -> Result<ureq::Agent, String> {
@@ -18,7 +23,32 @@ pub(crate) fn agent(url: &str) -> Result<ureq::Agent, String> {
             // A connection that goes quiet fails instead of waiting for ever.
             .timeout_connect(std::time::Duration::from_secs(15))
             .timeout_read(std::time::Duration::from_secs(60))
+            .max_idle_connections_per_host(DOWNLOAD_JOBS)
     })
+}
+
+/// Strip userinfo, query parameters, and fragments from a URL before printing it in an error.
+fn redact_url(raw: &str) -> String {
+    if let Ok(mut parsed) = url::Url::parse(raw) {
+        let _ = parsed.set_username("");
+        let _ = parsed.set_password(None);
+        parsed.set_query(None);
+        parsed.set_fragment(None);
+        return parsed.to_string();
+    }
+    let before_qf = raw.split(['?', '#']).next().unwrap_or(raw);
+    if let Some((scheme, rest)) = before_qf.split_once("://") {
+        let (authority, tail) = match rest.find('/') {
+            Some(slash) => (&rest[..slash], &rest[slash..]),
+            None => (rest, ""),
+        };
+        let host = authority
+            .rsplit_once('@')
+            .map_or(authority, |(_, host)| host);
+        format!("{scheme}://{host}{tail}")
+    } else {
+        before_qf.to_owned()
+    }
 }
 
 /// A file's body, from the network as the launcher reaches it.
@@ -32,7 +62,7 @@ pub fn get_bytes(url: &str) -> Result<Vec<u8>, String> {
 }
 
 pub(crate) fn get(url: &str) -> Result<ureq::Response, String> {
-    get_unless_missing(url)?.ok_or_else(|| format!("{url} answered 404"))
+    get_unless_missing(url)?.ok_or_else(|| format!("{} answered 404", redact_url(url)))
 }
 
 /// [`get`], with `None` when the server answers 404: a file that may not exist (a prebuilt game).
@@ -57,7 +87,7 @@ pub(crate) fn get_unless_missing(url: &str) -> Result<Option<ureq::Response>, St
             {
                 "GitHub's rate limit was reached. Try again in a few minutes.".into()
             }
-            ureq::Error::Status(code, _) => format!("{url} answered {code}"),
+            ureq::Error::Status(code, _) => format!("{} answered {code}", redact_url(url)),
             ureq::Error::Transport(t) => format!("No connection: {t}"),
         }),
     }

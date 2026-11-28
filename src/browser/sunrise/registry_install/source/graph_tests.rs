@@ -96,7 +96,7 @@ fn rejects_code_link_to_content_even_with_dispatch_override() {
         Err(SourceError::Dependency {
             required: None,
             detail:
-                "code link requirements refused: graph_lantern requires missing mod graph_terrain"
+                "These mods can't be built together: graph_lantern requires missing mod graph_terrain"
                     .into(),
         }),
     );

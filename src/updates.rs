@@ -198,7 +198,9 @@ impl SelfUpdate {
                 *armed = false;
             }
         }
-        settings::log_launcher_check_failure(error.message(), |line| eprintln!("{line}"));
+        settings::log_launcher_check_failure(error.message(), |line| {
+            sunrise_launcher::elog!("{line}")
+        });
         updates.launcher_error = Some(error);
     }
 
@@ -317,7 +319,7 @@ impl Launcher {
                     )
                 )
                 || self.settings_save_error.is_some()
-                || self.storage_pending
+                || self.ui.settings.storage_busy()
                 || self.finishing_game > 0
                 || !self.auth_busy.is_empty()
                 || (self.sign_in.is_some()
@@ -471,16 +473,24 @@ impl Launcher {
                 label.clone()
             }
         });
-        let main = button("launcher-update", "")
+        let main = crate::frame::button_drawn("launcher-update")
+            .debug_selector(|| "launcher-update".into())
             .max_w(px(172.))
             .overflow_hidden()
             .h(px(tokens::FIELD))
             .gap(px(6.))
             .tooltip(crate::glass_ui::tip(tip))
-            .child(div().min_w_0().truncate().child(label))
+            .child(
+                div()
+                    .debug_selector(|| "launcher-update-label".into())
+                    .min_w_0()
+                    .truncate()
+                    .child(label),
+            )
             .when(action.is_none(), |b| {
                 b.child(
                     crate::glass_ui::icon("information-circle", 16., rgb(p.chrome_muted).into())
+                        .debug_selector(|| "launcher-update-icon".into())
                         .flex_none(),
                 )
             })
@@ -666,6 +676,72 @@ mod tests {
             prerelease: false,
             nightly: None,
         }
+    }
+
+    /// The header's update button, as a player whose launcher can't update itself sees it: its
+    /// label and info icon sit in its middle (review of #639). Before `button_drawn`, the button
+    /// also had an empty text child, and the gap beside it pushed both 3 px right. The offer comes
+    /// through `note_launcher_check`, as a finished check's does, in a debug build, where
+    /// self-update is off. Debug builds only: `debug_selector` bounds are recorded only with debug
+    /// assertions.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn the_header_update_button_keeps_its_label_and_icon_centred() {
+        const CHILD: &str = "SUNRISE_LAUNCHER_UPDATE_WINDOW_TEST";
+        if std::env::var_os(CHILD).is_none() {
+            let scratch = tempfile::tempdir().unwrap();
+            let root = scratch.path();
+            let nowhere = "http://127.0.0.1:9";
+            let test = "updates::tests::the_header_update_button_keeps_its_label_and_icon_centred";
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", test])
+                .env(CHILD, "1")
+                .env("SUNRISE_HOME", root.join("game"))
+                .env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
+                .env("SUNRISE_LAUNCHER_LOCATION_FILE", root.join("location.json"))
+                .env("SUNRISE_NO_KEYCHAIN", "1")
+                .env("SUNRISE_LAUNCHER_NO_SELF_UPDATE", "1")
+                .env("SUNRISE_TELEMETRY_URL", "off")
+                .env("XDG_DATA_HOME", root.join("data"))
+                .env("XDG_CONFIG_HOME", root.join("config"))
+                .env("HTTP_PROXY", nowhere)
+                .env("HTTPS_PROXY", nowhere)
+                .env("ALL_PROXY", nowhere)
+                .env_remove("NO_PROXY")
+                .env_remove("SUNRISE_GITHUB_MIRROR")
+                .env_remove("SUNRISE_LAUNCHER_BENCH")
+                .status()
+                .unwrap();
+            assert!(
+                status.success(),
+                "the window test failed in its child process"
+            );
+            return;
+        }
+        assert!(!backend::self_update_allowed());
+        let mut app = gpui::TestAppContext::single();
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
+        let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("launcher-update").is_none(), "no offer yet");
+        launcher.update(cx, |l, cx| {
+            l.note_launcher_check(Ok(Some(release("v9.9.0"))));
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let button = cx
+            .debug_bounds("launcher-update")
+            .expect("the header shows the offer");
+        let label = cx.debug_bounds("launcher-update-label").unwrap();
+        let icon = cx
+            .debug_bounds("launcher-update-icon")
+            .expect("a launcher that can't update itself shows the info icon");
+        let content = (f32::from(label.origin.x) + f32::from(icon.origin.x + icon.size.width)) / 2.;
+        let offset = (content - f32::from(button.center().x)).abs();
+        assert!(
+            offset < 0.5,
+            "label and icon {offset:?} off the button's centre: button {button:?}, label {label:?}, icon {icon:?}"
+        );
     }
 
     #[test]

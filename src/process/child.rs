@@ -80,6 +80,14 @@ impl Child {
     }
 
     #[cfg(windows)]
+    pub(crate) fn preparer_job(&self) -> Option<std::sync::Arc<super::leases::CompilerJob>> {
+        match &self.process {
+            Handle::Std(_) | Handle::Relayed(_) => None,
+            Handle::Windows(child) => child.preparer_job(),
+        }
+    }
+
+    #[cfg(windows)]
     pub(super) fn wrapper_job(&self) -> Option<std::sync::Arc<super::leases::WrapperJob>> {
         match &self.process {
             Handle::Std(_) | Handle::Relayed(_) => None,
@@ -123,12 +131,49 @@ impl Child {
         }
     }
 
+    /// Whether the child has ended, without reaping it: on Unix its zombie keeps its PID, and so
+    /// the group's ID, from going to another process until it is reaped. With `block` it waits for
+    /// the end. Only for a child not reaped yet: once reaped, its PID may be another process's.
+    /// Elsewhere the handle keeps the PID from reuse until it is dropped.
+    pub(crate) fn ended_unreaped(&mut self, block: bool) -> io::Result<bool> {
+        #[cfg(unix)]
+        if let Handle::Std(child) = &self.process {
+            return unreaped_end(child.id(), block);
+        }
+        if block {
+            self.wait().map(|_| true)
+        } else {
+            self.try_wait().map(|status| status.is_some())
+        }
+    }
+
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         match &mut self.process {
             Handle::Std(child) => child.try_wait(),
             Handle::Relayed(child) => child.try_wait(),
             #[cfg(windows)]
             Handle::Windows(child) => child.try_wait(),
+        }
+    }
+}
+
+/// [`Child::ended_unreaped`] for a direct child on Unix: `waitid` with `WNOWAIT` leaves it unreaped.
+#[cfg(unix)]
+fn unreaped_end(pid: u32, block: bool) -> io::Result<bool> {
+    let mut flags = libc::WEXITED | libc::WNOWAIT;
+    if !block {
+        flags |= libc::WNOHANG;
+    }
+    loop {
+        // SAFETY: a zeroed siginfo_t is valid for waitid to fill, and the PID is this handle's child.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        if unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, flags) } == 0 {
+            // SAFETY: waitid filled `info`; si_pid is 0 when the child has not ended.
+            return Ok(unsafe { info.si_pid() } != 0);
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::EINTR) {
+            return Err(error);
         }
     }
 }

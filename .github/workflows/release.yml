@@ -1,5 +1,5 @@
 name: release
-# Builds and checks the launcher's release files; a real run on main or a release/launcher-* patch line (LAUNCHER_RELEASES=on) leaves them as an unsigned draft vX.Y.Z with build provenance, which sunrise-org/sunrise's launcher-bridge.yml signs and publishes.
+# Builds and checks the launcher's release files; a real run on release (LAUNCHER_RELEASES=on) leaves them as an unsigned draft vX.Y.Z with build provenance, which sunrise-org/sunrise's launcher-bridge.yml signs and publishes.
 on:
   workflow_dispatch:
     inputs:
@@ -47,10 +47,10 @@ jobs:
       - id: mode
         env:
           ASKED: ${{ inputs.dry_run }}
-        # Off main and the patch lines cut from a release tag, every run is a dry run.
+        # Off the release branch, every run is a dry run.
         run: |
           dry=true
-          [[ ("$GITHUB_REF" == refs/heads/main || "$GITHUB_REF" == refs/heads/release/launcher-*) && "$ASKED" == false ]] && dry=false
+          [[ "$GITHUB_REF" == refs/heads/release && "$ASKED" == false ]] && dry=false
           echo "dry_run=$dry" >> "$GITHUB_OUTPUT"
       - name: Releases are on, or this is a dry run
         env:

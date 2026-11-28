@@ -5,6 +5,7 @@
 use super::*;
 use crate::frame::button;
 use crate::launch_state::{Act, Main, StripAct};
+use crate::mods_page::install::stage_fraction;
 use crate::paint::palette;
 use gpui::rgb;
 
@@ -119,8 +120,8 @@ impl Launcher {
         };
         // A download says how far it is in the label; its bar shows it too.
         let fraction = match view.main {
-            Main::Installing(progress) => Some(progress),
-            Main::RegistryInstall(stage, _) => crate::mods_page::install::stage_fraction(stage),
+            Main::Installing(phase) => stage_fraction(phase.into()),
+            Main::RegistryInstall(stage, _) => stage_fraction(stage),
             _ => None,
         };
         let bar = fraction.map(|progress| {

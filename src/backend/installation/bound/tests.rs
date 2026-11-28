@@ -78,23 +78,26 @@ fn serve_windows_archive(
         time: String::new(),
         published_at: String::new(),
     };
-    let (url, serve) = serve_archive(asset, bytes);
+    let (url, serve) = serve_archive(asset, bytes, true);
     (download, proof, url, serve)
 }
 
-fn serve_archive(asset: &str, bytes: Vec<u8>) -> (String, std::thread::JoinHandle<()>) {
+fn serve_archive(
+    asset: &str,
+    bytes: Vec<u8>,
+    content_length: bool,
+) -> (String, std::thread::JoinHandle<()>) {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/{asset}", listener.local_addr().unwrap());
     let serve = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         let _ = stream.read(&mut [0; 4096]).unwrap();
-        write!(
-            stream,
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            bytes.len()
-        )
-        .unwrap();
+        stream.write_all(b"HTTP/1.1 200 OK\r\n").unwrap();
+        if content_length {
+            write!(stream, "Content-Length: {}\r\n", bytes.len()).unwrap();
+        }
+        stream.write_all(b"Connection: close\r\n\r\n").unwrap();
         stream.write_all(&bytes).unwrap();
     });
     (url, serve)

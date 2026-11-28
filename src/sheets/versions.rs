@@ -39,8 +39,6 @@ pub(crate) struct State {
     focused: bool,
     /// The build chosen in the list, before it is kept.
     pick: Option<String>,
-    /// The same-channel update that opened the list, if any. It does not pin the chosen build.
-    update: Option<String>,
     preview: Option<FitPreview>,
     /// The list's scroll, which the arrow keys move to the row they land on.
     scroll: gpui::UniformListScrollHandle,
@@ -64,7 +62,6 @@ impl Launcher {
         let v = &mut self.ui.sheets.versions;
         v.find.set(String::new());
         v.pick = pinned;
-        v.update = None;
         v.preview = None;
         v.rows.clear();
     }
@@ -78,12 +75,6 @@ impl Launcher {
     pub(super) fn versions_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         let body = self.versions_content(cx);
         frame("alt-versions", 560., body, cx)
-    }
-
-    pub(crate) fn open_update_picker(&mut self, tag: String) {
-        self.open_versions();
-        self.ui.sheets.versions.update = Some(tag.clone());
-        self.ui.sheets.versions.pick = Some(tag);
     }
 
     fn architecture_repair(&self, tag: &str) -> Option<&Release> {
@@ -112,6 +103,36 @@ impl Launcher {
         )
     }
 
+    /// Every build `instance` could switch to besides `plays` (the picker's list), to find one
+    /// its mods have releases for: the profile's channel first, then the others, each newest
+    /// first. All are checked, so "no build has every mod" is true of the whole list.
+    pub(crate) fn switch_candidates(
+        &self,
+        instance: &instances::Instance,
+        plays: Option<&str>,
+    ) -> Vec<String> {
+        let releases: &[Release] = match &self.releases {
+            Load::Ready(rows) => rows,
+            _ => &[],
+        };
+        let mut tags: Vec<String> = lines(releases, &self.installed, plays, instance.channel, "")
+            .into_iter()
+            // The build the profile plays isn't known here without reading its pointer: the
+            // caller drops it (`plays` only places the list as the picker does).
+            .filter_map(|line| match line {
+                Line::Build(b) => Some(b.tag),
+                _ => None,
+            })
+            .collect();
+        let elsewhere = |tag: &str| channel_build(tag).map(|(c, _)| c) != Some(instance.channel);
+        tags.sort_by(|a, b| {
+            elsewhere(a)
+                .cmp(&elsewhere(b))
+                .then_with(|| sunrise_launcher::backend::compare_game_versions(b, a))
+        });
+        tags
+    }
+
     /// How tall the list of `lines` is drawn: as tall as what it lists, up to the room the
     /// window has; past that it scrolls.
     fn versions_list_height(&self, lines: usize) -> f32 {
@@ -130,8 +151,7 @@ impl Launcher {
         let list = Rc::new(self.version_lines(instance, current));
         let list_height = self.versions_list_height(list.len());
         let pick = self.ui.sheets.versions.pick.clone();
-        let is_update = pick.is_some() && pick == self.ui.sheets.versions.update;
-        let choice = (!is_update || instance.version.is_some()).then_some(BuildChoice::Keep);
+        let choice = Some(BuildChoice::Keep);
         let already_kept = instance.version.as_deref() == current;
 
         let focus = self
@@ -290,10 +310,9 @@ impl Launcher {
             self.architecture_repair(tag)?;
             let tag = tag.clone();
             let label = match &self.installing {
-                Some((started, progress)) if started == &tag => trf(
-                    "Installing · {percent}%",
-                    &[("percent", &format!("{:.0}", progress * 100.))],
-                ),
+                Some((started, phase)) if started == &tag => {
+                    crate::mods_page::install::stage_label((*phase).into())
+                }
                 _ => tr("Reinstall for this architecture").to_owned(),
             };
             let button = button("alt-versions-reinstall", label);
@@ -451,7 +470,7 @@ impl Launcher {
                     .children(nothing),
             )
             .children(
-                (!is_pack && !is_update && pick.is_some())
+                (!is_pack && pick.is_some())
                     .then(|| muted(tr("This profile stays on this build until you change it."))),
             )
             .children(plan.map(muted))

@@ -162,7 +162,8 @@ enum Cmd {
         accept_eula: bool,
     },
     /// Show disposable storage by category as JSON, or clear a category by hand with `--clear`.
-    /// Read-only reports never block builds; `--clear` requires builds to be idle.
+    /// Read-only reports never block builds; `--clear` requires builds to be idle. A report counts
+    /// each row once and prints when done, with its progress on stderr; `--clear` needs no count first.
     ///
     /// Rust/Cargo/temp build-tool caches remain clearable. Game-accessible caches and installed-version
     /// removal retain files while any launch path lacks enforceable lifetime exclusion; an empty
@@ -455,7 +456,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, Error> {
         Cmd::Versions { installed: true } => builds::installed(as_json)?,
         Cmd::Versions { installed: false } => return builds::releases(as_json),
         Cmd::Install { tag } => builds::install(tag, as_json)?,
-        Cmd::Storage { clear } => storage::report(clear)?,
+        Cmd::Storage { clear } => return storage::report(clear, as_json),
         Cmd::NativeLock {
             folder,
             update_lock,

@@ -44,7 +44,21 @@ pub(crate) fn sync_build_choice(
 
 /// Changes what the player chose about an instance: its name, icon or group. No folder moves.
 pub fn edit(query: &str, change: impl FnOnce(&mut Meta)) -> Result<Instance, String> {
-    edit_in(&backend::game_home(), &backend::data_dir(), query, change)
+    let game_home = backend::game_home();
+    let data = backend::data_dir();
+    register_profile_names(&list_in(&game_home, &data));
+    let mut proposed_name = None;
+    let result = edit_in(&game_home, &data, query, |meta| {
+        change(meta);
+        proposed_name = meta.name.clone();
+    });
+    if let Some(name) = proposed_name {
+        crate::launcher_log::hide_profile_name(&name);
+    }
+    if let Ok(instance) = &result {
+        register_profile(instance);
+    }
+    result
 }
 
 pub(super) fn edit_in(

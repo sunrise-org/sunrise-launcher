@@ -128,10 +128,23 @@ fn next_install_recovers_before_requiring_a_download() {
         prerelease: false,
         nightly: Some("nightly".into()),
     };
+    let stop = sunrise_launcher::native_mods::Cancellation::default();
+    stop.stop();
+    assert!(backend::install_cancellable(&release, Some(&stop), |_| {
+        panic!("pre-cancelled install must not report a phase");
+    })
+    .is_err());
     assert!(
-        backend::install(&release, |_| {}).is_err(),
+        previous.exists(),
+        "pre-cancelled install must not reconcile the tree"
+    );
+    let phases = std::cell::RefCell::new(Vec::new());
+    assert!(
+        backend::install_cancellable(&release, None, |phase| phases.borrow_mut().push(phase))
+            .is_err(),
         "there is no archive to fetch"
     );
+    assert_eq!(phases.into_inner(), [backend::InstallPhase::Checking]);
     assert_eq!(backend::installed(), [TAG]);
     assert_eq!(
         fs::read_to_string(backend::version_dir(TAG).join("origin")).unwrap(),

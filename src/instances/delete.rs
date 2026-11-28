@@ -12,13 +12,11 @@ pub fn delete(query: &str) -> Result<Instance, String> {
 
 /// A completed deletion stays completed even if saving the new selection fails.
 pub fn delete_with_selection(query: &str) -> Result<(Instance, Result<(), String>), String> {
-    let gone = delete_in(
-        &backend::game_home(),
-        &backend::data_dir(),
-        query,
-        &crate::desktop_seams::to_trash,
-    )
-    .map_err(|error| error.to_string())?;
+    let game_home = backend::game_home();
+    let data = backend::data_dir();
+    register_profile_names(&list_with_snapshot(&game_home, &data, false, || {}));
+    let gone = delete_in(&game_home, &data, query, &crate::desktop_seams::to_trash)
+        .map_err(|error| error.to_string())?;
     let mut settings = backend::Settings::load();
     let saved = if clear_deleted_selection(&mut settings, &gone.id) {
         settings.save()
@@ -39,6 +37,7 @@ pub fn clear_deleted_selection(settings: &mut backend::Settings, id: &str) -> bo
 /// Move the exact folder shown in the window's confirmation, not a fresh lookup by slug.
 /// The caller saves its selection once the move settles.
 pub fn trash_confirmed(instance: Instance) -> Result<Instance, DeleteError> {
+    register_profile(&instance);
     delete_selected(
         &backend::game_home(),
         &backend::data_dir(),

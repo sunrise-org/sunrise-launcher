@@ -290,7 +290,7 @@ pub fn install(checkout: &Path, program: &Path, trusted: bool) -> Result<String,
     // `prepare` and no official launcher folder (#4315). Run again for the same checkout to pick
     // them up after preparing it; the tag has not changed, so nothing else is installed.
     if let Err(error) = reuse_checkout_resources(&checkout, &tag) {
-        eprintln!(
+        crate::elog!(
             "{}",
             trf(
                 "{tag}: the checkout's prepared resources were not copied: {error}",
@@ -353,25 +353,33 @@ mod tests {
     fn dirty_tracked_checkout_is_refused_but_local_commit_is_snapshotted() {
         let folder = tempfile::tempdir().unwrap();
         let git = |args: &[&str]| {
-            assert!(Command::new("git")
+            let output = Command::new("git")
                 .current_dir(folder.path())
+                .args([
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "-c",
+                    "commit.gpgSign=false",
+                    "-c",
+                    "tag.gpgSign=false",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                ])
                 .args(args)
-                .status()
-                .unwrap()
-                .success());
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         };
-        git(&["init", "-q"]);
+        git(&["init", "-q", "--template="]);
         fs::write(folder.path().join("input"), "committed").unwrap();
         git(&["add", "input"]);
-        git(&[
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.invalid",
-            "commit",
-            "-qm",
-            "local only",
-        ]);
+        git(&["commit", "-qm", "local only"]);
         let (commit, snapshot) = committed_snapshot(folder.path()).unwrap();
         assert_eq!(commit.len(), 40);
         let output = tempfile::tempdir().unwrap();

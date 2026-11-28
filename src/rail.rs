@@ -515,6 +515,12 @@ impl Launcher {
                 self.links.website.clone(),
             ),
             (
+                "sidebar-logs",
+                tr("Logs"),
+                "computer-terminal-01",
+                String::new(),
+            ),
+            (
                 "sidebar-settings",
                 tr("Settings"),
                 "sliders-horizontal",
@@ -522,11 +528,12 @@ impl Launcher {
             ),
         ] {
             let settings = id == "sidebar-settings";
+            let logs = id == "sidebar-logs";
             rail = rail.child(
                 row(
                     id.into(),
                     label.into(),
-                    settings && self.ui.page == Page::Settings,
+                    (settings && self.ui.page == Page::Settings) || (logs && self.logs_open()),
                 )
                 .child(icon_slot(crate::glass_ui::icon(
                     icon,
@@ -534,9 +541,11 @@ impl Launcher {
                     rgb(p.chrome_muted).into(),
                 )))
                 .when(labelled, |d| d.child(txt(label.into())))
-                .when(settings || !url.is_empty(), |d| {
+                .when(settings || logs || !url.is_empty(), |d| {
                     d.on_click(cx.listener(move |this, _, _, cx| {
-                        if settings {
+                        if logs {
+                            this.toggle_logs();
+                        } else if settings {
                             this.navigate(Page::Settings);
                         } else {
                             Self::open_url(&url, cx);
@@ -654,7 +663,7 @@ mod tests {
         settings.sidebar_expanded = false;
         settings.save().unwrap();
         let mut app = gpui::TestAppContext::single();
-        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
         let launcher = shell.read_with(cx, |shell, _| shell.launcher());
         // A frame with the sidebar `open` of the way, and no menu up.
         let draw = |cx: &mut gpui::VisualTestContext, open: f32| {
@@ -739,7 +748,7 @@ mod tests {
     #[test]
     fn a_build_downloading_leaves_profiles_free_but_mod_changes_do_not() {
         let mut work = Facts {
-            installing: Some(0.4),
+            installing: Some(sunrise_launcher::backend::InstallPhase::Downloading(0.4)),
             ..Facts::default()
         };
         assert_eq!(profile_lock_reason(&work, true, false), None);

@@ -53,8 +53,14 @@ pub fn scan_packages(home: &Path) -> Result<Vec<ScannedPackage>, String> {
             // supply linked packages, and a managed native input must be archived.
             if package.is_native() && (meta.is_dir() || directory != mod_list::NATIVE_DIR) {
                 return Err(crate::i18n::trf(
-                    "Pack {mod} as an .smod in the native mods folder before using it as an installed native mod.",
-                    &[("mod", &package.manifest.name)],
+                    "Put {mod} in {folder} as the .smod `cargo sunrise-mod build` packs from its source.",
+                    &[
+                        ("mod", &package.manifest.name),
+                        (
+                            "folder",
+                            &home.join(mod_list::NATIVE_DIR).display().to_string(),
+                        ),
+                    ],
                 ));
             }
             if !ids.insert(package.manifest.id.clone()) {
@@ -201,5 +207,33 @@ mod tests {
         fs::create_dir_all(archive.parent().unwrap()).unwrap();
         fs::write(archive, manifest::Package::write_files(&body, &[]).unwrap()).unwrap();
         assert!(scan_packages(home).is_err());
+    }
+
+    /// A native mod's source folder dropped into the native mods folder: Switch takes only its
+    /// package, and says how to make one and where it goes.
+    #[test]
+    fn a_native_source_folder_is_refused_with_how_to_pack_it() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path();
+        let native = home.join(mod_list::NATIVE_DIR);
+        let source = native.join("sunny_os");
+        fs::create_dir_all(source.join("csrc")).unwrap();
+        fs::create_dir_all(source.join("src")).unwrap();
+        fs::write(source.join("Cargo.toml"), "[package]\nname='sunny_os'\n").unwrap();
+        fs::write(source.join("src/lib.rs"), "").unwrap();
+        fs::write(
+            source.join(manifest::MANIFEST),
+            format!(
+                "id='sunny_os'\nname='SunnyOS'\nversion='0.1.0'\napi='{}'\nside='both'\n[native]\ngame='26.3'\nsunrise='{}'\n",
+                manifest::API,
+                "a".repeat(40)
+            ),
+        )
+        .unwrap();
+        fs::write(source.join("build.rs"), "fn main() {}\n").unwrap();
+        fs::write(source.join("csrc/shim.c"), "int shim(void) { return 1; }\n").unwrap();
+        let error = scan_packages(home).unwrap_err();
+        assert!(error.contains("cargo sunrise-mod build"), "{error}");
+        assert!(error.contains(&native.display().to_string()), "{error}");
     }
 }

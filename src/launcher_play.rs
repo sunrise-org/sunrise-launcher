@@ -143,7 +143,12 @@ impl Launcher {
         for home in homes {
             match backend::switch_from_auto(&home, api) {
                 Ok(changed) => switched |= changed,
-                Err(e) => eprintln!("Sunrise launcher: could not switch to {label}: {e}"),
+                Err(e) => {
+                    sunrise_launcher::elog!(
+                        "Sunrise launcher: could not switch to {label}: {}",
+                        sunrise_launcher::launcher_log::safe_error(&e.to_string())
+                    )
+                }
             }
         }
         switched.then_some(label)
@@ -182,15 +187,33 @@ impl Launcher {
             Msg::Links(links) => self.links = links,
             // The page reads is_prepared when drawn; `changed` redraws it.
             Msg::Reused(_) => self.refresh_installed(),
-            Msg::Progress(tag, p) => {
-                self.bar = (self.bar.1, p);
-                self.switch_download_progress(&tag, p);
-                self.installing = Some((tag, p));
+            Msg::Progress(tag, phase) => {
+                let Some((_, current)) = self
+                    .installing
+                    .as_mut()
+                    .filter(|(active, _)| *active == tag)
+                else {
+                    return;
+                };
+                let key = crate::eta::install_stage_key;
+                if key((*current).into()) != key(phase.into()) {
+                    self.play_detail = None;
+                }
+                *current = phase;
+                self.switch_download_progress(&tag, phase);
             }
             Msg::Installed(tag, result) => {
-                self.installing = None;
+                if self
+                    .installing
+                    .take_if(|(active, _)| *active == tag)
+                    .is_none()
+                {
+                    return;
+                }
+                if self.starting_client.is_none() && !self.preparing {
+                    self.play_detail = None;
+                }
                 let stopped = (self.install_stop.take()).is_some_and(|stop| stop.is_stopped());
-                self.bar = (0., 0.);
                 self.refresh_installed();
                 if let Some(warning) = self.record_nightly_receipt_outcome(&tag, &result) {
                     toast::say(trf(
@@ -294,11 +317,20 @@ impl Launcher {
         let tag = release.tag.clone();
         let stop = stop.unwrap_or_default();
         self.install_stop = Some(stop.clone());
-        self.installing = Some((tag.clone(), 0.0));
+        self.installing = Some((tag.clone(), backend::InstallPhase::Checking));
         self.install_started = Some(Instant::now());
-        self.bar = (0., 0.);
+        self.play_detail = None;
         self.install_error = None;
+        // The steps after the download say what they do, and their counts (#607): into a
+        // switch's own log and dialog when the install is a switch's, else to Home's line.
+        let op = self.switch_operation(&tag).unwrap_or_else(|| {
+            let tx = tx.clone();
+            sunrise_launcher::launcher_log::Operation::new(move |text| {
+                let _ = tx.send(Msg::PlayDetail(text));
+            })
+        });
         std::thread::spawn(move || {
+            let _in = op.enter();
             let progress = |p| {
                 let _ = tx.send(Msg::Progress(tag.clone(), p));
             };
@@ -330,9 +362,26 @@ impl Launcher {
         self.prepare_log
             .push_back(crate::i18n::tr("Checking Java and your Minecraft install").into());
         let tx = self.tx.clone();
+        // A switch's preparation logs into the switch's own operation, its child output too;
+        // one started on its own counts its steps on Home's line.
+        let op = self.switch_operation(&tag).or_else(|| {
+            let tx = self.tx.clone();
+            Some(sunrise_launcher::launcher_log::Operation::new(
+                move |text| {
+                    let _ = tx.send(Msg::PlayDetail(text));
+                },
+            ))
+        });
         // The checks may download the server jar, so they run on the thread too.
         std::thread::spawn(move || {
-            let log = |line| {
+            let _in = sunrise_launcher::launcher_log::enter(&op);
+            let log = |line: String| {
+                sunrise_launcher::launcher_log::line(
+                    sunrise_launcher::launcher_log::preparer_line(&line),
+                );
+                let _ = tx.send(Msg::Line(Job::Prepare, line));
+            };
+            let diagnostics = |line: String| {
                 let _ = tx.send(Msg::Line(Job::Prepare, line));
             };
             let result = (|| {
@@ -342,22 +391,15 @@ impl Launcher {
                     None => backend::preparer(&tag, None, &log, &lock)?,
                 };
                 match &stop {
-                    Some(stop) => backend::sounds_cancellable(&tag, &minecraft, &log, &lock, stop),
-                    None => backend::sounds(&tag, &minecraft, &log, &lock),
+                    Some(stop) => {
+                        backend::sounds_cancellable(&tag, &minecraft, &diagnostics, &lock, stop)
+                    }
+                    None => backend::sounds(&tag, &minecraft, &diagnostics, &lock),
                 }
                 backend::set_prepare_step(backend::PrepareStep::Prepare);
-                backend::spawn_holding_cancellable(
-                    Job::Prepare,
-                    cmd,
-                    tx.clone(),
-                    Some((tag, lock)),
-                    stop,
-                )
+                backend::run_preparation(&tag, cmd, &lock, stop.as_ref(), &diagnostics)
             })();
-            // A running preparer sends its own Exit when it ends.
-            if let Err(e) = result {
-                let _ = tx.send(Msg::Exit(Job::Prepare, Err(e)));
-            }
+            let _ = tx.send(Msg::Exit(Job::Prepare, result));
         });
         self.preparing = true;
         self.prepare_started = Some(Instant::now());
@@ -447,10 +489,24 @@ impl Launcher {
         self.starting_client = Some(target.clone().unwrap_or_default());
         self.play_step = Some(backend::PlayStep::Assets);
         self.play_download = None;
+        self.play_detail = None;
         let cancellation = native_mods::Cancellation::default();
         self.native_cancellation = Some(cancellation.clone());
         let tx = self.tx.clone();
         std::thread::spawn(move || {
+            let _detail = sunrise_launcher::launcher_log::on_play_detail({
+                let tx = tx.clone();
+                move |text| {
+                    let _ = tx.send(Msg::PlayDetail(text));
+                }
+            });
+            // Download progress arrives many times; each step is said once, when it begins.
+            let announced = std::cell::Cell::new(None);
+            let announce = |step: backend::PlayStep, what: &str| {
+                if announced.replace(Some(step)) != Some(step) {
+                    backend::play_step(what);
+                }
+            };
             let result = Client {
                 instance: &instance,
                 accepted_account: intent.account.as_deref(),
@@ -486,17 +542,33 @@ impl Launcher {
                 &cancellation,
                 |progress| {
                     let msg = match progress {
-                        Progress::Download(fraction) => Msg::PlayDownload(fraction),
-                        Progress::Prepare => Msg::PlayStep(backend::PlayStep::Prepare),
-                        Progress::NativeBuild { base, mods } => Msg::ManagedBuild {
-                            instance: instance.id.clone(),
-                            profile: instance.name.clone(),
-                            base,
-                            mods,
-                        },
+                        Progress::Download(fraction) => {
+                            announce(backend::PlayStep::Download, "downloading the game");
+                            Msg::PlayDownload(fraction)
+                        }
+                        Progress::Prepare => {
+                            announce(backend::PlayStep::Prepare, "preparing the game's files");
+                            Msg::PlayStep(backend::PlayStep::Prepare)
+                        }
+                        Progress::NativeBuild { base, mods } => {
+                            announce(backend::PlayStep::Native, "building mods");
+                            Msg::ManagedBuild {
+                                instance: instance.id.clone(),
+                                profile: instance.name.clone(),
+                                base,
+                                mods,
+                            }
+                        }
                         Progress::Native(step) => Msg::NativeProgress(step),
                         Progress::NativeLog(output) => Msg::ManagedBuildLog(output),
-                        Progress::SignIn => Msg::PlayStep(backend::PlayStep::SignIn),
+                        Progress::Verify => {
+                            announce(backend::PlayStep::Assets, "checking the game's files");
+                            Msg::PlayStep(backend::PlayStep::Assets)
+                        }
+                        Progress::SignIn => {
+                            announce(backend::PlayStep::SignIn, "reading the sign-in");
+                            Msg::PlayStep(backend::PlayStep::SignIn)
+                        }
                         Progress::Line(line) | Progress::HookLine(line) => {
                             Msg::Line(Job::Prepare, line)
                         }
@@ -540,6 +612,7 @@ impl Launcher {
         self.starting_client = Some(tag.clone());
         self.play_step = None;
         self.play_download = None;
+        self.play_detail = None;
         let accepted = intent.account.clone();
         self.play_pressed = Some(Instant::now());
         let tx = self.tx.clone();

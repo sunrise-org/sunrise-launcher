@@ -44,10 +44,13 @@ use sunrise_launcher_smod::{
 };
 
 mod switch_v2;
-#[cfg(all(test, target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+// Wherever `update_tests` builds (`registry_install.rs`), its `build_switch` uses it, not only
+// the native tests: on macOS too, and on no platform where it would go unused.
+#[cfg(all(test, debug_assertions, unix))]
 pub(crate) use switch_v2::switch_profile_build_v2_with;
 pub use switch_v2::{
-    checked_switch_fit_v2, switch_build_v2, switch_profile_build_v2, V2SwitchHooks,
+    checked_switch_fit_v2, mods_fit_by_build_v2, switch_build_v2, switch_fit_blockers_v2,
+    switch_profile_build_v2, Blocker, FitIssue, V2SwitchHooks,
 };
 mod ownership;
 mod plan;

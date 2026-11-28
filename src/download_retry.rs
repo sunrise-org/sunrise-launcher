@@ -8,13 +8,16 @@ pub(crate) const WAITS: [Duration; 2] = [Duration::from_secs(2), Duration::from_
 
 /// `request` sent with [`WAITS`].
 pub(crate) fn get(request: &ureq::Request) -> Result<ureq::Response, Box<ureq::Error>> {
-    call(&WAITS, || request.clone().call().map_err(Box::new))
+    let host = crate::downloads::host_of(request.url());
+    call(&WAITS, &host, || request.clone().call().map_err(Box::new))
 }
 
-/// `request` once, then again after each of `waits` while it fails with no connection or a 5xx.
+/// `request` once, then again after each of `waits` while it fails with no connection or a 5xx,
+/// saying each retry in the launcher log with the `host` it went to.
 /// The error is boxed: ureq's is large.
 fn call(
     waits: &[Duration],
+    host: &str,
     mut request: impl FnMut() -> Result<ureq::Response, Box<ureq::Error>>,
 ) -> Result<ureq::Response, Box<ureq::Error>> {
     let mut answer = request();
@@ -24,6 +27,10 @@ fn call(
             Err(e) if matches!(**e, ureq::Error::Status(500.., _)) => {}
             _ => break,
         }
+        crate::launcher_log::line(format!(
+            "Request to {host} failed; trying again in {} s",
+            wait.as_secs()
+        ));
         std::thread::sleep(*wait);
         answer = request();
     }
@@ -57,7 +64,7 @@ mod tests {
         });
         let agent = ureq::AgentBuilder::new().build();
         let mut requests = 0;
-        let answer = call(&[Duration::ZERO; 2], || {
+        let answer = call(&[Duration::ZERO; 2], "localhost", || {
             requests += 1;
             agent.get(&url).call().map_err(Box::new)
         });

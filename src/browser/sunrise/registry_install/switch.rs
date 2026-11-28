@@ -19,6 +19,37 @@ pub struct SwitchQuestion {
     /// What the fit check or build said, by the name shown in `held` or `unproved`.
     pub reasons: BTreeMap<String, String>,
     pub removed: Vec<(String, String)>,
+    /// Of `held`, `unproved` and `removed`, the mods the player had on: what a switch that
+    /// keeps every wanted mod refuses to leave out.
+    pub wanted_left_out: Vec<String>,
+}
+
+/// How a switch treats the player's mods. The window and its tests take it from here, so a test
+/// of Home's switch runs the same rule the button does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SwitchPolicy {
+    /// The picker's and Update game's: the player answers any question the switch asks.
+    #[default]
+    Ask,
+    /// Home's switch to the build the mods have releases for: the registry mods an earlier
+    /// switch held off while they were on come back, and it stops before any change when its
+    /// fresh check would still leave out one the player had on.
+    KeepEveryMod,
+}
+
+impl SwitchPolicy {
+    /// Whether the switch offers held-off registry mods again (`V2SwitchHooks::recover_held`).
+    pub fn recover_held(self) -> bool {
+        self == Self::KeepEveryMod
+    }
+
+    /// The answer the policy gives on its own, before the player is asked; None asks them.
+    pub fn answer(self, question: &SwitchQuestion) -> Option<SwitchDecision> {
+        match self {
+            Self::Ask => None,
+            Self::KeepEveryMod => question.all_mods_or_cancel(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +66,14 @@ impl SwitchQuestion {
 
     pub fn has_omissions(&self) -> bool {
         !self.held.is_empty() || !self.unproved.is_empty()
+    }
+
+    /// The answer for a switch that has to keep every wanted mod (Home's switch to the build
+    /// the mods have releases for): Cancel, before anything is published, when it would hold
+    /// or remove one the player had on; None leaves the question to the player (only saved
+    /// worlds, or mods they had turned off, are at stake).
+    pub fn all_mods_or_cancel(&self) -> Option<SwitchDecision> {
+        (!self.wanted_left_out.is_empty()).then_some(SwitchDecision::Cancel)
     }
 
     pub fn omission_summary(&self) -> String {
@@ -154,6 +193,22 @@ pub enum Switched {
 }
 
 pub use crate::managed_play::BuildChoice;
+
+pub fn save_build_choice(instance_id: &str, tag: &str, choice: BuildChoice) -> Result<(), String> {
+    crate::instances::edit(instance_id, |meta| match choice {
+        BuildChoice::Follow(channel) => {
+            meta.version = None;
+            meta.channel = Some(channel);
+        }
+        BuildChoice::Keep => {
+            meta.version = Some(tag.into());
+            if let Some(channel) = crate::instances::Channel::of_build(tag) {
+                meta.channel = Some(channel);
+            }
+        }
+    })
+    .map(|_| ())
+}
 
 pub(super) fn sha256_bytes(hex: &str) -> Result<[u8; 32], String> {
     let mut bytes = [0; 32];

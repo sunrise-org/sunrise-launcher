@@ -8,8 +8,21 @@ pub struct Shell {
 
 impl Shell {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let launcher = cx.new(|cx| Launcher::new(window, cx));
+        Self::with_startup_checks(window, cx, true)
+    }
+
+    pub(crate) fn with_startup_checks(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        startup_checks: bool,
+    ) -> Self {
+        let launcher = cx.new(|cx| Launcher::new_with_startup_checks(window, cx, startup_checks));
         Self { launcher }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::with_startup_checks(window, cx, false)
     }
 
     /// The launcher it draws, for tests that drive the window as it opens.

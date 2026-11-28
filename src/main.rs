@@ -10,6 +10,7 @@ mod account_chip;
 mod app;
 mod launcher_messages;
 mod launcher_play;
+mod logs_panel;
 mod updates;
 pub(crate) use widgets::*;
 mod backdrop;
@@ -33,6 +34,7 @@ mod game_tools;
 mod github_mods_page;
 mod glass_ui;
 mod home;
+mod home_fit;
 mod home_mods;
 mod instance_icons;
 mod instances_page;
@@ -206,12 +208,10 @@ struct Launcher {
     instance_install: Option<String>,
     /// One for an instance waiting for the install running now to end.
     install_next: Option<Release>,
-    /// The install bar's previous and current fraction, so it moves rather than jumps.
-    bar: (f32, f32),
     releases: Load<Vec<Release>>,
     installed: Vec<String>,
     known_nightly: Option<String>,
-    installing: Option<(String, f32)>,
+    installing: Option<(String, backend::InstallPhase)>,
     /// Stops the game build download under way: its own, or the build switch's it serves.
     install_stop: Option<native_mods::Cancellation>,
     /// The status strip's list of work under way: open or folded, and the time left it measures.
@@ -220,9 +220,6 @@ struct Launcher {
     removing: Vec<String>,
     storage_builds: storage_builds::View,
     storage_report: Option<storage::Report>,
-    storage_pending: bool,
-    /// The storage work under way is a Clear, not a count.
-    storage_clearing: bool,
     /// A Clear the player still has to confirm: `Some(None)` is Clear all.
     storage_confirm: Option<Option<storage::Category>>,
     storage_error: Option<String>,
@@ -329,6 +326,8 @@ struct Launcher {
     play_step: Option<backend::PlayStep>,
     /// How far the accepted Play's game build download is, while it is at that step.
     play_download: Option<f32>,
+    /// Live counted detail shown beside/under "Preparing…" while Play is working.
+    play_detail: Option<String>,
     /// The accepted Play the session worker is answering.
     starting_play: Option<launcher_play::PlayIntent>,
     /// Play was pressed on a version not prepared yet: it starts once this preparation ends well.

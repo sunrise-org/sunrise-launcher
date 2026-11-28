@@ -19,8 +19,20 @@ static ARRIVED: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 /// Runs the pump now. Wakes that come while it runs make it run once more, never more.
 pub(crate) fn wake() {
+    #[cfg(test)]
+    if UNDER_TEST_SCHEDULER.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     ARRIVED.notify_one();
 }
+
+/// Set by a window test (a `gpui::TestAppContext` in its own process): GPUI's test scheduler
+/// refuses a foreground task woken from another thread, panicking in `assert_correct_thread`,
+/// which on this module's 64 KiB thread shows only as a stack overflow. Such a test drives the
+/// pump's tick with its own clock instead.
+#[cfg(test)]
+pub(crate) static UNDER_TEST_SCHEDULER: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Waits for the next [`wake`].
 pub(crate) async fn woken() {

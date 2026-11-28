@@ -99,6 +99,21 @@ pub(super) struct SettingsView {
     setup: bool,
     note: Option<String>,
     pub(crate) appearance: appearance::State,
+    pub(crate) storage_work: Option<crate::storage_report::Work>,
+    /// Feedback from the last explicit Clear, independent of the next count.
+    pub(crate) storage_clear: Option<Result<Box<storage::Report>, String>>,
+}
+
+impl SettingsView {
+    pub(crate) fn storage_busy(&self) -> bool {
+        self.storage_work.is_some()
+    }
+
+    pub(crate) fn storage_clearing(&self) -> bool {
+        self.storage_work
+            .as_ref()
+            .is_some_and(crate::storage_report::Work::is_clearing)
+    }
 }
 
 /// A card of rows with a rule between them.

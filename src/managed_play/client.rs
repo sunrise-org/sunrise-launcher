@@ -1,5 +1,9 @@
 //! Ordinary client Play keeps one admission on its worker through the actual spawn.
-use super::{catalogue, first::game_lock, unsettled, Active, FirstBuild, Profile};
+use super::{
+    catalogue,
+    first::{game_lock, RefreshError, VerifiedSnapshot},
+    unsettled, Active, FirstBuild, Profile,
+};
 use crate::{
     account::{self, Accounts, NoOwner},
     backend::{self, installation::BoundVariant, RuntimeGuard},
@@ -23,6 +27,8 @@ pub enum Progress {
     },
     Native(native_mods::Step),
     NativeLog(std::sync::Arc<str>),
+    /// The installed files are being checked before the game starts.
+    Verify,
     SignIn,
     Line(String),
     HookLine(String),
@@ -35,6 +41,7 @@ pub enum StartError {
     Native(native_mods::Failed, Option<Arc<FailedBuild>>),
     Hook(crate::launch::PreLaunchError),
     UnknownSpawn(String),
+    Snapshot(String),
     Other(String),
 }
 
@@ -54,7 +61,9 @@ impl From<StartError> for String {
             },
             StartError::Native(error, _) => error.into(),
             StartError::Hook(error) => error.to_string(),
-            StartError::UnknownSpawn(error) | StartError::Other(error) => error,
+            StartError::UnknownSpawn(error)
+            | StartError::Snapshot(error)
+            | StartError::Other(error) => error,
         }
     }
 }
@@ -200,7 +209,7 @@ impl Client<'_> {
             backend::managed_game_architecture_launch_error(tag, variant)
                 .map_or(Ok(()), |error| Err(StartError::Other(error)))
         };
-        let (active, registry_notices) = self.ready(
+        let (active, registry_notices, proof) = self.ready(
             &mut profile,
             || selected.map_or_else(|| choose.expect("a first Play needs a selection")(), Ok),
             check_build,
@@ -229,13 +238,19 @@ impl Client<'_> {
         let launch = &self.instance.launch;
         let started = (|| {
             arguments(&mut cmd)?;
+            // The window says what the check of the files (their hashes can take minutes on a
+            // slow disk) is doing; the session is made after it.
+            progress(Progress::Verify);
             profile.spawn_checked_account(
                 &active,
                 cancellation,
                 cmd,
-                (launch, self.piped, &|line| {
-                    progress(Progress::HookLine(line))
-                }),
+                (
+                    launch,
+                    self.piped,
+                    &|line| progress(Progress::HookLine(line)),
+                    proof,
+                ),
                 prepare_jars,
                 |cmd: &mut Command| {
                     if offline {
@@ -300,7 +315,7 @@ impl Client<'_> {
         cancellation: &native_mods::Cancellation,
         progress: impl Fn(Progress),
         load_index: impl FnOnce() -> Option<std::sync::Arc<sunrise_launcher_smod::index_v2::Index>>,
-    ) -> Result<(Active, Vec<String>), StartError> {
+    ) -> Result<(Active, Vec<String>, Option<VerifiedSnapshot>), StartError> {
         let home = profile.home().to_owned();
         let mode = self.instance.native_profile;
         let started = std::cell::Cell::new(false);
@@ -315,18 +330,24 @@ impl Client<'_> {
         };
         let log = |output| progress(Progress::NativeLog(output));
         if let Some(old) = profile.active()? {
+            let checking = crate::launcher_log::step("Checking game files");
             check_build(old.base(), old.variant.as_deref())?;
             // Prepare without the game-manifest lock. The profile stays admitted and the
             // saved generation continues to reserve this base until refresh commits.
             let replacement = match old.resources.check_play_output(old.base()) {
                 Ok(()) => None,
                 Err(backend::Unprepared::Incomplete | backend::Unprepared::ServerOnly) => {
-                    // The preparer is part of the saved image. Verify it before starting it.
-                    old.verify_artifacts()?;
+                    // The on-disk manifest is not proof of what the saved snapshot was.
+                    // Verify both the old resources and the preparer before replacing them.
+                    old.verify_binaries()?;
+                    old.resources
+                        .verify(old.base())
+                        .map_err(StartError::Snapshot)?;
                     progress(Progress::Prepare);
-                    Some(super::Resources::for_play(
+                    Some(super::Resources::for_play_with(
                         old.base(),
                         profile.handoff(),
+                        &|line| emit_prepare_line(&progress, line),
                         &|line| progress(Progress::Line(line)),
                     )?)
                 }
@@ -334,20 +355,33 @@ impl Client<'_> {
             };
             // Legacy writers still use the game lock, not profile admission. Keep
             // them out until refresh has staged the exact set we checked.
-            let _manifest = game_lock(&home)?;
+            let manifest = game_lock(&home)?;
+            checking.note("the profile's lock is held");
             super::recover_game_install(&home).map_err(StartError::Journal)?;
             let notices = catalogue::inspect(&home, load_index)?;
-            let active = profile
-                .refresh(
+            let (replacement_resources, proven_by_seal) = match replacement {
+                Some(prepared) => (Some(prepared.resources), prepared.proven_by_seal),
+                None => (None, false),
+            };
+            let (active, verified_resources) = profile
+                .refresh_for_play(
                     mode,
                     cancellation,
                     |step| native(old.base(), step),
                     Some(&log),
-                    replacement,
+                    replacement_resources,
                 )
-                .map_err(|error| native_failure(&home, error, || Some(Build::Active(old))))?
+                .map_err(|error| match error {
+                    RefreshError::Native(error) => {
+                        native_failure(&home, error, || Some(Build::Active(old)))
+                    }
+                    RefreshError::Snapshot(error) => StartError::Snapshot(error),
+                })?
                 .ok_or_else(|| unsettled!())?;
-            return Ok((active, notices));
+            let proof = (proven_by_seal || verified_resources)
+                .then(|| VerifiedSnapshot::new(active.clone(), home.clone(), manifest));
+            checking.done("");
+            return Ok((active, notices, proof));
         }
 
         let ready = (|| {
@@ -356,7 +390,10 @@ impl Client<'_> {
             })?;
             check_build(first.base(), first.variant().as_ref())?;
             progress(Progress::Prepare);
-            first.prepare(&|line| progress(Progress::Line(line)))?;
+            let prepared = first
+                .prepare_with(&|line| emit_prepare_line(&progress, line), &|line| {
+                    progress(Progress::Line(line))
+                })?;
             let (image, notices) = {
                 let _manifest = game_lock(&home)?;
                 super::recover_game_install(&home).map_err(StartError::Journal)?;
@@ -376,9 +413,11 @@ impl Client<'_> {
                     })?;
                 (image, notices)
             };
-            // Resource preparation takes a version lock. Don't take it under the game
-            // manifest lock; commit rechecks the frozen input epoch before publication.
-            Ok((first.commit(&image, cancellation)?, notices))
+            if !prepared.proven_by_seal {
+                progress(Progress::Verify);
+            }
+            let first = first.commit_prepared(&image, prepared, cancellation)?;
+            Ok((first.active.clone(), notices, Some(first)))
         })();
         if ready.is_err() {
             profile.release_failed_first_play()?;
@@ -480,7 +519,10 @@ fn turn_off_mods(
         .collect();
     let mut worlds = crate::worlds::review_risk(home, &suspects)
         .map_err(|error| {
-            eprintln!("checking saved worlds before turning off mods: {error}");
+            crate::elog!(
+                "checking saved worlds before turning off mods: {}",
+                crate::launcher_log::safe_error(&error.to_string())
+            );
             crate::i18n::tr("Sunrise couldn't check the saved worlds. No mods were turned off.")
                 .to_owned()
         })?
@@ -536,4 +578,115 @@ pub fn headless_first(instance: &instances::Instance) -> Result<FirstBuild, Stri
             .next()
     };
     FirstBuild::download(release.ok_or(installed)?)
+}
+
+/// Logs a preparation line to `launcher.log` before forwarding it to the caller (both the
+/// window and the CLI `play` path pass through here, so neither logs twice and both record
+/// preparation progress in `launcher.log`).
+fn emit_prepare_line(progress: &impl Fn(Progress), line: String) {
+    crate::launcher_log::line(crate::launcher_log::preparer_line(&line));
+    progress(Progress::Line(line));
+}
+
+#[cfg(test)]
+mod cli_log_tests {
+    use super::*;
+
+    #[test]
+    fn cli_play_prepare_and_meter_lines_land_in_launcher_log_without_ui_sink() {
+        const CHILD: &str = "SUNRISE_TEST_CLI_PLAY_LOG_CHILD";
+        const TEST: &str = "managed_play::client::cli_log_tests::cli_play_prepare_and_meter_lines_land_in_launcher_log_without_ui_sink";
+        if std::env::var_os(CHILD).is_none() {
+            let root = tempfile::tempdir().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST, "--nocapture"])
+                .env(CHILD, "1")
+                .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+                .env("SUNRISE_HOME", root.path().join("game"))
+                .env(
+                    "SUNRISE_LAUNCHER_LOCATION_FILE",
+                    root.path().join("location"),
+                )
+                .env("SUNRISE_NO_KEYCHAIN", "1")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("test result: ok. 1 passed;"),
+                "{stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        crate::launcher_log::hide("Alex_CliPlay");
+        let before = crate::launcher_log::since(0).0;
+        let seen = std::cell::RefCell::new(Vec::new());
+        emit_prepare_line(
+            &|p| {
+                if let Progress::Line(line) = p {
+                    seen.borrow_mut().push(line);
+                }
+            },
+            "Downloading Minecraft's files: 5 of 40 for Alex_CliPlay".into(),
+        );
+        let meter =
+            crate::launcher_log::PlayMeter::new(|d, t| format!("Checking cli files: {d} of {t}"));
+        meter.tick(1, 50);
+        assert_eq!(
+            seen.into_inner(),
+            vec!["Downloading Minecraft's files: 5 of 40 for Alex_CliPlay".to_string()]
+        );
+        let (_, lines) = crate::launcher_log::since(before);
+        let prep: Vec<&String> = lines
+            .iter()
+            .filter(|l| l.contains("Preparing: Downloading Minecraft's files: 5 of 40"))
+            .collect();
+        assert_eq!(prep.len(), 1, "{lines:?}");
+        assert!(!prep[0].contains("Alex_CliPlay"), "{prep:?}");
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("Checking cli files: 1 of 50")),
+            "{lines:?}"
+        );
+    }
+
+    /// The preparer names files in its progress lines and errors: such a line reaches the
+    /// caller whole and `launcher.log` only as a fixed note (review of #615).
+    #[test]
+    fn a_preparer_line_naming_a_file_or_address_stays_out_of_the_log() {
+        let named = [
+            "Imported client 26.3 from /home/ada/Private Client Backup/.minecraft/versions/26.3/26.3.jar",
+            r"C:\Users\Ada Lovelace\Private Client Backup\java\bin\javac.exe: The system cannot find the file specified. (os error 2)",
+            r"\\nas\Private Client Backup\sounds\indexes\26.json: denied",
+            "Downloading https://piston-data.mojang.com/v1/objects/0123/client.jar for Private Client Backup",
+            "Missing versions/26.3/26.3.json in Private Client Backup",
+        ];
+        let before = crate::launcher_log::since(0).0;
+        let seen = std::cell::RefCell::new(Vec::new());
+        for line in named {
+            emit_prepare_line(
+                &|p| {
+                    if let Progress::Line(line) = p {
+                        seen.borrow_mut().push(line);
+                    }
+                },
+                line.into(),
+            );
+        }
+        assert_eq!(seen.into_inner(), named, "the window gets each line whole");
+        let (_, lines) = crate::launcher_log::since(before);
+        let left_out = lines
+            .iter()
+            .filter(|l| l.contains("Preparing: (a line that names a file or an address"))
+            .count();
+        assert_eq!(left_out, named.len(), "{lines:?}");
+        for word in ["Private Client Backup", "/home/ada", "piston-data", "javac"] {
+            assert!(lines.iter().all(|l| !l.contains(word)), "{word}: {lines:?}");
+        }
+        assert_eq!(
+            crate::launcher_log::preparer_line("Preparing fixture resources (3 of 40)"),
+            "Preparing: Preparing fixture resources (3 of 40)"
+        );
+    }
 }

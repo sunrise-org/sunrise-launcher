@@ -2,88 +2,20 @@
 use super::*;
 
 impl Storage {
-    /// Not deletion candidates: an unproved worker can still be writing to them.
-    fn retained_compiler_bytes(
-        &self,
-        counted: &mut HashSet<(u64, u64)>,
-    ) -> Result<Option<u64>, Error> {
-        let native = self.root.join("native");
-        let mut bytes = None;
-        if checked(&native, true)?.is_some() {
-            for entry in fs::read_dir(&native)? {
-                let entry = entry?;
-                if entry.file_name().to_str().is_some_and(|name| {
-                    name.starts_with(native_mods::ATTEMPT_PREFIX)
-                        || name.starts_with(native_mods::OLD_ATTEMPT_PREFIX)
-                }) {
-                    // A changing or unreadable tree is still protected; zero means its size is unknown.
-                    let size = Tree::build(&entry.path()).map_or(0, |tree| tree.size(counted));
-                    bytes = Some(bytes.unwrap_or(0u64).saturating_add(size));
-                }
-            }
-        }
-        Ok(bytes)
-    }
-
+    /// A read-only count, or a manual Clear of one row or all of them under the build lease.
     pub fn report(&self, clear: Option<Category>, all: bool) -> Result<Report, Error> {
-        let registry_entries = match fs::read_dir(self.data.join("run-leases")) {
-            Ok(mut entries) => entries.try_fold(0usize, |count, entry| entry.map(|_| count + 1))?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
-            Err(error) => return Err(error.into()),
-        };
-        eprintln!(
-            "{}",
-            crate::i18n::trf(
-                "Runtime lease registry entries: {count}",
-                &[("count", &registry_entries.to_string())]
-            )
-        );
-        let clearing = clear.is_some() || all;
-        // Only manual clear takes the native build lease; read-only reports never make Play wait.
-        let lease = if clearing {
-            let lease = self.build_lease()?;
-            // Also refuse an external Cargo holding a target lock before starting a cleanup.
-            lease.bytes()?;
-            use sunrise_launcher_smod::runtime_leases::{cleanup::Cleanup, Error as LeaseError};
-            match Cleanup::existing(&self.data) {
-                Ok(cleanup) => {
-                    cleanup.collect_records()?;
-                }
-                Err(LeaseError::Busy) => {} // Other cache classes can still be reported/retained.
-                Err(LeaseError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            }
-            Some(lease)
-        } else {
-            None
-        };
-        let entries = self.entries()?;
-        let mut report = self.apply_retaining(entries, clear, all, true, lease.as_ref())?;
-        report.include_retained_compiler(self.retained_compiler_bytes(&mut HashSet::new())?);
-        if !clearing {
-            for entry in self.entries()? {
-                if let Err(error) = entry.access().and_then(|access| access.check()) {
-                    // A refused unit already has its line.
-                    let bytes = match allocated_bytes(&entry.path) {
-                        Err(Error::Unsafe(_)) => 0,
-                        bytes => bytes?,
-                    };
-                    if bytes > 0 {
-                        report
-                            .rows
-                            .iter_mut()
-                            .find(|row| row.category == entry.category)
-                            .expect("the rows have one for every category")
-                            .kept
-                            .push(Kept {
-                                bytes,
-                                reason: native_mods::cache_error(error),
-                            });
-                    }
-                }
-            }
+        if clear.is_none() && !all {
+            return self.report_counting(|_| {});
         }
-        Ok(report)
+        // Only manual Clear takes the build lease; its selected units take their own
+        // Cargo locks or runtime claim at removal, with no whole-target sizing preflight.
+        let selection = if all { None } else { clear };
+        let result = (|| {
+            let _lease = self.build_lease()?;
+            let entries = self.entries_until(&Cancel::default(), selection)?;
+            self.apply_retaining(entries, clear, all, true)
+        })();
+        result.map_err(redact_error)
     }
 
     #[cfg(test)]
@@ -93,12 +25,7 @@ impl Storage {
         clear: Option<Category>,
         all: bool,
     ) -> Result<Report, Error> {
-        let needs_target_lease = (clear.is_some() || all)
-            && entries
-                .iter()
-                .any(|entry| entry.path == self.root.join("native/target"));
-        let lease = needs_target_lease.then(|| self.build_lease()).transpose()?;
-        self.apply_retaining(entries, clear, all, false, lease.as_ref())
+        self.apply_retaining(entries, clear, all, false)
     }
 
     #[cfg(test)]
@@ -108,9 +35,9 @@ impl Storage {
         all: bool,
         before_clear: impl FnMut(&Path),
     ) -> Result<Report, Error> {
-        let lease = self.build_lease()?;
-        let entries = self.entries()?;
-        self.apply_retaining_observed(entries, clear, all, true, Some(&lease), before_clear)
+        let _lease = self.build_lease()?;
+        let entries = self.entries_until(&Cancel::default(), if all { None } else { clear })?;
+        self.apply_retaining_observed(entries, clear, all, true, before_clear)
     }
 
     pub(super) fn apply_retaining(
@@ -119,9 +46,8 @@ impl Storage {
         clear: Option<Category>,
         all: bool,
         retain: bool,
-        lease: Option<&Cache>,
     ) -> Result<Report, Error> {
-        self.apply_retaining_observed(entries, clear, all, retain, lease, |_| {})
+        self.apply_retaining_observed(entries, clear, all, retain, |_| {})
     }
 
     fn apply_retaining_observed(
@@ -130,50 +56,48 @@ impl Storage {
         clear: Option<Category>,
         all: bool,
         retain: bool,
-        lease: Option<&Cache>,
         mut before_clear: impl FnMut(&Path),
     ) -> Result<Report, Error> {
         // Validate every descendant before any deletion and deduplicate allocated blocks per row.
-        let mut rows: Vec<_> = Category::ALL
-            .into_iter()
-            .map(|category| Row {
-                category,
-                bytes: 0,
-                freed_bytes: 0,
-                remaining_bytes: 0,
-                private_compiler_bytes: 0,
-                kept: Vec::new(),
-            })
-            .collect();
+        let mut rows: Vec<_> = Category::ALL.into_iter().map(Row::new).collect();
         // Each folder is walked once, here: the walk validates every descendant and its sizes
         // serve the rows and the kept lines.
         let (entries, mut trees) = if retain {
-            refused(entries, &mut rows)?
+            refused(entries, &mut rows, &Cancel::default(), |category| {
+                all || clear == Some(category)
+            })?
         } else {
             let trees = entries
                 .iter()
-                .map(|entry| Tree::build(&entry.path))
+                .map(|entry| entry.tree(&Cancel::default()))
                 .collect::<Result<Vec<_>, Error>>()?;
             (entries, trees)
         };
         for row in &mut rows {
             row.bytes = allocated(&entries, &trees, row.category);
             row.remaining_bytes = row.bytes;
+            row.measured = all || clear.is_none() || clear == Some(row.category);
+            row.has_candidates = entries
+                .iter()
+                .zip(&trees)
+                .any(|(entry, tree)| entry.category == row.category && entry.is_candidate(tree));
         }
+        let mut blocked_build_tools = false;
+        let mut refused_indices = HashSet::new();
         for (index, entry) in entries.iter().enumerate() {
             if all || clear == Some(entry.category) {
+                if !trees[index].present {
+                    continue;
+                }
                 before_clear(&entry.path);
-                let result = if entry.path == self.root.join("native/target") {
-                    lease
-                        .expect("manual clear holds the build lease")
-                        .clear()
-                        .map(|_| ())
+                let result = if blocked_build_tools && entry.build_tool() {
+                    Err(Error::Busy)
                 } else {
-                    entry.clear()
+                    entry.remove(&self.root, retain, entry.root_id)
                 };
                 match result {
                     // Only a cleared folder is walked again, to see what is left of it.
-                    Ok(()) => trees[index] = Tree::build(&entry.path)?,
+                    Ok(()) => trees[index] = entry.tree(&Cancel::default())?,
                     Err(
                         error @ (Error::Busy
                         | Error::UnprovenExclusion
@@ -181,21 +105,30 @@ impl Storage {
                         | Error::UnpublishedGame
                         | Error::ResourceDependent(_)
                         | Error::ReferencedProfile
-                        | Error::UnprovenReferences),
+                        | Error::UnprovenReferences
+                        | Error::UnsupportedFilesystem
+                        | Error::Unsafe(_)),
                     ) if retain => {
                         let row = rows
                             .iter_mut()
                             .find(|row| row.category == entry.category)
                             .expect("the rows have one for every category");
-                        row.kept.push(Kept {
-                            bytes: trees[index].size(&mut HashSet::new()),
-                            reason: native_mods::cache_error(error),
-                        });
-                        // A busy build may be using subsequent build-tool units too. Stop
-                        // this clear attempt rather than deleting more after contention.
-                        if matches!(entry.access()?, Access::BuildTools) {
-                            break;
+                        blocked_build_tools |= entry.build_tool() && matches!(error, Error::Busy);
+                        row.keep(trees[index].size(&mut HashSet::new()), error, true);
+                        refused_indices.insert(index);
+                    }
+                    Err(error @ Error::Io(_)) if retain => {
+                        // A failed recursive removal can already have freed some files. If
+                        // the rest can't be measured, conservatively keep its original size.
+                        if let Ok(tree) = entry.tree(&Cancel::default()) {
+                            trees[index] = tree;
                         }
+                        let row = rows
+                            .iter_mut()
+                            .find(|row| row.category == entry.category)
+                            .expect("all categories have a row");
+                        row.keep(trees[index].size(&mut HashSet::new()), error, true);
+                        refused_indices.insert(index);
                     }
                     Err(error) => return Err(error),
                 }
@@ -203,17 +136,23 @@ impl Storage {
         }
         for row in &mut rows {
             if all || clear == Some(row.category) {
+                row.after_clear = true;
                 let remaining = allocated(&entries, &trees, row.category);
                 row.freed_bytes = row.bytes.saturating_sub(remaining);
                 row.remaining_bytes = remaining;
+                row.has_candidates =
+                    entries
+                        .iter()
+                        .zip(&trees)
+                        .enumerate()
+                        .any(|(index, (entry, tree))| {
+                            entry.category == row.category
+                                && entry.is_candidate(tree)
+                                && !refused_indices.contains(&index)
+                        });
             }
         }
-        Ok(Report {
-            total_bytes: rows
-                .iter()
-                .fold(0u64, |total, row| total.saturating_add(row.bytes)),
-            rows,
-        })
+        Ok(Report::new(rows))
     }
 }
 
@@ -231,26 +170,251 @@ pub(super) fn allocated(entries: &[Entry], trees: &[Tree], category: Category) -
 
 /// A unit holding a link or file the launcher does not expect is refused whole: it is neither
 /// counted nor cleared, and its row says so. The other units are not held up by it.
-fn refused(entries: Vec<Entry>, rows: &mut [Row]) -> Result<(Vec<Entry>, Vec<Tree>), Error> {
+fn refused(
+    entries: Vec<Entry>,
+    rows: &mut [Row],
+    cancel: &Cancel,
+    clearing: impl Fn(Category) -> bool,
+) -> Result<(Vec<Entry>, Vec<Tree>), Error> {
     let mut sound = Vec::new();
     let mut trees = Vec::new();
     for entry in entries {
-        match Tree::build(&entry.path) {
-            Ok(tree) => {
-                sound.push(entry);
-                trees.push(tree);
-            }
-            Err(error @ Error::Unsafe(_)) => rows
-                .iter_mut()
-                .find(|row| row.category == entry.category)
-                .expect("the rows have one for every category")
-                .kept
-                .push(Kept {
-                    bytes: 0,
-                    reason: native_mods::cache_error(error),
-                }),
-            Err(error) => return Err(error),
+        if cancel.is_cancelled() {
+            break;
+        }
+        let row = rows
+            .iter_mut()
+            .find(|row| row.category == entry.category)
+            .expect("the rows have one for every category");
+        if let Some(tree) = measure_entry(&entry, row, cancel, clearing(entry.category))? {
+            sound.push(entry);
+            trees.push(tree);
         }
     }
     Ok((sound, trees))
+}
+
+pub(super) fn measure_entry(
+    entry: &Entry,
+    row: &mut Row,
+    cancel: &Cancel,
+    clearing: bool,
+) -> Result<Option<Tree>, Error> {
+    match entry.tree(cancel) {
+        Ok(tree) => {
+            if !clearing && entry.incomplete_target() && tree.present {
+                row.keep(tree.size(&mut HashSet::new()), Error::IncompleteUnit, false);
+            }
+            Ok(Some(tree))
+        }
+        Err(Error::Unsafe(_) | Error::Io(_)) if cancel.is_cancelled() => Ok(None),
+        Err(error @ (Error::Unsafe(_) | Error::Io(_))) => {
+            row.keep(0, error, clearing);
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+mod manual_tests {
+    use super::*;
+
+    #[test]
+    fn profile_game_cache_inventory_counts_only_the_rebuildable_entries() {
+        let home = crate::storage::tests::Home::new();
+        let files = [
+            home.seed(".sunrise-cache/behaviours-v8.bin"),
+            home.seed(".sunrise-cache/behaviours-v7.bin"),
+            home.seed(".sunrise-cache/registry-v1.bin"),
+            home.seed(".sunrise-cache/mod-content/out"),
+            home.seed(".sunrise-cache/resourcepacks/out"),
+            home.seed("cache/dx12-shaders.bin"),
+        ];
+        let canaries = [
+            home.seed(".sunrise-cache/behaviours-v9.bin"),
+            home.seed(".sunrise-cache/player-data"),
+            home.seed("cache/unknown/keep"),
+            home.seed("cache/.trash-unrelated/keep"),
+        ];
+        let root = Root::open(&home.0).unwrap();
+        let mut entries = Vec::new();
+        profile_game_caches(&mut entries, &root).unwrap();
+        // Simulate a profile separate from both the build root and launcher data directory.
+        let launcher = crate::storage::tests::Home::new();
+        let storage = Storage::at(&launcher.0).unwrap();
+        let data = Root::open(&launcher.0).unwrap();
+        storage
+            .detached_trash(&mut entries, &data, &[], &Cancel::default())
+            .unwrap();
+        assert_eq!(entries.len(), 6);
+        for file in files {
+            assert_eq!(
+                entries
+                    .iter()
+                    .filter(|entry| file.starts_with(&entry.path))
+                    .count(),
+                1
+            );
+        }
+        for file in canaries {
+            assert!(!entries.iter().any(|entry| file.starts_with(&entry.path)));
+        }
+    }
+
+    #[test]
+    fn refused_units_are_residual_with_bytes_and_reason() {
+        let home = crate::storage::tests::Home::new();
+        let file = home.seed("game/output");
+        let storage = Storage::at(&home.0).unwrap();
+        let root = Root::open(&home.0).unwrap();
+        let entries = vec![Entry::fixed(&root, Path::new("game"), Category::RustCompiler).unwrap()];
+        let lock = home.seed("game/.cargo-lock");
+        let lock = fs::File::options()
+            .read(true)
+            .write(true)
+            .open(lock)
+            .unwrap();
+        lock.lock().unwrap();
+        let directory = file.parent().unwrap();
+        // Give inline-directory filesystems enough names to allocate directory blocks too.
+        for index in 0..32 {
+            fs::write(
+                directory.join(format!("padding-{index:02}-{}", "x".repeat(180))),
+                [],
+            )
+            .unwrap();
+        }
+        // Independent filesystem allocations, not the recursive production sum.
+        let own_bytes = |path: &Path| {
+            super::super::super::allocation(path, &fs::symlink_metadata(path).unwrap())
+                .unwrap()
+                .1
+        };
+        let bytes = own_bytes(directory)
+            + fs::read_dir(directory)
+                .unwrap()
+                .map(|entry| own_bytes(&entry.unwrap().path()))
+                .sum::<u64>();
+        let report = storage.apply_retaining(entries, None, true, true).unwrap();
+        let row = report
+            .rows
+            .iter()
+            .find(|row| row.category == Category::RustCompiler)
+            .unwrap();
+        assert_eq!(row.bytes, bytes);
+        assert_eq!(row.freed_bytes, 0);
+        assert_eq!(row.remaining_bytes, bytes);
+        assert_eq!(row.kept.len(), 1);
+        assert_eq!(row.kept[0].bytes, bytes);
+        assert!(!row.kept[0].reason.is_empty());
+        assert!(file.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_unit_with_an_unexpected_link_is_refused_on_its_row_and_holds_up_no_other() {
+        let home = crate::storage::tests::Home::new();
+        let good = home.seed("rust/old/payload");
+        let bad = home.seed("cache/payload");
+        home.seed("worlds/keep");
+        std::os::unix::fs::symlink(home.0.join("worlds"), home.0.join("cache/link")).unwrap();
+        let storage = Storage::at(&home.0).unwrap();
+        let root = Root::open(&home.0).unwrap();
+        let entries = vec![
+            Entry::fixed(&root, Path::new("cache"), Category::OtherCaches).unwrap(),
+            Entry::fixed(&root, Path::new("rust/old"), Category::RustCompiler).unwrap(),
+        ];
+        let report = storage.apply_retaining(entries, None, true, true).unwrap();
+        let row = |category| {
+            report
+                .rows
+                .iter()
+                .find(|row| row.category == category)
+                .unwrap()
+        };
+        let refused = row(Category::OtherCaches);
+        assert_eq!((refused.bytes, refused.freed_bytes), (0, 0));
+        assert_eq!(refused.kept.len(), 1);
+        assert!(refused.kept[0].reason.contains("link"));
+        assert!(bad.exists());
+        assert!(home.0.join("worlds/keep").exists());
+        assert!(row(Category::RustCompiler).freed_bytes > 0);
+        assert!(row(Category::RustCompiler).kept.is_empty());
+        assert!(!good.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn retained_compiler_attempt_with_outside_link_is_cleared_without_following_it() {
+        let home = crate::storage::tests::Home::new();
+        let payload = home.seed("native/.nb-retained/output");
+        let outside = home.seed("player-data/keep");
+        let link = payload.with_file_name("link");
+        std::os::unix::fs::symlink(outside.parent().unwrap(), &link).unwrap();
+        let storage = Storage::at(&home.0).unwrap();
+        let root = Root::open(&home.0).unwrap();
+        let entries = vec![Entry::fixed(
+            &root,
+            Path::new("native/.nb-retained"),
+            Category::BuildFiles,
+        )
+        .unwrap()];
+        let report = storage
+            .apply_retaining(entries, Some(Category::BuildFiles), false, true)
+            .unwrap();
+        let row = report
+            .rows
+            .iter()
+            .find(|row| row.category == Category::BuildFiles)
+            .unwrap();
+        assert!(row.freed_bytes > 0);
+        assert!(row.kept.is_empty());
+        assert!(!payload.parent().unwrap().exists());
+        assert!(outside.is_file());
+    }
+
+    #[test]
+    fn a_refused_unit_is_walked_once_and_a_cleared_one_twice() {
+        let home = crate::storage::tests::Home::new();
+        home.seed("rust/old/payload");
+        let storage = Storage::at(&home.0).unwrap();
+        let root = Root::open(&home.0).unwrap();
+        #[cfg(unix)]
+        {
+            home.seed("cache/payload");
+            std::os::unix::fs::symlink(home.0.join("rust"), home.0.join("cache/link")).unwrap();
+        }
+        #[cfg_attr(not(unix), allow(unused_mut))]
+        let mut entries =
+            vec![Entry::fixed(&root, Path::new("rust/old"), Category::RustCompiler).unwrap()];
+        #[cfg(unix)]
+        entries.push(Entry::fixed(&root, Path::new("cache"), Category::OtherCaches).unwrap());
+        let count = entries.len();
+        let walks = crate::storage::walks();
+        let report = storage.apply_retaining(entries, None, true, true).unwrap();
+        // The refused folder was walked once (and stopped there); the sound one once, then once
+        // more after it was cleared.
+        assert_eq!(crate::storage::walks() - walks, count + 1);
+        assert!(
+            report
+                .rows
+                .iter()
+                .find(|row| row.category == Category::RustCompiler)
+                .unwrap()
+                .freed_bytes
+                > 0
+        );
+        #[cfg(unix)]
+        assert_eq!(
+            report
+                .rows
+                .iter()
+                .find(|row| row.category == Category::OtherCaches)
+                .unwrap()
+                .kept
+                .len(),
+            1
+        );
+    }
 }

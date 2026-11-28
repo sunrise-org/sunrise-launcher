@@ -48,7 +48,8 @@ pub(super) fn releases(as_json: bool) -> Result<i32, Error> {
 
 pub(super) fn install(tag: String, as_json: bool) -> Result<(), Error> {
     let label = format!("Installing {tag}");
-    let tag = backend::install_tag(&tag, false, progress(label))?;
+    let tag =
+        progress::install_progress(&label, |report| backend::install_tag(&tag, false, report))?;
     if as_json {
         json(serde_json::json!({ "installed": tag, "prepared": backend::check_prepared(&tag) }));
     } else if backend::check_prepared(&tag) {

@@ -36,7 +36,7 @@ pub(super) const EVIDENCE: &str = ".native-reuse.json";
 pub(super) const OLDER_EVIDENCE: &str = ".native-inputs";
 
 /// The evidence's layout. An unknown layout is unreadable, not missing.
-const SCHEMA: u32 = 1;
+const SCHEMA: u32 = 2;
 
 /// How many admissions one build keeps (each caller and base that planned it has one).
 const ADMISSIONS_KEPT: usize = 8;
@@ -61,6 +61,8 @@ pub(super) struct Image {
     local_sdk: Option<String>,
     /// The SDK the build compiles against, whether or not any pin was read from it.
     build_sdk: BuildSdk,
+    mixins_from_source: bool,
+    tool: CompilerTool,
 }
 
 /// The identity of the SDK a build compiles against.
@@ -72,6 +74,15 @@ pub(super) enum BuildSdk {
     /// A developer's prebuilt game: the SHA-256 of its `sunrise-prebuilt.json`, which lists the
     /// digest of every file of the package.
     Local { sha256: String },
+}
+
+/// The selected compiler for the installed image, independent of its SDK inputs.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+enum CompilerTool {
+    Signed,
+    Local { sha256: String },
+    Unavailable,
 }
 
 /// What the developer's prebuilt game folder ([`sdk_cache::DEVELOPER_SDK`]) names its package by
@@ -96,7 +107,15 @@ impl Chosen {
     ) -> Result<Self, Failed> {
         if let Some(folder) = local {
             let path = folder.join(PREBUILT_IDENTITY);
-            let bytes = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let bytes = fs::read(&path).map_err(|error| {
+                trf(
+                    "Could not read the developer SDK manifest {manifest}: {kind}.",
+                    &[
+                        ("manifest", PREBUILT_IDENTITY),
+                        ("kind", &error.kind().to_string()),
+                    ],
+                )
+            })?;
             return Ok(Self::Local {
                 folder: folder.to_owned(),
                 sha256: sunrise_launcher_release_verify::sha256_hex(&bytes),
@@ -150,6 +169,15 @@ impl Image {
             sdk: read.sdk.clone(),
             local_sdk: read.local.clone(),
             build_sdk: chosen.identity(),
+            mixins_from_source: MIXINS_FROM_SOURCE.load(std::sync::atomic::Ordering::Relaxed),
+            tool: match chosen {
+                Chosen::Signed(_) => CompilerTool::Signed,
+                Chosen::Local { .. } => sdk_cache::developer_tool(true)
+                    .and_then(|tool| sunrise_launcher_smod::index::sha256_file(&tool).ok())
+                    .map_or(CompilerTool::Unavailable, |sha256| CompilerTool::Local {
+                        sha256,
+                    }),
+            },
         }
     }
 }
@@ -237,7 +265,7 @@ impl Evidence {
     /// image and its game is still the sealed one. A build with no evidence is never proved, and
     /// never sealed here.
     fn prove(version: &str, contents: &Contents<'_>, image: &Image) -> Option<Self> {
-        if !contents.installed_in(version) {
+        if image.tool == CompilerTool::Unavailable || !contents.installed_in(version) {
             return None;
         }
         let dir = Target::Client.directory(version);
@@ -252,7 +280,7 @@ impl Evidence {
     /// The first seal of a build this launcher has just published: its installed mods are the
     /// plan's, it has no evidence yet, and its game can be captured.
     fn seal(version: &str, contents: &Contents<'_>, image: &Image) -> Option<Self> {
-        if !contents.installed_in(version) {
+        if image.tool == CompilerTool::Unavailable || !contents.installed_in(version) {
             return None;
         }
         let dir = Target::Client.directory(version);
@@ -418,10 +446,15 @@ pub(super) fn installable(
     match slot(version, contents, image) {
         Some(Slot::Proved(version, evidence)) => Ok((version, Some(*evidence))),
         Some(Slot::Vacant(version)) => Ok((version, None)),
-        None => Err(Failed::Other(trf(
-            "Every installed build named for these mods ({version}) holds other mods or was changed after it was installed. Remove them, then build again.",
-            &[("version", version)],
-        ))),
+        None => {
+            crate::launcher_log::line(
+                "Native build refused: no vacant or proved installed image slot",
+            );
+            Err(Failed::Other(trf(
+                "The installed builds for these mods ({version}) hold different mods or were changed after they were installed. Remove them, then build again.",
+                &[("version", version)],
+            )))
+        }
     }
 }
 
@@ -661,7 +694,7 @@ pub(super) fn find(
     }
     let looking = std::time::Instant::now();
     let hit = lookup(request, requested);
-    timed("Looking up the installed build", looking)?;
+    timed(tr("Looking up the installed build"), looking)?;
     hit.map(|hit| {
         reused(
             hit,
@@ -728,6 +761,100 @@ pub(super) fn before_planning(
     find(&request, &requested, progress, started)
 }
 
+/// Whether Play's exact-profile fast path (`build_exact_client` -> `pipeline` -> `reuse::find` ->
+/// [`lookup`]) already has a proved, admitted installed client build for the enabled native mods
+/// in `home` on `base` with build `profile`. Reads only kept SDK indexes and installed files on
+/// disk; fetches nothing and writes only inside a transient temp directory that drops on return.
+pub(crate) fn exact_client_reusable(base: &str, home: &Path, profile: Profile) -> bool {
+    if backend::native_mod_architecture_error().is_some() {
+        return false;
+    }
+    let (Ok(built_on), Ok(()), Ok(platform)) = (
+        checked_about(base),
+        backend::need_prepared(base),
+        platform_for_game(base),
+    ) else {
+        return false;
+    };
+    let Ok(temp) = tempfile::Builder::new()
+        .prefix("sunrise-native-reuse-")
+        .tempdir()
+    else {
+        return false;
+    };
+    let staged = temp.path().join("staged");
+    if !stage_enabled_readonly(home, &staged) {
+        return false;
+    }
+    let Ok(found) = scan_bundles(&staged) else {
+        return false;
+    };
+    let mut ids = std::collections::HashSet::new();
+    if found.is_empty() || !found.iter().all(|b| ids.insert(&b.manifest.id)) {
+        return false;
+    }
+    let incoming = temp.path().join("incoming");
+    let mut requested = Vec::with_capacity(found.len());
+    for bundle in found {
+        let dir = incoming.join(&bundle.manifest.id);
+        if copy_bundle(&bundle, &dir).is_err() {
+            return false;
+        }
+        requested.push(Bundle { dir, ..bundle });
+    }
+    let origin = built_on.as_ref().map_or(base, |about| about.base.as_str());
+    let local_sdk = developer_sdk(crate::developer_install::is_developer(origin));
+    let options = BuildOptions {
+        exact_home: Some(home),
+        ..BuildOptions::default()
+    };
+    let request = Request {
+        base,
+        folder: &staged,
+        built_on: built_on.as_ref(),
+        platform,
+        profile,
+        target: Target::Client,
+        options: &options,
+        local_sdk: local_sdk.as_deref(),
+    };
+    lookup(&request, &requested).is_some()
+}
+
+/// Read-only staging of enabled native `.smod` archives in `home` into a transient folder,
+/// matching `stage_installed` without locking or mutating `home`.
+fn stage_enabled_readonly(home: &Path, out: &Path) -> bool {
+    let mut paths: Vec<PathBuf> = fs::read_dir(home.join(INSTALLED))
+        .map(|dir| dir.flatten().map(|entry| entry.path()).collect())
+        .unwrap_or_default();
+    paths.retain(|path| path.extension().is_some_and(|ext| ext == "smod") && path.is_file());
+    paths.sort();
+    let mut seen = std::collections::HashSet::new();
+    let mut count = 0usize;
+    for path in paths {
+        let Ok(bundle) = sunrise_launcher_smod::index::native::Bundle::read(&path) else {
+            continue;
+        };
+        if !crate::browser::mod_list::is_enabled(home, &bundle.manifest.id) {
+            continue;
+        }
+        if !seen.insert(bundle.manifest.id.clone()) {
+            return false;
+        }
+        let dir = out.join(&bundle.manifest.id);
+        for (name, bytes) in &bundle.files {
+            let to = dir.join(name);
+            if fs::create_dir_all(to.parent().unwrap_or(&dir)).is_err()
+                || fs::write(&to, bytes).is_err()
+            {
+                return false;
+            }
+        }
+        count += 1;
+    }
+    count > 0
+}
+
 /// The found build, used again as the planned path uses an installed one: kept for a staged
 /// profile, said to be up to date, and counted as the newest of the builds kept (`prune`).
 pub(super) fn reused(
@@ -743,8 +870,11 @@ pub(super) fn reused(
         let _publication = crate::run_leases::installation().map_err(cache_error)?;
         stage.retain_target(&hit.version)?;
     }
-    timed("Planning the build", started)?;
+    timed(tr("Planning the build"), started)?;
     options.cancellation.check()?;
+    crate::launcher_log::line(
+        "Native build reused: unchanged inputs match a sealed installed image",
+    );
     progress(Step::Plan(Plan::UpToDate, profile));
     let _ = fs::write(target.directory(&hit.version).join(".installed"), "");
     Ok(Built {

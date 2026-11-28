@@ -16,9 +16,37 @@ type Next = fn(&mut Facts);
 const LONG: &str = "The build failed. The compiler said a great deal more than fits here.";
 
 #[test]
+fn installing_uses_build_phase_labels_and_keeps_the_donor_count() {
+    use backend::InstallPhase;
+    for (phase, label) in [
+        (InstallPhase::Checking, "Checking the build…"),
+        (InstallPhase::Unpacking, "Unpacking the build"),
+        (InstallPhase::Finishing, "Putting the build in place"),
+        (InstallPhase::Preparing, "Getting the build ready…"),
+    ] {
+        let view = Facts {
+            installing: Some(phase),
+            ..idle()
+        }
+        .view();
+        assert_eq!(view.main.label(), label);
+        assert_eq!(view.strip(), Some((label.into(), StripAct::Home)));
+    }
+    let detail = "Copying the prepared game files: 2 of 8";
+    let view = Facts {
+        installing: Some(InstallPhase::Preparing),
+        play_detail: Some(detail.into()),
+        ..idle()
+    }
+    .view();
+    assert_eq!(view.play_detail.as_deref(), Some(detail));
+    assert_eq!(view.strip(), Some((detail.into(), StripAct::Home)));
+}
+
+#[test]
 fn play_says_each_state_in_the_order_they_win() {
     let all = Facts {
-        installing: Some(0.42),
+        installing: Some(backend::InstallPhase::Downloading(0.42)),
         preparing: true,
         building: true,
         starting: true,
@@ -28,7 +56,10 @@ fn play_says_each_state_in_the_order_they_win() {
     };
     // Each step takes the winning state away: the next one shows.
     let steps: [(Main, Next); 9] = [
-        (Main::Installing(0.42), |f| f.installing = None),
+        (
+            Main::Installing(backend::InstallPhase::Downloading(0.42)),
+            |f| f.installing = None,
+        ),
         (Main::Preparing, |f| f.preparing = false),
         (Main::Building, |f| f.building = false),
         (Main::Starting, |f| f.starting = false),
@@ -46,7 +77,10 @@ fn play_says_each_state_in_the_order_they_win() {
     assert_eq!(Main::Play.label(), "Play");
     // Signed out, Play is still "Play": Home has no second "Sign in with Microsoft".
     assert_eq!(Main::SignIn.label(), "Play");
-    assert_eq!(Main::Installing(0.42).label(), "Installing · 42%");
+    assert_eq!(
+        Main::Installing(backend::InstallPhase::Downloading(0.42)).label(),
+        "Downloading the build 42%"
+    );
 }
 
 #[test]
@@ -69,9 +103,48 @@ fn play_names_the_step_it_is_at_while_the_game_starts() {
     // A step left over once the start is over says nothing.
     let done = Facts {
         step: Some(backend::PlayStep::Mods),
+        play_detail: Some("Sealing the game files: 10 of 20".into()),
         ..idle()
     };
     assert_eq!(done.view().main, Main::Play);
+    assert_eq!(done.view().play_detail, None);
+
+    // Live counted detail shows in the reserved play_detail slot (not `said`) while Play is working.
+    let preparing = Facts {
+        starting: true,
+        step: Some(backend::PlayStep::Prepare),
+        play_detail: Some("Downloading Minecraft's files: 120 of 4000".into()),
+        ..idle()
+    };
+    let view = preparing.view();
+    assert_eq!(view.main.label(), "Preparing…");
+    assert_eq!(view.said, None);
+    assert_eq!(
+        view.play_detail.as_deref(),
+        Some("Downloading Minecraft's files: 120 of 4000")
+    );
+    assert!(!view.failed);
+
+    // After a failed Play, a cancel (idle), or once the game is running, no stale detail remains.
+    let failed = Facts {
+        client_error: Some("Prepare failed".into()),
+        play_detail: Some("Sealing the game files: 10 of 20".into()),
+        ..idle()
+    };
+    let failed_view = failed.view();
+    assert!(failed_view.failed);
+    assert_eq!(
+        failed_view.said.as_deref(),
+        Some("The game couldn't start.")
+    );
+    assert_eq!(failed_view.play_detail, None);
+
+    let running = Facts {
+        running: true,
+        play_detail: Some("Checking the game files: 10 of 20".into()),
+        ..idle()
+    };
+    assert_eq!(running.view().play_detail, None);
 }
 
 #[test]
@@ -149,7 +222,7 @@ fn play_can_be_pressed_unless_something_is_under_way_or_the_data_is_lost() {
     }
     for facts in [
         Facts {
-            installing: Some(0.),
+            installing: Some(backend::InstallPhase::Checking),
             ..idle()
         },
         Facts {
@@ -351,6 +424,8 @@ fn a_newer_build_is_offered_only_to_an_idle_installed_game_and_only_on_home() {
     let view = newer.view();
     assert_eq!(view.said.as_deref(), Some("Nov 18 is available"));
     assert_eq!(view.act, Some(Act::Update));
+    // Home draws the offer above the Play row, in the played line's place.
+    assert_eq!(view.offer.as_deref(), Some("Nov 18 is available"));
     assert_eq!(Act::Update.label(), "Update game");
     assert_eq!(view.strip(), None);
     for facts in [
@@ -368,8 +443,21 @@ fn a_newer_build_is_offered_only_to_an_idle_installed_game_and_only_on_home() {
         },
     ] {
         let view = facts.view();
+        assert_eq!(view.offer, None, "{facts:?}");
         assert_eq!((view.said, view.act), (None, None), "{facts:?}");
     }
+    // A problem's action wins the button, so the offer isn't drawn on its own.
+    let held = Facts {
+        held: Some("Nov 19".into()),
+        ..idle()
+    };
+    let view = Facts {
+        update: Some("Nov 18".into()),
+        ..held
+    }
+    .view();
+    assert_eq!(view.act, Some(Act::Resolve));
+    assert_eq!(view.offer, None);
 }
 
 #[test]
@@ -409,10 +497,10 @@ fn the_strip_shows_work_under_way_then_a_running_game_and_nothing_when_idle() {
     };
     home(
         Facts {
-            installing: Some(0.5),
+            installing: Some(backend::InstallPhase::Preparing),
             ..idle()
         },
-        "Installing · 50%",
+        "Getting the build ready…",
     );
     home(
         Facts {
@@ -787,9 +875,13 @@ fn play_build_account_error_shows_the_account_refusal_instead_of_publish_fallbac
             true,
         );
         let expected = refused.in_window();
-        let captured = settle_play_build_error(&mut run, &StartError::Account(refused), false);
+        let (captured, close_sheet) = crate::launcher_messages::route_active_play_build_error(
+            &mut run,
+            &StartError::Account(refused),
+            false,
+        );
         assert!(
-            !captured,
+            !captured && !close_sheet,
             "account refusal still runs the Play button's account-refusal path"
         );
         let Some(End::Stopped(stop)) = &run.end else {
@@ -799,4 +891,14 @@ fn play_build_account_error_shows_the_account_refusal_instead_of_publish_fallbac
         assert!(stop.error.is_empty());
         assert_eq!(stop.action, None);
     }
+}
+
+#[test]
+fn update_game_keeps_a_pinned_profile_pinned_and_a_following_one_following() {
+    use sunrise_launcher::browser::sunrise::BuildChoice;
+    assert!(matches!(update_choice(true), Some(BuildChoice::Keep)));
+    assert!(
+        update_choice(false).is_none(),
+        "a following profile saves no pin"
+    );
 }

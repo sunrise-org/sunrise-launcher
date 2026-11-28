@@ -225,7 +225,11 @@ mod installed_refresh_tests {
             error: None,
             backup_notice: None,
         };
-        assert!(!snapshot.finish(InstalledRows::read(&home)));
+        assert!(!snapshot.finish(InstalledRows::read(
+            &home,
+            native_mods::Profile::Optimized,
+            None
+        )));
         assert!(!snapshot.ready());
         assert!(matches!(
             InstalledRefresh::of(Some(&snapshot)),
@@ -237,7 +241,11 @@ mod installed_refresh_tests {
             "the same fingerprint must be reread"
         );
         drop(publication);
-        assert!(snapshot.finish(InstalledRows::read(&home)));
+        assert!(snapshot.finish(InstalledRows::read(
+            &home,
+            native_mods::Profile::Optimized,
+            None
+        )));
         assert!(snapshot.ready());
     }
 
@@ -267,7 +275,11 @@ mod installed_refresh_tests {
             InstalledRefresh::of(Some(&snapshot)),
             InstalledRefresh::Reading
         ));
-        snapshot.finish(InstalledRows::read(home.path()));
+        snapshot.finish(InstalledRows::read(
+            home.path(),
+            native_mods::Profile::Optimized,
+            None,
+        ));
         assert!(snapshot.enabled.contains("ruby"));
         assert!(matches!(
             InstalledRefresh::of(Some(&snapshot)),
@@ -275,7 +287,11 @@ mod installed_refresh_tests {
         ));
         assert_eq!(std::fs::read(&journal).unwrap(), b"not a journal");
         std::fs::remove_file(journal).unwrap();
-        snapshot.finish(InstalledRows::read(home.path()));
+        snapshot.finish(InstalledRows::read(
+            home.path(),
+            native_mods::Profile::Optimized,
+            None,
+        ));
         assert!(matches!(
             InstalledRefresh::of(Some(&snapshot)),
             InstalledRefresh::Ready
