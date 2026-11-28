@@ -223,7 +223,7 @@ pub(crate) fn banner_button(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
 ) -> Stateful<Div> {
-    button(id, label, Look::new(Style::Secondary, Size::Small))
+    button(id, label, Look::new(Style::Secondary, Size::Medium))
 }
 
 /// A banner's quiet text button (Ghost, Small), for its Details.

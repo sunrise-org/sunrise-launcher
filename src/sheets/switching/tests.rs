@@ -1,4 +1,7 @@
-use super::{build_switch::can_fast_save_choice, receipt::publish_report};
+use super::{
+    build_switch::{can_fast_save_choice, can_save_choice},
+    receipt::publish_report,
+};
 use std::io::{self, Write};
 use sunrise_launcher::instances::{Channel, Instance, Kind as InstanceKind};
 
@@ -35,6 +38,35 @@ fn can_fast_save_choice_checks_kind_recovery_and_target() {
     std::fs::create_dir_all(txn.parent().unwrap()).unwrap();
     std::fs::write(&txn, "{}").unwrap();
     assert!(!can_fast_save_choice(&instance, tag));
+    assert!(!can_save_choice(&instance));
+}
+
+#[test]
+fn a_choice_can_be_saved_without_a_switch_for_an_ordinary_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut instance = Instance {
+        id: "own-2".into(),
+        name: "Own".into(),
+        home: dir.path().to_path_buf(),
+        work: dir.path().to_path_buf(),
+        version: None,
+        channel: Channel::Dev,
+        kind: InstanceKind::Own,
+        group: None,
+        icon: None,
+        native_profile: Default::default(),
+        last_played: None,
+        played: Default::default(),
+        launch: Default::default(),
+        incarnation: None,
+    };
+    // Never played: any choice is only saved. (A played profile on a different build needs an
+    // active-build record on disk; `can_save_choice` is what lets the chooser save it too,
+    // and `pending_choice` in `profile_builds` is what Play then reads.)
+    assert!(can_save_choice(&instance));
+    assert!(can_fast_save_choice(&instance, "dev-2026-11-24-abc"));
+    instance.kind = InstanceKind::Pack;
+    assert!(!can_save_choice(&instance));
 }
 
 #[test]

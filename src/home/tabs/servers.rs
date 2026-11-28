@@ -29,7 +29,6 @@ impl Launcher {
             })
             .map(|(index, entry)| (index, entry.clone()))
             .collect();
-        let shown = (!query.is_empty() && count > 0).then_some((found.len(), count));
         let view = &self.ui.home.tabs.views[Tab::Servers.index()];
         let (built, place) = view.near.list(&view.scroll, found.len(), 1, ROW, 0.);
         let rows = found[built].to_vec();
@@ -83,9 +82,7 @@ impl Launcher {
         ));
         Content {
             count: Some(count),
-            shown,
             manage: (count > 0).then_some(manage),
-            turned_off: 0,
             items,
         }
     }

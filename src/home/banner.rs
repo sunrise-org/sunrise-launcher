@@ -201,7 +201,10 @@ impl Launcher {
     /// The build's name and the tag it was made from (for the tooltip). A profile on Dev with no
     /// build says why it has none.
     fn build_name(&self, instance: &instances::Instance) -> (String, Option<String>) {
-        let version = self.profile_target(instance);
+        // The chosen build, while it isn't the one played: Play then says how to get it.
+        let version = self
+            .pending_build(instance)
+            .or_else(|| self.profile_target(instance));
         // A built mod image reads as its base; keep the actual tag in the tooltip.
         let base = version
             .as_deref()
@@ -610,7 +613,7 @@ fn profile_state(
     if let Some((tone, said)) = tone.zip(view.said.clone()) {
         let mut strip = Banner::new(tone, said);
         if let Some(act) = act {
-            strip = strip.action(act_button_sized(act, Size::Small, cx));
+            strip = strip.action(act_button(act, cx));
         }
         if let Some(source) = log.filter(|_| tone == Tone::Danger) {
             strip = strip.action(banner_button("alt-view-logs", tr("View logs")).on_click(
@@ -628,19 +631,16 @@ fn profile_state(
 /// The one action a state offers, under its own name. A held update's and an update's are the
 /// accent; the rest are secondary.
 fn act_button(act: Act, cx: &mut Context<Launcher>) -> Stateful<Div> {
-    act_button_sized(act, Size::Medium, cx)
-}
-
-/// [`act_button`] at `size`: Small inside a banner.
-fn act_button_sized(act: Act, size: Size, cx: &mut Context<Launcher>) -> Stateful<Div> {
     let (id, style) = match act {
         Act::StopBuild => ("alt-build-stop", Style::Secondary),
         Act::Update => ("alt-update", Style::Primary),
         _ => ("alt-fix", Style::Secondary),
     };
     let label = act.label();
-    button(id, label, Look::new(style, size)).on_click(cx.listener(move |this, _, _, cx| {
-        this.launch_act(&act);
-        cx.notify();
-    }))
+    button(id, label, Look::new(style, Size::Medium)).on_click(cx.listener(
+        move |this, _, _, cx| {
+            this.launch_act(&act);
+            cx.notify();
+        },
+    ))
 }

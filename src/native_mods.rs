@@ -2663,7 +2663,7 @@ fn plain_pin(
 
 /// The release or Nightly `instance` plays now (the one a native build of it started from).
 fn playing(instance: &Instance) -> String {
-    let Ok(version) = instance.resolve_version(None) else {
+    let Ok(version) = instance.playing_version() else {
         return String::new();
     };
     about(&version).map_or(version, |about| about.base)

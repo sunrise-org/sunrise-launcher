@@ -177,9 +177,7 @@ pub fn validate(cmd: &Command) -> Result<(), String> {
 
 pub fn selected() -> bool {
     let instance = crate::instances::selected();
-    instance
-        .resolve_version(None)
-        .is_ok_and(|tag| enabled(&tag))
+    instance.playing_version().is_ok_and(|tag| enabled(&tag))
 }
 
 #[cfg(test)]

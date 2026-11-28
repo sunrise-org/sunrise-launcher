@@ -165,7 +165,12 @@ impl Client<'_> {
         if self.instance.kind == instances::Kind::Pack {
             return Err(unsettled!().into());
         }
-        if self.accepted_account.is_none() && !developer_offline::requested() {
+        // Asked before anything downloads or builds: a Play that can't sign in stops here, not
+        // after the game was installed. An account picked in the chip plays online, offline
+        // requested or not, so it needs the sign-in too (as `check_build` and the spawn ask).
+        if self.accepted_account.is_none()
+            && (self.explicit_account || !developer_offline::requested())
+        {
             return Err(StartError::Account(NoOwner::default()));
         }
         if self.instance.kind == instances::Kind::Default && self.instance.incarnation.is_none() {
@@ -194,7 +199,9 @@ impl Client<'_> {
             None
         };
         let check_build = |tag: &str, variant: Option<&BoundVariant>| {
-            if self.accepted_account.is_none() && !developer_offline::enabled(tag) {
+            if self.accepted_account.is_none()
+                && (self.explicit_account || !developer_offline::enabled(tag))
+            {
                 return Err(StartError::Account(NoOwner::default()));
             }
             backend::managed_game_architecture_launch_error(tag, variant)

@@ -67,6 +67,52 @@ impl Launcher {
             || self.ui.sheets.switching.ack
     }
 
+    /// A build picked in the chooser. A played profile only records the choice: nothing
+    /// downloads or switches until Play, which says "Install build" while the choice differs
+    /// from the build played, runs `switch_to_chosen_build`. A pack, or a profile with a
+    /// transaction to recover, switches at once as before.
+    pub(in crate::sheets) fn choose_build(&mut self, tag: String, choice: BuildChoice) {
+        let Some(instance) = self.selected_instance().cloned() else {
+            return;
+        };
+        if !can_save_choice(&instance) {
+            self.begin_switch(tag, Some(choice));
+            return;
+        }
+        if self.launch_busy() || self.client.is_some() {
+            return;
+        }
+        let target = match Target::of(&instance) {
+            Ok(target) => target,
+            Err(error) => {
+                self.open_notice(error.into(), Some(WayOut::ProfileFolder(instance.home)));
+                return;
+            }
+        };
+        if let Err(error) = target.save_build_choice(&tag, choice) {
+            self.open_notice(error.into(), Some(WayOut::ProfileFolder(instance.home)));
+            return;
+        }
+        self.reload_instances();
+        self.close_sheet();
+    }
+
+    /// Play's install action: switches the selected profile to the build its saved choice names.
+    pub(crate) fn switch_to_chosen_build(&mut self) {
+        let Some(instance) = self.selected_instance().cloned() else {
+            return;
+        };
+        let Some(tag) = self.pending_build(&instance) else {
+            return;
+        };
+        let choice = if instance.version.is_some() {
+            BuildChoice::Keep
+        } else {
+            BuildChoice::Follow(instance.channel)
+        };
+        self.begin_switch(tag, Some(choice));
+    }
+
     pub(in crate::sheets) fn begin_switch(&mut self, tag: String, choice: Option<BuildChoice>) {
         if self.launch_busy() || self.client.is_some() || self.removing.contains(&tag) {
             return;
@@ -597,24 +643,27 @@ impl Launcher {
     }
 }
 
-/// Whether a picker selection can be saved directly to `instances.json` without running a build
-/// switch: the profile must be ordinary, have no pending transaction recovery or first-Play
-/// bootstrap, and be already on `tag` or never played.
+/// Whether a build choice can be saved to `instances.json` without running a switch: the
+/// profile must be ordinary, with no pending transaction recovery or first-Play bootstrap, and
+/// its active build readable. What it plays stays as it is; Play then offers the switch
+/// (`Launcher::pending_build`).
+pub(super) fn can_save_choice(instance: &instances::Instance) -> bool {
+    instance.kind != instances::Kind::Pack
+        && matches!(
+            sunrise_launcher::profile_txn::recovery_pending(&instance.home),
+            Ok(false)
+        )
+        && managed_play::display_active(&instance.home).is_ok()
+}
+
+/// Whether the choice of `tag` changes nothing but the saved choice, whatever the profile
+/// plays: it is already on `tag`, or has never been played (nothing downloads or builds until
+/// Install or Play, which installs whatever the profile then names).
 pub(super) fn can_fast_save_choice(instance: &instances::Instance, tag: &str) -> bool {
-    if instance.kind == instances::Kind::Pack {
-        return false;
-    }
-    if !matches!(
-        sunrise_launcher::profile_txn::recovery_pending(&instance.home),
-        Ok(false)
-    ) {
-        return false;
-    }
-    match managed_play::display_active(&instance.home) {
-        Ok(Some(active)) => active.base() == tag,
-        // Never played: the choice is all there is to change. Nothing downloads or builds until
-        // the player presses Install (or Play), which installs whatever the profile then names.
-        Ok(None) => true,
-        Err(_) => false,
-    }
+    can_save_choice(instance)
+        && match managed_play::display_active(&instance.home) {
+            Ok(Some(active)) => active.base() == tag,
+            Ok(None) => true,
+            Err(_) => false,
+        }
 }

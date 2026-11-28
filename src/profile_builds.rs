@@ -52,6 +52,18 @@ impl Launcher {
         profile_build_choices(channel, self.game_releases(), &self.installed)
     }
 
+    /// The build the profile's saved choice names while it still plays another one: a choice
+    /// made in the build chooser that nothing has switched to yet. Play shows it as its
+    /// install action. None for a profile on its chosen build, one never played, a pack, or a
+    /// choice that can't be carried out (not installed, and nothing to download).
+    pub(crate) fn pending_build(&self, instance: &instances::Instance) -> Option<String> {
+        let active = display_active(&instance.home).ok()??;
+        let tag = pending_choice(instance, active.base(), |channel| {
+            self.channel_switch_target(channel).cloned()
+        })?;
+        (self.installed.contains(&tag) || self.release_to_install(&tag).is_some()).then_some(tag)
+    }
+
     /// The release to download for the Sunrise version `tag`, when it isn't installed.
     pub(super) fn release_to_install(&self, tag: &str) -> Option<Release> {
         let Load::Ready(releases) = &self.releases else {
@@ -61,6 +73,31 @@ impl Launcher {
             .then(|| releases.iter().find(|r| r.tag == tag && r.asset.is_some()))
             .flatten()
             .cloned()
+    }
+}
+
+/// The build `instance`'s saved choice names when it differs from `base`, the one it plays.
+/// A pin names its build. Following a channel the played build isn't on names that channel's
+/// newest build (`newest`); following the channel it is on is the update offer's business,
+/// not a pending choice, and a played build of no known channel never counts as different.
+fn pending_choice(
+    instance: &instances::Instance,
+    base: &str,
+    newest: impl FnOnce(Channel) -> Option<String>,
+) -> Option<String> {
+    if instance.kind == instances::Kind::Pack {
+        return None;
+    }
+    match &instance.version {
+        Some(pin) => (pin != base).then(|| pin.clone()),
+        None => {
+            let on = Channel::of_build(base)?;
+            if on == instance.channel {
+                None
+            } else {
+                newest(instance.channel)
+            }
+        }
     }
 }
 
@@ -457,6 +494,46 @@ mod tests {
             "receipts": [],
         });
         Active::parse(&serde_json::to_vec(&pointer).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_saved_choice_that_differs_from_the_played_build_is_pending() {
+        let played = "dev-2026-11-24-aaaaaaa";
+        let nightly = "nightly-2026-11-26-bbbbbbb".to_owned();
+        let pending = |profile: &instances::Instance| {
+            pending_choice(profile, played, |channel| {
+                (channel == Channel::Nightly).then(|| nightly.clone())
+            })
+        };
+        // On the build it plays, pinned or following its channel: nothing is pending.
+        assert_eq!(
+            pending(&home_profile("a", Channel::Dev, Some(played))),
+            None
+        );
+        assert_eq!(pending(&home_profile("b", Channel::Dev, None)), None);
+        // Another pin, or another channel (its newest build): that is pending.
+        let other = "dev-2026-11-20-ccccccc";
+        assert_eq!(
+            pending(&home_profile("c", Channel::Dev, Some(other))).as_deref(),
+            Some(other)
+        );
+        assert_eq!(
+            pending(&home_profile("d", Channel::Nightly, None)),
+            Some(nightly.clone())
+        );
+        // A channel with no build to name, a pack, and a played build of no channel.
+        assert_eq!(pending(&home_profile("e", Channel::Stable, None)), None);
+        let mut pack = home_profile("f", Channel::Nightly, None);
+        pack.kind = instances::Kind::Pack;
+        assert_eq!(pending(&pack), None);
+        assert_eq!(
+            pending_choice(
+                &home_profile("g", Channel::Nightly, None),
+                "imported",
+                |_| { Some(nightly.clone()) }
+            ),
+            None
+        );
     }
 
     #[test]

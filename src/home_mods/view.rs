@@ -106,8 +106,6 @@ impl Launcher {
         let Some(snapshot) = self.ui.home.mods.snapshot.clone() else {
             return Content {
                 count: None,
-                shown: None,
-                turned_off: 0,
                 manage: Some(add),
                 items: div(),
             };
@@ -120,8 +118,6 @@ impl Launcher {
         if full.is_empty() {
             return Content {
                 count: Some(0),
-                shown: None,
-                turned_off: 0,
                 // The empty state has its own Add file.
                 manage: None,
                 items: self.home_installed_empty(packs, cx),
@@ -133,27 +129,19 @@ impl Launcher {
             .iter()
             .map(|item| self.home_flipped(packs, item))
             .collect();
-        let turned_off = if packs {
-            0
-        } else {
-            all.iter().filter(|item| !item.on).count()
-        };
-        let count = all.len() - turned_off;
+        let count = all.len();
         let query = self.ui.home.tabs.query(packs);
         let list: Vec<Item> = all
             .iter()
             .filter(|item| home_item_matches(item, &query))
             .cloned()
             .collect();
-        let shown = (!query.is_empty()).then_some((list.len(), all.len()));
         // Rows already gone drop out of the ticks; the rest keep them as the list changes.
         let every: Vec<String> = all.iter().map(|item| item.id.clone()).collect();
         self.home_pick(packs).retain(&every);
         if list.is_empty() {
             return Content {
                 count: Some(count),
-                shown,
-                turned_off,
                 manage: Some(add),
                 items: tabs::no_matches(),
             };
@@ -165,8 +153,6 @@ impl Launcher {
         self.home_set_bar(pick_bar);
         Content {
             count: Some(count),
-            shown,
-            turned_off,
             manage: Some(add),
             items: rows,
         }

@@ -45,10 +45,7 @@ impl Launcher {
     /// rows, a question waiting for its answer, filters) is not carried in: the player sees
     /// what they asked for, and nothing they can't see is acted on.
     pub(crate) fn open_installed(&mut self, to: Installed) {
-        self.leave_section(!matches!(
-            to,
-            Installed::ModsOff | Installed::Mod(_) | Installed::ModNamed(_)
-        ));
+        self.leave_section(!matches!(to, Installed::Mod(_) | Installed::ModNamed(_)));
         self.ui.page = self.mods_state.enter(&to);
         self.game_packs.confirm_remove = None;
         self.game_packs.stale();
@@ -59,8 +56,6 @@ impl Launcher {
 /// A place in Installed that another page opens.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Installed {
-    /// Mods › Installed, the mods that are turned off.
-    ModsOff,
     /// Mods › Installed with every mod listed, at the mod with this ID.
     Mod(String),
     /// Mods › Installed, the mods a search for this name finds.
@@ -98,7 +93,6 @@ impl ModsState {
         self.reveal = None;
         self.revealed.set(false);
         match to {
-            Installed::ModsOff => self.row_filter.show = model::Show::Off,
             Installed::Mod(id) => self.reveal = Some(Reveal::Mod(id.clone())),
             Installed::Pack(kind, file) => self.reveal = Some(Reveal::Pack(*kind, file.clone())),
             Installed::ModNamed(title) | Installed::PackNamed(_, title) => {
@@ -187,27 +181,6 @@ mod tests {
     }
 
     #[test]
-    fn turned_off_shows_the_mods_that_are_off_and_keeps_none_ticked() {
-        let mut m = left_behind();
-        assert!(shown(&m).is_empty(), "the old filters hid what is off");
-        assert!(m.enter(&Installed::ModsOff) == Page::Installed);
-        nothing_carried_in(&m);
-        assert_eq!(m.row_filter.show, Show::Off);
-        assert_eq!((m.have.text(), m.row_filter.text.as_str()), ("", ""));
-        assert_eq!(shown(&m), ["trail"]);
-    }
-
-    #[test]
-    fn manage_mods_does_not_keep_the_turned_off_shortcuts_filter() {
-        let mut m = left_behind();
-        m.enter(&Installed::ModsOff);
-        assert_eq!(shown(&m), ["trail"]);
-        assert!(m.enter(&Installed::ModNamed(String::new())) == Page::Installed);
-        assert_eq!(shown(&m), ["lantern", "rain", "trail"]);
-        assert_eq!(m.row_filter, RowFilter::default());
-    }
-
-    #[test]
     fn a_mod_is_opened_by_its_id_among_all_of_them() {
         // Left on "Turned off" with another kind chosen: a mod that is on would be hidden.
         let mut m = left_behind();
@@ -247,9 +220,6 @@ mod tests {
             m.row_filter.text = "zz".into();
             m
         };
-        let mut m = left();
-        assert!(m.enter(&Installed::ModsOff) == Page::Installed);
-        assert_eq!(shown(&m), ["trail"], "the mods that are off");
         for (kind, shelf) in [
             (Kind::Resource, Shelf::Resource),
             (Kind::Shader, Shelf::Shader),

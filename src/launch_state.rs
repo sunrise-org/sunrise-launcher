@@ -38,6 +38,9 @@ pub(crate) struct Facts {
     pub signed_in: bool,
     /// The selected profile has an installed build to play.
     pub installed: bool,
+    /// The profile's saved build choice differs from the build it plays: Play becomes the
+    /// action that runs the switch. True when the chosen build still has to be downloaded.
+    pub switch_build: Option<bool>,
     /// The configured data folder could be opened, regardless of any move notice.
     pub located: bool,
     pub client_error: Option<String>,
@@ -74,6 +77,10 @@ pub(crate) enum Main {
     Stop,
     SignIn,
     Install,
+    /// The chosen build is not the one the profile plays, and has to be downloaded first.
+    InstallBuild,
+    /// The chosen build is on disk: only the switch is left.
+    SwitchBuild,
     Play,
     BuildAndPlay,
 }
@@ -264,6 +271,13 @@ impl Facts {
             Main::ChangingMods
         } else if self.running {
             Main::Stop
+        } else if let Some(download) = self.switch_build {
+            // A switch needs no account, so it comes before signing in.
+            if download {
+                Main::InstallBuild
+            } else {
+                Main::SwitchBuild
+            }
         } else if !self.signed_in {
             Main::SignIn
         } else if !self.installed {
@@ -380,6 +394,8 @@ impl Main {
             // Microsoft". Pressing it signs in first and then plays (`play_game`).
             Main::SignIn => tr("Play").into(),
             Main::Install => tr("Install and play").into(),
+            Main::InstallBuild => tr("Install build").into(),
+            Main::SwitchBuild => tr("Switch build").into(),
             Main::Play => tr("Play").into(),
             Main::BuildAndPlay => tr("Build mods and play").into(),
         }
@@ -545,10 +561,12 @@ impl Launcher {
         let active = self.selected_instance();
         let launch = self.ui.home.mods.launch();
         let held = self.held_update();
+        let pending = active.and_then(|i| self.pending_build(i));
         Facts {
             signed_in: self.accounts.selected().is_some()
                 || sunrise_launcher::developer_offline::selected(),
             installed: active.and_then(|i| self.version_of(i)).is_some(),
+            switch_build: pending.as_ref().map(|tag| !self.installed.contains(tag)),
             located: !self.location_unavailable,
             client_error: self.client_error.clone(),
             install_recovery: self
@@ -568,8 +586,10 @@ impl Launcher {
             crash: self.crash.as_ref().map(|c| c.summary.clone()),
             build_gone: self.build_gone(),
             held: held.map(|h| h.to),
+            // A chosen build waits to be installed: an update would be a second answer.
             update: self
                 .game_update()
+                .filter(|_| pending.is_none())
                 .map(|r| crate::sheets::build_name(&r.tag)),
             mods_off: launch.map_or(0, |summary| summary.mods_off),
             pending_mods: launch.is_some_and(|summary| summary.pending_mods),
@@ -581,6 +601,12 @@ impl Launcher {
     pub(crate) fn press_play(&mut self) {
         if let Some(client) = &self.client {
             client.kill();
+        } else if self
+            .selected_instance()
+            .is_some_and(|i| self.pending_build(i).is_some())
+        {
+            // Play is the install action while the chosen build isn't the one played.
+            self.switch_to_chosen_build();
         } else {
             self.play_game(crate::launcher_play::PlayDestination::Home);
         }

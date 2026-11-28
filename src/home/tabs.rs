@@ -3,7 +3,6 @@ use super::*;
 use crate::frame::Page;
 use crate::line_edit::LineEdit;
 use crate::mods::selection::{Gesture, Selection};
-use crate::mods::Installed;
 use crate::widgets::check::{checkbox, Tick};
 use gpui::{ScrollHandle, StatefulInteractiveElement};
 
@@ -49,22 +48,6 @@ impl Tab {
             Self::Packs => tr("Packs"),
             Self::Mods => tr("Mods"),
             Self::Logs => tr("Logs"),
-        }
-    }
-
-    fn count(self, count: usize) -> String {
-        let (one, many) = match self {
-            // The Logs tab has no count line.
-            Self::Logs => return String::new(),
-            Self::Servers => ("1 saved server", "{count} saved servers"),
-            Self::Worlds => ("1 world", "{count} worlds"),
-            Self::Packs => ("1 resource pack", "{count} resource packs"),
-            Self::Mods => ("1 enabled mod", "{count} enabled mods"),
-        };
-        if count == 1 {
-            tr(one).into()
-        } else {
-            trf(many, &[("count", &count.to_string())])
         }
     }
 }
@@ -178,10 +161,8 @@ pub(crate) struct Pick {
 }
 
 pub(crate) struct Content {
+    /// How many rows the tab has; with none, the tab shows its empty state and no search.
     pub(crate) count: Option<usize>,
-    /// While a search is on: how many rows match, of how many.
-    pub(crate) shown: Option<(usize, usize)>,
-    pub(crate) turned_off: usize,
     pub(crate) manage: Option<Stateful<Div>>,
     pub(crate) items: Div,
 }
@@ -228,9 +209,7 @@ impl Launcher {
         let strip = self.profile_tab_strip(active, cx);
         let Content {
             count,
-            shown,
             manage,
-            turned_off,
             items,
         } = match active {
             Tab::Logs => return self.home_logs(strip, instance, inset, window, cx),
@@ -240,38 +219,6 @@ impl Launcher {
         };
         // An empty tab says so in its body; "0 worlds" over it says nothing more.
         let searchable = count.is_some_and(|count| count > 0) && active != Tab::Logs;
-        let count = count.filter(|&count| count > 0).map(|count| {
-            if let Some((shown, total)) = shown {
-                trf(
-                    "{shown} of {total}",
-                    &[("shown", &shown.to_string()), ("total", &total.to_string())],
-                )
-            } else if turned_off > 0 {
-                trf("{count} enabled", &[("count", &count.to_string())])
-            } else {
-                active.count(count)
-            }
-        });
-        let off_link = (turned_off > 0).then(|| {
-            div()
-                .id("home-off-mods")
-                .reach()
-                .min_w_0()
-                .truncate()
-                .cursor_pointer()
-                .underline()
-                .hover(|s| s.text_color(rgb(palette().text)))
-                .child(trf(
-                    "{count} turned off",
-                    &[("count", &turned_off.to_string())],
-                ))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.open_installed(Installed::ModsOff);
-                    cx.notify();
-                }))
-        });
-        let separator = count.is_some() && off_link.is_some() && shown.is_none();
-        let off_link = off_link.filter(|_| shown.is_none());
         let search = searchable.then(|| self.home_search(active, window, cx));
         let bar = self.ui.home.tabs.bar.take();
         let menu = self.home_item_menu(active, cx);
@@ -322,20 +269,7 @@ impl Launcher {
                     .h(px(if searchable { 59. } else { 38. }))
                     .items_center()
                     .gap(px(10.))
-                    .children(search)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .items_center()
-                            .min_w_0()
-                            .gap(px(5.))
-                            .text_size(px(tokens::SMALL))
-                            .text_color(rgb(palette().muted))
-                            .children(count.map(|label| div().min_w_0().truncate().child(label)))
-                            .when(separator, |d| d.child(div().flex_none().child("·")))
-                            .children(off_link),
-                    ),
+                    .children(search),
             )
             .child(
                 div()

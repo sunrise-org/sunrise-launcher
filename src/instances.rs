@@ -459,6 +459,16 @@ impl Instance {
 
     /// The installed version this instance plays: an explicit request or pin wins, then the
     /// newest installed build on its channel, with an offline fallback.
+    /// The build this profile plays now: its active build once it was played (the one Play
+    /// starts, which a chosen build waiting for Install or Switch doesn't change), otherwise
+    /// the build it names, as [`Self::resolve_version`] finds it.
+    pub fn playing_version(&self) -> Result<String, String> {
+        match crate::managed_play::display_active(&self.home) {
+            Ok(Some(active)) => Ok(active.executable().to_owned()),
+            _ => self.resolve_version(None),
+        }
+    }
+
     pub fn resolve_version(&self, requested: Option<&str>) -> Result<String, String> {
         match (requested, &self.version) {
             (None, Some(pinned)) => backend::resolve_version(Some(pinned)).map_err(|_| {

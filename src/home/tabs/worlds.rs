@@ -26,8 +26,6 @@ impl Launcher {
             .filter(|world| search::matches(&query, &[world.name.as_str(), world.folder.as_str()]))
             .cloned()
             .collect();
-        let shown =
-            (!query.is_empty() && count.is_some()).then_some((found.len(), self.worlds.list.len()));
         // A world that is gone (deleted, or the game removed it) drops out of the ticks.
         let every: Vec<String> = self
             .worlds
@@ -115,9 +113,7 @@ impl Launcher {
         let manage = (count.unwrap_or(0) > 0).then(|| self.add_world_button("home-worlds-add", cx));
         Content {
             count,
-            shown,
             manage,
-            turned_off: 0,
             items,
         }
     }

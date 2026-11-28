@@ -112,6 +112,51 @@ fn a_stopped_managed_build_opens_its_result_from_home_and_the_strip() {
 }
 
 #[test]
+fn a_chosen_build_that_isnt_the_one_played_turns_play_into_its_install_action() {
+    let download = Facts {
+        switch_build: Some(true),
+        ..idle()
+    }
+    .view();
+    assert_eq!(download.main, Main::InstallBuild);
+    assert_eq!(download.main.label(), "Install build");
+    assert!(download.enabled);
+    let on_disk = Facts {
+        switch_build: Some(false),
+        ..idle()
+    }
+    .view();
+    assert_eq!(on_disk.main, Main::SwitchBuild);
+    assert_eq!(on_disk.main.label(), "Switch build");
+    // It needs no account, and it is not Play's own work: nothing is under way.
+    let signed_out = Facts {
+        signed_in: false,
+        switch_build: Some(true),
+        ..idle()
+    }
+    .view();
+    assert_eq!(signed_out.main, Main::InstallBuild);
+    assert!(!signed_out.main.under_way());
+    // A running game, or work under way, still wins and disables it.
+    let running = Facts {
+        running: true,
+        switch_build: Some(true),
+        ..idle()
+    }
+    .view();
+    assert_eq!(running.main, Main::Stop);
+    let busy = Facts {
+        mutating: true,
+        switch_build: Some(true),
+        ..idle()
+    }
+    .view();
+    assert!(!busy.enabled);
+    // No chosen build left to install: Play is back.
+    assert_eq!(idle().view().main, Main::Play);
+}
+
+#[test]
 fn signed_out_play_signs_in_first_and_only_its_tooltip_says_so() {
     let out = Facts {
         signed_in: false,

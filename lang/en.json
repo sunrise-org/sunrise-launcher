@@ -2854,5 +2854,7 @@
   "Deleted 1 world": "Deleted 1 world",
   "Deleted {count} worlds": "Deleted {count} worlds",
   "Duplicated 1 world": "Duplicated 1 world",
-  "Duplicated {count} worlds": "Duplicated {count} worlds"
+  "Duplicated {count} worlds": "Duplicated {count} worlds",
+  "Install build": "Install build",
+  "Switch build": "Switch build"
 }

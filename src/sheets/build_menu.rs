@@ -46,7 +46,7 @@ fn menu_card() -> Div {
 
 impl Launcher {
     /// The latest published build, or the latest installed one when the channel is offline.
-    fn channel_switch_target(&self, channel: instances::Channel) -> Option<&String> {
+    pub(crate) fn channel_switch_target(&self, channel: instances::Channel) -> Option<&String> {
         channel
             .builds(self.game_releases())
             .next()
@@ -65,6 +65,16 @@ impl Launcher {
         self.begin_switch(target, Some(BuildChoice::Follow(channel)));
     }
 
+    /// A channel picked in the chooser: the profile follows it from now on. A played profile
+    /// only records that; Play then offers to install the build (`choose_build`).
+    fn choose_channel(&mut self, channel: instances::Channel) {
+        use sunrise_launcher::browser::sunrise::BuildChoice;
+        let Some(target) = self.channel_switch_target(channel).cloned() else {
+            return;
+        };
+        self.choose_build(target, BuildChoice::Follow(channel));
+    }
+
     pub(super) fn build_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         use instances::Channel;
         let Some(instance) = self.selected_instance() else {
@@ -77,6 +87,12 @@ impl Launcher {
         let active_channel = playing_target
             .as_deref()
             .and_then(instances::Channel::of_build);
+        // The marked row is the chosen build's, which isn't the played one while a choice waits
+        // for Play's install action.
+        let pinned_channel = pinned
+            .as_deref()
+            .and_then(instances::Channel::of_build)
+            .or(active_channel);
         let waits_for_stable =
             instance.channel == instances::Channel::Stable && !self.stable_available();
         let follows = pinned
@@ -97,7 +113,7 @@ impl Launcher {
             // The row of the build in use is the one marked: the channel it follows, or the
             // channel of the build it is pinned to.
             let selected = if pinned.is_some() {
-                active_channel == Some(channel)
+                pinned_channel == Some(channel)
             } else {
                 follows == Some(channel)
             };
@@ -189,7 +205,7 @@ impl Launcher {
                     })
                     .when(!unavailable && !current, |d| {
                         d.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.switch_channel(channel);
+                            this.choose_channel(channel);
                             cx.notify();
                         }))
                     })
@@ -375,7 +391,7 @@ impl Launcher {
                             .then(|| crate::glass_ui::icon("tick-02", 16., rgb(p.accent).into())),
                     )
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.switch_channel(channel);
+                        this.choose_channel(channel);
                         cx.notify();
                     })),
             )
@@ -424,7 +440,7 @@ impl Launcher {
                         on.then(|| crate::glass_ui::icon("tick-02", 16., rgb(p.accent).into())),
                     )
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.begin_switch(pick.clone(), Some(BuildChoice::Keep));
+                        this.choose_build(pick.clone(), BuildChoice::Keep);
                         cx.notify();
                     })),
             );
