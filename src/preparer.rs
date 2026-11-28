@@ -214,9 +214,10 @@ impl Handoff<'_> {
 ///
 /// 1. **Spawn** ([`crate::process::leases::spawn_preparer`], piped, with the lock or without):
 ///    on Unix it leads a new process group, on Windows it runs in a job of its own. Its quit
-///    entry is made with it: the group, or the job ([`crate::process::owned::Owned::start_preparer`]). From here a
-///    [`Held`] owns it, so a return before the reap, a `?` included, kills its tree and leaves
-///    it to the reaper. A spawn error returns before there is a child.
+///    entry is made with it: the group, or the job
+///    ([`crate::process::owned::Owned::start_preparer`]). From here a [`Held`] owns it, so a
+///    return before the reap, a `?` included, kills its tree and leaves it to the reaper. A
+///    spawn error returns before there is a child.
 /// 2. **Track**: a stop learns its PID and job ([`crate::native_mods::Cancellation`]). A stop
 ///    that came first kills the tree at once, on Windows through the job alone.
 /// 3. **Run**: one loop takes both streams through one bounded queue (stdout past [`MAX_OUTPUT`]
@@ -225,8 +226,8 @@ impl Handoff<'_> {
 ///    each with a timed wait.
 /// 4. **Stop and kill**: Cancel sends SIGTERM to the group (on Windows it ends the job). The run
 ///    kills the group as soon as the child ended or the grace is over ([`next`]). A read error
-///    kills it at once. A child that ended while something still holds its output has its group
-///    killed after the grace, and the run is an error.
+///    on either stream kills it at once. A child that ended while something still holds its
+///    output has its group killed after the grace, and the run is an error.
 /// 5. **Untrack**: the stop forgets the PID under its lock; a stop that came just before has the
 ///    group killed now ([`finish`]).
 /// 6. **Reap**: an ended child is reaped here. One that hasn't ended goes to the reaper thread,
@@ -234,8 +235,8 @@ impl Handoff<'_> {
 ///    fails before its spawn; if the reaper has gone, the run waits a bounded time, then leaves the
 ///    child unreaped ([`abandon`]). Before every reap its quit entry is
 ///    removed, under the lock a quit signals under ([`crate::process::owned::Owned`]).
-/// 7. **Forget**: once reaped, nothing looks at or signals its PID again; [`crate::process::owned::Owned`] keeps its
-///    status.
+/// 7. **Forget**: once reaped, nothing looks at or signals its PID again;
+///    [`crate::process::owned::Owned`] keeps its status.
 ///
 /// Until the reap the PID, and the group's ID, are the child's: its zombie keeps them on Unix,
 /// its handle on Windows. Until then the run, the stop and a quit may signal the group or end
@@ -454,13 +455,7 @@ fn read_output(
     let (lines_tx, queue) = std::sync::mpsc::sync_channel::<Read>(QUEUE);
     let stderr = child.child().stderr.take().expect("piped");
     let errors_tx = lines_tx.clone();
-    reader(move || {
-        for text in lines(stderr).map_while(Result::ok) {
-            if errors_tx.send(Read::Line(Stream::Err, text)).is_err() {
-                break;
-            }
-        }
-    })?;
+    reader(move || pump_errors(stderr, &errors_tx))?;
     let stdout = child.child().stdout.take().expect("piped");
     #[cfg(test)]
     let mut fails_after = test_hooks::READ_FAILS_AFTER.with(std::cell::Cell::take);
@@ -497,6 +492,21 @@ fn read_output(
         }
     })?;
     Ok(queue)
+}
+
+/// Hands on `stream`'s lines as stderr's. A read error ends it as one on stdout does: the run
+/// gets [`Read::Failed`] and starts its bounded end, rather than taking the error for the end of
+/// the stream (follow-up to #670).
+fn pump_errors(stream: impl std::io::Read, to: &std::sync::mpsc::SyncSender<Read>) {
+    for text in lines(stream) {
+        let (line, failed) = match text {
+            Ok(text) => (Read::Line(Stream::Err, text), false),
+            Err(error) => (Read::Failed(error), true),
+        };
+        if to.send(line).is_err() || failed {
+            break;
+        }
+    }
 }
 
 /// Starts one of a run's reader threads. A thread that can't start is an error like any other:
@@ -687,12 +697,15 @@ impl End for Ending {
 }
 
 /// Leaves a child that may not have ended, and was killed, to the reaper thread. With no reaper
-/// (it has gone, as a run whose reaper can't start never spawns), the child is waited for here, but no longer than a stop's wait: one that still hasn't ended
-/// is left unreaped, so its PID stays its own. Nothing here starts a thread or can panic.
+/// (it has gone, as a run whose reaper can't start never spawns), the child is waited for here,
+/// but no longer than a stop's wait: one that still hasn't ended is left unreaped, so its PID
+/// stays its own. Nothing here starts a thread or can panic.
 fn abandon(child: crate::process::owned::Owned) {
     #[cfg(test)]
     test_hooks::ABANDONED.with(|count| count.set(count.get() + 1));
     let Some(mut child) = reaper::reap(child) else {
+        #[cfg(test)]
+        test_hooks::REAPER_TOOK.with(|count| count.set(count.get() + 1));
         return;
     };
     let waiting = Instant::now();
@@ -716,42 +729,69 @@ mod reaper {
     use std::sync::mpsc::{Receiver, Sender};
     use std::sync::{Mutex, PoisonError};
 
-    static REAPER: Mutex<Option<Sender<Owned>>> = Mutex::new(None);
+    /// The launcher's reaper.
+    static REAPER: Reaper = Reaper::new();
 
-    /// Starts the reaper, once; an error when it can't start, so the run spawns nothing.
+    /// Starts the launcher's reaper, once; an error when it can't start, so the run spawns
+    /// nothing.
     pub(super) fn start() -> std::io::Result<()> {
-        #[cfg(test)]
-        if super::test_hooks::NO_REAPER.with(std::cell::Cell::get) {
-            return Err(std::io::Error::other("a test's missing reaper"));
-        }
-        let mut reaper = REAPER.lock().unwrap_or_else(PoisonError::into_inner);
-        if reaper.is_some() {
-            return Ok(());
-        }
-        let (send, children) = std::sync::mpsc::channel::<Owned>();
-        std::thread::Builder::new()
-            .name("preparer reaper".into())
-            .spawn(move || run(&children))?;
-        *reaper = Some(send);
-        Ok(())
+        REAPER.start()
     }
 
-    /// Hands `child` to the reaper; gives it back when there is none.
+    /// Hands `child` to the launcher's reaper; gives it back when there is none.
     pub(super) fn reap(child: Owned) -> Option<Owned> {
-        #[cfg(test)]
-        if super::test_hooks::NO_REAPER.with(std::cell::Cell::get) {
-            return Some(child);
+        REAPER.reap(child)
+    }
+
+    /// A reaper thread's sender, once it started. A test keeps its own.
+    pub(super) struct Reaper(Mutex<Option<Sender<Owned>>>);
+
+    impl Reaper {
+        pub(super) const fn new() -> Self {
+            Self(Mutex::new(None))
         }
-        let mut reaper = REAPER.lock().unwrap_or_else(PoisonError::into_inner);
-        let unsent = match reaper.as_ref() {
-            Some(send) => send.send(child).err().map(|unsent| unsent.0),
-            None => Some(child),
-        };
-        // A reaper that has gone is started again by the next run, before its child.
-        if unsent.is_some() {
-            *reaper = None;
+
+        pub(super) fn start(&self) -> std::io::Result<()> {
+            #[cfg(test)]
+            if super::test_hooks::NO_REAPER.with(std::cell::Cell::get) {
+                return Err(std::io::Error::other("a test's missing reaper"));
+            }
+            let mut reaper = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            if reaper.is_some() {
+                return Ok(());
+            }
+            let (send, children) = std::sync::mpsc::channel::<Owned>();
+            std::thread::Builder::new()
+                .name("preparer reaper".into())
+                .spawn(move || run(&children))?;
+            *reaper = Some(send);
+            Ok(())
         }
-        unsent
+
+        pub(super) fn reap(&self, child: Owned) -> Option<Owned> {
+            #[cfg(test)]
+            if super::test_hooks::NO_REAPER.with(std::cell::Cell::get) {
+                return Some(child);
+            }
+            let mut reaper = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            let unsent = match reaper.as_ref() {
+                Some(send) => send.send(child).err().map(|unsent| unsent.0),
+                None => Some(child),
+            };
+            // A reaper that has gone is started again by the next run, before its child.
+            if unsent.is_some() {
+                *reaper = None;
+            }
+            unsent
+        }
+
+        /// Puts in a sender whose reaper has gone, as when its thread ended.
+        #[cfg(all(test, target_os = "linux"))]
+        pub(super) fn gone(&self) {
+            let (send, children) = std::sync::mpsc::channel::<Owned>();
+            drop(children);
+            *self.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(send);
+        }
     }
 
     fn run(children: &Receiver<Owned>) {
@@ -868,13 +908,55 @@ const MAX_LINE: usize = 64 << 10;
 
 /// `stream`'s lines, each read lossily (bytes that aren't UTF-8 become U+FFFD) and cut at [`MAX_LINE`].
 fn lines(stream: impl std::io::Read) -> impl Iterator<Item = std::io::Result<String>> {
-    BufReader::new(stream).split(b'\n').map(|line| {
-        line.map(|mut bytes| {
-            bytes.truncate(MAX_LINE);
-            let text = String::from_utf8_lossy(&bytes);
-            text.trim_end_matches('\r').to_owned()
-        })
+    let mut reader = BufReader::new(stream);
+    let mut ended = false;
+    std::iter::from_fn(move || {
+        if ended {
+            return None;
+        }
+        let mut bytes = Vec::new();
+        match capped_line(&mut reader, &mut bytes) {
+            Ok(true) => {
+                let text = String::from_utf8_lossy(&bytes);
+                Some(Ok(text.trim_end_matches('\r').to_owned()))
+            }
+            Ok(false) => {
+                ended = true;
+                None
+            }
+            Err(error) => {
+                ended = true;
+                Some(Err(error))
+            }
+        }
     })
+}
+
+/// Reads one line into `bytes`, its newline left out, keeping at most [`MAX_LINE`] bytes of it.
+/// The rest of an overlong line is read and dropped as it comes, so it is never held whole
+/// (follow-up to #670). False at the stream's end with nothing read.
+fn capped_line(reader: &mut impl BufRead, bytes: &mut Vec<u8>) -> io::Result<bool> {
+    let mut read = false;
+    loop {
+        let available = match reader.fill_buf() {
+            Ok(available) => available,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        if available.is_empty() {
+            return Ok(read);
+        }
+        read = true;
+        let newline = available.iter().position(|&byte| byte == b'\n');
+        let line = &available[..newline.unwrap_or(available.len())];
+        let room = MAX_LINE.saturating_sub(bytes.len());
+        bytes.extend_from_slice(&line[..line.len().min(room)]);
+        let used = newline.map_or(available.len(), |at| at + 1);
+        reader.consume(used);
+        if newline.is_some() {
+            return Ok(true);
+        }
+    }
 }
 
 /// The last lines of a stream, at most [`MAX_ERRORS`] bytes of them.
@@ -1146,8 +1228,10 @@ mod test_hooks {
         pub(crate) static BEFORE_TRACK: Hook = const { RefCell::new(None) };
         /// Runs in `run_with` after its loop, before `finish`.
         pub(crate) static BEFORE_UNTRACK: Hook = const { RefCell::new(None) };
-        /// How many children this thread left to a reaping thread (`abandon`).
+        /// How many children this thread began to leave to the reaper (`abandon`).
         pub(crate) static ABANDONED: Cell<usize> = const { Cell::new(0) };
+        /// How many of them the reaper thread took; the rest were waited for in place.
+        pub(crate) static REAPER_TOOK: Cell<usize> = const { Cell::new(0) };
         /// The next probe of whether the child ended fails.
         pub(crate) static PROBE_FAILS: Cell<bool> = const { Cell::new(false) };
         /// The next reader thread fails to start.
@@ -1168,7 +1252,7 @@ mod test_hooks {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::test_hooks::{ABANDONED, BEFORE_TRACK};
+    use super::test_hooks::{ABANDONED, BEFORE_TRACK, REAPER_TOOK};
     // Their tests run on Linux only.
     #[cfg(target_os = "linux")]
     use super::test_hooks::{
@@ -1189,6 +1273,7 @@ mod tests {
         let later = stop.clone();
         BEFORE_TRACK.with(|hook| *hook.borrow_mut() = Some(Box::new(move || later.stop())));
         let before = ABANDONED.with(Cell::get);
+        let taken = REAPER_TOOK.with(Cell::get);
         let mut command = Command::new("sh");
         command.args(["-c", "sleep 30"]).process_group(0);
         let started = Instant::now();
@@ -1197,7 +1282,12 @@ mod tests {
         assert_eq!(
             ABANDONED.with(Cell::get),
             before + 1,
-            "the child went to a reaping thread, not dropped on this one"
+            "the child went to cleanup, not dropped on this one"
+        );
+        assert_eq!(
+            REAPER_TOOK.with(Cell::get),
+            taken + 1,
+            "the reaper thread took the child, rather than this thread waiting on it"
         );
         assert!(started.elapsed() < Duration::from_secs(5));
     }
@@ -1613,6 +1703,125 @@ mod tests {
         );
         assert_eq!(taken.get(), 40);
         assert_eq!(reply.unwrap().unwrap()["done"], true);
+    }
+
+    /// A reaper whose thread has gone gives the child back and drops its sender, so the next start
+    /// puts in a working reaper, which then reaps (follow-up to #670).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_gone_reaper_gives_the_child_back_and_the_next_start_replaces_it() {
+        use crate::process::owned::Owned;
+        let reaper = reaper::Reaper::new();
+        reaper.gone();
+        let mut first = Owned::spawn(&mut Command::new("true")).unwrap();
+        let first_pid = first.child().id();
+        let mut back = reaper
+            .reap(first)
+            .expect("a gone reaper gives the child back");
+        assert_eq!(back.child().id(), first_pid);
+        drop(back);
+        reaper.start().unwrap();
+        let mut later = Owned::spawn(&mut Command::new("true")).unwrap();
+        let pid = later.child().id();
+        assert!(
+            reaper.reap(later).is_none(),
+            "the next start put in a working reaper"
+        );
+        let waiting = Instant::now();
+        while Path::new(&format!("/proc/{pid}")).exists()
+            && waiting.elapsed() < Duration::from_secs(3)
+        {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(
+            !Path::new(&format!("/proc/{pid}")).exists(),
+            "the new reaper reaped it"
+        );
+    }
+
+    /// A line far longer than [`MAX_LINE`] is cut as it is read: the reader never holds more of
+    /// it than that, so a preparer writing one huge line can't grow the launcher's memory
+    /// (follow-up to #670).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_overlong_line_is_cut_as_it_is_read() {
+        const CHILD: &str = "SUNRISE_PREPARER_LONG_LINE_TEST";
+        if std::env::var_os(CHILD).is_none() {
+            let status = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "preparer::tests::an_overlong_line_is_cut_as_it_is_read",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(status.success(), "the test failed in its child process");
+            return;
+        }
+        /// `left` bytes of `x`, with no newline.
+        struct Long(usize);
+        impl std::io::Read for Long {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                let n = buf.len().min(self.0);
+                buf[..n].fill(b'x');
+                self.0 -= n;
+                Ok(n)
+            }
+        }
+        let peak = || {
+            let status = fs::read_to_string("/proc/self/status").unwrap();
+            let line = status
+                .lines()
+                .find(|l| l.starts_with("VmHWM:"))
+                .unwrap()
+                .to_owned();
+            line.split_whitespace()
+                .nth(1)
+                .unwrap()
+                .parse::<u64>()
+                .unwrap()
+                * 1024
+        };
+        let before = peak();
+        let stream = std::io::Read::chain(Long(128 << 20), &b"\nafter\n"[..]);
+        let read: Vec<String> = lines(stream).map(Result::unwrap).collect();
+        let grew = peak().saturating_sub(before);
+        assert_eq!(read.len(), 2);
+        assert_eq!(read[0].len(), MAX_LINE);
+        assert_eq!(read[1], "after");
+        assert!(
+            grew < 32 << 20,
+            "reading the line grew the peak memory by {} MiB",
+            grew >> 20
+        );
+    }
+
+    /// A read error on stderr is handed on to the run, as one on stdout is, rather than taken for
+    /// the stream's end (follow-up to #670).
+    #[test]
+    fn a_stderr_read_error_is_handed_on_not_taken_for_its_end() {
+        struct Broken(bool);
+        impl std::io::Read for Broken {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                if std::mem::replace(&mut self.0, true) {
+                    return Err(io::Error::other("a test's stderr read error"));
+                }
+                buf[..6].copy_from_slice(b"first\n");
+                Ok(6)
+            }
+        }
+        let (to, from) = std::sync::mpsc::sync_channel(8);
+        pump_errors(Broken(false), &to);
+        drop(to);
+        let got: Vec<Read> = from.iter().collect();
+        assert!(
+            matches!(got.first(), Some(Read::Line(Stream::Err, text)) if text == "first"),
+            "the first line came through"
+        );
+        assert!(
+            matches!(got.get(1), Some(Read::Failed(_))),
+            "the read error was taken for the end of stderr"
+        );
     }
 
     /// A native build copies the SDK's `sunrise-client` with this, then runs it. Checked in the
