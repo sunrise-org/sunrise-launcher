@@ -351,7 +351,6 @@ impl Launcher {
                         .items_center()
                         .justify_center()
                         .cursor_pointer()
-                        .occlude()
                         .bg(rgb(palette().accent))
                         .shadow_md()
                         .child(crate::glass_ui::icon("play", 20., gpui::white()))
@@ -382,7 +381,6 @@ impl Launcher {
             .top(px(8.))
             .p(px(4.))
             .rounded(radius)
-            .occlude()
             .bg(gpui::hsla(0., 0., 0., 0.4))
             .child(check);
         let check = (hovered || ticked || any).then_some(check);
