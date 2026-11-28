@@ -1,6 +1,7 @@
 //! A fixed panel; only the selected collection owns a vertical viewport.
 use super::*;
 use crate::frame::Page;
+use crate::line_edit::LineEdit;
 use crate::mods::selection::{Gesture, Selection};
 use crate::mods::Installed;
 use crate::widgets::check::{checkbox, Tick};
@@ -9,10 +10,12 @@ use gpui::{ScrollHandle, StatefulInteractiveElement};
 mod cards;
 mod logs;
 mod scrollbar;
+mod search;
 mod servers;
 mod worlds;
 
 pub(crate) use cards::{Card, ItemAction, MenuEntry, GAP};
+pub(crate) use search::{matches as matches_query, no_matches};
 
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 pub(super) enum Tab {
@@ -92,9 +95,33 @@ pub(crate) struct Tabs {
     pub(crate) quiet: bool,
     /// What each mod's card says beyond the name, read from Installed once per change.
     pub(crate) facts: crate::mods::selection::item::CardCache,
+    /// What each tab's search field holds, by tab: kept while the profile stays selected.
+    search: [LineEdit; 5],
+    search_focus: [Option<FocusHandle>; 5],
+    /// Switches flipped on a card and not yet confirmed by a fresh read of the files: the card
+    /// shows the flip at once, and the read replaces it.
+    pub(crate) flipped: HashMap<(bool, String), Flip>,
+}
+
+/// A flip shown ahead of the files.
+pub(crate) struct Flip {
+    pub(crate) on: bool,
+    /// The inventory revision it was made on: a newer one has the answer.
+    pub(crate) revision: u64,
+    /// When the change under it ended, so a flip that never reached the files is dropped.
+    pub(crate) done: Option<std::time::Instant>,
 }
 
 impl Tabs {
+    /// The words the Mods tab (or the Packs tab) is searched for, lower-cased; empty for all.
+    pub(crate) fn query(&self, packs: bool) -> String {
+        self.query_of(if packs { Tab::Packs } else { Tab::Mods })
+    }
+
+    fn query_of(&self, tab: Tab) -> String {
+        self.search[tab.index()].text().trim().to_lowercase()
+    }
+
     pub(super) fn select_profile(&mut self, id: &str) {
         if self.profile.as_deref() != Some(id) {
             *self = Self {
@@ -130,6 +157,8 @@ pub(crate) struct Pick {
 
 pub(crate) struct Content {
     pub(crate) count: Option<usize>,
+    /// While a search is on: how many rows match, of how many.
+    pub(crate) shown: Option<(usize, usize)>,
     pub(crate) turned_off: usize,
     pub(crate) manage: Option<Stateful<Div>>,
     pub(crate) items: Div,
@@ -177,6 +206,7 @@ impl Launcher {
         let strip = self.profile_tab_strip(active, cx);
         let Content {
             count,
+            shown,
             manage,
             turned_off,
             items,
@@ -187,8 +217,14 @@ impl Launcher {
             Tab::Packs | Tab::Mods => self.home_installed_tab(active == Tab::Packs, cx),
         };
         // An empty tab says so in its body; "0 worlds" over it says nothing more.
+        let searchable = count.is_some_and(|count| count > 0) && active != Tab::Logs;
         let count = count.filter(|&count| count > 0).map(|count| {
-            if turned_off > 0 {
+            if let Some((shown, total)) = shown {
+                trf(
+                    "{shown} of {total}",
+                    &[("shown", &shown.to_string()), ("total", &total.to_string())],
+                )
+            } else if turned_off > 0 {
                 trf("{count} enabled", &[("count", &count.to_string())])
             } else {
                 active.count(count)
@@ -212,7 +248,9 @@ impl Launcher {
                     cx.notify();
                 }))
         });
-        let separator = count.is_some() && off_link.is_some();
+        let separator = count.is_some() && off_link.is_some() && shown.is_none();
+        let off_link = off_link.filter(|_| shown.is_none());
+        let search = searchable.then(|| self.home_search(active, window, cx));
         let bar = self.ui.home.tabs.bar.take();
         let menu = self.home_item_menu(active, cx);
         let view = &self.ui.home.tabs.views[active.index()];
@@ -258,6 +296,7 @@ impl Launcher {
                     .h(px(38.))
                     .items_center()
                     .gap(px(10.))
+                    .children(search)
                     .child(
                         div()
                             .flex()

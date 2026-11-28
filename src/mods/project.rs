@@ -311,6 +311,8 @@ impl Launcher {
         let back_label = match (back_to, &parent_name) {
             (_, Some(name)) => name.clone(),
             (Page::Installed, _) => tr("Installed").to_string(),
+            (Page::Home, _) => tr("Home").to_string(),
+            (Page::Packs, _) => tr("Packs").to_string(),
             _ => tr("Discover").to_string(),
         };
         // The back link scrolls away with the page, above the side panel.
@@ -319,18 +321,8 @@ impl Launcher {
             .flex_col()
             .gap(px(14.))
             .child(
-                back(back_label).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    match &parent {
-                        Some(Parent::Collection(collection)) => {
-                            this.mods_show_v2_collection(collection.clone(), back_to)
-                        }
-                        Some(Parent::Project { id, parent, .. }) => this.mods_return_to_project(
-                            id.clone(),
-                            back_to,
-                            parent.as_deref().cloned(),
-                        ),
-                        None => this.ui.page = back_to,
-                    }
+                back(back_label).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.details_go_back();
                     cx.notify();
                 })),
             )

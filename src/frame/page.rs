@@ -47,11 +47,60 @@ impl Page {
 /// How many pages Back remembers.
 const BACK_LIMIT: usize = 20;
 
+/// The pages Back returns to, the most recent last, at most [`BACK_LIMIT`] of them. A page's own
+/// state (Home's tab, its scroll, the profile) stays where it lives, so returning to the page is
+/// returning to what the player left.
+#[derive(Default)]
+pub(crate) struct History(Vec<Page>);
+
+impl History {
+    /// Remembers `from` as the page Back returns to, dropping the oldest past the limit.
+    pub(crate) fn remember(&mut self, from: Page) {
+        self.0.push(from);
+        if self.0.len() > BACK_LIMIT {
+            self.0.remove(0);
+        }
+    }
+
+    /// The page Back returns to, forgotten as it is taken.
+    pub(crate) fn pop(&mut self) -> Option<Page> {
+        self.0.pop()
+    }
+
+    /// A details page was left for `to` by its own way back: forget the entry that led to it, if
+    /// it is still the latest, so Back doesn't return to a page the player is already on.
+    pub(crate) fn leave_to(&mut self, to: Page) {
+        if self.0.last() == Some(&to) {
+            self.0.pop();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pages(&self) -> &[Page] {
+        &self.0
+    }
+}
+
+impl Page {
+    /// Whether this page shows one mod's or pack's details.
+    pub(crate) fn is_details(self) -> bool {
+        matches!(self, Self::Project | Self::PackProject)
+    }
+
+    /// The page a mod's details opened from here return to: this one when it is a list the
+    /// player can come back to, else Discover.
+    pub(crate) fn details_origin(self) -> Self {
+        match self {
+            Self::Home | Self::Discover | Self::Installed | Self::Packs | Self::PackFind => self,
+            _ => Self::Discover,
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct State {
     pub page: Page,
-    /// The pages Back returns to, the most recent last, at most [`BACK_LIMIT`] of them.
-    pub back: Vec<Page>,
+    pub back: History,
     pub home: crate::home::HomeState,
     pub backdrop: crate::backdrop::Backdrop,
     pub sheet: Option<Sheet>,
@@ -84,11 +133,17 @@ pub(crate) struct State {
 }
 
 impl State {
-    /// Remembers `from` as the page Back returns to, dropping the oldest past [`BACK_LIMIT`].
+    /// Remembers `from` as the page Back returns to.
     pub(crate) fn remember(&mut self, from: Page) {
-        self.back.push(from);
-        if self.back.len() > BACK_LIMIT {
-            self.back.remove(0);
+        self.back.remember(from);
+    }
+
+    /// A details page is opening from the page shown: Back returns there. Moving between
+    /// details pages (a dependency, a collection's mod) adds nothing: they share one way back.
+    pub(crate) fn enter_details(&mut self) {
+        if !self.page.is_details() {
+            let from = self.page;
+            self.back.remember(from);
         }
     }
 
@@ -126,3 +181,6 @@ impl State {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

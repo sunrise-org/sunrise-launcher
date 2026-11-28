@@ -87,6 +87,7 @@ impl Launcher {
             project: project.clone(),
             page: None,
         });
+        self.ui.enter_details();
         self.ui.page = Page::PackProject;
         let tx = self.mods_state.tx.clone();
         std::thread::spawn(move || {
@@ -111,7 +112,7 @@ impl Launcher {
             .gap(px(14.))
             .child(
                 back(tr("Discover")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.ui.page = Page::PackFind;
+                    this.details_go_back();
                     cx.notify();
                 })),
             )

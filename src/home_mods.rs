@@ -359,6 +359,9 @@ pub(crate) struct Inventory {
     stale: bool,
     drawn: Option<Instant>,
     watched: bool,
+    /// A pack was switched on Home: the next published list keeps the packs' places, so the
+    /// card flipped doesn't move to another row.
+    keep_order: bool,
 }
 
 /// Home drawn again after this long checks the files once more: the player was elsewhere.
@@ -400,7 +403,12 @@ impl Inventory {
         }
         self.reading = false;
         match read {
-            Some((stamp, snapshot)) => {
+            Some((stamp, mut snapshot)) => {
+                if std::mem::take(&mut self.keep_order) {
+                    if let Some(old) = &self.snapshot {
+                        keep_order(&old.tabs.resources, &mut snapshot.tabs.resources);
+                    }
+                }
                 self.revision += 1;
                 self.stamp = stamp;
                 self.snapshot.replace(Arc::new(snapshot))
@@ -411,6 +419,22 @@ impl Inventory {
             }
         }
     }
+}
+
+/// Puts `new` in the order of `old` when both hold the same packs.
+fn keep_order(old: &[Item], new: &mut [Item]) {
+    if old.len() != new.len() {
+        return;
+    }
+    let place: HashMap<&str, usize> = old
+        .iter()
+        .enumerate()
+        .map(|(at, item)| (item.id.as_str(), at))
+        .collect();
+    if new.iter().any(|item| !place.contains_key(item.id.as_str())) {
+        return;
+    }
+    new.sort_by_key(|item| place[item.id.as_str()]);
 }
 
 /// Release superseded pack thumbnails from the window's sprite atlas on its next frame.

@@ -2839,5 +2839,10 @@
   "Delete group": "Delete group",
   "Delete group and profile": "Delete group and profile",
   "Delete group and profiles": "Delete group and profiles",
-  "Type the new group's name": "Type the new group's name"
+  "Type the new group's name": "Type the new group's name",
+  "Search mods": "Search mods",
+  "Search worlds": "Search worlds",
+  "Search packs": "Search packs",
+  "Search servers": "Search servers",
+  "{shown} of {total}": "{shown} of {total}"
 }

@@ -2,7 +2,7 @@
 //! what each does. A change goes through the same actions and locks as the Mods pages, and its
 //! refusal or failure is told in a toast.
 use super::*;
-use crate::home::tabs::{ItemAction, MenuEntry};
+use crate::home::tabs::{Flip, ItemAction, MenuEntry};
 use crate::mods::selection::PackOp;
 
 impl Launcher {
@@ -13,7 +13,12 @@ impl Launcher {
         } else {
             &snapshot.tabs.all_mods
         };
-        list.iter().find(|item| item.id == key).cloned()
+        let mut item = list.iter().find(|item| item.id == key).cloned()?;
+        // A switch just flipped counts as flipped, as its card shows it.
+        if let Some(flip) = self.ui.home.tabs.flipped.get(&(packs, key.to_owned())) {
+            item.on = flip.on;
+        }
+        Some(item)
     }
 
     /// The folder of the selected profile.
@@ -22,22 +27,58 @@ impl Launcher {
             .map(|instance| instance.home.clone())
     }
 
-    /// The card's switch: turns the mod or pack on or off. Nothing is said when it works (the
-    /// switch shows it); a refusal or a failure is.
+    /// The card's switch: turns the mod or pack on or off. The card shows the flip at once; when
+    /// the change fails the files bring it back. Nothing is said when it works (the switch shows
+    /// it); a refusal or a failure is.
     pub(crate) fn home_item_toggle(&mut self, packs: bool, key: &str, cx: &mut Context<Self>) {
-        if !packs {
-            self.home_mod_toggle(key);
-            return;
-        }
-        let (Some(item), Some(home)) = (self.home_item(true, key), self.home_item_home()) else {
+        let Some(item) = self.home_item(packs, key) else {
             return;
         };
-        let op = if item.on {
-            PackOp::Disable
+        let was_busy = self.mutating();
+        if packs {
+            let Some(home) = self.home_item_home() else {
+                return;
+            };
+            if let Some(why) = self.pack_refusal(&home) {
+                crate::toast::say(why);
+                return;
+            }
+            let op = if item.on {
+                PackOp::Disable
+            } else {
+                PackOp::Enable
+            };
+            self.ui.home.tabs.quiet = true;
+            self.run_pack_change(
+                home,
+                PackKind::Resource,
+                vec![item.id.clone()],
+                op,
+                false,
+                cx,
+            );
         } else {
-            PackOp::Enable
-        };
-        self.run_pack_change(home, PackKind::Resource, vec![item.id], op, false, cx);
+            self.home_mod_toggle(key);
+        }
+        // Only a change that began is shown ahead of the files; a refusal leaves the card be.
+        if !was_busy && self.mutating() {
+            let revision = self.ui.home.mods.revision;
+            self.ui.home.mods.keep_order |= packs;
+            self.ui.home.tabs.flipped.insert(
+                (packs, item.id),
+                Flip {
+                    on: !item.on,
+                    revision,
+                    done: None,
+                },
+            );
+            // A frame once the change should be over, to show the files' answer.
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+                let _ = this.update(cx, |_, cx| cx.notify());
+            })
+            .detach();
+        }
     }
 
     /// A row of the menu that does `action`, as it is until a lock or a rule dims it.

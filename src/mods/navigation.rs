@@ -14,9 +14,9 @@ impl Launcher {
                 .open
                 .as_ref()
                 .map_or(Page::Discover, |o| o.from),
-            Page::Installed => Page::Installed,
-            _ => Page::Discover,
+            page => page.details_origin(),
         };
+        self.ui.enter_details();
         self.ui.page = Page::Project;
         self.mods_load_v2_page(id, from);
     }
@@ -69,6 +69,7 @@ impl Launcher {
                 InstalledProject::Registry,
             ),
         };
+        self.ui.enter_details();
         self.ui.page = Page::Project;
         self.mods_load_page(id, Page::Installed, Some(installed));
     }
@@ -83,8 +84,39 @@ impl Launcher {
             ids.contains(&open.id) || open.removing.iter().any(|id| ids.contains(id))
         });
         if let Some(open) = self.mods_state.open.take_if(|_| gone) {
-            self.ui.page = open.from;
+            self.leave_details_to(open.from);
         }
+    }
+
+    /// Leaves a details page for `to`, the page it was opened from, and forgets that visit.
+    pub(crate) fn leave_details_to(&mut self, to: Page) {
+        self.ui.back.leave_to(to);
+        self.ui.page = to;
+    }
+
+    /// Back from a mod's or pack's page: where it was opened from (Home, with the tab it was
+    /// on), or the mod page it was reached from. False when no details page is open.
+    pub(crate) fn details_go_back(&mut self) -> bool {
+        match self.ui.page {
+            Page::PackProject => self.leave_details_to(Page::PackFind),
+            Page::Project => {
+                let Some(open) = self.mods_state.open.as_ref() else {
+                    return false;
+                };
+                let from = open.from;
+                match open.parent.clone() {
+                    Some(Parent::Collection(collection)) => {
+                        self.mods_show_v2_collection(collection, from)
+                    }
+                    Some(Parent::Project { id, parent, .. }) => {
+                        self.mods_return_to_project(id, from, parent.as_deref().cloned())
+                    }
+                    None => self.leave_details_to(from),
+                }
+            }
+            _ => return false,
+        }
+        true
     }
 
     pub(crate) fn show_resource_pack_discover(&mut self) {

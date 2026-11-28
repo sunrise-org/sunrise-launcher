@@ -1,6 +1,12 @@
 use super::*;
 use crate::widgets::button::secondary;
 use crate::widgets::focus::c;
+use gpui::Image;
+use std::sync::Arc;
+use sunrise_launcher::server_list::Server;
+
+/// A saved server and its picture, as the list keeps them.
+type Saved = (Server, Option<Arc<Image>>);
 
 impl Launcher {
     pub(super) fn home_servers(
@@ -11,10 +17,22 @@ impl Launcher {
     ) -> Content {
         self.load_servers(instance.home.clone());
         let count = self.multiplayer.list.len();
+        let query = self.ui.home.tabs.query_of(Tab::Servers);
+        // Each match keeps its place in the saved list: the Join page finds the server by it.
+        let found: Vec<(usize, Saved)> = self
+            .multiplayer
+            .list
+            .iter()
+            .enumerate()
+            .filter(|(_, (server, _))| {
+                search::matches(&query, &[server.name.as_str(), server.ip.as_str()])
+            })
+            .map(|(index, entry)| (index, entry.clone()))
+            .collect();
+        let shown = (!query.is_empty() && count > 0).then_some((found.len(), count));
         let view = &self.ui.home.tabs.views[Tab::Servers.index()];
-        let (built, place) = view.near.list(&view.scroll, count, 1, ROW, 0.);
-        let start = built.start;
-        let rows = self.multiplayer.list[built].to_vec();
+        let (built, place) = view.near.list(&view.scroll, found.len(), 1, ROW, 0.);
+        let rows = found[built].to_vec();
         let mut items = div().flex().flex_col();
         if count == 0 {
             items = empty(
@@ -29,9 +47,10 @@ impl Launcher {
                     )),
                 ),
             );
+        } else if found.is_empty() {
+            items = search::no_matches();
         } else {
-            for (offset, (server, saved)) in rows.into_iter().enumerate() {
-                let index = start + offset;
+            for (index, (server, saved)) in rows {
                 let reach = self.multiplayer.reach.get(&server.ip);
                 let offline = matches!(reach, Some(multiplayer_page::Reach::Offline));
                 let status = match reach {
@@ -64,6 +83,7 @@ impl Launcher {
         ));
         Content {
             count: Some(count),
+            shown,
             manage: (count > 0).then_some(manage),
             turned_off: 0,
             items,

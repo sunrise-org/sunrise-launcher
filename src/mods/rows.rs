@@ -127,12 +127,21 @@ impl Launcher {
             }
         }
         self.mods_refresh();
-        let mut labels = HashMap::new();
-        if self
+        let ready = self
             .mods_state
             .snapshot
             .as_ref()
-            .is_some_and(Snapshot::ready)
+            .is_some_and(Snapshot::ready);
+        if !ready {
+            // Mid-read the labels of the last read stay: the lines under the names don't blink.
+            return self
+                .mods_state
+                .home_mod_labels
+                .as_ref()
+                .map(|labels| labels.rows.clone())
+                .unwrap_or_default();
+        }
+        let mut labels = HashMap::new();
         {
             for row in self.rows().into_iter().filter(|row| row.on) {
                 let error = self.mods_state.errors.get(&row.id).map(String::as_str);

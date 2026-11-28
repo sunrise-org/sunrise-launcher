@@ -40,6 +40,7 @@ impl Launcher {
             parent: None,
             removing: Vec::new(),
         });
+        self.ui.enter_details();
         self.ui.page = Page::Project;
     }
 

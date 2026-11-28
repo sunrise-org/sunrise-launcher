@@ -899,22 +899,41 @@ impl Dropdown {
         // Before anything is typed, the way to make a new one is offered under the list.
         if let Some(made) = create.as_ref().filter(|_| !filtering) {
             let naming = id.clone();
+            // The offer's words without their "…" are the name to type over.
+            let seed = tr(made.offer).trim_end_matches('…').trim().to_string();
+            let owner = Owner::default();
+            let redraw = owner.clone();
+            let p = palette();
             rows.push(rule());
             rows.push(
-                row_when(
-                    ElementId::from((key.clone(), CREATE_ROW - 1)),
-                    tr(made.offer),
-                    None,
-                    false,
-                    true,
-                )
-                .on_click(move |_, window, _| {
-                    NAMING.with_borrow_mut(|n| {
-                        n.insert(naming.clone());
-                    });
-                    window.refresh();
-                })
-                .into_any_element(),
+                div()
+                    .id(ElementId::from((key.clone(), CREATE_ROW - 1)))
+                    .reach()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .px(px(10.))
+                    .min_h(px(ROW_H))
+                    .rounded(tokens::r(tokens::R_SMALL))
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(c(p.hover)))
+                    .text_size(px(tokens::BODY))
+                    .text_color(c(p.accent_ink))
+                    .child(owner.noting())
+                    .child(crate::glass_ui::icon("plus-sign", 16., c(p.accent_ink)))
+                    .child(tr(made.offer))
+                    // The name is typed where the filter is: it starts as a name to type over.
+                    .on_click(move |_, window, cx| {
+                        NAMING.with_borrow_mut(|n| {
+                            n.insert(naming.clone());
+                        });
+                        with_filter(&naming, |e| {
+                            e.set(seed.clone());
+                            e.select_all();
+                        });
+                        redraw.redraw(window, cx);
+                    })
+                    .into_any_element(),
             );
         }
         if rows.is_empty() {

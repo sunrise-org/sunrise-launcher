@@ -78,6 +78,16 @@ impl Launcher {
         }
     }
 
+    /// Home's cards act while Installed's read of the profile is being renewed (every change
+    /// starts one): the rows it kept from the last read are this profile's, and the workers check
+    /// the files under their locks. Home never opens the Installed page that would settle it.
+    fn settling_on_home(&self, snapshot: &Snapshot) -> bool {
+        self.ui.page == Page::Home
+            && snapshot.reading
+            && snapshot.error.is_none()
+            && snapshot.home == self.mods_home()
+    }
+
     /// The gate every change passes: not locked, nothing else running.
     pub(super) fn guard(&mut self) -> bool {
         let refusal = if let Some(why) = self.mods_locked() {
@@ -94,7 +104,7 @@ impl Launcher {
             .mods_state
             .snapshot
             .as_ref()
-            .is_some_and(|snapshot| !snapshot.ready())
+            .is_some_and(|snapshot| !snapshot.ready() && !self.settling_on_home(snapshot))
         {
             Some(
                 tr("Installed mods aren't settled yet. Wait or retry before changing them.").into(),

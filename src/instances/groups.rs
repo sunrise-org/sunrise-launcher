@@ -1,7 +1,7 @@
 //! The sidebar's groups: the order the player gave them, which ones are folded, and renaming or
 //! dissolving one. A group has no record of its own: it is the `group` of its profiles, so a
 //! group exists while a profile is in it, and these choices are kept beside the profiles' in
-//! `instances.json` (`group_order`, `collapsed_groups`). A file without them lists the groups by
+//! `instances.json` (`group_order`, `collapsed_groups`, `profiles_folded`). A file without them lists the groups by
 //! name with none folded, as before.
 use super::*;
 
@@ -22,6 +22,8 @@ pub struct GroupChoices {
     pub order: Vec<String>,
     /// The groups folded under their heading.
     pub collapsed: BTreeSet<String>,
+    /// The whole profile list folded under the sidebar's "Profiles" heading.
+    pub profiles_folded: bool,
 }
 
 /// The saved group choices.
@@ -34,6 +36,7 @@ pub(super) fn group_choices_in(data: &Path) -> GroupChoices {
     GroupChoices {
         order: store.group_order,
         collapsed: store.collapsed_groups,
+        profiles_folded: store.profiles_folded,
     }
 }
 
@@ -202,6 +205,18 @@ pub(super) fn collapse_group_in(data: &Path, group: &str, collapsed: bool) -> Re
         } else {
             store.collapsed_groups.remove(group);
         }
+        Ok(())
+    })
+}
+
+/// Folds the whole profile list under the sidebar's "Profiles" heading, or unfolds it.
+pub fn fold_profiles(folded: bool) -> Result<(), String> {
+    fold_profiles_in(&backend::data_dir(), folded)
+}
+
+pub(super) fn fold_profiles_in(data: &Path, folded: bool) -> Result<(), String> {
+    Store::mutate(data, |store| {
+        store.profiles_folded = folded;
         Ok(())
     })
 }

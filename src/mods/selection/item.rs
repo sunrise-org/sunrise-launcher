@@ -49,7 +49,8 @@ impl Launcher {
             .as_ref()
             .is_some_and(|snapshot| snapshot.ready());
         if !ready {
-            return Arc::default();
+            // Mid-read the last facts stay, so the cards and menus don't change under the player.
+            return self.ui.home.tabs.facts.rows.clone().unwrap_or_default();
         }
         let home = self.mods_home();
         let mut facts = HashMap::new();
@@ -90,6 +91,10 @@ impl Launcher {
         self.mods_state.bulk_toast = true;
         self.ui.home.tabs.quiet = true;
         self.toggle(&row);
+        // Nothing began and nothing is left to say: the flag has no result to wait for.
+        if !self.mutating() && self.notice().is_none() {
+            self.ui.home.tabs.quiet = false;
+        }
     }
 
     /// Updates the mod `id`; the result is told in a toast.

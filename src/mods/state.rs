@@ -281,7 +281,9 @@ impl Launcher {
             .as_ref()
             .is_none_or(|s| s.key != key)
         {
-            self.mods_state.home_mod_labels = None;
+            if moved {
+                self.mods_state.home_mod_labels = None;
+            }
             // Keep the same profile's confirmed rows and advisory until the worker answers.
             let (rows, backup_notice) = self
                 .mods_state
@@ -356,6 +358,11 @@ impl Launcher {
     /// The Mods page's own change under way (a Modrinth mod or pack, a data pack, mods turned
     /// on): its line and how far it is, for the status strip.
     pub(crate) fn mods_change(&self) -> Option<(&str, f32)> {
+        // A switch flipped on a Home card shows itself: a strip sliding in and out of the page
+        // for it would move everything under it.
+        if self.ui.home.tabs.quiet && self.ui.page == Page::Home {
+            return None;
+        }
         let (line, fraction) = self.mods_state.busy.as_ref()?;
         Some((line.as_str(), *fraction))
     }

@@ -17,6 +17,16 @@ impl Launcher {
             .fresh
             .then_some(self.worlds.list.len())
             .or_else(|| (!self.worlds.list.is_empty()).then_some(self.worlds.list.len()));
+        let query = self.ui.home.tabs.query_of(Tab::Worlds);
+        let found: Vec<World> = self
+            .worlds
+            .list
+            .iter()
+            .filter(|world| search::matches(&query, &[world.name.as_str(), world.folder.as_str()]))
+            .cloned()
+            .collect();
+        let shown =
+            (!query.is_empty() && count.is_some()).then_some((found.len(), self.worlds.list.len()));
         let view = &self.ui.home.tabs.views[Tab::Worlds.index()];
         let tiles = self.settings.world_layout == backend::WorldLayout::Tiles;
         let across = if tiles {
@@ -31,9 +41,9 @@ impl Launcher {
         } else {
             (WORLD_ROW, WORLD_ROW_GAP)
         };
-        let (built, place) =
-            view.near
-                .list(&view.scroll, self.worlds.list.len(), across, height, gap);
+        let (built, place) = view
+            .near
+            .list(&view.scroll, found.len(), across, height, gap);
         let items = if count == Some(0) {
             // A world copied into the folder shows up here.
             let saves = instance.home.join("saves");
@@ -67,8 +77,10 @@ impl Launcher {
             )
         } else if self.worlds.list.is_empty() {
             div()
+        } else if found.is_empty() {
+            search::no_matches()
         } else {
-            let worlds = self.worlds.list[built].to_vec();
+            let worlds = found[built].to_vec();
             let mut rows = div().flex().gap(px(gap));
             if tiles {
                 rows = rows.flex_wrap();
@@ -87,6 +99,7 @@ impl Launcher {
         let manage = (count.unwrap_or(0) > 0).then(|| self.add_world_button("home-worlds-add", cx));
         Content {
             count,
+            shown,
             manage,
             turned_off: 0,
             items,

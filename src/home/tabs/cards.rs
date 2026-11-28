@@ -1,7 +1,7 @@
 //! The Mods and Packs tabs' rows, drawn as the Worlds tab draws its own: a bordered card of one
 //! height with a picture, a name over a muted line, and on the right a switch and a "…" menu.
 //! Pressing the card opens the item; the switch and the menu take their own presses. The tick
-//! box of a multi-selection shows over the picture's corner under the pointer.
+//! box of a multi-selection has a column left of the picture, shown under the pointer.
 use super::*;
 use crate::widgets::button::{icon_button_opening, Style};
 use crate::widgets::check::switch;
@@ -16,6 +16,8 @@ pub(crate) const GAP: f32 = WORLD_ROW_GAP;
 /// The menu's width, and how close to the window's edge it may come.
 const MENU_WIDTH: f32 = 210.;
 const MENU_EDGE: f32 = 8.;
+/// The column of the tick box: as wide as the box, fixed so the card doesn't shift.
+const CHECK_SLOT: f32 = 18.;
 
 /// One thing a card's "…" menu can do.
 #[derive(Clone, Debug, PartialEq)]
@@ -235,8 +237,8 @@ impl Launcher {
         .into_any_element()
     }
 
-    /// The tick box over the picture's corner: shown under the pointer, and on every card once
-    /// one is ticked.
+    /// The tick box, in a column of its own left of the picture so the card's content stays put
+    /// when it shows: under the pointer, and on every card once one is ticked.
     fn card_check(
         &mut self,
         id: &SharedString,
@@ -246,10 +248,11 @@ impl Launcher {
     ) -> Div {
         let (packs, key, order) = (pick.packs, pick.key.clone(), pick.order.clone());
         div()
-            .absolute()
-            .top(px(-4.))
-            .left(px(-4.))
-            .opacity(if pick.any { 1. } else { 0. })
+            .flex_none()
+            .w(px(CHECK_SLOT))
+            .flex()
+            .items_center()
+            .opacity(if pick.any || pick.ticked { 1. } else { 0. })
             .group_hover(group.clone(), |s| s.opacity(1.))
             .child(
                 checkbox(
@@ -359,14 +362,8 @@ impl Launcher {
             .px(px(12.))
             .hover(|s| s.bg(rgb(palette().hover)))
             .when(ticked, |d| d.bg(rgb(palette().selected)))
-            .child(
-                div()
-                    .relative()
-                    .flex_none()
-                    .size(px(ICON))
-                    .child(picture)
-                    .child(check),
-            )
+            .child(check)
+            .child(div().flex_none().size(px(ICON)).child(picture))
             .child(
                 div()
                     .flex_1()

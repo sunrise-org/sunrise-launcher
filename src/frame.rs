@@ -25,6 +25,11 @@ impl Launcher {
 
     /// Back: shows the page navigated away from last. Returns whether there was one.
     pub(super) fn go_back(&mut self) -> bool {
+        // A mod's or pack's page has its own way back (a dependency returns to the mod it was
+        // opened from); the rest of the time Back is the history.
+        if self.ui.page.is_details() && self.details_go_back() {
+            return true;
+        }
         let Some(page) = self.ui.back.pop() else {
             return false;
         };

@@ -40,11 +40,14 @@ impl Launcher {
     /// current, which the actions below work from.
     pub(crate) fn mod_selection_facts(&mut self, ids: &BTreeSet<String>) -> ModFacts {
         self.mods_refresh();
-        let ready = self
-            .mods_state
-            .snapshot
-            .as_ref()
-            .is_some_and(|snapshot| snapshot.ready());
+        // Mid-read the rows of the last read still say what is on and what can be removed, so
+        // the bar doesn't lose its buttons for a moment after every change.
+        let ready = self.mods_state.snapshot.as_ref().is_some_and(|snapshot| {
+            snapshot.error.is_none()
+                && (snapshot.ready()
+                    || !snapshot.rows.entries.is_empty()
+                    || !snapshot.rows.local.is_empty())
+        });
         if !ready {
             return ModFacts::default();
         }
@@ -191,6 +194,7 @@ impl Launcher {
             let said = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.mods_state.busy = None;
+                this.ui.home.tabs.quiet = false;
                 this.game_packs.stale();
                 this.home_inventory_changed();
                 match said {
@@ -314,7 +318,8 @@ impl Launcher {
                 let typing = [&self.mods_state.have_focus, &self.mods_state.find_focus]
                     .into_iter()
                     .flatten()
-                    .any(|focus| focus.is_focused(window));
+                    .any(|focus| focus.is_focused(window))
+                    || self.home_search_focused(window);
                 !typing && self.tick_all()
             }
             _ => false,

@@ -386,6 +386,79 @@ pub(crate) fn reload_group_folds() {
     FOLDS.with_borrow_mut(|folds| folds.folded = None);
 }
 
+/// The whole profile list's fold, under the "Profiles" heading: whether it is folded (read from
+/// `instances.json` once), what it was when last drawn, and the ease while it turns over. The
+/// sidebar folded to icons ignores it.
+#[derive(Default)]
+struct ListFold {
+    folded: Option<bool>,
+    drawn: Option<bool>,
+    fade: Option<crate::motion::Fade>,
+}
+
+impl ListFold {
+    fn folded(&mut self) -> bool {
+        *self
+            .folded
+            .get_or_insert_with(|| instances::group_choices().profiles_folded)
+    }
+
+    /// Notes that the list is drawn folded or not, as [`Folds::note`] does for a group: how open it
+    /// is now (1 open, 0 folded) and, while it turns over, the ease that plays it. A turn made
+    /// while another is playing reverses from where that one is.
+    fn note(&mut self, folded: bool) -> (f32, Option<crate::motion::Fade>) {
+        let now = Instant::now();
+        if self.drawn.replace(folded) == Some(!folded) {
+            if crate::motion::arrivals() {
+                let mut fade = crate::motion::Fade::toward(self.fade, !folded, now);
+                fade.motion = sunrise_launcher_theme::MOVE;
+                self.fade = Some(fade);
+            } else {
+                self.fade = None;
+            }
+        }
+        match self.fade {
+            Some(fade) if crate::motion::arrivals() && fade.moving(now) => {
+                (fade.value(now).clamp(0., 1.), Some(fade))
+            }
+            _ => {
+                self.fade = None;
+                (if folded { 0. } else { 1. }, None)
+            }
+        }
+    }
+}
+
+thread_local! {
+    static LIST_FOLD: RefCell<ListFold> = RefCell::new(ListFold::default());
+}
+
+/// Whether the whole profile list is folded under its heading.
+fn profiles_folded() -> bool {
+    LIST_FOLD.with_borrow_mut(ListFold::folded)
+}
+
+/// The height of the list drawn at `open` of the way, unfolded, in px: its rows and its group
+/// headings (a folded group's rows left out), with the gaps between, from the same constants the
+/// list is built with.
+fn list_extent(all: &[Instance], open: f32) -> f32 {
+    let headings = group_headings(all.iter().map(|i| i.group.as_deref()));
+    let (mut rows, mut heads) = (0usize, 0usize);
+    for (i, heading) in all.iter().zip(&headings) {
+        heads += usize::from(heading.is_some());
+        let named = i.group.as_deref().filter(|g| !g.trim().is_empty());
+        if !(open > 0. && named.is_some_and(group_collapsed)) {
+            rows += 1;
+        }
+    }
+    let head = if open > 0. {
+        HEADING_EXTENT
+    } else {
+        RULE_EXTENT
+    };
+    (rows as f32 * (row_height(open) + ROW_GAP) + heads as f32 * head - ROW_GAP).max(0.)
+}
+
 /// One small button on a group's heading: `mark` slides in from the right and fades in while the
 /// pointer is on the heading `hover_id` (see `track_hover`), as a profile's dots do, and the
 /// button itself is over it, clear until the keyboard has it. `right` is how far its right edge
@@ -704,6 +777,18 @@ impl Launcher {
         cx.notify();
     }
 
+    /// Folds the whole profile list under its heading, or unfolds it, and keeps the choice for the
+    /// next time the launcher opens.
+    pub(crate) fn toggle_profiles(&mut self, cx: &mut Context<Self>) {
+        let fold = !profiles_folded();
+        if let Err(error) = instances::fold_profiles(fold) {
+            crate::toast::say(error);
+            return;
+        }
+        LIST_FOLD.with_borrow_mut(|list| list.folded = Some(fold));
+        cx.notify();
+    }
+
     pub(crate) fn switch_profile(&mut self, instance: &Instance, cx: &mut Context<Self>) {
         if self.profile_lock().is_some() {
             return;
@@ -793,20 +878,53 @@ impl Launcher {
 
     /// The profiles section: the heading, then the list, which takes the room the sidebar has.
     pub(super) fn profiles_section(&mut self, look: Look, cx: &mut Context<Self>) -> Div {
-        let heading = self.profiles_heading(look, cx);
-        let list = self.profile_list(look, cx);
-        div()
+        let labelled = look.open > 0.;
+        let folded = labelled && profiles_folded();
+        let (open, fade) = if labelled {
+            LIST_FOLD.with_borrow_mut(|list| list.note(folded))
+        } else {
+            (1., None)
+        };
+        let count = self.instances.list.len();
+        let heading = self.profiles_heading(look, count, folded, open, cx);
+        let section = div()
             .flex()
             .flex_col()
             .flex_1()
             .min_h_0()
             .gap(px(4.))
-            .child(heading)
-            .child(list)
+            .child(heading);
+        if folded && fade.is_none() {
+            // Folded and at rest: no rows are built, and none is a keyboard target.
+            self.ui.profile_rows.borrow_mut().clear();
+            return section;
+        }
+        let full = list_extent(&self.instances.list, look.open);
+        let list = self.profile_list(look, cx);
+        // Turning over, the whole list sits in a box whose height follows the ease, and the gap
+        // under the heading goes with it, so nothing below jumps when it ends.
+        section.child(match fade {
+            Some(fade) => fade.play(
+                &SharedString::from("profile-list-fold"),
+                list,
+                move |d, open| {
+                    let open = open.clamp(0., 1.);
+                    d.max_h(px(full * open)).mt(px(-4. * (1. - open)))
+                },
+            ),
+            None => list.into_any_element(),
+        })
     }
 
     /// "Profiles", and the + button that makes a new one. Locked, the button says why.
-    fn profiles_heading(&mut self, look: Look, cx: &mut Context<Self>) -> Div {
+    fn profiles_heading(
+        &mut self,
+        look: Look,
+        count: usize,
+        folded: bool,
+        open: f32,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let p = palette();
         let add = match look.lock {
             None => icon_button("profile-add", "plus-sign", tr("New profile"), Style::Ghost)
@@ -826,15 +944,46 @@ impl Launcher {
             )
             .tooltip(crate::glass_ui::tip(reason)),
         };
+        let muted = rgb(p.chrome_muted);
+        let label = div()
+            .id("profiles-fold")
+            .reach()
+            .relative()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .px(px(3.))
+            .whitespace_nowrap()
+            .text_size(px(tokens::CAPTION))
+            .text_color(muted)
+            .cursor_pointer()
+            .child(tr("Profiles"))
+            .when(open < 1., |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .gap(px(4.))
+                        .opacity(1. - open)
+                        .child(crate::widgets::motion_bits::chevron(
+                            "profiles-fold-chevron",
+                            !folded,
+                            10.,
+                            muted.into(),
+                        ))
+                        .child(count.to_string()),
+                )
+            })
+            .on_click(cx.listener(|this, _, _, cx| this.toggle_profiles(cx)));
         let title = div()
             .flex_1()
             .min_w_0()
             .overflow_hidden()
-            .whitespace_nowrap()
-            .text_size(px(tokens::CAPTION))
-            .text_color(rgb(p.chrome_muted))
+            .flex()
             .opacity(label_opacity(look.open))
-            .child(tr("Profiles"));
+            .child(label);
         // Closed, the + alone is centred in the column.
         let pad = if look.open > 0. {
             ICON_PAD

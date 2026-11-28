@@ -34,8 +34,8 @@ pub use delete::*;
 pub use deletion_recovery::{interrupted_deletions, InterruptedDeletion};
 pub use edit::*;
 pub use groups::{
-    collapse_group, group_choices, group_names, move_group, move_group_options, rename_group,
-    ungroup_group, GroupChoices,
+    collapse_group, fold_profiles, group_choices, group_names, move_group, move_group_options,
+    rename_group, ungroup_group, GroupChoices,
 };
 use lifecycle::{initial_choices, GATES, INITIAL, RETIRED};
 pub use list::*;
@@ -231,6 +231,13 @@ struct Store {
         skip_serializing_if = "BTreeSet::is_empty"
     )]
     collapsed_groups: BTreeSet<String>,
+    /// The whole profile list folded under its "Profiles" heading. Unreadable: not folded.
+    #[serde(
+        default,
+        deserialize_with = "groups::tolerant",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    profiles_folded: bool,
     #[serde(flatten)]
     other: BTreeMap<String, serde_json::Value>,
 }

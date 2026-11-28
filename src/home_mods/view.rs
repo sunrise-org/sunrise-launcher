@@ -106,51 +106,117 @@ impl Launcher {
         let Some(snapshot) = self.ui.home.mods.snapshot.clone() else {
             return Content {
                 count: None,
+                shown: None,
                 turned_off: 0,
                 manage: Some(add),
                 items: div(),
             };
         };
-        let list = if packs {
+        let full = if packs {
             &snapshot.tabs.resources
         } else {
             &snapshot.tabs.all_mods
         };
-        if list.is_empty() {
+        if full.is_empty() {
             return Content {
                 count: Some(0),
+                shown: None,
                 turned_off: 0,
                 // The empty state has its own Add file.
                 manage: None,
                 items: self.home_installed_empty(packs, cx),
             };
         }
-        let turned_off = if packs { 0 } else { snapshot.tabs.mods_off };
-        let count = if packs {
-            list.len()
+        // The rows as the screen has them: a switch just flipped is already in its new place.
+        self.home_settle_flips(cx);
+        let all: Vec<Item> = full
+            .iter()
+            .map(|item| self.home_flipped(packs, item))
+            .collect();
+        let turned_off = if packs {
+            0
         } else {
-            list.len() - turned_off
+            all.iter().filter(|item| !item.on).count()
         };
+        let count = all.len() - turned_off;
+        let query = self.ui.home.tabs.query(packs);
+        let list: Vec<Item> = all
+            .iter()
+            .filter(|item| home_item_matches(item, &query))
+            .cloned()
+            .collect();
+        let shown = (!query.is_empty()).then_some((list.len(), all.len()));
         // Rows already gone drop out of the ticks; the rest keep them as the list changes.
+        let every: Vec<String> = all.iter().map(|item| item.id.clone()).collect();
+        self.home_pick(packs).retain(&every);
+        if list.is_empty() {
+            return Content {
+                count: Some(count),
+                shown,
+                turned_off,
+                manage: Some(add),
+                items: tabs::no_matches(),
+            };
+        }
         let order: std::rc::Rc<Vec<String>> =
             std::rc::Rc::new(list.iter().map(|item| item.id.clone()).collect());
-        self.home_pick(packs).retain(&order);
-        let rows = self.home_cards(packs, list, &order, cx);
-        let pick_bar = self.home_pick_bar(packs, list, &order, cx);
+        let rows = self.home_cards(packs, &list, &all, &order, cx);
+        let pick_bar = self.home_pick_bar(packs, &all, &order, cx);
         self.home_set_bar(pick_bar);
         Content {
             count: Some(count),
+            shown,
             turned_off,
             manage: Some(add),
             items: rows,
         }
     }
 
-    /// The cards of the rows the list has room to build now.
+    /// `item` as the card shows it: on or off as the player just flipped it, until the files
+    /// say so themselves.
+    fn home_flipped(&self, packs: bool, item: &Item) -> Item {
+        let mut item = item.clone();
+        if let Some(flip) = self.ui.home.tabs.flipped.get(&(packs, item.id.clone())) {
+            item.on = flip.on;
+        }
+        item
+    }
+
+    /// Drops the flips the files have answered (a new inventory) or never will (the change
+    /// ended and nothing came of it, as when it failed): the card shows the files again. While a
+    /// flip waits for its answer the inventory is looked at once more.
+    fn home_settle_flips(&mut self, cx: &mut Context<Self>) {
+        if self.ui.home.tabs.flipped.is_empty() {
+            return;
+        }
+        let revision = self.ui.home.mods.revision;
+        let busy = self.mutating();
+        let now = Instant::now();
+        let mut waiting = false;
+        self.ui.home.tabs.flipped.retain(|_, flip| {
+            if flip.revision != revision {
+                return false;
+            }
+            if busy {
+                return true;
+            }
+            let done = *flip.done.get_or_insert(now);
+            waiting = true;
+            now.duration_since(done) < SETTLE
+        });
+        if waiting {
+            self.ui.home.mods.stale = true;
+            cx.notify();
+        }
+    }
+
+    /// The cards of the rows the list has room to build now. `list` is what the search leaves
+    /// of `all`.
     fn home_cards(
         &mut self,
         packs: bool,
         list: &[Item],
+        all: &[Item],
         order: &std::rc::Rc<Vec<String>>,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -172,12 +238,24 @@ impl Launcher {
         {
             self.ensure_v2_catalog(false);
         }
+        // A pack's place in the stack is its place among the packs that are on, the whole list
+        // over, not among those the search leaves.
+        let mut before: HashMap<&str, usize> = HashMap::new();
+        if packs {
+            let mut on = 0;
+            for item in all {
+                before.insert(item.id.as_str(), on);
+                on += usize::from(item.on);
+            }
+        }
         let ticked = self.home_pick(packs).clone();
         let mut rows = div().flex().flex_col().gap(px(tabs::GAP));
-        let mut priority = list[..built.start].iter().filter(|item| item.on).count();
         for item in &list[built] {
             let (detail, switchable) = match &facts {
-                None => (Self::home_pack_detail(item, &mut priority), true),
+                None => {
+                    let mut priority = before.get(item.id.as_str()).copied().unwrap_or(0);
+                    (Self::home_pack_detail(item, &mut priority), true)
+                }
                 Some((labels, facts)) => {
                     let fact = facts.get(&item.id);
                     (
@@ -321,7 +399,7 @@ impl Launcher {
         self.home_pick(packs).clear();
     }
 
-    /// The ids of the rows the Mods or Packs tab lists, in order.
+    /// The ids of the rows the Mods or Packs tab shows now (its search applied), in order.
     pub(crate) fn home_list_ids(&self, packs: bool) -> Vec<String> {
         let Some(snapshot) = &self.ui.home.mods.snapshot else {
             return Vec::new();
@@ -331,7 +409,11 @@ impl Launcher {
         } else {
             &snapshot.tabs.all_mods
         };
-        list.iter().map(|item| item.id.clone()).collect()
+        let query = self.ui.home.tabs.query(packs);
+        list.iter()
+            .filter(|item| home_item_matches(item, &query))
+            .map(|item| item.id.clone())
+            .collect()
     }
 
     /// Something other than the Home page changed the profile's mods or packs: read them again.
@@ -339,3 +421,21 @@ impl Launcher {
         self.ui.home.mods.stale = true;
     }
 }
+
+/// Whether `item` is what the search `query` (lower-cased) asks for: its name, version or
+/// source.
+fn home_item_matches(item: &Item, query: &str) -> bool {
+    let source = item.manual_badge.map_or("", |badge| badge.label());
+    tabs::matches_query(
+        query,
+        &[
+            item.name.as_str(),
+            item.id.as_str(),
+            item.mod_version.as_deref().unwrap_or(""),
+            source,
+        ],
+    )
+}
+
+/// How long a flipped switch waits for the files to say so after its change ended.
+const SETTLE: Duration = Duration::from_millis(1500);

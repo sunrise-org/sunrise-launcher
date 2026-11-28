@@ -162,3 +162,17 @@ fn a_move_writes_the_order_beside_the_profiles_choices() {
     let saved = fs::read_to_string(data.join(FILE)).expect("the saved choices");
     assert!(saved.contains("group_order"));
 }
+
+#[test]
+fn the_folded_profile_list_is_kept_and_written_only_while_folded() {
+    let (_root, _home, data) = with_groups("fold-list", &THREE);
+    assert!(!group_choices_in(&data).profiles_folded);
+    fold_profiles_in(&data, true).expect("folds");
+    assert!(group_choices_in(&data).profiles_folded);
+    // It sits beside the groups' own choices, never among them.
+    assert!(group_choices_in(&data).collapsed.is_empty());
+    fold_profiles_in(&data, false).expect("unfolds");
+    assert!(!group_choices_in(&data).profiles_folded);
+    let saved = fs::read_to_string(data.join(FILE)).expect("the saved choices");
+    assert!(!saved.contains("profiles_folded"));
+}
