@@ -591,7 +591,8 @@ impl Launcher {
                 }
             }
             Msg::PlayDetail(detail) => {
-                if self.starting_client.is_some() {
+                // A switch's steps come as SwitchDetail, from its own operation.
+                if self.starting_client.is_some() || self.preparing || self.installing.is_some() {
                     self.play_detail = Some(detail);
                 }
             }

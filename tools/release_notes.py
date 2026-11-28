@@ -72,19 +72,27 @@ def decide(head: str) -> dict:
 
 
 def merged_since(tag: str | None, head: str, base: str = "main") -> list[dict]:
-    """The pull requests merged into `base` after `tag` (all, before the first release), from GitHub, newest first."""
+    """The pull requests merged into `base` (and `main`, when releasing from another branch) after `tag`, newest first."""
     since = ""
     if tag:
         since = subprocess.run(["git", "-C", str(ROOT), "log", "-1", "--format=%cI", tag],
                                capture_output=True, text=True, check=True).stdout.strip()
-    search = f"is:merged base:{base}" + (f" merged:>{since}" if since else "")
-    out = subprocess.run(["gh", "pr", "list", "-R", REPOSITORY, "--state", "merged", "--search", search,
-                          "--limit", "200", "--json", "number,title,labels,mergeCommit"],
-                         capture_output=True, text=True, check=True).stdout
+    bases = [base] if base == "main" else [base, "main"]
+    pulls: list[dict] = []
+    seen: set[int] = set()
+    for branch in bases:
+        search = f"is:merged base:{branch}" + (f" merged:>{since}" if since else "")
+        out = subprocess.run(["gh", "pr", "list", "-R", REPOSITORY, "--state", "merged", "--search", search,
+                              "--limit", "200", "--json", "number,title,labels,mergeCommit"],
+                             capture_output=True, text=True, check=True).stdout
+        for pr in json.loads(out):
+            if pr["number"] not in seen:
+                seen.add(pr["number"])
+                pulls.append(pr)
     rev_range = f"{tag}..{head}" if tag else head
-    reachable = subprocess.run(["git", "-C", str(ROOT), "rev-list", rev_range], capture_output=True, text=True,
-                               check=True).stdout.split()
-    return [p for p in json.loads(out) if (p.get("mergeCommit") or {}).get("oid") in reachable]
+    reachable = set(subprocess.run(["git", "-C", str(ROOT), "rev-list", rev_range], capture_output=True, text=True,
+                                   check=True).stdout.split())
+    return [p for p in pulls if (p.get("mergeCommit") or {}).get("oid") in reachable]
 
 
 def notes(tag: str, pulls: list[dict], skipped: list[str] = ()) -> tuple[str, str]:

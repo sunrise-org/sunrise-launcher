@@ -473,6 +473,13 @@ fn publish_snapshot(
     static RETIRED: AtomicUsize = AtomicUsize::new(0);
 
     let local = root.join(".local");
+    let remove_retired = |retired_name: &str| {
+        if let Ok(local_dir) =
+            cap_std::fs::Dir::open_ambient_dir(&local, cap_std::ambient_authority())
+        {
+            let _ = crate::native_cache::remove_entry(&local_dir, Path::new(retired_name));
+        }
+    };
     let retired = if exists {
         require_dir(&local)?;
         let name = format!(
@@ -481,23 +488,31 @@ fn publish_snapshot(
             RETIRED.fetch_add(1, Ordering::Relaxed)
         );
         let path = local.join(&name);
-        durable::move_new_directory(snapshot, &path).map_err(io_failure)?;
+        if let Err(err) = durable::move_new_directory(snapshot, &path) {
+            // On Unix, `move_new_directory` can fail syncing a parent after renaming `snapshot`.
+            if path.exists() && !snapshot.exists() {
+                let _ = durable::move_new_directory(&path, snapshot);
+            }
+            return Err(io_failure(err));
+        }
         Some((name, path))
     } else {
         None
     };
     if let Err(publish_err) = publish(staged, snapshot) {
-        if let Some((_, retired_path)) = retired {
-            durable::move_new_directory(&retired_path, snapshot).map_err(io_failure)?;
+        if let Some((retired_name, retired_path)) = retired {
+            if snapshot.exists() {
+                // `publish` failed after renaming `staged` into `snapshot` (e.g. parent sync):
+                // leave the published snapshot in place instead of restoring into an occupied path.
+                remove_retired(&retired_name);
+            } else if retired_path.exists() {
+                durable::move_new_directory(&retired_path, snapshot).map_err(io_failure)?;
+            }
         }
         return Err(io_failure(publish_err));
     }
     if let Some((retired_name, _)) = retired {
-        if let Ok(local_dir) =
-            cap_std::fs::Dir::open_ambient_dir(&local, cap_std::ambient_authority())
-        {
-            let _ = crate::native_cache::remove_entry(&local_dir, Path::new(&retired_name));
-        }
+        remove_retired(&retired_name);
     }
     Ok(())
 }
@@ -1090,6 +1105,25 @@ mod tests {
         assert!(
             damaged_siblings().is_empty(),
             "retired sibling must be removed after publish succeeds"
+        );
+
+        // If `publish` fails after already renaming `staged` into `snapshot` (e.g. parent sync),
+        // it must not try to restore the retired sibling into the occupied path.
+        fs::create_dir_all(staged.join("resources")).unwrap();
+        fs::write(staged.join("resources/blob.bin"), b"post-rename snapshot").unwrap();
+        let err = publish_snapshot(root, &staged, &snapshot, true, |from, to| {
+            fs::rename(from, to)?;
+            Err(io::Error::other("parent sync failed"))
+        })
+        .expect_err("post-rename failure must still return the error");
+        assert_eq!(err, io_failure(io::Error::other("parent sync failed")));
+        assert_eq!(
+            fs::read(snapshot.join("resources/blob.bin")).unwrap(),
+            b"post-rename snapshot"
+        );
+        assert!(
+            damaged_siblings().is_empty(),
+            "retired sibling must be cleaned up when publish already renamed"
         );
     }
 }

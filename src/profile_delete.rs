@@ -560,6 +560,61 @@ mod tests {
     }
 
     #[test]
+    fn standalone_install_and_prepare_route_and_clear_play_detail() {
+        let Some(_root) =
+            scratch_child("standalone_install_and_prepare_route_and_clear_play_detail")
+        else {
+            return;
+        };
+        let mut app = gpui::TestAppContext::single();
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
+        let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+
+        launcher.update(cx, |launcher, cx| {
+            const TAG: &str = "26.3-0.1.1";
+            // Idle: PlayDetail is dropped.
+            launcher.on_play_message(Msg::PlayDetail("Ignored while idle".into()), cx);
+            assert_eq!(launcher.play_detail, None);
+
+            // Standalone Install routes detail to Home and clears it on completion.
+            launcher.installing = Some((TAG.into(), backend::InstallPhase::Downloading(0.25)));
+            launcher.on_play_message(Msg::PlayDetail("Downloading build: 25%".into()), cx);
+            assert_eq!(
+                launcher.play_detail.as_deref(),
+                Some("Downloading build: 25%")
+            );
+            assert_eq!(
+                launcher.launch_facts().view().play_detail.as_deref(),
+                Some("Downloading build: 25%")
+            );
+            launcher.on_install_message(Msg::Installed(
+                TAG.into(),
+                Ok(backend::InstallOutcome::Installed(None)),
+            ));
+            assert!(launcher.installing.is_none());
+            assert_eq!(launcher.play_detail, None);
+
+            // Standalone Prepare routes detail to Home and clears it on completion.
+            launcher.preparing = true;
+            launcher.on_play_message(
+                Msg::PlayDetail("Downloading Minecraft's files: 10 of 40".into()),
+                cx,
+            );
+            assert_eq!(
+                launcher.play_detail.as_deref(),
+                Some("Downloading Minecraft's files: 10 of 40")
+            );
+            assert_eq!(
+                launcher.launch_facts().view().play_detail.as_deref(),
+                Some("Downloading Minecraft's files: 10 of 40")
+            );
+            launcher.on_game_exit_message(Msg::Exit(Job::Prepare, Ok(())), cx);
+            assert!(!launcher.preparing);
+            assert_eq!(launcher.play_detail, None);
+        });
+    }
+
+    #[test]
     fn a_queued_update_waits_for_the_recovery_error_and_settings_retry() {
         let Some(root) =
             scratch_child("a_queued_update_waits_for_the_recovery_error_and_settings_retry")

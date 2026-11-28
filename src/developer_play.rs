@@ -11,6 +11,9 @@ impl Launcher {
                 match job {
                     Job::Prepare => {
                         self.preparing = false;
+                        if self.starting_client.is_none() && self.installing.is_none() {
+                            self.play_detail = None;
+                        }
                         self.refresh_open_storage_builds();
                         // Play pressed before the version was prepared plays now.
                         if let Some((tag, intent)) = self.play_when_prepared.take() {

@@ -115,6 +115,9 @@ impl Profile {
             hook,
             before_spawn,
         } = hooks;
+        let selection = validate_selection(self.home(), &active.resource_path(), &command)?;
+        prepare_jars(&command)?;
+        cancellation.check()?;
         let proof = if let Some((launch, hook_log)) =
             hook.filter(|(launch, _)| !launch.pre_launch.trim().is_empty())
         {
@@ -130,8 +133,6 @@ impl Profile {
             proof
         };
         let _manifest = self.verify_handoff(active, proof, cancellation)?;
-        let selection = validate_selection(self.home(), &active.resource_path(), &command)?;
-        prepare_jars(&command)?;
         cancellation.check()?;
         let (mut command, runtime) = prepare(self.home(), active, command)?;
         let data = backend::data_dir();
@@ -424,5 +425,37 @@ mod tests {
             stopped.err().expect("a stopped Play starts no game")
         );
         assert!(stopped.contains("cancelled"), "{stopped}");
+
+        // A refused JAR preparation stops before running any configured pre-launch hook.
+        let marker = home.join("pre-launch-ran");
+        let launch = crate::launch::Launch {
+            pre_launch: format!("echo ran > {}", marker.display()),
+            ..Default::default()
+        };
+        let jar_refused = {
+            let command = command();
+            let mut hook_log = |_: String| {};
+            profile.spawn_selected(
+                &active,
+                &Cancellation::default(),
+                command,
+                &[],
+                false,
+                SpawnHooks {
+                    proof: None,
+                    prepare_jars: |_: &Command| Err("jar preparation declined".into()),
+                    hook: Some((&launch, &mut hook_log)),
+                    before_spawn: |_: &mut Command| Ok(()),
+                },
+            )
+        };
+        assert!(
+            format!("{:?}", jar_refused.err().expect("refused jars must fail"))
+                .contains("jar preparation declined")
+        );
+        assert!(
+            !marker.exists(),
+            "pre-launch hook must not run when JAR preparation is refused"
+        );
     }
 }

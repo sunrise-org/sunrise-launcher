@@ -298,7 +298,9 @@ fn shared_runtime_lease_on_profile_context_root_blocks_clearing_profile_caches()
         "storage::inventory::regressions::shared_runtime_lease_on_profile_context_root_blocks_clearing_profile_caches";
     const ACTOR: &str = "STORAGE_CONTEXT_ROOT_LEASE_ACTOR";
     if std::env::var_os(ACTOR).is_none() {
-        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let root =
+            tempfile::tempdir_in(backend::plain(std::env::temp_dir().canonicalize().unwrap()))
+                .unwrap();
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", TEST, "--nocapture"])
             .env(ACTOR, "1")
@@ -386,7 +388,9 @@ fn incomplete_build_retry_and_clear_recheck_enforce_ordinary_profile_pins() {
     const TEST: &str = "storage::inventory::regressions::incomplete_build_retry_and_clear_recheck_enforce_ordinary_profile_pins";
     const ACTOR: &str = "STORAGE_ORDINARY_PIN_RECHECK_ACTOR";
     if std::env::var_os(ACTOR).is_none() {
-        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let root =
+            tempfile::tempdir_in(backend::plain(std::env::temp_dir().canonicalize().unwrap()))
+                .unwrap();
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", TEST, "--nocapture"])
             .env(ACTOR, "1")
@@ -504,7 +508,9 @@ fn clear_refuses_units_replaced_with_different_identity_after_selection() {
     const TEST: &str = "storage::inventory::regressions::clear_refuses_units_replaced_with_different_identity_after_selection";
     const ACTOR: &str = "STORAGE_IDENTITY_BIND_ACTOR";
     if std::env::var_os(ACTOR).is_none() {
-        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let root =
+            tempfile::tempdir_in(backend::plain(std::env::temp_dir().canonicalize().unwrap()))
+                .unwrap();
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", TEST, "--nocapture"])
             .env(ACTOR, "1")
@@ -613,7 +619,9 @@ fn explicit_storage_clear_keeps_version_started_after_discovery_as_busy() {
     const ACTOR: &str = "STORAGE_VERSION_IN_USE_ACTOR";
     const TAG: &str = "v0.0.0-late-server";
     if std::env::var_os(ACTOR).is_none() {
-        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let root =
+            tempfile::tempdir_in(backend::plain(std::env::temp_dir().canonicalize().unwrap()))
+                .unwrap();
         let output = Command::new(std::env::current_exe().unwrap())
             .args(["--exact", TEST, "--nocapture"])
             .env(ACTOR, "1")

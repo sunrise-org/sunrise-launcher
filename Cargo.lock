@@ -6400,7 +6400,7 @@ dependencies = [
 
 [[package]]
 name = "sunrise-launcher"
-version = "1.3.11"
+version = "1.4.0"
 dependencies = [
  "base64 0.22.1",
  "cap-fs-ext",

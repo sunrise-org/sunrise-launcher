@@ -205,7 +205,7 @@ jobs:
         run: cargo test --locked --test ordinary_play --test managed_play_process --test lifecycle --test modpack_fence
       - name: Storage row UI fixture
         if: runner.os != 'Windows'
-        run: cargo test --locked --bin sunrise-launcher -- --ignored --exact glass_storage::tests::storage_row_actions_and_advice_use_real_inventory_rows
+        run: cargo test --locked --bin sunrise-launcher -- --ignored --exact storage_report::tests::storage_row_actions_and_advice_use_real_inventory_rows
       - name: The tests/ targets that start no process (Windows)
         if: runner.os == 'Windows'
         run: cargo test --locked --test developer_install

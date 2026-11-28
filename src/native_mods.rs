@@ -325,17 +325,18 @@ pub fn mixins_from_source(on: bool) {
 /// The failed build's error, led by its blamed mod in the launcher's own words, as [`compile_failed_mod`] and [`refused_mod`] read it.
 fn blamed_text(failed: tool::Failure) -> String {
     let lead = match failed.blame {
-        // A build script refused by a tool made before mods could run them: its error says so.
-        None
-        | Some(tool::Blame {
-            kind: tool::BlameKind::BuildScript,
-            ..
-        }) => {
+        None => {
             return trf(
                 "The native build failed: {error}",
                 &[("error", &failed.error)],
             );
         }
+        // A build script refused by a tool made before mods could run them: map to the typed
+        // refusal so the UI still identifies the affected mod without rejecting scripts in newer tools.
+        Some(tool::Blame {
+            mod_id,
+            kind: tool::BlameKind::BuildScript,
+        }) => Refusal::BuildScript { mod_id }.to_string(),
         Some(tool::Blame {
             mod_id,
             kind: tool::BlameKind::Compile,
@@ -1187,14 +1188,17 @@ pub fn compile_failed_mod<'a>(error: &str, ids: &'a [String]) -> Option<&'a Stri
         .find(|id| error.contains(&format!("{} (", build_log::failed(&compiling_mod(id)))))
 }
 
-/// The mod among `ids` whose features stopped the build `error` describes, and why: `error`
+/// The mod among `ids` whose refusal stopped the build `error` describes, and why: `error`
 /// holds that refusal word for word (the build log keeps it).
 pub fn refused_mod<'a>(error: &str, ids: &'a [String]) -> Option<(&'a String, Refusal)> {
     ids.iter().find_map(|id| {
-        let refusal = Refusal::Features { mod_id: id.clone() };
-        error
-            .contains(&refusal.to_string())
-            .then_some((id, refusal))
+        [
+            Refusal::BuildScript { mod_id: id.clone() },
+            Refusal::Features { mod_id: id.clone() },
+        ]
+        .into_iter()
+        .find(|refusal| error.contains(&refusal.to_string()))
+        .map(|refusal| (id, refusal))
     })
 }
 
@@ -4222,18 +4226,21 @@ mod tests {
     }
 
     /// The tool of a game build made before mods could run build scripts still blames one: its
-    /// failure reads as that tool's own error.
+    /// failure maps to `Refusal::BuildScript` so the UI identifies the affected mod.
     #[test]
     fn an_older_tools_build_script_blame_reads_as_its_error() {
         let error = "E_NATIVE_BUILD_SCRIPT: scripted has a build script".to_string();
         let blame = serde_json::from_str(r#"{"mod":"scripted","kind":"build-script"}"#).unwrap();
-        assert_eq!(
-            blamed_text(tool::Failure {
-                error: error.clone(),
-                blame: Some(blame),
-            }),
-            format!("The native build failed: {error}")
-        );
+        let text = blamed_text(tool::Failure {
+            error: error.clone(),
+            blame: Some(blame),
+        });
+        let expected = Refusal::BuildScript {
+            mod_id: "scripted".into(),
+        };
+        assert_eq!(text, format!("{expected}\n\n{error}"));
+        let ids = vec!["scripted".to_string()];
+        assert_eq!(refused_mod(&text, &ids), Some((&ids[0], expected)));
     }
 
     #[test]
@@ -5507,6 +5514,10 @@ printf ']}}\n'
         let refused = blamed_text(blamed(tool::BlameKind::Features));
         assert!(
             matches!(refused_mod(&refused, &ids), Some((id, Refusal::Features { .. })) if id == "maps")
+        );
+        let script = blamed_text(blamed(tool::BlameKind::BuildScript));
+        assert!(
+            matches!(refused_mod(&script, &ids), Some((id, Refusal::BuildScript { .. })) if id == "maps")
         );
         let none = blamed_text(tool::Failure::from("no mod named".to_string()));
         assert_eq!(

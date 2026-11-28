@@ -59,6 +59,45 @@ class ReleaseNotes(unittest.TestCase):
         self.assertTrue(body.startswith("1.3.8 was not released.\n\n### Fixed and changed\n"))
         self.assertIn("Remove automatic cache cleanup (#647)", body)
 
+    def test_release_branch_notes_include_reachable_main_prs_without_duplicates(self):
+        import json
+
+        head = "f" * 40
+        release_pr = {
+            **pull(701, "Hotfix on release"),
+            "mergeCommit": {"oid": "1" * 40},
+        }
+        main_carried = {
+            **pull(702, "Feature from main", "feature"),
+            "mergeCommit": {"oid": "2" * 40},
+        }
+        main_unreleased = {
+            **pull(703, "Not yet on release"),
+            "mergeCommit": {"oid": "3" * 40},
+        }
+        queries = []
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:4] == ["git", "-C", str(notes.ROOT), "log"]:
+                return mock.Mock(stdout="2026-11-28T00:00:00Z\n")
+            if cmd[:3] == ["gh", "pr", "list"]:
+                search = cmd[cmd.index("--search") + 1]
+                queries.append(search)
+                if "base:release" in search:
+                    return mock.Mock(stdout=json.dumps([release_pr]))
+                if "base:main" in search:
+                    return mock.Mock(stdout=json.dumps([release_pr, main_carried, main_unreleased]))
+            if cmd[:4] == ["git", "-C", str(notes.ROOT), "rev-list"]:
+                return mock.Mock(stdout=f"{'1' * 40}\n{'2' * 40}\n")
+            raise AssertionError(f"unexpected command: {cmd}")
+
+        with mock.patch.object(notes.subprocess, "run", side_effect=fake_run):
+            got = notes.merged_since("v1.3.11", head, base="release")
+        self.assertEqual(len(queries), 2)
+        self.assertTrue(any("base:release" in q for q in queries))
+        self.assertTrue(any("base:main" in q for q in queries))
+        self.assertEqual([p["number"] for p in got], [701, 702])
+
 
 if __name__ == "__main__":
     unittest.main()
