@@ -1,9 +1,9 @@
-//! Where the player's own Minecraft files are: the folder they chose, the official launcher's,
-//! or another launcher's (Prism Launcher, MultiMC, Modrinth App, ATLauncher, GDLauncher, Dawn
-//! Client), #434.
-//! sunrise-prepare reads the official launcher's layout and pins the version JSON's own sha1, so
-//! files found elsewhere are linked into that layout in the launcher's data folder, with the
-//! pinned version JSON from Mojang when the other launcher keeps its own rewrite of it.
+//! Where the player's own Minecraft files may already live: the folder they chose, the official
+//! launcher's, or another launcher's (Prism Launcher, MultiMC, Modrinth App, ATLauncher,
+//! GDLauncher, Dawn Client), #434.
+//! Preparing always assembles the pinned version into Sunrise's own folder (`data_dir()/minecraft`)
+//! from the build's pinned version file, copying files from these folders only when their hash
+//! matches and downloading the rest from Mojang.
 
 pub(crate) use crate::hashing::{sha1_file, sha1_hex};
 use crate::i18n::{tr, trf};
@@ -48,29 +48,25 @@ impl Pins {
         }
     }
 
-    fn manifest_accepted(&self, path: &Path) -> bool {
+    /// The primary version JSON's sha1 pinned in `research-lock.json`.
+    pub(crate) fn primary_manifest_sha1(&self) -> &str {
+        &self.manifests[0]
+    }
+
+    pub(crate) fn manifest_is_primary(&self, path: &Path) -> bool {
+        sha1_file(path).as_deref() == Some(self.primary_manifest_sha1())
+    }
+
+    pub(crate) fn manifest_accepted(&self, path: &Path) -> bool {
         sha1_file(path).is_some_and(|sha1| self.manifests.contains(&sha1))
     }
 }
 
-/// A launcher's copy of the pinned version.
-#[derive(Debug, PartialEq)]
-pub struct Found {
-    /// The folder holding the launcher's `libraries` and `assets`.
-    pub base: PathBuf,
-    /// The client jar, checked against the pin.
-    pub client: PathBuf,
-    /// The launcher's version JSON when it is one Sunrise pins.
-    pub manifest: Option<PathBuf>,
-}
-
-impl Found {
-    /// Whether `base` is in the official launcher's layout, so sunrise-prepare reads it as is.
-    fn official_layout(&self, version: &str) -> bool {
-        let dir = self.base.join("versions").join(version);
-        self.client == dir.join(format!("{version}.jar"))
-            && self.manifest == Some(dir.join(format!("{version}.json")))
-    }
+/// Where a build's pinned Minecraft files are assembled: Sunrise's own folder (`dir`) and any
+/// other launchers' base folders (`sources`) to copy hash-matching files from before downloading.
+pub struct Store<'a> {
+    pub dir: &'a Path,
+    pub sources: &'a [PathBuf],
 }
 
 pub struct Folders {
@@ -217,7 +213,7 @@ fn meta_client_jar(base: &Path, version: &str) -> Option<String> {
 }
 
 /// Where launchers keep the client jar, relative to the folder holding their `libraries`.
-fn client_jars(base: &Path, version: &str) -> Vec<String> {
+pub(crate) fn client_jars(base: &Path, version: &str) -> Vec<String> {
     let v = version;
     let mut jars: Vec<String> = meta_client_jar(base, v).into_iter().collect();
     for jar in [
@@ -272,121 +268,60 @@ fn dawn_root(dir: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-/// The launcher whose tree `path` is inside, when its folder name is one Sunrise knows, so the
-/// not-found message can name it (#693).
-fn launcher_of(path: &Path) -> Option<&'static str> {
-    path.ancestors()
-        .filter_map(Path::file_name)
-        .filter_map(|name| name.to_str())
-        .find_map(|name| match name {
-            "PrismLauncher" => Some("Prism Launcher"),
-            "multimc" | "MultiMC" => Some("MultiMC"),
-            "ModrinthApp" | "com.modrinth.theseus" => Some("the Modrinth App"),
-            "atlauncher" | "ATLauncher" => Some("ATLauncher"),
-            "gdlauncher_carbon" | "gdlauncher_next" => Some("GDLauncher"),
-            ".dawn" | "dawn" => Some("Dawn Client"),
-            _ => None,
-        })
+/// Maps an official native library relative path under `libraries/` to Prism Launcher's layout:
+/// `<group>/<artifact>/<version>/<artifact>-<version>-natives-<os>.jar` becomes
+/// `<group>/<artifact>-natives-<os>/<version>/<artifact>-natives-<os>-<version>.jar`.
+pub(crate) fn prism_native_path(rel: &str) -> Option<String> {
+    let (dir, file) = rel.rsplit_once('/')?;
+    let (artifact_dir, version) = dir.rsplit_once('/')?;
+    let (group, artifact) = artifact_dir.rsplit_once('/')?;
+    let prefix = format!("{artifact}-{version}-natives-");
+    let os = file.strip_prefix(&prefix)?.strip_suffix(".jar")?;
+    if os.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{group}/{artifact}-natives-{os}/{version}/{artifact}-natives-{os}-{version}.jar"
+    ))
 }
 
-/// The pinned version in one launcher folder, or what the folder lacks. The folder holding
-/// `libraries` is the folder itself or its `meta` (Modrinth App), `data` (GDLauncher) or
-/// `datastore` (GDLauncher Next) or `cache/minecraft` (Dawn Client).
-pub fn find(dir: &Path, pins: &Pins) -> Result<Found, String> {
-    if !dir.is_dir() {
-        return Err("the folder doesn't exist".into());
-    }
-    let v = &pins.version;
-    let mut other = None;
-    let bases: Vec<PathBuf> = [dir.to_path_buf()]
-        .into_iter()
-        .chain(["meta", "data", "datastore", "cache/minecraft"].map(|sub| dir.join(sub)))
-        .collect();
-    for base in bases.iter().cloned() {
-        for jar in client_jars(&base, v) {
-            let client = base.join(&jar);
-            if !client.is_file() {
-                continue;
+/// Every existing base folder (holding `versions`, `libraries` or `assets`) under `chosen` (its
+/// ancestors and any Prism/MultiMC or Dawn root above it) and `known`, excluding `own` so Sunrise
+/// never copies from its own store into itself.
+pub fn candidate_bases(
+    chosen: Option<&Path>,
+    known: &[(&'static str, PathBuf)],
+    own: &Path,
+) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = chosen {
+        roots.extend(dir.ancestors().take(4).map(Path::to_path_buf));
+        if let Some(root) = instance_root(dir).or_else(|| dawn_root(dir)) {
+            if !roots.contains(&root) {
+                roots.push(root);
             }
-            if sha1_file(&client).as_ref() != Some(&pins.client_sha1) {
-                other.get_or_insert(client);
-                continue;
-            }
-            let manifest = base.join(format!("versions/{v}/{v}.json"));
-            let manifest = pins.manifest_accepted(&manifest).then_some(manifest);
-            return Ok(Found {
-                base,
-                client,
-                manifest,
-            });
         }
     }
-    // The official launcher writes a version's file before its game: a version picked but never
-    // played, or whose download stopped, has only that, and playing it once is the fix (#14286).
-    let listed = bases
-        .iter()
-        .map(|base| base.join(format!("versions/{v}/{v}.json")))
-        .find(|file| file.is_file());
-    Err(match (other, listed) {
-        (Some(jar), _) => trf(
-            "{file} is not the {version} release Sunrise was made for",
-            &[
-                ("file", &jar.strip_prefix(dir).unwrap_or(&jar).display().to_string()),
-                ("version", v),
-            ],
-        ),
-        (None, Some(file)) => trf(
-            "{file} is here but not the game itself: play {version} once in that launcher to download it",
-            &[
-                // `meta\versions/…` on Windows otherwise: one separator, as the jar paths above.
-                (
-                    "file",
-                    &file
-                        .strip_prefix(dir)
-                        .unwrap_or(&file)
-                        .to_string_lossy()
-                        .replace('\\', "/"),
-                ),
-                ("version", v),
-            ],
-        ),
-        (None, None) => trf("no Minecraft {version} client jar", &[("version", v)]),
-    })
-}
-
-/// The error when no folder has the pinned version: every folder looked in with what it
-/// lacks, and what the player can do about it (#419, #693). When the chosen folder is inside a
-/// launcher Sunrise knows, the advice names it: a Prism or MultiMC instance downloads the game
-/// only when it is launched once.
-pub fn not_found(version: &str, checked: &[(PathBuf, String)], chosen: &Path) -> String {
-    let mut text = trf(
-        "Minecraft {version} was not found. Sunrise looked in:",
-        &[("version", version)],
-    );
-    for (dir, missing) in checked {
-        text += &format!("\n  {} ({missing})", dir.display());
-    }
-    let manifest = chosen
-        .join("versions")
-        .join(version)
-        .join(format!("{version}.json"));
-    if manifest.try_exists().is_ok_and(|exists| !exists) {
-        text += "\n";
-        text += &missing_version_file(&manifest);
-    }
-    text += tr("\nTo fix it:\n  • ");
-    text += &match launcher_of(chosen) {
-        Some(launcher) => trf(
-            "Play {version} once in {launcher} so it downloads the game, then prepare again.",
-            &[("version", version), ("launcher", launcher)],
-        ),
-        None => trf(
-            "Play {version} once in the official Minecraft launcher, or in Prism Launcher, MultiMC, the Modrinth App, ATLauncher, GDLauncher or Dawn Client, then prepare again.",
-            &[("version", version)],
-        ),
+    roots.extend(known.iter().map(|(_, dir)| dir.clone()));
+    let same = |a: &Path, b: &Path| {
+        a == b
+            || fs::canonicalize(a)
+                .ok()
+                .zip(fs::canonicalize(b).ok())
+                .is_some_and(|(x, y)| x == y)
     };
-    text += &prepare_advice();
-    text
+    let mut bases: Vec<PathBuf> = Vec::new();
+    for root in roots.into_iter().filter(|d| d.is_dir()) {
+        for base in [root.clone()]
+            .into_iter()
+            .chain(["meta", "data", "datastore", "cache/minecraft"].map(|sub| root.join(sub)))
+        {
+            if base.is_dir() && !same(&base, own) && !bases.iter().any(|seen| same(seen, &base)) {
+                bases.push(base);
+            }
+        }
+    }
+    bases
 }
 
 pub(crate) fn missing_version_file(path: &Path) -> String {
@@ -407,87 +342,27 @@ pub(crate) fn prepare_advice() -> String {
 /// Fetches a URL's body (from several threads for a download).
 pub type Fetch<'a> = &'a (dyn Fn(&str) -> Result<Vec<u8>, String> + Sync);
 
-/// Where the pinned version is.
-#[derive(Debug, PartialEq)]
-pub enum Resolved {
-    /// A folder in the official launcher's layout.
-    Folder(PathBuf),
-    /// In none of these folders; each with what it lacks.
-    NotFound(Vec<(PathBuf, String)>),
-}
-
-/// A Minecraft folder in the official launcher's layout holding the pinned version: the
-/// chosen folder when it is one, else the files found in the chosen folder, a folder above it
-/// (a launcher's instance folder may be chosen, and the launcher root above a Prism or MultiMC
-/// `instances` folder is looked in too) or any launcher's default folder, linked into `linked`.
-pub fn resolve(
-    chosen: &Path,
-    pins: &Pins,
-    known: &[(&'static str, PathBuf)],
-    linked: &Path,
-    fetch: Fetch,
-    log: &dyn Fn(String),
-) -> Result<Resolved, String> {
-    let mut checked = Vec::new();
-    let mut found = None;
-    // The chosen folder, the folders above it (an instance's own folder may be chosen), and,
-    // when it is inside a Prism or MultiMC instance tree or a Dawn Client folder, the launcher
-    // root that holds their shared `libraries` (#693).
-    let mut dirs: Vec<PathBuf> = chosen.ancestors().take(4).map(Path::to_path_buf).collect();
-    if let Some(root) = instance_root(chosen).or_else(|| dawn_root(chosen)) {
-        if !dirs.contains(&root) {
-            dirs.push(root);
-        }
-    }
-    for dir in dirs {
-        match find(&dir, pins) {
-            Ok(f) => {
-                found = Some(("the chosen folder", f));
-                break;
-            }
-            Err(missing) if dir.as_path() == chosen => checked.push((dir, missing)),
-            Err(_) => {}
-        }
-    }
-    let same = |a: &Path, b: &Path| a == b || fs::canonicalize(a).ok() == fs::canonicalize(b).ok();
-    for (name, dir) in known.iter().filter(|(_, d)| d.is_dir() && !same(d, chosen)) {
-        if found.is_some() {
-            break;
-        }
-        match find(dir, pins) {
-            Ok(f) => found = Some((name, f)),
-            Err(missing) => checked.push((dir.clone(), format!("{name}: {missing}"))),
-        }
-    }
-    let Some((name, found)) = found else {
-        return Ok(Resolved::NotFound(checked));
-    };
-    log(trf(
-        "Using Minecraft {version} from {name} ({folder})",
-        &[
-            ("version", &pins.version),
-            ("name", name),
-            ("folder", &found.base.display().to_string()),
-        ],
-    ));
-    if found.official_layout(&pins.version) {
-        return Ok(Resolved::Folder(found.base));
-    }
-    link_official_layout(&found, pins, linked, fetch, log)?;
-    Ok(Resolved::Folder(linked.to_path_buf()))
-}
-
-/// The pinned version JSON at `path`, from piston-meta (by its sha1) unless it is there.
+/// The primary pinned version JSON at `path`, copied from `sources` when one matches the primary
+/// hash, else fetched from piston-meta by its primary sha1.
 pub(crate) fn fetch_manifest(
     pins: &Pins,
     path: &Path,
+    sources: &[PathBuf],
     fetch: Fetch,
     log: &dyn Fn(String),
 ) -> Result<(), String> {
-    if pins.manifest_accepted(path) {
+    if pins.manifest_is_primary(path) {
         return Ok(());
     }
-    let (v, sha1) = (&pins.version, &pins.manifests[0]);
+    let (v, sha1) = (&pins.version, pins.primary_manifest_sha1());
+    for base in sources {
+        let candidate = base.join("versions").join(v).join(format!("{v}.json"));
+        if copy_checked(&candidate, path, sha1, None)
+            .map_err(|e| format!("{}: {e}", path.display()))?
+        {
+            return Ok(());
+        }
+    }
     log(trf(
         "Downloading the {version} version file from Mojang",
         &[("version", v)],
@@ -511,8 +386,10 @@ pub(crate) fn fetch_checked(fetch: Fetch, url: &str, sha1: &str) -> Result<Vec<u
     }
 }
 
-/// Writes a file whole: a partial one never takes its place.
+/// Writes a file whole through a unique sibling temporary file: a partial one never takes its
+/// place and concurrent preparations never collide on a fixed `.partial` name.
 pub(crate) fn write_file(path: &Path, data: &[u8]) -> Result<(), String> {
+    use std::io::Write;
     let error = |e: std::io::Error| format!("{}: {e}", path.display());
     let not_a_file = || {
         trf(
@@ -522,74 +399,130 @@ pub(crate) fn write_file(path: &Path, data: &[u8]) -> Result<(), String> {
     };
     let (folder, name) = path.parent().zip(path.file_name()).ok_or_else(not_a_file)?;
     fs::create_dir_all(folder).map_err(error)?;
-    let partial = path.with_file_name(format!("{}.partial", name.to_string_lossy()));
-    fs::write(&partial, data)
-        .and_then(|_| fs::rename(&partial, path))
-        .map_err(error)
+    let mut partial = tempfile::Builder::new()
+        .prefix(&format!(".{}.", name.to_string_lossy()))
+        .suffix(".partial")
+        .tempfile_in(folder)
+        .map_err(error)?;
+    partial.write_all(data).map_err(error)?;
+    persist_temp(partial, path).map_err(error)
 }
 
-/// Links a launcher's files into the official layout in `linked`: the client jar as
-/// `versions/<v>/<v>.jar`, its `libraries` and `assets`, and the pinned version JSON, the
-/// launcher's own when it keeps it, else Mojang's.
-fn link_official_layout(
-    found: &Found,
-    pins: &Pins,
-    linked: &Path,
-    fetch: Fetch,
-    log: &dyn Fn(String),
-) -> Result<(), String> {
-    let v = &pins.version;
-    let versions = linked.join("versions").join(v);
-    fs::create_dir_all(&versions).map_err(|e| format!("{}: {e}", versions.display()))?;
-    let manifest = versions.join(format!("{v}.json"));
-    if let Some(source) = &found.manifest {
-        fs::copy(source, &manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
-    } else {
-        fetch_manifest(pins, &manifest, fetch, log)?;
-    }
-    link(&found.client, &versions.join(format!("{v}.jar")))?;
-    for dir in ["libraries", "assets"] {
-        let source = found.base.join(dir);
-        let target = linked.join(dir);
-        if source.is_dir() {
-            link(&source, &target)?;
-        } else {
-            unlink(&target)?;
+#[cfg(windows)]
+fn persist_temp(mut partial: tempfile::NamedTempFile, to: &Path) -> std::io::Result<()> {
+    for _ in 0..16 {
+        match partial.persist(to) {
+            Ok(_) => return Ok(()),
+            Err(e) if e.error.kind() == std::io::ErrorKind::PermissionDenied => {
+                partial = e.file;
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(e) => return Err(e.error),
         }
     }
-    Ok(())
+    partial.persist(to).map(|_| ()).map_err(|e| e.error)
+}
+
+#[cfg(not(windows))]
+fn persist_temp(partial: tempfile::NamedTempFile, to: &Path) -> std::io::Result<()> {
+    partial.persist(to).map(|_| ()).map_err(|e| e.error)
+}
+
+/// Copies `from` to `to` in one pass through a unique sibling temporary file, persisting only when
+/// both `expected_size` (if given) and `expected_sha1` match. Returns `Ok(false)` when `from` is
+/// absent, unreadable or does not match; returns `Err` only on destination write failure.
+pub(crate) fn copy_checked(
+    from: &Path,
+    to: &Path,
+    expected_sha1: &str,
+    expected_size: Option<u64>,
+) -> std::io::Result<bool> {
+    use sha1::{Digest, Sha1};
+    use std::io::{Error, ErrorKind, Read, Write};
+    let Ok(meta) = fs::metadata(from) else {
+        return Ok(false);
+    };
+    if !meta.is_file() || expected_size.is_some_and(|want| meta.len() != want) {
+        return Ok(false);
+    }
+    let Ok(mut src) = fs::File::open(from) else {
+        return Ok(false);
+    };
+    let (folder, name) = to
+        .parent()
+        .zip(to.file_name())
+        .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "not a file path"))?;
+    fs::create_dir_all(folder)?;
+    let mut partial = tempfile::Builder::new()
+        .prefix(&format!(".{}.", name.to_string_lossy()))
+        .suffix(".partial")
+        .tempfile_in(folder)?;
+    let mut hasher = Sha1::new();
+    let mut buf = [0u8; 64 * 1024];
+    let mut total = 0u64;
+    loop {
+        let Ok(n) = src.read(&mut buf) else {
+            return Ok(false);
+        };
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        partial.write_all(&buf[..n])?;
+        total += n as u64;
+    }
+    if expected_size.is_some_and(|want| total != want) {
+        return Ok(false);
+    }
+    let actual: String = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    if actual != expected_sha1 {
+        return Ok(false);
+    }
+    persist_temp(partial, to)?;
+    Ok(true)
+}
+
+/// A symlink, or on Windows any reparse point (including a directory junction).
+fn is_link(meta: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    meta.file_type().is_symlink()
+}
+
+/// Safely removes a legacy `linked-minecraft` folder left by an earlier launcher version,
+/// unlinking `linked` itself when it is a symlink/junction and otherwise unlinking `libraries` and
+/// `assets` symlinks/junctions first so target launcher folders are never touched.
+pub(crate) fn remove_legacy_linked(linked: &Path) {
+    let Ok(meta) = fs::symlink_metadata(linked) else {
+        return;
+    };
+    if is_link(&meta) {
+        let _ = unlink(linked);
+        return;
+    }
+    for dir in ["libraries", "assets"] {
+        let _ = unlink(&linked.join(dir));
+    }
+    let _ = fs::remove_dir_all(linked);
 }
 
 /// Removes a link left by an earlier preparation; never a real folder's contents.
-fn unlink(path: &Path) -> Result<(), String> {
+fn unlink(path: &Path) -> std::io::Result<()> {
     if fs::symlink_metadata(path).is_err() {
         return Ok(());
     }
     // A Windows junction, or a directory symlink, is removed as a directory.
-    fs::remove_file(path)
-        .or_else(|_| fs::remove_dir(path))
-        .map_err(|e| format!("{}: {e}", path.display()))
-}
-
-/// `link` pointing at `target`, replacing an earlier one.
-fn link(target: &Path, link: &Path) -> Result<(), String> {
-    unlink(link)?;
-    make_link(target, link).map_err(|e| format!("{} → {}: {e}", link.display(), target.display()))
-}
-
-#[cfg(unix)]
-fn make_link(target: &Path, link: &Path) -> std::io::Result<()> {
-    std::os::unix::fs::symlink(target, link)
-}
-
-/// Symlinks need developer mode on Windows: a junction for a folder, a hard link for a file (a
-/// copy on another volume).
-#[cfg(windows)]
-fn make_link(target: &Path, link: &Path) -> std::io::Result<()> {
-    if !target.is_dir() {
-        return fs::hard_link(target, link).or_else(|_| fs::copy(target, link).map(|_| ()));
-    }
-    junction(target, link)
+    fs::remove_file(path).or_else(|_| fs::remove_dir(path))
 }
 
 #[cfg(any(windows, test))]

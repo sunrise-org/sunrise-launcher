@@ -66,16 +66,7 @@ impl Resources {
         if !backend::check_prepared(base) {
             backend::reuse_prepared(&backend::versions_dir(), base);
             if !backend::check_prepared(base) {
-                let minecraft = backend::Settings::load()
-                    .minecraft_dir
-                    .unwrap_or_else(|| preparer::minecraft_dir(None));
-                let (command, minecraft) = backend::preparer_staged(
-                    base,
-                    &minecraft,
-                    backend::MinecraftFrom::Install,
-                    log,
-                    &handoff,
-                )?;
+                let (command, minecraft) = backend::preparer_staged(base, None, log, &handoff)?;
                 backend::sounds_staged(base, &minecraft, log, &handoff);
                 backend::set_prepare_step(backend::PrepareStep::Prepare);
                 preparer::run_staged(command, &handoff, log)?;

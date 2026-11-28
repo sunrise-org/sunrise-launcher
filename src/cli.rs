@@ -124,14 +124,13 @@ enum Cmd {
         #[arg(long)]
         trust_unsigned: bool,
     },
-    /// Prepare a version's resources from your own Minecraft install, or from Mojang
+    /// Prepare a version's resources in Sunrise's own store from the pinned Minecraft files
     Prepare {
-        /// The game folder of the official launcher, Prism Launcher, MultiMC, the Modrinth App,
-        /// ATLauncher or GDLauncher (default: the launcher's, then every launcher's default)
+        /// Additional Minecraft folder to copy hash-matching files from before downloading
         #[arg(long, conflicts_with = "download")]
         minecraft: Option<PathBuf>,
-        /// Download Minecraft from Mojang for the signed-in account that owns it, instead of
-        /// using an install
+        /// Download Minecraft from Mojang for the signed-in account that owns it (now the default
+        /// for any file not already matching by hash)
         #[arg(long)]
         download: bool,
         /// The installed version (default: the selected one)

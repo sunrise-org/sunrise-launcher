@@ -146,20 +146,10 @@ impl Unprepared {
     }
 }
 
-/// Where the preparation takes Minecraft's files from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MinecraftFrom {
-    /// The player's own install (any launcher's); Mojang only when none has the version and an
-    /// account that owns the game is signed in.
-    Install,
-    /// Mojang, for the signed-in account that owns the game ("Download and prepare").
-    Mojang,
-}
-
 /// A preparation's steps, in the order they run, as Home names them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PrepareStep {
-    /// Minecraft's files: found in an install, or downloaded from Mojang.
+    /// Minecraft's files: checked in Sunrise's store, copied from matching installs or downloaded.
     Files,
     Java,
     Sounds,

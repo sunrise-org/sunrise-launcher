@@ -79,12 +79,12 @@ MCP: none: the player's switch.
 
 ## `sunrise-launcher prepare`
 
-Prepare a version's resources from your own Minecraft install, or from Mojang.
+Prepare a version's resources in Sunrise's own store from the pinned Minecraft files.
 
     sunrise-launcher prepare
 
-- `--minecraft`: The game folder of the official launcher, Prism Launcher, MultiMC, the Modrinth App, ATLauncher or GDLauncher (default: the launcher's, then every launcher's default)
-- `--download`: Download Minecraft from Mojang for the signed-in account that owns it, instead of using an install
+- `--minecraft`: Additional Minecraft folder to copy hash-matching files from before downloading
+- `--download`: Download Minecraft from Mojang for the signed-in account that owns it (now the default for any file not already matching by hash)
 - `--version`: The installed version (default: the selected one)
 
 MCP: `prepare`.

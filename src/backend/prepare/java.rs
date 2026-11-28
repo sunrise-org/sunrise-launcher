@@ -1,6 +1,6 @@
 //! The Java a preparation runs with: found on this computer or Minecraft's own, downloaded.
 use crate::backend::{data_dir, fetch_bytes_cancellable, read_json};
-use crate::{mojang, sources};
+use crate::mojang;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -93,36 +93,5 @@ pub(in crate::backend) fn with_java(cmd: &mut Command, home: &Path) {
     cmd.env("JAVA_HOME", home);
     if let Ok(path) = std::env::join_paths(path) {
         cmd.env("PATH", path);
-    }
-}
-
-/// The Minecraft folder a preparation whose game files are imported already reads: the sounds,
-/// the title panorama, the fonts and the languages come from its asset store. It is the one
-/// `resolve` found, linked into the official layout for another launcher's files; without one, the
-/// chosen folder, and the preparation goes without them, saying so. Before, such a preparation
-/// read the chosen folder as it was, which a Prism Launcher or Modrinth App install does not
-/// keep its assets in: the game was silent and its title screen grey.
-pub(in crate::backend) fn assets_folder(
-    resolved: Result<sources::Resolved, String>,
-    chosen: &Path,
-    version: &str,
-    log: &dyn Fn(String),
-) -> PathBuf {
-    match resolved {
-        Ok(sources::Resolved::Folder(dir)) => dir,
-        Ok(sources::Resolved::NotFound(_)) => {
-            log(format!(
-                "Minecraft {version}'s assets were not found in any launcher folder: the game \
-                 will be silent and the title screen plain"
-            ));
-            chosen.to_path_buf()
-        }
-        Err(e) => {
-            log(crate::i18n::trf(
-                "Minecraft {version}'s assets: {error}",
-                &[("version", version), ("error", &e.to_string())],
-            ));
-            chosen.to_path_buf()
-        }
     }
 }

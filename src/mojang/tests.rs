@@ -1,6 +1,6 @@
 //! A download from a mock of Mojang's servers serving small fake files (never Mojang's).
 use super::*;
-use crate::sources::{resolve, sha1_hex, Resolved};
+use crate::sources::sha1_hex;
 use std::collections::HashMap;
 
 const CLIENT: &[u8] = b"fake client jar";
@@ -114,10 +114,14 @@ fn an_owner_gets_the_official_layout_with_this_systems_libraries() {
         asked: Mutex::new(Vec::new()),
     };
     let dir = scratch("layout");
+    let store = Store {
+        dir: &dir,
+        sources: &[],
+    };
     let logged = Mutex::new(Vec::new());
     download(
         &pins,
-        &dir,
+        &store,
         "linux",
         3,
         &|url| server.fetch(url),
@@ -155,19 +159,10 @@ fn an_owner_gets_the_official_layout_with_this_systems_libraries() {
         "Downloading Minecraft 26.3 from Mojang: the game and 3 libraries"
     );
 
-    // Found like any launcher's folder, as it is; a second download fetches nothing.
-    let found = resolve(
-        &dir,
-        &pins,
-        &[],
-        &scratch("unused"),
-        &|url| server.fetch(url),
-        &|_| {},
-    );
-    assert_eq!(found, Ok(Resolved::Folder(dir.clone())));
+    // A second download keeps every verified file and fetches nothing.
     download(
         &pins,
-        &dir,
+        &store,
         "linux",
         3,
         &|url| server.fetch(url),
@@ -187,9 +182,13 @@ fn macos_skips_what_its_rules_disallow() {
         asked: Mutex::new(Vec::new()),
     };
     let dir = scratch("osx");
+    let store = Store {
+        dir: &dir,
+        sources: &[],
+    };
     download(
         &pins,
-        &dir,
+        &store,
         "osx",
         2,
         &|url| server.fetch(url),
@@ -216,9 +215,13 @@ fn a_file_that_is_not_the_pinned_one_stops_the_download() {
         asked: Mutex::new(Vec::new()),
     };
     let dir = scratch("bad-jar");
+    let store = Store {
+        dir: &dir,
+        sources: &[],
+    };
     let error = download(
         &pins,
-        &dir,
+        &store,
         "linux",
         2,
         &|url| server.fetch(url),
@@ -244,10 +247,14 @@ fn missing_sounds_are_a_line_in_the_log_not_an_error() {
         asked: Mutex::new(Vec::new()),
     };
     let dir = scratch("no-sound");
+    let store = Store {
+        dir: &dir,
+        sources: &[],
+    };
     let logged = Mutex::new(Vec::new());
     download(
         &pins,
-        &dir,
+        &store,
         "linux",
         1,
         &|url| server.fetch(url),
@@ -389,9 +396,13 @@ fn a_file_of_another_size_than_mojang_lists_is_refused() {
         asked: Mutex::new(Vec::new()),
     };
     let dir = scratch("size");
+    let store = Store {
+        dir: &dir,
+        sources: &[],
+    };
     let error = download(
         &pins,
-        &dir,
+        &store,
         "linux",
         2,
         &|url| server.fetch(url),
@@ -418,6 +429,10 @@ fn a_cancelled_download_goes_on_where_it_stopped() {
         asked: Mutex::new(Vec::new()),
     };
     let dir = scratch("cancel");
+    let store = Store {
+        dir: &dir,
+        sources: &[],
+    };
     let cancel = AtomicBool::new(false);
     // Cancelled once the client jar has arrived: one job, so nothing after it starts.
     let fetch = |url: &str| {
@@ -427,7 +442,7 @@ fn a_cancelled_download_goes_on_where_it_stopped() {
         }
         body
     };
-    let error = download(&pins, &dir, "linux", 1, &fetch, &cancel, &|_| {}).unwrap_err();
+    let error = download(&pins, &store, "linux", 1, &fetch, &cancel, &|_| {}).unwrap_err();
     assert_eq!(error, CANCELLED);
     assert_eq!(
         fs::read(dir.join("versions/26.3/26.3.jar")).unwrap(),
@@ -439,7 +454,7 @@ fn a_cancelled_download_goes_on_where_it_stopped() {
     server.asked();
     download(
         &pins,
-        &dir,
+        &store,
         "linux",
         1,
         &|url| server.fetch(url),
@@ -519,7 +534,11 @@ fn any_listed_version_comes_with_its_natives() {
     let pins = Pins::for_version("1.12.2", &sha1);
     let platform = |os: &str| {
         let dir = scratch(&format!("any-{os}"));
-        download(&pins, &dir, os, 2, &|url| server.fetch(url), &GO, &|_| {}).unwrap();
+        let store = Store {
+            dir: &dir,
+            sources: &[],
+        };
+        download(&pins, &store, os, 2, &|url| server.fetch(url), &GO, &|_| {}).unwrap();
         dir
     };
     let mac = platform("osx");
@@ -563,7 +582,19 @@ fn any_listed_version_comes_with_its_natives() {
         asked: Mutex::new(Vec::new()),
     };
     let dir = scratch("any-wrong");
-    let refused = download(&pins, &dir, "osx", 1, &|url| wrong.fetch(url), &GO, &|_| {});
+    let store = Store {
+        dir: &dir,
+        sources: &[],
+    };
+    let refused = download(
+        &pins,
+        &store,
+        "osx",
+        1,
+        &|url| wrong.fetch(url),
+        &GO,
+        &|_| {},
+    );
     assert!(refused.unwrap_err().contains("old.jar"));
     let _ = fs::remove_dir_all(&dir);
 }
@@ -579,10 +610,14 @@ fn a_download_goes_on_past_an_asset_that_keeps_failing() {
         asked: Mutex::new(Vec::new()),
     };
     let dir = scratch("tolerant");
+    let store = Store {
+        dir: &dir,
+        sources: &[],
+    };
     let logged = Mutex::new(Vec::new());
     download(
         &pins,
-        &dir,
+        &store,
         "linux",
         1,
         &|url| server.fetch(url),
@@ -600,5 +635,264 @@ fn a_download_goes_on_past_an_asset_that_keeps_failing() {
     assert_eq!(sound, 3, "tried three times");
     let last = logged.lock().unwrap().last().cloned().unwrap();
     assert!(last.contains("1 of 2 files failed"), "{last}");
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn copies_matching_files_from_other_launcher_and_downloads_differing() {
+    let (pins, files) = mojang();
+    let server = Server {
+        files,
+        asked: Mutex::new(Vec::new()),
+    };
+    let root = scratch("copy-and-download");
+    let own = root.join("own");
+    let modrinth = root.join("ModrinthApp/meta");
+    let write = |base: &Path, rel: &str, data: &[u8]| {
+        let p = base.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, data).unwrap();
+    };
+    // Modrinth has matching client jar, common library, and sound object, but a newer/re-issued
+    // linux library (not matching the pinned hash) and no not-osx library.
+    write(&modrinth, "versions/26.3/26.3.jar", CLIENT);
+    write(
+        &modrinth,
+        "libraries/org/fake/common/1/common-1.jar",
+        COMMON,
+    );
+    write(
+        &modrinth,
+        "libraries/org/fake/linux/1/linux-1.jar",
+        b"re-issued patched linux lib",
+    );
+    let sound_hash = sha1_hex(SOUND);
+    write(
+        &modrinth,
+        &format!("assets/objects/{}/{sound_hash}", &sound_hash[..2]),
+        SOUND,
+    );
+
+    let sources = [modrinth];
+    let store = Store {
+        dir: &own,
+        sources: &sources,
+    };
+    download(
+        &pins,
+        &store,
+        "linux",
+        2,
+        &|url| server.fetch(url),
+        &GO,
+        &|_| {},
+    )
+    .unwrap();
+
+    assert_eq!(
+        fs::read(own.join("versions/26.3/26.3.jar")).unwrap(),
+        CLIENT
+    );
+    assert_eq!(
+        fs::read(own.join("libraries/org/fake/common/1/common-1.jar")).unwrap(),
+        COMMON
+    );
+    assert_eq!(
+        fs::read(own.join("libraries/org/fake/linux/1/linux-1.jar")).unwrap(),
+        LINUX
+    );
+    assert_eq!(
+        fs::read(
+            own.join("assets/objects")
+                .join(&sound_hash[..2])
+                .join(&sound_hash)
+        )
+        .unwrap(),
+        SOUND
+    );
+    let asked = server.asked();
+    // Matching client jar, common library, and sound object were copied locally, never fetched.
+    assert!(
+        !asked.iter().any(|u| u.ends_with("client.jar")),
+        "client jar should have been copied: {asked:#?}"
+    );
+    assert!(
+        !asked.iter().any(|u| u.contains("common-1.jar")),
+        "common library should have been copied: {asked:#?}"
+    );
+    assert!(
+        !asked.iter().any(|u| u.ends_with(&sound_hash)),
+        "sound object should have been copied: {asked:#?}"
+    );
+    // The differing linux library was downloaded from Mojang.
+    assert!(
+        asked.iter().any(|u| u.contains("linux-1.jar")),
+        "differing linux library must be downloaded: {asked:#?}"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn corrupted_file_in_other_launcher_is_never_copied() {
+    let (pins, files) = mojang();
+    let server = Server {
+        files,
+        asked: Mutex::new(Vec::new()),
+    };
+    let root = scratch("corrupted-source");
+    let own = root.join("own");
+    let other = root.join("Official");
+    let corrupted_client = b"fake client XXX";
+    assert_eq!(corrupted_client.len(), CLIENT.len());
+    fs::create_dir_all(other.join("versions/26.3")).unwrap();
+    fs::write(other.join("versions/26.3/26.3.jar"), corrupted_client).unwrap();
+
+    let sources = [other];
+    let store = Store {
+        dir: &own,
+        sources: &sources,
+    };
+    download(
+        &pins,
+        &store,
+        "linux",
+        2,
+        &|url| server.fetch(url),
+        &GO,
+        &|_| {},
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read(own.join("versions/26.3/26.3.jar")).unwrap(),
+        CLIENT
+    );
+    assert!(
+        server.asked().iter().any(|u| u.ends_with("client.jar")),
+        "corrupted client jar must be downloaded from Mojang"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn assemble_local_copies_all_pinned_files_without_network() {
+    let (pins, files) = mojang();
+    let root = scratch("assemble-local");
+    let own = root.join("own");
+    let other = root.join("Official");
+    let write = |rel: &str, data: &[u8]| {
+        let p = other.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, data).unwrap();
+    };
+    let manifest_url = format!(
+        "https://piston-meta.mojang.com/v1/packages/{}/26.3.json",
+        pins.primary_manifest_sha1()
+    );
+    write("versions/26.3/26.3.json", &files[&manifest_url]);
+    write("versions/26.3/26.3.jar", CLIENT);
+    write("libraries/org/fake/common/1/common-1.jar", COMMON);
+    write("libraries/org/fake/linux/1/linux-1.jar", LINUX);
+    write("libraries/org/fake/not-osx/1/not-osx-1.jar", COMMON);
+    write(
+        "assets/indexes/34.json",
+        &files["https://piston-meta.mojang.com/v1/packages/i/34.json"],
+    );
+    let sound_hash = sha1_hex(SOUND);
+    write(
+        &format!("assets/objects/{}/{sound_hash}", &sound_hash[..2]),
+        SOUND,
+    );
+
+    let sources = [other];
+    let store = Store {
+        dir: &own,
+        sources: &sources,
+    };
+    assemble_local(&pins, &store, "linux", &GO).unwrap();
+    assert_eq!(
+        fs::read(own.join("versions/26.3/26.3.jar")).unwrap(),
+        CLIENT
+    );
+    assert_eq!(
+        fs::read(own.join("libraries/org/fake/linux/1/linux-1.jar")).unwrap(),
+        LINUX
+    );
+    assert_eq!(
+        fs::read(
+            own.join("assets/objects")
+                .join(&sound_hash[..2])
+                .join(&sound_hash)
+        )
+        .unwrap(),
+        SOUND
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn assemble_local_copies_pinned_client_with_minimal_manifest() {
+    let jar = b"client fixture";
+    let manifest = b"{}";
+    let pins = Pins::read(&serde_json::json!({"minecraft": {
+        "version": "26.3",
+        "client_sha1": sha1_hex(jar),
+        "manifest_sha1": sha1_hex(manifest),
+    }}))
+    .unwrap();
+    let root = scratch("assemble-local-minimal");
+    let own = root.join("own");
+    let other = root.join("fixture");
+    fs::create_dir_all(other.join("versions/26.3")).unwrap();
+    fs::write(other.join("versions/26.3/26.3.jar"), jar).unwrap();
+    fs::write(other.join("versions/26.3/26.3.json"), manifest).unwrap();
+
+    let sources = [other];
+    let store = Store {
+        dir: &own,
+        sources: &sources,
+    };
+    assemble_local(&pins, &store, "linux", &GO).unwrap();
+    assert_eq!(
+        fs::read(own.join("versions/26.3/26.3.json")).unwrap(),
+        manifest
+    );
+    assert_eq!(fs::read(own.join("versions/26.3/26.3.jar")).unwrap(), jar);
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn download_missing_manifest_field_never_prints_null() {
+    let manifest = b"{}";
+    let manifest_sha1 = sha1_hex(manifest);
+    let pins = Pins::read(&serde_json::json!({"minecraft": {
+        "version": "26.3",
+        "client_sha1": sha1_hex(CLIENT),
+        "manifest_sha1": manifest_sha1,
+    }}))
+    .unwrap();
+    let server = Server {
+        files: HashMap::from([(
+            format!("https://piston-meta.mojang.com/v1/packages/{manifest_sha1}/26.3.json"),
+            manifest.to_vec(),
+        )]),
+        asked: Mutex::new(Vec::new()),
+    };
+    let dir = scratch("missing-field");
+    let store = Store {
+        dir: &dir,
+        sources: &[],
+    };
+    let error = download(
+        &pins,
+        &store,
+        "linux",
+        1,
+        &|url| server.fetch(url),
+        &GO,
+        &|_| {},
+    )
+    .unwrap_err();
+    assert!(!error.contains("null"), "{error}");
+    assert!(error.contains("downloads.client"), "{error}");
     fs::remove_dir_all(&dir).unwrap();
 }

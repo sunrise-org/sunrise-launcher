@@ -185,7 +185,7 @@ impl Launcher {
                 backend::PrepareStep::Files,
                 None,
             ));
-            self.prepare_version_cancellable(tag, backend::MinecraftFrom::Install, Some(stop));
+            self.prepare_version_cancellable(tag, Some(stop));
         }
     }
 

@@ -382,7 +382,7 @@ impl Launcher {
                     let b = secondary("alt-versions-prepare", tr("Prepare"));
                     cache_action = Some(if idle {
                         b.on_click(cx.listener(move |this, _, _, cx| {
-                            this.prepare_version(target.clone(), backend::MinecraftFrom::Install);
+                            this.prepare_version(target.clone());
                             cx.notify();
                         }))
                     } else {

@@ -23,8 +23,8 @@ pub const SCHEMA: u32 = 1;
 pub const MAX_INDEX: u64 = 16 << 20;
 /// The biggest file the registry takes (a `.smod` with content, a `.spack`).
 pub const MAX_FILE: u64 = 64 << 20;
-/// Where files may be downloaded from: the registry's release assets.
-pub const FILE_HOST: &str = "https://github.com/horizon-rust/horizon-mods/releases/download/";
+/// The default base URL for mirrored packages and native binaries.
+pub const FILE_HOST: &str = "https://github.com/sunrise-org/sunrise-mods/releases/download/";
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Index {

@@ -120,7 +120,7 @@ impl Launcher {
         };
         if !backend::check_prepared(&tag) {
             self.play_when_prepared = Some((tag, intent));
-            self.prepare(backend::MinecraftFrom::Install);
+            self.prepare();
             return;
         }
         self.native_error = None;
