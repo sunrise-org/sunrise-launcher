@@ -3152,16 +3152,16 @@ fn extra_kind_label(kind: &str) -> &'static str {
     }
 }
 
-/// The Minecraft folders whose asset store can hold what a prepared version lacks: the one
-/// chosen in the launcher, the official launcher's (or SUNRISE_MINECRAFT_DIR), the folder
-/// other launchers' files are linked into and Sunrise's own download, then every launcher's
+/// The Minecraft folders whose asset store can hold what a prepared version lacks: Sunrise's own
+/// download first, then the one chosen in the launcher, the official launcher's (or
+/// SUNRISE_MINECRAFT_DIR), the folder other launchers' files are linked into, and every launcher's
 /// default folder.
 fn minecraft_folders() -> Vec<PathBuf> {
-    let mut folders: Vec<PathBuf> = Settings::load().minecraft_dir.into_iter().collect();
+    let mut folders = vec![data_dir().join("minecraft")];
+    folders.extend(Settings::load().minecraft_dir);
     folders.extend([
         crate::preparer::minecraft_dir(None),
         data_dir().join("linked-minecraft"),
-        data_dir().join("minecraft"),
     ]);
     folders.extend(
         sources::Folders::current()
@@ -3189,6 +3189,19 @@ pub fn default_minecraft_dir() -> Option<PathBuf> {
         .find(|dir| dir.is_dir())
 }
 
+/// Why [`download_for_owner`] did not fill Sunrise's own Minecraft folder: either a verified
+/// owner's download failed, or no verified owner was available to download.
+struct OwnerDownloadError {
+    verified_owner: bool,
+    message: String,
+}
+
+impl std::fmt::Display for OwnerDownloadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
 /// Downloads the pinned version from Mojang into `dir` when an account in the launcher owns
 /// Minecraft (asked again now), else says what signing in would do, as the last line of the
 /// not-found error.
@@ -3198,7 +3211,7 @@ fn download_for_owner(
     fetch: sources::Fetch,
     cancel: Option<&std::sync::atomic::AtomicBool>,
     log: &dyn Fn(String),
-) -> Result<(), String> {
+) -> Result<(), OwnerDownloadError> {
     let mut accounts = account::Accounts::load();
     // Any account that owns the game may download it (`launch`), not only the one that plays.
     let pass = account::launch(
@@ -3213,6 +3226,7 @@ fn download_for_owner(
             crate::launcher_log::safe_error(&e.to_string())
         ));
     }
+    let verified_owner = pass.as_ref().is_ok_and(|launch| launch.owner.is_some());
     download_for(
         pins,
         dir,
@@ -3222,6 +3236,10 @@ fn download_for_owner(
         cancel.unwrap_or(&mojang::CANCEL),
         log,
     )
+    .map_err(|message| OwnerDownloadError {
+        verified_owner,
+        message,
+    })
 }
 
 /// Downloads Minecraft `id` (any version on Mojang's list, its version file's sha1 from it) into
@@ -3243,7 +3261,7 @@ pub fn download_version_for_owner(
     };
     let pins = sources::Pins::for_version(id, manifest_sha1);
     download_for_owner(&pins, &dir, &fetch, None, log)
-        .map_err(|e| e.trim_start_matches("\n  • ").to_string())?;
+        .map_err(|e| e.message.trim_start_matches("\n  • ").to_string())?;
     Ok(dir)
 }
 
@@ -3447,8 +3465,9 @@ fn assets_folder(
 /// Where the preparation takes Minecraft's files from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MinecraftFrom {
-    /// The player's own install (any launcher's); Mojang only when none has the version and an
-    /// account that owns the game is signed in.
+    /// Mojang's pinned version file in Sunrise's own folder when an account that owns the game is
+    /// signed in; falls back to an existing launcher install only when no verified owner is
+    /// available.
     Install,
     /// Mojang, for the signed-in account that owns the game ("Download and prepare").
     Mojang,
@@ -3497,6 +3516,36 @@ pub fn set_prepare_step(step: PrepareStep) {
     *PREPARE_STATE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = (step, Some(std::time::Instant::now()));
+}
+
+/// Chooses the Minecraft folder to prepare from: for a signed-in owner, fills Sunrise's own
+/// folder (`own`) from the pinned version file through `download` (`mojang::download` keeps files
+/// already present and whole), so another launcher's mismatched libraries never break prepare.
+/// Only when no verified owner is available does it fall back to `sources::resolve`.
+#[allow(clippy::too_many_arguments)]
+fn resolve_minecraft_for_prepare(
+    minecraft: &Path,
+    pins: &sources::Pins,
+    known: &[(&'static str, PathBuf)],
+    own: &Path,
+    linked: &Path,
+    fetch: sources::Fetch,
+    log: &dyn Fn(String),
+    download: impl FnOnce() -> Result<(), OwnerDownloadError>,
+) -> Result<PathBuf, String> {
+    match download() {
+        Ok(()) => Ok(own.to_path_buf()),
+        Err(error) if error.verified_owner => {
+            Err(error.message.trim_start_matches("\n  • ").to_string())
+        }
+        Err(error) => match sources::resolve(minecraft, pins, known, linked, fetch, log)? {
+            sources::Resolved::Folder(dir) => Ok(dir),
+            sources::Resolved::NotFound(checked) => {
+                let not_found = sources::not_found(&pins.version, &checked, minecraft);
+                Err(not_found + &error.message)
+            }
+        },
+    }
 }
 
 /// Checks what the preparation needs and picks how to run it. PLAY.txt describes the same
@@ -3603,23 +3652,30 @@ pub(crate) fn preparer_staged(
         if from == MinecraftFrom::Mojang {
             // Straight from Mojang (what is already there and whole is kept), for an owner only.
             download_for_owner(&pins, &own, &fetch, Some(cancel), log)
-                .map_err(|e| e.trim_start_matches("\n  • ").to_string())?;
+                .map_err(|e| e.message.trim_start_matches("\n  • ").to_string())?;
             own
-        } else {
-            let resolved = sources::resolve(minecraft, &pins, &known, &linked, &fetch, log);
-            if reused {
-                assets_folder(resolved, &chosen, &version, log)
-            } else {
-                match resolved? {
-                    sources::Resolved::Folder(dir) => dir,
-                    sources::Resolved::NotFound(checked) => {
-                        let not_found = sources::not_found(&version, &checked, minecraft);
-                        download_for_owner(&pins, &own, &fetch, Some(cancel), log)
-                            .map_err(|e| not_found + &e)?;
-                        own
-                    }
+        } else if reused {
+            match download_for_owner(&pins, &own, &fetch, Some(cancel), log) {
+                Ok(()) => own,
+                Err(e) if e.verified_owner => {
+                    return Err(e.message.trim_start_matches("\n  • ").to_string());
+                }
+                Err(_) => {
+                    let resolved = sources::resolve(minecraft, &pins, &known, &linked, &fetch, log);
+                    assets_folder(resolved, &chosen, &version, log)
                 }
             }
+        } else {
+            resolve_minecraft_for_prepare(
+                minecraft,
+                &pins,
+                &known,
+                &own,
+                &linked,
+                &fetch,
+                log,
+                || download_for_owner(&pins, &own, &fetch, Some(cancel), log),
+            )?
         }
     };
     if let Some(stop) = stop {
@@ -6748,6 +6804,197 @@ pub fn {f}("
         assert_eq!(assets_folder(resolved, &empty, "26.3", &log), empty);
         assert!(lines.borrow().last().unwrap().contains("will be silent"));
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A signed-in owner prepares from the pinned version file in Sunrise's own folder even when
+    /// another launcher's folder (e.g. Modrinth App with a re-issued library set) has the client
+    /// jar; without a verified owner, prepare falls back to `sources::resolve`.
+    #[test]
+    fn signed_in_owner_prepares_from_pinned_store_over_other_launcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = b"fake 26.3 client jar";
+        let freetype = b"pinned lwjgl-freetype 3.4.3";
+        let sound = b"fake ogg";
+        let index = serde_json::json!({
+            "objects": {
+                "minecraft/sounds/a.ogg": {
+                    "hash": sources::sha1_hex(sound),
+                    "size": sound.len(),
+                }
+            }
+        })
+        .to_string();
+        let freetype_rel = "org/lwjgl/lwjgl-freetype/3.4.3/lwjgl-freetype-3.4.3.jar";
+        let manifest = serde_json::json!({
+            "id": "26.3",
+            "assetIndex": {
+                "id": "34",
+                "sha1": sources::sha1_hex(index.as_bytes()),
+                "url": "https://piston-meta.mojang.com/v1/packages/i/34.json",
+            },
+            "downloads": {
+                "client": {
+                    "sha1": sources::sha1_hex(client),
+                    "size": client.len(),
+                    "url": "https://piston-data.mojang.com/client.jar",
+                }
+            },
+            "libraries": [{
+                "name": "org.lwjgl:lwjgl-freetype:3.4.3",
+                "downloads": {
+                    "artifact": {
+                        "path": freetype_rel,
+                        "sha1": sources::sha1_hex(freetype),
+                        "size": freetype.len(),
+                        "url": format!("https://libraries.minecraft.net/{freetype_rel}"),
+                    }
+                }
+            }]
+        })
+        .to_string();
+        let manifest_sha1 = sources::sha1_hex(manifest.as_bytes());
+        let pins = sources::Pins::read(&serde_json::json!({ "minecraft": {
+            "version": "26.3",
+            "client_sha1": sources::sha1_hex(client),
+            "manifest_sha1": manifest_sha1,
+        }}))
+        .unwrap();
+
+        // Another launcher (Modrinth App) has the matching client jar, but only a newer
+        // re-issued lwjgl-freetype jar instead of the pinned 3.4.3 jar.
+        let modrinth = dir.path().join("ModrinthApp");
+        let write = |path: PathBuf, data: &[u8]| {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, data).unwrap();
+        };
+        write(modrinth.join("meta/versions/26.3/26.3.jar"), client);
+        write(
+            modrinth.join("meta/versions/26.3/26.3.json"),
+            br#"{"id":"26.3"}"#,
+        );
+        write(
+            modrinth.join(
+                "meta/libraries/org/lwjgl/lwjgl-freetype/3.4.3-mojang-2.15.0/lwjgl-freetype-3.4.3-mojang-2.15.0.jar",
+            ),
+            b"reissued freetype",
+        );
+
+        let sound_hash = sources::sha1_hex(sound);
+        let files = std::collections::HashMap::from([
+            (
+                format!("https://piston-meta.mojang.com/v1/packages/{manifest_sha1}/26.3.json"),
+                manifest.into_bytes(),
+            ),
+            (
+                "https://piston-data.mojang.com/client.jar".to_string(),
+                client.to_vec(),
+            ),
+            (
+                format!("https://libraries.minecraft.net/{freetype_rel}"),
+                freetype.to_vec(),
+            ),
+            (
+                "https://piston-meta.mojang.com/v1/packages/i/34.json".to_string(),
+                index.into_bytes(),
+            ),
+            (
+                format!(
+                    "https://resources.download.minecraft.net/{}/{sound_hash}",
+                    &sound_hash[..2]
+                ),
+                sound.to_vec(),
+            ),
+        ]);
+        let fetch = |url: &str| -> Result<Vec<u8>, String> {
+            files
+                .get(url)
+                .cloned()
+                .ok_or_else(|| format!("{url} answered 404"))
+        };
+        let own = dir.path().join("minecraft");
+        let linked = dir.path().join("linked-minecraft");
+        let known = [
+            ("Sunrise's own download", own.clone()),
+            ("Modrinth App", modrinth.clone()),
+        ];
+
+        // Verified owner: prepares from `own` with the pinned library and assets, never linking
+        // the Modrinth App folder.
+        let owner = account::Account {
+            uuid: "069a79f444e94726a5befca90e38aaf5".into(),
+            name: "Notch".into(),
+            skin: None,
+            cape: None,
+        };
+        let secrets = serde_json::from_str(
+            r#"{"refresh_token":"r","minecraft_token":"t","minecraft_expires_at":1,"owns":true}"#,
+        )
+        .unwrap();
+        let pass = Ok(account::Launch {
+            owner: Some((owner, secrets)),
+            ..Default::default()
+        });
+        let folder = resolve_minecraft_for_prepare(
+            &modrinth,
+            &pins,
+            &known,
+            &own,
+            &linked,
+            &fetch,
+            &|_| {},
+            || {
+                download_for(&pins, &own, pass, true, &fetch, &mojang::CANCEL, &|_| {}).map_err(
+                    |message| OwnerDownloadError {
+                        verified_owner: true,
+                        message,
+                    },
+                )
+            },
+        )
+        .unwrap();
+        assert_eq!(folder, own);
+        assert_eq!(
+            fs::read(own.join("libraries").join(freetype_rel)).unwrap(),
+            freetype
+        );
+        assert_eq!(
+            fs::read(
+                own.join("assets/objects")
+                    .join(&sound_hash[..2])
+                    .join(&sound_hash)
+            )
+            .unwrap(),
+            sound
+        );
+        assert!(!linked.exists());
+
+        // No signed-in owner: keeps the existing `sources::resolve` path.
+        let fallback = resolve_minecraft_for_prepare(
+            &modrinth,
+            &pins,
+            &[],
+            &dir.path().join("empty-own"),
+            &linked,
+            &fetch,
+            &|_| {},
+            || {
+                download_for(
+                    &pins,
+                    &dir.path().join("empty-own"),
+                    Err(account::NoOwner::default()),
+                    false,
+                    &fetch,
+                    &mojang::CANCEL,
+                    &|_| {},
+                )
+                .map_err(|message| OwnerDownloadError {
+                    verified_owner: false,
+                    message,
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(fallback, linked);
     }
 
     #[test]
