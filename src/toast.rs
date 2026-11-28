@@ -234,6 +234,12 @@ fn cards() -> Vec<Card> {
             if l.slot != i {
                 l.from = l.slot;
                 l.slot = i;
+                // Moving rebuilds the card, its countdown bar with it: the bar goes on from the
+                // time actually left, not from the start of its run.
+                if l.held.is_none() {
+                    l.segment += 1;
+                    l.segment_left = share_left(l.since, now);
+                }
             }
             let countdown = l.leaving.is_none().then(|| {
                 let left = share_left(l.since, l.held.unwrap_or(now));
@@ -521,6 +527,21 @@ mod tests {
         assert_eq!([showing[0].slot, showing[1].slot], [0, 1]);
         // The older one moved down from the top.
         assert_eq!(showing[1].from, 0);
+    }
+
+    #[test]
+    fn a_new_line_does_not_restart_the_older_ones_time() {
+        let _one = fresh();
+        say("first");
+        cards();
+        let n = n_of("first");
+        age(n, SHOWN / 2);
+        say("second");
+        let first = cards().into_iter().find(|c| c.n == n).expect("still shown");
+        let (left, _, _, from) = first.countdown.expect("counting down");
+        assert!((0.4..0.6).contains(&left), "half its time is left: {left}");
+        // The bar, rebuilt in its new place, goes on from there, not from full.
+        assert!((from - left).abs() < 0.05, "the bar starts at {from}");
     }
 
     #[test]
