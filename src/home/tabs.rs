@@ -195,6 +195,11 @@ impl Tabs {
         self.fades.insert(id.clone(), fade);
     }
 
+    /// Whether the pointer is on the card `id` now.
+    pub(crate) fn hovered(&self, id: &SharedString) -> bool {
+        self.fades.get(id).is_some_and(|fade| fade.on)
+    }
+
     /// The fade of the card `id`, while there is something to draw; one that has ended off is
     /// dropped.
     fn lit(&mut self, id: &SharedString) -> Option<crate::motion::Fade> {

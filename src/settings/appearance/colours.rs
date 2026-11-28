@@ -242,9 +242,9 @@ impl Launcher {
             }),
             release: Rc::new({
                 let this = this.clone();
-                move |_: &mut Window, cx: &mut App| {
+                move |window: &mut Window, cx: &mut App| {
                     this.update(cx, |this, cx| {
-                        this.ui.settings.appearance.dragging = None;
+                        this.picker_release(window);
                         cx.notify();
                     })
                 }

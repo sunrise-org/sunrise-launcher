@@ -26,6 +26,17 @@ impl Launcher {
         (SLOTS[slot].set)(&mut roles, rgb);
         self.ui.settings.appearance.draft = None;
         match roles.readable() {
+            // While dragging, painted from memory: writing the theme and the settings at every
+            // step falls behind the pointer. The drag's end writes it (`picker_release`).
+            Ok(()) if self.ui.settings.appearance.dragging.is_some() => {
+                match library::preview(&mut self.settings, &roles) {
+                    Ok(()) => {
+                        self.ui.settings.appearance.unsaved = true;
+                        self.appearance_changed(window);
+                    }
+                    Err(error) => self.ui.settings.appearance.error = Some(error),
+                }
+            }
             Ok(()) => self.appearance_change(|s| library::paint(s, &roles), window),
             Err(reason) => {
                 let state = &mut self.ui.settings.appearance;
@@ -58,6 +69,7 @@ impl Launcher {
         let Some(slot) = self.ui.settings.appearance.editing else {
             return;
         };
+        self.picker_release(window);
         let typed = self.hex_apply(window);
         let state = &mut self.ui.settings.appearance;
         if !typed {
@@ -107,7 +119,17 @@ impl Launcher {
         if ev.pressed_button == Some(MouseButton::Left) {
             self.picker_to(ev.position, window);
         } else {
-            self.ui.settings.appearance.dragging = None;
+            self.picker_release(window);
+        }
+    }
+
+    /// The drag ended: what it painted is written, theme and settings, once.
+    pub(super) fn picker_release(&mut self, window: &Window) {
+        let state = &mut self.ui.settings.appearance;
+        state.dragging = None;
+        if std::mem::take(&mut state.unsaved) {
+            let roles = library::current(&self.settings);
+            self.appearance_change(|s| library::paint(s, &roles), window);
         }
     }
 

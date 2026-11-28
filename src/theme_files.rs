@@ -748,6 +748,20 @@ pub fn loaded() -> Arc<Vec<Entry>> {
     reload()
 }
 
+/// Puts `local` among the loaded themes in place of its folder's, without touching the disk: a
+/// colour dragged in the editor is painted at once and written when it is let go.
+pub fn preview(local: Local) {
+    let mut entries: Vec<Entry> = loaded().as_ref().clone();
+    entries.retain(|e| !matches!(e, Entry::Good(l) if l.slug == local.slug));
+    entries.push(Entry::Good(local));
+    #[cfg(test)]
+    set_loaded(entries);
+    #[cfg(not(test))]
+    if let Ok(mut loaded) = LOADED.write() {
+        *loaded = Some(Arc::new(entries));
+    }
+}
+
 /// Reads the themes folder again.
 pub fn reload() -> Arc<Vec<Entry>> {
     let entries = Arc::new(scan(&dir()));

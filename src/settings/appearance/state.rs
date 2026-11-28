@@ -43,6 +43,8 @@ pub(crate) struct State {
     pub(super) before: u32,
     pub(super) areas: Areas,
     pub(super) dragging: Option<Part>,
+    /// A drag painted colours not written yet: they are written when it ends.
+    pub(super) unsaved: bool,
     pub(super) picker_focus: Option<FocusHandle>,
     /// Whether the hex field had the keyboard when last drawn: leaving it takes what is typed.
     pub(super) hex_was_focused: bool,
@@ -98,6 +100,7 @@ impl Default for State {
             before: 0,
             areas: Areas::default(),
             dragging: None,
+            unsaved: false,
             picker_focus: None,
             hex_was_focused: false,
             draft: None,

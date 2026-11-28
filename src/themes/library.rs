@@ -139,6 +139,19 @@ pub fn paint(settings: &mut Settings, roles: &Roles) -> Result<(), String> {
     crate::appearance::select_theme(settings, WORKING_ID)
 }
 
+/// [`paint`] in memory only: the editor's colours are shown while they are dragged, and
+/// written by [`paint`] once the drag ends.
+pub fn preview(settings: &mut Settings, roles: &Roles) -> Result<(), String> {
+    theme_files::preview(theme_files::Local {
+        slug: WORKING.to_string(),
+        name: "Custom".to_string(),
+        roles: *roles,
+        picture: None,
+    });
+    settings.theme_accents.remove(WORKING_ID);
+    crate::appearance::select_theme(settings, WORKING_ID)
+}
+
 /// Goes back to Sunrise's own colours, in its night or its day.
 pub fn reset(settings: &mut Settings, light: bool) -> Result<(), String> {
     let id = if light {

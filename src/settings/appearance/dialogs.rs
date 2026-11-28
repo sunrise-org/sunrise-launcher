@@ -177,6 +177,8 @@ impl Launcher {
         };
         let shown = div()
             .id("alt-export-code")
+            .flex_1()
+            .min_w_0()
             .max_h(px(120.))
             .overflow_y_scroll()
             .p(px(10.))
@@ -192,18 +194,28 @@ impl Launcher {
             .flex_col()
             .gap(px(12.))
             .child(title(heading))
-            .child(shown)
+            // Copy code beside the code it copies.
+            .child(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap(px(8.))
+                    .child(shown)
+                    .child(
+                        div()
+                            .flex_none()
+                            .child(crate::widgets::motion_bits::copy_button(
+                                "alt-export-copy",
+                                tr("Copy code"),
+                                code,
+                            )),
+                    ),
+            )
             .child(theme_list("alt-export", themes))
             .child(
                 div()
                     .flex()
                     .justify_end()
-                    .gap(px(8.))
-                    .child(crate::widgets::motion_bits::copy_button(
-                        "alt-export-copy",
-                        tr("Copy code"),
-                        code,
-                    ))
                     .child(self.dialog_cancel("Close", cx)),
             )
     }

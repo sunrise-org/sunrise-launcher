@@ -297,7 +297,6 @@ impl Launcher {
         order: &Rc<Vec<String>>,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        const GROUP: &str = "world-tile";
         let folder = world.folder.clone();
         let focus = self
             .worlds
@@ -307,6 +306,9 @@ impl Launcher {
             .clone();
         let id = SharedString::from(format!("alt-world:{}", world.folder));
         let (ticked, any) = (ticks.contains(&world.folder), !ticks.is_empty());
+        // Tracked as the rows' hover is (`watch_hover`): GPUI's group hover isn't always drawn
+        // again in this window.
+        let hovered = self.ui.home.tabs.hovered(&id);
         let radius = crate::tokens::r(crate::tokens::R_CONTROL);
         let (key, order_of) = (world.folder.clone(), order.clone());
         let picture = div()
@@ -330,40 +332,40 @@ impl Launcher {
             }));
         // Play in the picture's middle, in the accent, only while the pointer is on the tile.
         let play_folder = world.folder.clone();
-        let play = div()
-            .absolute()
-            .inset_0()
-            .flex()
-            .items_center()
-            .justify_center()
-            .opacity(0.)
-            .group_hover(GROUP, |s| s.opacity(1.))
-            .child(
-                div()
-                    .id(SharedString::from(format!(
-                        "alt-world-play-{}",
-                        world.folder
-                    )))
-                    .size(px(44.))
-                    .rounded_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .occlude()
-                    .bg(rgb(palette().accent))
-                    .shadow_md()
-                    .child(crate::glass_ui::icon("play", 20., gpui::white()))
-                    .tooltip(crate::glass_ui::tip(trf(
-                        "Play {world}",
-                        &[("world", &world.name)],
-                    )))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        cx.stop_propagation();
-                        this.play_to("--world", play_folder.clone());
-                        cx.notify();
-                    })),
-            );
+        let play = hovered.then(|| {
+            div()
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "alt-world-play-{}",
+                            world.folder
+                        )))
+                        .size(px(44.))
+                        .rounded_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .cursor_pointer()
+                        .occlude()
+                        .bg(rgb(palette().accent))
+                        .shadow_md()
+                        .child(crate::glass_ui::icon("play", 20., gpui::white()))
+                        .tooltip(crate::glass_ui::tip(trf(
+                            "Play {world}",
+                            &[("world", &world.name)],
+                        )))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.play_to("--world", play_folder.clone());
+                            cx.notify();
+                        })),
+                )
+        });
         let (pick_key, pick_order) = (world.folder.clone(), order.clone());
         let check = self.tick_column(&id, ticked, any, {
             cx.listener(move |this, ev: &ClickEvent, _, cx| {
@@ -382,10 +384,8 @@ impl Launcher {
             .rounded(radius)
             .occlude()
             .bg(gpui::hsla(0., 0., 0., 0.4))
-            .when(!(ticked || any), |d| {
-                d.opacity(0.).group_hover(GROUP, |s| s.opacity(1.))
-            })
             .child(check);
+        let check = (hovered || ticked || any).then_some(check);
         let tile = div()
             .relative()
             .rounded(radius)
@@ -397,8 +397,8 @@ impl Launcher {
                     .rounded(radius)
                     .when(ticked, |d| d.border_2().border_color(rgb(palette().focus))),
             )
-            .child(play)
-            .child(check);
+            .children(play)
+            .children(check);
         // The row's "…" menu, beside the name.
         let drawn = Rc::new(std::cell::Cell::new(gpui::Bounds::<gpui::Pixels>::default()));
         let (write, read) = (drawn.clone(), drawn);
@@ -447,7 +447,6 @@ impl Launcher {
         let outer = div()
             // The tile's own id scopes what is in it: no world's control is another's.
             .id(id)
-            .group(GROUP)
             .flex_none()
             .w(px(WORLD_TILE))
             .h(px(TILE_TALL))
