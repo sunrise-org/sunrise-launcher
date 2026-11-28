@@ -87,7 +87,7 @@ impl Launcher {
         let actions = div()
             .flex()
             .flex_col()
-            .items_start()
+            .items_center()
             .gap(px(8.))
             .child(controls)
             // The build picker is centred under Play and the gear together while it fits there.
@@ -109,10 +109,14 @@ impl Launcher {
         // The cat walks the ground along the art's bottom edge, right of the buttons.
         let (lane, _) = self.cat(true, false, window, cx);
         let pad = if compact { 16. } else { 24. };
-        let lane_left = pad + PLAY_WIDTH + 8. + tokens::PLAY + 16.;
-        let banner_width = self.window_width
-            - crate::rail::rail_width(self.rail_open())
-            - 2. * tokens::FRAME_INSET;
+        let banner_left = crate::rail::rail_width(self.rail_open()) + tokens::FRAME_INSET;
+        let banner_width = self.window_width - banner_left - tokens::FRAME_INSET;
+        // The name, Play and the build stand on the window's middle (the top bar's search is
+        // there too), sidebar included; where that leaves them too little room on the left,
+        // on the banner's middle.
+        let controls_width = if compact { 132. } else { PLAY_WIDTH } + 8. + tokens::PLAY;
+        let centre = centre_in_banner(self.window_width / 2. - banner_left, banner_width);
+        let lane_left = centre + controls_width / 2. + 16.;
         // The lane's middle: the strip's depth hardly changes along it.
         let middle = (lane_left + banner_width - pad) / 2.;
         let feet = ground_height(banner_width, middle);
@@ -153,8 +157,8 @@ impl Launcher {
                     .pt(px(if compact { 16. } else { 32. }))
                     // As tall as the design's art (208), however little the banner holds.
                     .min_h(px(BANNER_HEIGHT))
-                    .child(identity)
-                    .child(actions)
+                    .child(centred(identity, centre, pad))
+                    .child(centred(actions, centre, pad))
                     .children(self.build_progress(view, cx))
                     .children(self.says(instance, view, false, cx)),
             )
@@ -559,6 +563,28 @@ impl Launcher {
 
 /// The line under the profile's name: "Last played today · Time played 3 h", or "Not played
 /// yet".
+/// Where in a banner `width` wide the header's middle goes: `wanted` (the window's middle, from
+/// the banner's left), unless that leaves less than `HALF` on a side; then the banner's middle.
+fn centre_in_banner(wanted: f32, width: f32) -> f32 {
+    const HALF: f32 = 200.;
+    if wanted >= HALF && width - wanted >= HALF {
+        wanted
+    } else {
+        width / 2.
+    }
+}
+
+/// `content` centred on `centre` (from the banner's left edge), inside the banner's padding
+/// `pad`: a box twice as wide as the distance to the nearer side, with the content in its middle.
+fn centred(content: Div, centre: f32, pad: f32) -> Div {
+    let half = (centre - pad).max(0.);
+    div()
+        .w(px(2. * half))
+        .flex()
+        .justify_center()
+        .child(content.max_w_full())
+}
+
 fn identity_line(instance: &instances::Instance) -> String {
     match instance.last_played {
         Some(last) => format!(
