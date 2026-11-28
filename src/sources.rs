@@ -346,7 +346,9 @@ pub(crate) fn fetch_manifest(
     let (v, sha1) = (&pins.version, pins.primary_manifest_sha1());
     for base in sources {
         let candidate = base.join("versions").join(v).join(format!("{v}.json"));
-        if copy_checked(&candidate, path, sha1, None)? {
+        if copy_checked(&candidate, path, sha1, None)
+            .map_err(|e| format!("{}: {e}", path.display()))?
+        {
             return Ok(());
         }
     }
@@ -406,9 +408,9 @@ pub(crate) fn copy_checked(
     to: &Path,
     expected_sha1: &str,
     expected_size: Option<u64>,
-) -> Result<bool, String> {
+) -> std::io::Result<bool> {
     use sha1::{Digest, Sha1};
-    use std::io::{Read, Write};
+    use std::io::{Error, ErrorKind, Read, Write};
     let Ok(meta) = fs::metadata(from) else {
         return Ok(false);
     };
@@ -418,20 +420,15 @@ pub(crate) fn copy_checked(
     let Ok(mut src) = fs::File::open(from) else {
         return Ok(false);
     };
-    let error = |e: std::io::Error| format!("{}: {e}", to.display());
-    let not_a_file = || {
-        trf(
-            "{path}: not a file path",
-            &[("path", &to.display().to_string())],
-        )
-    };
-    let (folder, name) = to.parent().zip(to.file_name()).ok_or_else(not_a_file)?;
-    fs::create_dir_all(folder).map_err(error)?;
+    let (folder, name) = to
+        .parent()
+        .zip(to.file_name())
+        .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "not a file path"))?;
+    fs::create_dir_all(folder)?;
     let mut partial = tempfile::Builder::new()
         .prefix(&format!(".{}.", name.to_string_lossy()))
         .suffix(".partial")
-        .tempfile_in(folder)
-        .map_err(error)?;
+        .tempfile_in(folder)?;
     let mut hasher = Sha1::new();
     let mut buf = [0u8; 64 * 1024];
     let mut total = 0u64;
@@ -443,7 +440,7 @@ pub(crate) fn copy_checked(
             break;
         }
         hasher.update(&buf[..n]);
-        partial.write_all(&buf[..n]).map_err(error)?;
+        partial.write_all(&buf[..n])?;
         total += n as u64;
     }
     if expected_size.is_some_and(|want| total != want) {
@@ -457,10 +454,8 @@ pub(crate) fn copy_checked(
     if actual != expected_sha1 {
         return Ok(false);
     }
-    partial
-        .persist(to)
-        .map(|_| true)
-        .map_err(|e| error(e.error))
+    partial.persist(to).map_err(|e| e.error)?;
+    Ok(true)
 }
 
 /// Safely removes a legacy `linked-minecraft` folder left by an earlier launcher version,

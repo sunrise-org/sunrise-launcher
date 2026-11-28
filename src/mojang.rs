@@ -70,7 +70,7 @@ fn file_ok(file: &File) -> bool {
     sha1_file(&file.path).as_ref() == Some(&file.sha1)
 }
 
-fn try_copy_from_sources(file: &File, sources: &[PathBuf]) -> Result<bool, String> {
+fn try_copy_from_sources(file: &File, sources: &[PathBuf]) -> std::io::Result<bool> {
     match &file.candidates {
         CandidateKind::None => Ok(false),
         CandidateKind::Relative(rel) => {
@@ -276,7 +276,10 @@ pub(crate) fn assemble_local(
         if cancel.load(Relaxed) {
             return Err(CANCELLED.to_string());
         }
-        if !file_ok(file) && !try_copy_from_sources(file, store.sources)? {
+        if !file_ok(file)
+            && !try_copy_from_sources(file, store.sources)
+                .map_err(|e| format!("{}: {e}", file.path.display()))?
+        {
             missing.get_or_insert_with(|| file.path.clone());
         }
     }
@@ -298,7 +301,10 @@ fn copy_local_assets(
     let Ok(index) = asset_index_file(manifest, store.dir) else {
         return Ok(());
     };
-    if !file_ok(&index) && !try_copy_from_sources(&index, store.sources)? {
+    if !file_ok(&index)
+        && !try_copy_from_sources(&index, store.sources)
+            .map_err(|e| format!("{}: {e}", index.path.display()))?
+    {
         return Ok(());
     }
     let Ok(objs) = read_json(&index.path).and_then(|j| objects(&j, store.dir)) else {
@@ -323,7 +329,9 @@ fn ensure_local_manifest(pins: &Pins, path: &Path, sources: &[PathBuf]) -> Resul
     let primary = pins.primary_manifest_sha1();
     for base in sources {
         let candidate = base.join("versions").join(v).join(format!("{v}.json"));
-        if copy_checked(&candidate, path, primary, None)? {
+        if copy_checked(&candidate, path, primary, None)
+            .map_err(|e| format!("{}: {e}", path.display()))?
+        {
             return Ok(());
         }
     }
@@ -333,7 +341,9 @@ fn ensure_local_manifest(pins: &Pins, path: &Path, sources: &[PathBuf]) -> Resul
     for sha1 in pins.manifests.iter().skip(1) {
         for base in sources {
             let candidate = base.join("versions").join(v).join(format!("{v}.json"));
-            if copy_checked(&candidate, path, sha1, None)? {
+            if copy_checked(&candidate, path, sha1, None)
+                .map_err(|e| format!("{}: {e}", path.display()))?
+            {
                 return Ok(());
             }
         }
@@ -632,7 +642,7 @@ fn fetch_each(
                                 Ok(false) => fetch_file(fetch, file)
                                     .map_err(|e| format!("{} {e}", file.url))
                                     .and_then(|body| write_file(&file.path, &body)),
-                                Err(e) => Err(e),
+                                Err(e) => Err(format!("{}: {e}", file.path.display())),
                             };
                             if let Err(e) = got {
                                 errors.fetch_add(1, Relaxed);
