@@ -173,6 +173,9 @@ pub(crate) fn install_stage_key(step: InstallProgress) -> u8 {
         InstallProgress::Building(_) => 12,
         InstallProgress::Publishing => 13,
         InstallProgress::Reviewing => 14,
+        InstallProgress::CheckingBuild => 15,
+        InstallProgress::UnpackingBuild => 16,
+        InstallProgress::FinishingBuild => 17,
     }
 }
 
@@ -325,6 +328,9 @@ pub(crate) fn record_prepare_duration(elapsed: Duration) {
 /// Player-facing label for one install stage.
 pub(crate) fn stage_label(step: InstallProgress) -> String {
     match step {
+        InstallProgress::CheckingBuild => tr("Checking the build…").into(),
+        InstallProgress::UnpackingBuild => tr("Unpacking the build").into(),
+        InstallProgress::FinishingBuild => tr("Putting the build in place").into(),
         InstallProgress::PreparingBuild => tr("Getting the build ready…").into(),
         InstallProgress::Checking => tr("Checking the mod set…").into(),
         InstallProgress::Waiting => tr("Waiting for another build to finish…").into(),
@@ -332,9 +338,10 @@ pub(crate) fn stage_label(step: InstallProgress) -> String {
             "Downloading {percent}%",
             &[("percent", &format!("{:.0}", f * 100.))],
         ),
-        InstallProgress::DownloadingBuild(f) => trf(
+        InstallProgress::DownloadingBuild(None) => tr("Downloading the build…").into(),
+        InstallProgress::DownloadingBuild(Some(f)) => trf(
             "Downloading the build {percent}%",
-            &[("percent", &format!("{:.0}", f * 100.))],
+            &[("percent", &format!("{:.0}", f.clamp(0., 1.) * 100.))],
         ),
         InstallProgress::Minecraft(step, files) => {
             use sunrise_launcher::backend::PrepareStep;
@@ -379,9 +386,8 @@ pub(crate) fn stage_label(step: InstallProgress) -> String {
 /// Determinate fraction of one install stage, when it has one.
 pub(crate) fn stage_fraction(step: InstallProgress) -> Option<f32> {
     match step {
-        InstallProgress::Downloading(f)
-        | InstallProgress::DownloadingBuild(f)
-        | InstallProgress::Rust(f) => Some(f),
+        InstallProgress::DownloadingBuild(f) => f.map(|f| f.clamp(0., 1.)),
+        InstallProgress::Downloading(f) | InstallProgress::Rust(f) => Some(f),
         InstallProgress::Minecraft(_, Some((done, total))) if total > 0 => {
             Some(done as f32 / total as f32)
         }
@@ -394,6 +400,30 @@ pub(crate) fn stage_fraction(step: InstallProgress) -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_build_downloads_have_an_eta_and_finishing_is_not_switch_publication() {
+        let stages = [
+            InstallProgress::CheckingBuild,
+            InstallProgress::UnpackingBuild,
+            InstallProgress::FinishingBuild,
+            InstallProgress::PreparingBuild,
+            InstallProgress::Publishing,
+        ];
+        let keys = stages.map(install_stage_key);
+        for (i, key) in keys.into_iter().enumerate() {
+            assert!(!keys[..i].contains(&key));
+            let mut eta = StageEta::default();
+            let start = Instant::now();
+            let download_key = install_stage_key(InstallProgress::DownloadingBuild(Some(0.)));
+            eta.update(download_key, Some(0.0), start);
+            let ready = start + Duration::from_secs(3);
+            eta.update(download_key, Some(0.25), ready);
+            assert!(eta.remaining(ready).is_some());
+            eta.update(key, None, ready);
+            assert_eq!(eta.remaining(ready), None);
+        }
+    }
 
     #[test]
     fn determinate_eta_warms_up_and_smooths_rate() {

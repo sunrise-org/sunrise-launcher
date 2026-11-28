@@ -294,7 +294,7 @@ pub fn private(mode: &OsStr, args: impl Iterator<Item = OsString>) -> Option<i32
     #[cfg(any(target_os = "linux", windows))]
     if mode == super::relay_wrapper::ARG {
         return Some(super::relay_wrapper::run(args).unwrap_or_else(|error| {
-            eprintln!(
+            crate::elog!(
                 "{}",
                 crate::i18n::trf(
                     "The game wrapper stopped: {reason}",
@@ -308,7 +308,7 @@ pub fn private(mode: &OsStr, args: impl Iterator<Item = OsString>) -> Option<i32
         return None;
     }
     Some(run(args).unwrap_or_else(|_| {
-        eprintln!("{}", crate::i18n::tr("Sunrise didn't start: the game launch is no longer active or could not be verified."));
+        crate::elog!("{}", crate::i18n::tr("Sunrise didn't start: the game launch is no longer active or could not be verified."));
         78
     }))
 }

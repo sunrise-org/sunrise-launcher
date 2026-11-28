@@ -3574,8 +3574,8 @@ fn cancelling_a_download_stops_mid_transfer() {
         &"0".repeat(64),
         &dest,
         Some(&stop),
-        &|fraction| {
-            if fraction > 0.0 {
+        &|done, _| {
+            if done > 0 {
                 stop_on_progress.stop();
                 let _ = release_on_progress.send(());
             }
@@ -3684,7 +3684,7 @@ fn cancelling_download_interrupts_stalled_read() {
         &"0".repeat(64),
         &dest,
         Some(&stop),
-        &|_| {},
+        &|_, _| {},
     );
     let elapsed = started.elapsed();
     stopper.join().unwrap();

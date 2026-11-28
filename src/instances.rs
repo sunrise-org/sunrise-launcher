@@ -30,6 +30,8 @@ pub use delete::*;
 pub use deletion_recovery::{interrupted_deletions, InterruptedDeletion};
 pub use edit::*;
 use lifecycle::{initial_choices, GATES, INITIAL, RETIRED};
+#[cfg(test)]
+use list::list_snapshot_until;
 pub use list::*;
 pub use play::*;
 

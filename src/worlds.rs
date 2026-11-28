@@ -166,8 +166,7 @@ pub fn saved_with<'a>(worlds: &'a [World], ids: &[String]) -> Vec<(&'a World, Ve
         .collect()
 }
 
-/// The worlds in a game folder's `saves/`, the last played first.
-pub fn list(home: &Path) -> Vec<World> {
+fn list_raw(home: &Path) -> Vec<World> {
     let mut worlds: Vec<Scanned> = fs::read_dir(home.join("saves"))
         .into_iter()
         .flatten()
@@ -181,6 +180,17 @@ pub fn list(home: &Path) -> Vec<World> {
             .then_with(|| a.world.folder.cmp(&b.world.folder))
     });
     worlds.into_iter().map(|s| s.world).collect()
+}
+
+/// The worlds in a game folder's `saves/`, the last played first.
+pub fn list(home: &Path) -> Vec<World> {
+    let worlds = list_raw(home);
+    // A world made since the launcher started is hidden from its log as well.
+    for world in &worlds {
+        crate::launcher_log::hide(world.folder.as_str());
+        crate::launcher_log::hide(world.name.as_str());
+    }
+    worlds
 }
 
 /// Whether `folder` has a level.dat file the game's reader can read (no recovery from level.dat_old).
@@ -753,14 +763,21 @@ fn size(dir: &Path) -> u64 {
         .sum()
 }
 
-/// The world in `home` a command names: its folder, or its name (any case).
-pub fn find(home: &Path, query: &str) -> Result<World, String> {
-    let all = list(home);
+fn find_in(all: &[World], home: &Path, query: &str) -> Result<World, String> {
     all.iter()
         .find(|w| w.folder == query)
         .or_else(|| all.iter().find(|w| w.name.eq_ignore_ascii_case(query)))
         .cloned()
         .ok_or_else(|| format!("No world {query} in {}", home.join("saves").display()))
+}
+
+fn find_raw(home: &Path, query: &str) -> Result<World, String> {
+    find_in(&list_raw(home), home, query)
+}
+
+/// The world in `home` a command names: its folder, or its name (any case).
+pub fn find(home: &Path, query: &str) -> Result<World, String> {
+    find_in(&list(home), home, query)
 }
 
 /// `base`, else `base (1)`, `base (2)`... from the `first` count: the first name free in `dir`
@@ -841,7 +858,11 @@ fn backup_at(
 /// and gives the copy that name in its level.dat so the game's list tells them apart.
 pub fn copy(instance: &crate::instances::Instance, query: &str) -> Result<World, String> {
     let profile = crate::managed_play::Profile::open_selected(instance)?;
-    copy_admitted(profile, query, |_| {})
+    let _ = list(profile.home());
+    let copied = copy_admitted(profile, query, |_| {})?;
+    crate::launcher_log::hide(copied.folder.as_str());
+    crate::launcher_log::hide(copied.name.as_str());
+    Ok(copied)
 }
 
 fn copy_admitted(
@@ -851,7 +872,7 @@ fn copy_admitted(
 ) -> Result<World, String> {
     use crate::profile_txn::durable;
     let home = profile.home();
-    let world = find(home, query)?;
+    let world = find_raw(home, query)?;
     let saves = home.join("saves");
     let error = |e: std::io::Error| {
         crate::i18n::trf(

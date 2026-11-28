@@ -44,7 +44,13 @@ impl Launcher {
         let body = div()
             .flex()
             .flex_col()
-            .child(title(tr("What went wrong").into()))
+            .child(title(
+                self.ui
+                    .sheets
+                    .notice_title
+                    .clone()
+                    .unwrap_or_else(|| tr("What went wrong").into()),
+            ))
             .child(div().flex().flex_col().gap(px(10.)).children(paragraphs))
             .child(
                 div()

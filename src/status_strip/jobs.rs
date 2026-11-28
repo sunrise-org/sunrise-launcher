@@ -119,12 +119,18 @@ impl Launcher {
     /// The game build's download, its preparation and the game starting.
     fn game_jobs(&self, jobs: &mut Vec<Job>) {
         let downloading = self.switch_download();
-        if let Some((tag, fraction)) = self
+        if let Some((tag, phase)) = self
             .installing
             .as_ref()
             .filter(|(tag, _)| downloading != Some(tag.as_str()))
         {
             let stopping = self.install_stop.as_ref().is_some_and(|s| s.is_stopped());
+            let stage: InstallProgress = (*phase).into();
+            let step = if stopping {
+                tr("Stopping…").into()
+            } else {
+                step_name(stage)
+            };
             let job = Job::new(
                 "install",
                 trf(
@@ -132,12 +138,11 @@ impl Launcher {
                     &[("build", &crate::sheets::build_name(tag))],
                 ),
             )
-            .step(if stopping {
-                tr("Stopping…")
-            } else {
-                tr("Downloading")
-            })
-            .measured(*fraction);
+            .step(step);
+            let job = match stage_fraction(stage) {
+                Some(fraction) => job.measured(fraction),
+                None => job,
+            };
             jobs.push(match self.install_stop {
                 Some(_) => job.stop(JobAct::StopGameDownload, stopping),
                 None => job,
@@ -309,7 +314,7 @@ impl Launcher {
                 Job::new("import", tr("Importing a game build")).show(JobAct::Go(Page::Settings)),
             );
         }
-        if self.storage_pending && self.storage_clearing {
+        if self.ui.settings.storage_clearing() {
             jobs.push(Job::new("clear", tr("Clearing downloads")).show(JobAct::Go(Page::Settings)));
         }
         if let Some((what, line)) = self.servers.job() {

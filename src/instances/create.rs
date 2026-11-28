@@ -43,15 +43,18 @@ pub(super) const PLAYER_FILES: &[&str] = &[crate::paths::OPTIONS, "sunrise-playe
 /// Creates an instance named `name`: empty but for the player's options and offline name, or a
 /// copy of `from`'s game folder (its worlds, options and packs). Nothing of `from` changes.
 pub fn create(name: &str, from: Option<&str>) -> Result<Instance, String> {
+    crate::launcher_log::hide_profile_name(name);
     let from = from.map(find).transpose()?;
-    create_whole_in(
+    let created = create_whole_in(
         &backend::game_home(),
         &backend::data_dir(),
         name,
         from.as_ref(),
         None,
         |_| {},
-    )
+    )?;
+    register_profile(&created);
+    Ok(created)
 }
 
 /// The directory and build the creation picker told the player it would duplicate.
@@ -110,7 +113,11 @@ pub fn create_with(
     picture: Option<Option<&[u8]>>,
     choose: impl FnOnce(&mut Meta),
 ) -> Result<Instance, String> {
-    create_with_publish(
+    crate::launcher_log::hide_profile_name(name);
+    if let Some(from) = from {
+        register_profile(&from.instance);
+    }
+    let created = create_with_publish(
         &backend::game_home(),
         &backend::data_dir(),
         name,
@@ -118,7 +125,9 @@ pub fn create_with(
         picture,
         choose,
         |_| {},
-    )
+    )?;
+    register_profile(&created);
+    Ok(created)
 }
 
 /// What creating or renaming an instance says when another already has `name`.

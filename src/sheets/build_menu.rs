@@ -295,7 +295,8 @@ impl Launcher {
                     .p(px(14.))
                     .rounded(crate::tokens::r(crate::tokens::R_CARD))
                     .border_1()
-                    .border_color(palette().input_edge())
+                    // The soft edge every sheet and picker has, not a light outline.
+                    .border_color(rgb(palette().divider))
                     .bg(rgb(palette().raised))
                     .text_color(rgb(palette().text))
                     .on_mouse_down(MouseButton::Left, |_: &MouseDownEvent, _, cx| {

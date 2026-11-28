@@ -72,7 +72,9 @@ pub(crate) fn modal_frame(
                 .gap(px(16.))
                 .rounded(crate::tokens::r(crate::tokens::R_PANEL))
                 .border_1()
-                .border_color(rgb(palette().line))
+                // The soft rule the header, the page and the Logs panel use: the raised fill
+                // already sets the sheet off the scrim, so a bright edge only shouts.
+                .border_color(rgb(palette().divider))
                 .bg(rgb(palette().raised))
                 .text_color(rgb(palette().text))
                 .on_mouse_down(MouseButton::Left, |_: &MouseDownEvent, _, cx| {

@@ -151,7 +151,17 @@ impl Profile {
     }
 
     /// Reserve one exact, already-prepared target. Download and Prepare never change a profile.
+    #[cfg(test)]
     pub(crate) fn begin_switch(&mut self, tag: &str) -> Result<Option<Edit<'_>>, String> {
+        self.begin_switch_cancellable(tag, None)
+    }
+
+    /// [`Self::begin_switch`], whose resource capture honours `stop` (a switch's Cancel).
+    pub(crate) fn begin_switch_cancellable(
+        &mut self,
+        tag: &str,
+        stop: Option<&crate::native_mods::Cancellation>,
+    ) -> Result<Option<Edit<'_>>, String> {
         let home = self.home().to_owned();
         let manifest = game_lock(&home)?;
         let before = inputs(&home)?;
@@ -189,7 +199,7 @@ impl Profile {
             self.0.reserve(Intent::Switch, targets)?
         };
         drop(manifest);
-        let resources = Resources::capture(tag, &stage)?;
+        let resources = Resources::capture_cancellable(tag, &stage, stop)?;
         let target = FirstAttempt {
             home: home.clone(),
             bound,

@@ -373,7 +373,7 @@ mod tests {
         settings.instance = Some(cabin.id.clone());
         settings.save().unwrap();
         let mut app = gpui::TestAppContext::single();
-        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
         let launcher = shell.read_with(cx, |shell, _| shell.launcher());
         cx.run_until_parked();
         let row = |cx: &mut gpui::VisualTestContext, id: &str| {
@@ -424,7 +424,7 @@ mod tests {
         settings.instance = Some(first.id.clone());
         settings.save().unwrap();
         let mut app = gpui::TestAppContext::single();
-        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
         let launcher = shell.read_with(cx, |shell, _| shell.launcher());
         cx.run_until_parked();
         let rows = |cx: &mut gpui::VisualTestContext| {
@@ -485,7 +485,7 @@ mod tests {
         settings.prune_old_versions = Some(false);
         settings.save().unwrap();
         let mut app = gpui::TestAppContext::single();
-        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
         let launcher = shell.read_with(cx, |shell, _| shell.launcher());
         let window = cx.update(|window, _| window.window_handle());
         launcher.update(cx, |launcher, cx| {
@@ -498,16 +498,54 @@ mod tests {
                 Some(Action::Deleting(_))
             ));
 
+            const TAG: &str = "26.3-0.1.1";
+            use backend::InstallPhase;
+            launcher.installing = Some((TAG.into(), InstallPhase::Downloading(0.25)));
+            launcher.install_detail = Some("Transfer detail".into());
+            launcher
+                .tx
+                .send(Msg::Progress("other".into(), InstallPhase::Finishing))
+                .unwrap();
             launcher
                 .tx
                 .send(Msg::Installed(
-                    "26.3-0.1.1".into(),
+                    "other".into(),
+                    Err("Unrelated install failure".into()),
+                ))
+                .unwrap();
+            launcher.drain(window, cx);
+            assert_eq!(
+                launcher.installing,
+                Some((TAG.into(), InstallPhase::Downloading(0.25)))
+            );
+            assert!(launcher.install_error.is_none());
+            launcher
+                .tx
+                .send(Msg::Progress(TAG.into(), InstallPhase::Downloading(0.50)))
+                .unwrap();
+            launcher.drain(window, cx);
+            assert_eq!(launcher.install_detail.as_deref(), Some("Transfer detail"));
+            launcher
+                .tx
+                .send(Msg::Progress(TAG.into(), InstallPhase::Finishing))
+                .unwrap();
+            launcher.drain(window, cx);
+            assert_eq!(
+                launcher.installing,
+                Some((TAG.into(), InstallPhase::Finishing))
+            );
+            assert!(launcher.install_detail.is_none());
+            launcher
+                .tx
+                .send(Msg::Installed(
+                    TAG.into(),
                     Ok(backend::InstallOutcome::Installed(None)),
                 ))
                 .unwrap();
             launcher.drain(window, cx);
             let live = Settings::load();
-            assert_eq!(live.selected.as_deref(), Some("26.3-0.1.1"));
+            assert!(launcher.installing.is_none());
+            assert_eq!(live.selected.as_deref(), Some(TAG));
             assert_eq!(live.instance.as_ref(), Some(&profile.id));
 
             let trashed = instances::trash_confirmed(profile.clone());
@@ -519,6 +557,138 @@ mod tests {
         assert!(saved.instance.is_none());
         assert_eq!(saved.selected.as_deref(), Some("26.3-0.1.1"));
         assert!(root.join("trash").join(&profile.id).is_dir());
+    }
+
+    #[test]
+    fn standalone_install_and_prepare_route_and_clear_play_detail() {
+        let Some(_root) =
+            scratch_child("standalone_install_and_prepare_route_and_clear_play_detail")
+        else {
+            return;
+        };
+        let mut app = gpui::TestAppContext::single();
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
+        let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+
+        launcher.update(cx, |launcher, cx| {
+            const TAG: &str = "26.3-0.1.1";
+            // Idle: details from all jobs are dropped.
+            launcher.on_play_message(Msg::PlayDetail("Ignored while idle".into()), cx);
+            launcher.on_play_message(Msg::PrepareDetail("Ignored while idle".into()), cx);
+            launcher
+                .on_install_message(Msg::InstallDetail(TAG.into(), "Ignored while idle".into()));
+            assert_eq!(launcher.play_detail, None);
+            assert_eq!(launcher.install_detail, None);
+            assert_eq!(launcher.prepare_detail, None);
+
+            // Standalone Install routes detail to Home and clears it on completion.
+            launcher.installing = Some((TAG.into(), backend::InstallPhase::Downloading(0.25)));
+            launcher.on_install_message(Msg::InstallDetail("other".into(), "Wrong tag".into()));
+            assert_eq!(launcher.install_detail, None);
+            launcher.on_install_message(Msg::InstallDetail(
+                TAG.into(),
+                "Downloading build: 25%".into(),
+            ));
+            assert_eq!(
+                launcher.install_detail.as_deref(),
+                Some("Downloading build: 25%")
+            );
+            assert_eq!(
+                launcher.launch_facts().view().play_detail.as_deref(),
+                Some("Downloading build: 25%")
+            );
+            launcher.on_install_message(Msg::Installed(
+                TAG.into(),
+                Ok(backend::InstallOutcome::Installed(None)),
+            ));
+            assert!(launcher.installing.is_none());
+            assert_eq!(launcher.install_detail, None);
+            assert_eq!(launcher.launch_facts().view().play_detail, None);
+
+            // Standalone Prepare routes detail to Home and clears it on completion.
+            launcher.preparing = true;
+            launcher.on_play_message(
+                Msg::PrepareDetail("Downloading Minecraft's files: 10 of 40".into()),
+                cx,
+            );
+            assert_eq!(
+                launcher.prepare_detail.as_deref(),
+                Some("Downloading Minecraft's files: 10 of 40")
+            );
+            assert_eq!(
+                launcher.launch_facts().view().play_detail.as_deref(),
+                Some("Downloading Minecraft's files: 10 of 40")
+            );
+            launcher.on_game_exit_message(Msg::Exit(Job::Prepare, Ok(())), cx);
+            assert!(!launcher.preparing);
+            assert_eq!(launcher.prepare_detail, None);
+            assert_eq!(launcher.launch_facts().view().play_detail, None);
+
+            // Overlapping Install + Prepare: Home shows whichever job wins, and each job's
+            // completion clears only its own detail.
+            launcher.installing = Some((TAG.into(), backend::InstallPhase::Downloading(0.50)));
+            launcher.preparing = true;
+            launcher.on_install_message(Msg::InstallDetail(
+                TAG.into(),
+                "Downloading build: 50%".into(),
+            ));
+            launcher.on_play_message(
+                Msg::PrepareDetail("Downloading Minecraft's files: 20 of 40".into()),
+                cx,
+            );
+            assert_eq!(
+                launcher.launch_facts().view().play_detail.as_deref(),
+                Some("Downloading build: 50%")
+            );
+            launcher.on_install_message(Msg::Installed(
+                TAG.into(),
+                Ok(backend::InstallOutcome::Installed(None)),
+            ));
+            assert!(launcher.installing.is_none());
+            assert_eq!(launcher.install_detail, None);
+            assert_eq!(
+                launcher.prepare_detail.as_deref(),
+                Some("Downloading Minecraft's files: 20 of 40")
+            );
+            assert_eq!(
+                launcher.launch_facts().view().play_detail.as_deref(),
+                Some("Downloading Minecraft's files: 20 of 40")
+            );
+            launcher.on_game_exit_message(Msg::Exit(Job::Prepare, Ok(())), cx);
+            assert!(!launcher.preparing);
+            assert_eq!(launcher.prepare_detail, None);
+            assert_eq!(launcher.launch_facts().view().play_detail, None);
+
+            // Reverse completion order: Prepare finishes while Install is still active.
+            launcher.installing = Some((TAG.into(), backend::InstallPhase::Downloading(0.75)));
+            launcher.preparing = true;
+            launcher.on_install_message(Msg::InstallDetail(
+                TAG.into(),
+                "Downloading build: 75%".into(),
+            ));
+            launcher.on_play_message(
+                Msg::PrepareDetail("Downloading Minecraft's files: 30 of 40".into()),
+                cx,
+            );
+            launcher.on_game_exit_message(Msg::Exit(Job::Prepare, Ok(())), cx);
+            assert!(!launcher.preparing);
+            assert_eq!(launcher.prepare_detail, None);
+            assert_eq!(
+                launcher.install_detail.as_deref(),
+                Some("Downloading build: 75%")
+            );
+            assert_eq!(
+                launcher.launch_facts().view().play_detail.as_deref(),
+                Some("Downloading build: 75%")
+            );
+            launcher.on_install_message(Msg::Installed(
+                TAG.into(),
+                Ok(backend::InstallOutcome::Installed(None)),
+            ));
+            assert!(launcher.installing.is_none());
+            assert_eq!(launcher.install_detail, None);
+            assert_eq!(launcher.launch_facts().view().play_detail, None);
+        });
     }
 
     #[test]
@@ -536,7 +706,7 @@ mod tests {
         let settings_path = root.join("launcher/settings.json");
 
         let mut app = gpui::TestAppContext::single();
-        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
         let launcher = shell.read_with(cx, |shell, _| shell.launcher());
         launcher.update(cx, |launcher, cx| {
             launcher.self_update = SelfUpdate::Ready(Release {

@@ -1280,6 +1280,37 @@ fn v2_switch_slot_planning_keeps_chosen_project_maps_verdicts_and_honors_pins() 
         SlotPlan::Hold(HeldReason::NoFit { ref build, .. }) if build == "26.3-0.1.2"
     ));
     assert!(!checked_switch_fit_v2(&idx, home.path(), "26.3-0.1.2"));
+    // The same check by name and reason, per build: Home says which build the mods have
+    // releases for, or what each build leaves out and what is known of it.
+    let wayfinder = |issue| Blocker {
+        name: "Wayfinder A".into(),
+        issue,
+    };
+    assert_eq!(
+        switch_fit_blockers_v2(&idx, home.path(), "26.3-0.1.1"),
+        Some(Vec::new())
+    );
+    let builds = [
+        "26.3-0.1.2".to_string(),
+        "26.3-0.9.0".to_string(),
+        "26.3-0.1.1".to_string(),
+    ];
+    assert_eq!(
+        mods_fit_by_build_v2(&idx, home.path(), &builds),
+        Some(vec![
+            // Marked as not fitting by every release it could use: confirmed.
+            (
+                "26.3-0.1.2".to_string(),
+                vec![wayfinder(FitIssue::NoRelease)]
+            ),
+            // Marked neither way: not known, not "no".
+            (
+                "26.3-0.9.0".to_string(),
+                vec![wayfinder(FitIssue::Unproved)]
+            ),
+            ("26.3-0.1.1".to_string(), Vec::new()),
+        ])
+    );
 
     // 3. Target 26.3-0.9.0 is in neither fits nor does_not_fit -> Unproved hold!
     let plan_unknown = plan_slot_for_build(&idx, "wayfinder", item, "26.3-0.9.0", &BTreeMap::new());

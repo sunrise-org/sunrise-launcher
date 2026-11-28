@@ -682,18 +682,27 @@ fn fetch_each(
                 })
             })
             .collect();
-        let mut waited = 0;
+        let mut waited = 0u32;
+        let mut last_ui_done = usize::MAX;
         while !workers.iter().all(|w| w.is_finished()) {
             std::thread::sleep(Duration::from_millis(100));
             waited += 1;
-            if waited % 10 == 0 {
-                log(trf(
-                    "{done} of {total} files",
-                    &[
-                        ("done", &done.load(Relaxed).to_string()),
-                        ("total", &files.len().to_string()),
-                    ],
+            let count = done.load(Relaxed);
+            let total = files.len();
+            if waited.is_multiple_of(3) && count != last_ui_done {
+                last_ui_done = count;
+                crate::launcher_log::play_detail_ui_only(crate::i18n::trf(
+                    "Downloading Minecraft's files: {done} of {total}",
+                    &[("done", &count.to_string()), ("total", &total.to_string())],
                 ));
+            }
+            if waited.is_multiple_of(10) {
+                let text = crate::i18n::trf(
+                    "Downloading Minecraft's files: {done} of {total}",
+                    &[("done", &count.to_string()), ("total", &total.to_string())],
+                );
+                crate::launcher_log::play_detail_ui_only(text.clone());
+                log(text);
             }
         }
     });

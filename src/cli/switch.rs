@@ -117,6 +117,7 @@ pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> R
             switch: hooks,
             confirm_publisher_change: None,
             pin_dir: None,
+            recover_held: false,
         },
     )?;
     let mut output = io::stdout().lock();

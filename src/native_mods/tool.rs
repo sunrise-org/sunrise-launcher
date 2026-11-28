@@ -43,12 +43,31 @@ pub(crate) struct ProcessGuard {
     pid: u32,
 }
 
-impl Drop for ProcessGuard {
-    fn drop(&mut self) {
+impl ProcessGuard {
+    /// Forgets the child, under the same lock [`Cancellation::stop`] takes, and says whether a
+    /// stop came first. After `false`, no stop signals this PID again. After `true`, the stop
+    /// may have sent only SIGTERM, so the caller still ends the child's group before reaping it
+    /// (review of #670).
+    pub(crate) fn release(self) -> bool {
+        self.forget()
+    }
+
+    fn forget(&self) -> bool {
         let mut state = self.cancellation.state();
         if state.tool == Some(self.pid) {
             state.tool = None;
+            #[cfg(windows)]
+            {
+                state.job = None;
+            }
         }
+        state.stopped
+    }
+}
+
+impl Drop for ProcessGuard {
+    fn drop(&mut self) {
+        self.forget();
     }
 }
 
@@ -82,16 +101,46 @@ impl Cancellation {
         &self.flag
     }
 
-    /// Registers a spawned child process group so [`Self::stop`] terminates it. If already
-    /// stopped, terminates the child immediately and returns the cancellation error.
     pub(crate) fn track_process(&self, pid: u32) -> Result<ProcessGuard, String> {
         let mut state = self.state();
         if state.stopped {
             drop(state);
-            terminate_process(pid);
+            kill_process(pid);
             return Err(super::CANCELLED.into());
         }
         state.tool = Some(pid);
+        Ok(ProcessGuard {
+            cancellation: self.clone(),
+            pid,
+        })
+    }
+
+    /// Registers a preparer child's process group, with its Windows job, so [`Self::stop`]
+    /// ends the whole tree and not only the leader's PID (review of #670). If already stopped,
+    /// it is killed outright, as it has done nothing yet, and the cancellation error returned.
+    /// One kill decides: a preparer with a job ends through its job alone, as [`Self::stop`]
+    /// ends it, and nothing waits on a `taskkill`.
+    pub(crate) fn track_preparer(
+        &self,
+        pid: u32,
+        #[cfg(windows)] job: Option<Arc<crate::process::leases::CompilerJob>>,
+    ) -> Result<ProcessGuard, String> {
+        let mut state = self.state();
+        if state.stopped {
+            drop(state);
+            #[cfg(windows)]
+            if let Some(job) = &job {
+                let _ = job.terminate();
+                return Err(super::CANCELLED.into());
+            }
+            kill_process(pid);
+            return Err(super::CANCELLED.into());
+        }
+        state.tool = Some(pid);
+        #[cfg(windows)]
+        {
+            state.job = job;
+        }
         Ok(ProcessGuard {
             cancellation: self.clone(),
             pid,
@@ -109,13 +158,34 @@ impl Cancellation {
         state.publishing = true;
         Ok(())
     }
+}
 
+#[derive(Debug)]
+struct CancelledRead;
+
+impl std::fmt::Display for CancelledRead {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(super::CANCELLED)
+    }
+}
+
+impl std::error::Error for CancelledRead {}
+
+pub(crate) fn is_cancelled_io(error: &std::io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<CancelledRead>())
+}
+
+impl Cancellation {
     /// Check the attempt before each bounded download or extraction read.
     pub(crate) fn reader<R: std::io::Read>(&self, reader: R) -> impl std::io::Read + use<'_, R> {
         struct Reader<'a, R>(&'a Cancellation, R);
         impl<R: std::io::Read> std::io::Read for Reader<'_, R> {
             fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-                self.0.check().map_err(std::io::Error::other)?;
+                if self.0.is_stopped() {
+                    return Err(std::io::Error::other(CancelledRead));
+                }
                 self.1.read(buf)
             }
         }
@@ -140,16 +210,49 @@ impl Cancellation {
             return;
         }
         if let Some(pid) = state.tool {
+            // The one that runs it ends it outright once the grace is over: it alone knows the
+            // child is not reaped yet, so the PID is still the child's (review of #670).
             terminate_process(pid);
         }
     }
 }
 
+/// How long a stopped child's process group gets to end on its own before it is killed.
+pub(crate) const STOP_GRACE: Duration = Duration::from_secs(2);
+
+/// Ends the process group of child `pid` outright. Only for a child not reaped yet: its zombie
+/// keeps the PID, and so the group's ID, from going to another process.
+#[cfg(unix)]
+pub(crate) fn kill_group(pid: u32) {
+    kill_process(pid);
+}
+
+/// Asks the child's process group to end: SIGTERM on Unix. On Windows the tree is ended at once
+/// (`taskkill /T /F`), which is already the hard kill.
 fn terminate_process(pid: u32) {
     // SAFETY: callers only pass PIDs of process groups they spawned for this attempt.
     #[cfg(unix)]
     unsafe {
         libc::kill(-(pid as libc::pid_t), libc::SIGTERM);
+    }
+    #[cfg(windows)]
+    kill_process(pid);
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many times this thread ended a process by its PID ([`kill_process`]).
+    static KILLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Ends the child's process group outright: SIGKILL on Unix, `taskkill /T /F` on Windows.
+fn kill_process(pid: u32) {
+    #[cfg(test)]
+    KILLS.with(|kills| kills.set(kills.get() + 1));
+    // SAFETY: callers only pass PIDs of process groups they spawned for this attempt.
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
     }
     #[cfg(windows)]
     let _ = crate::process::command(crate::process::taskkill())
@@ -189,6 +292,7 @@ pub struct Blame {
 #[serde(rename_all = "kebab-case")]
 pub enum BlameKind {
     Compile,
+    /// A build script, which the tool of a game build made before mods could run one refused.
     BuildScript,
     Features,
 }
@@ -269,7 +373,7 @@ pub(super) fn toolchain(rust: &Toolchain) -> Value {
 /// The plan's JSON line.
 fn plan_line(rust: &Toolchain, plan: &Plan<'_>) -> String {
     let mut tools = toolchain(rust);
-    tools["cargo_home"] = serde_json::json!(plan.workspace.path().join("cargo"));
+    tools["cargo_home"] = serde_json::json!(plan.workspace.cargo_home());
     serde_json::json!({
         "contract": CONTRACT,
         "work": plan.work,
@@ -325,9 +429,11 @@ fn compiler_handoff(terminal: Result<Built, Failure>, quiescent: bool) -> Result
     match terminal {
         Err(failure) if quiescent || failure.blame.is_none() => Err(failure),
         Ok(built) if quiescent => Ok(built),
-        _ => Err(tr("The launcher couldn't prove all native build workers stopped. Their build files were kept.")
-            .to_owned()
-            .into()),
+        _ => Err(tr(
+            "Part of the mod build may still be running, so its build files were kept. Wait a moment and try again.",
+        )
+        .to_owned()
+        .into()),
     }
 }
 

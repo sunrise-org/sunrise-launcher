@@ -584,20 +584,26 @@ pub struct Tip(SharedString);
 impl Render for Tip {
     fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
         // Offset below the pointer so tooltips never sit directly on top of the hovered button.
-        div().pt(px(20.)).pl(px(4.)).child(
-            div()
-                .max_w(px(360.))
-                .px(px(10.))
-                .py(px(6.))
-                .rounded(px(rad(radius::CONTROL)))
-                .bg(rgb(palette().raised))
-                .border_1()
-                .border_color(rgb(palette().line))
-                .font_family(sunrise_launcher_theme::glass::FONT)
-                .text_size(px(13.))
-                .text_color(rgb(palette().text))
-                .child(self.0.clone()),
-        )
+        // Found by its text in window tests: `tooltip: <text>`.
+        let text = self.0.clone();
+        div()
+            .pt(px(20.))
+            .pl(px(4.))
+            .debug_selector(move || format!("tooltip: {text}"))
+            .child(
+                div()
+                    .max_w(px(360.))
+                    .px(px(10.))
+                    .py(px(6.))
+                    .rounded(px(rad(radius::CONTROL)))
+                    .bg(rgb(palette().raised))
+                    .border_1()
+                    .border_color(rgb(palette().line))
+                    .font_family(sunrise_launcher_theme::glass::FONT)
+                    .text_size(px(13.))
+                    .text_color(rgb(palette().text))
+                    .child(self.0.clone()),
+            )
     }
 }
 

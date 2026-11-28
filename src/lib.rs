@@ -32,6 +32,7 @@ pub mod instances;
 pub mod java;
 pub mod jdk;
 pub mod launch;
+pub mod launcher_log;
 #[cfg(target_os = "macos")]
 mod mac_update;
 #[doc(hidden)] // Internal launcher contracts, exposed to the integration harness.

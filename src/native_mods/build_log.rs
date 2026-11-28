@@ -26,9 +26,9 @@ pub(crate) fn snapshot() -> Option<Arc<str>> {
     if bytes.is_empty() {
         return None;
     }
-    let text = String::from_utf8_lossy(&bytes);
+    let text = crate::launcher_log::scrub(&String::from_utf8_lossy(&bytes));
     Some(if skip == 0 {
-        Arc::from(text.as_ref())
+        Arc::from(text)
     } else {
         Arc::from(format!(
             "{}\n\n{text}",
@@ -54,6 +54,11 @@ pub fn append_log(message: &str) -> Result<(), String> {
     writeln!(log, "{message}").map_err(|e| e.to_string())
 }
 
+/// Appends scrubbed `message` to the build log while keeping [`append_log`] identical to the game's copy.
+pub(crate) fn append_scrubbed(message: &str) -> Result<(), String> {
+    append_log(&crate::launcher_log::scrub(message))
+}
+
 /// Appends `text` to the build log, the way a compiler warning reads.
 pub fn log_warning(text: &str) {
     if let Ok(mut log) = fs::OpenOptions::new()
@@ -61,7 +66,8 @@ pub fn log_warning(text: &str) {
         .append(true)
         .open(log_path())
     {
-        let _ = writeln!(log, "{}", trf("warning: {text}", &[("text", text)]));
+        let line = crate::launcher_log::scrub(&trf("warning: {text}", &[("text", text)]));
+        let _ = writeln!(log, "{line}");
     }
 }
 

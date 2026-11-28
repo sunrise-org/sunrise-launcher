@@ -395,6 +395,46 @@ fn the_api_route_fetches_its_two_slices_only_and_reuses_them_on_their_stamps() {
 }
 
 #[test]
+fn using_a_kept_tool_offline_does_not_mark_or_evict_sdk_slices() {
+    let fixture = Fixture::new();
+    let name = Asset::name(Kind::Tool, TRIPLE, Side::Client);
+    let sdk = fixture.sdk(&[(name.as_str(), SLICE)]).unwrap();
+    let prebuilt = fixture.scratch.path().join("prebuilt");
+    let into = prebuilt.join(format!("{COMMIT}-{TRIPLE}-tool"));
+    let program = into.join(super::super::tool::PROGRAM);
+    fs::create_dir_all(&into).unwrap();
+    fs::write(&program, b"kept tool").unwrap();
+    let stamp = Stamp {
+        index: sdk.signed().to_owned(),
+        asset: name,
+        files: listing(&into).unwrap(),
+    };
+    let stamp_bytes = serde_json::to_vec(&stamp).unwrap();
+    fs::write(stamp_path(&into), &stamp_bytes).unwrap();
+    let other = prebuilt.join(format!("{COMMIT}-{TRIPLE}")).join("runtime");
+    fs::create_dir_all(&other).unwrap();
+    let canary = other.join("kept-resource");
+    fs::write(&canary, b"other SDK slice").unwrap();
+    fs::remove_dir_all(fixture.scratch.path().join("base")).unwrap();
+
+    // Writing .last-used inside the tool folder would invalidate its exact file listing and
+    // make the next offline lookup discard it while trying to fetch a replacement.
+    for _ in 0..2 {
+        let heard = std::cell::RefCell::new(Vec::new());
+        let found = tool_in(&prebuilt, &sdk, &fixture.base(), TRIPLE, &|fetched| {
+            heard.borrow_mut().push(fetched);
+        })
+        .unwrap();
+        assert_eq!(found, program);
+        assert_eq!(*heard.borrow(), [Fetched::default()]);
+        assert_eq!(listing(&into), Some(stamp.files.clone()));
+        assert_eq!(fs::read(&program).unwrap(), b"kept tool");
+        assert_eq!(fs::read(stamp_path(&into)).unwrap(), stamp_bytes);
+        assert_eq!(fs::read(&canary).unwrap(), b"other SDK slice");
+    }
+}
+
+#[test]
 fn a_stamp_from_another_index_is_not_trusted() {
     let fixture = Fixture::new();
     let sdk = fixture.sdk(&[]).unwrap();

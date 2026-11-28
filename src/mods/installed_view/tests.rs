@@ -63,7 +63,7 @@ fn a_mod_rewritten_in_place_shows_on_an_idle_page_once_due() {
     settings.save().unwrap();
 
     let mut app = gpui::TestAppContext::single();
-    let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+    let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
     let launcher = shell.read_with(cx, |shell, _| shell.launcher());
     launcher.update(cx, |l, cx| {
         l.show_installed_mods();
@@ -143,7 +143,7 @@ fn a_mod_far_down_the_list_is_built_and_revealed() {
     settings.save().unwrap();
 
     let mut app = gpui::TestAppContext::single();
-    let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+    let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
     let launcher = shell.read_with(cx, |shell, _| shell.launcher());
     // Opened at the 251st mod, as Home's mod count opens it at one.
     launcher.update(cx, |l, cx| {
@@ -256,7 +256,8 @@ fn show_resource_pack_discover_re_searches_after_clearing_a_previous_resource_qu
         return;
     }
     let mut app = gpui::TestAppContext::single();
-    let (launcher, cx) = app.add_window_view(Launcher::new);
+    let (launcher, cx) =
+        app.add_window_view(|w, cx| Launcher::new_with_startup_checks(w, cx, true));
     launcher.update(cx, |l, _| {
         l.ui.page = Page::Home;
         l.mods_state.find.set("faithful".into());

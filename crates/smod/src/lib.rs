@@ -17,8 +17,9 @@ pub mod manifest;
 pub mod mod_list;
 pub mod modpack;
 pub mod output;
+pub mod package;
 pub mod packages;
 pub mod runtime_leases;
 pub mod selection;
 
-pub use manifest::{Capability, Manifest, Package, find};
+pub use manifest::{Capability, Manifest, Package, find, find_until, try_find_until};

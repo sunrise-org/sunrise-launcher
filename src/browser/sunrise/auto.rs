@@ -99,7 +99,7 @@ fn remove_kept(home: &Path) -> Result<(), String> {
 
 fn lock_for_updates(home: &Path) -> Result<crate::browser::HomeLockGuard, String> {
     crate::browser::lock_home(home).map_err(|error| {
-        eprintln!(
+        crate::elog!(
             "Sunrise launcher: could not lock registry updates for {}: {error}",
             home.display()
         );

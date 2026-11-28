@@ -14,14 +14,16 @@ use sunrise_launcher::managed_play::StartError;
 /// What the launcher knows that Play depends on.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Facts {
-    /// A game build downloading, and how far it is (0 to 1).
-    pub installing: Option<f32>,
+    /// The current game build install phase.
+    pub installing: Option<backend::InstallPhase>,
     pub preparing: bool,
     /// Native mods are being built.
     pub building: bool,
     pub starting: bool,
     /// The step the start is at, once it has said (`Main::Step`).
     pub step: Option<backend::PlayStep>,
+    /// Live detail line shown beside/under "Preparing…" while Play is working.
+    pub play_detail: Option<String>,
     /// Mods are being added, removed or updated.
     pub mutating: bool,
     pub registry: Option<InstallProgress>,
@@ -56,7 +58,7 @@ pub(crate) struct Facts {
 /// Play itself: what it says, in the order the states win.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Main {
-    Installing(f32),
+    Installing(backend::InstallPhase),
     Preparing,
     Building,
     Starting,
@@ -110,6 +112,12 @@ pub(crate) struct View {
     pub enabled: bool,
     /// One sentence beside Play: a problem, a held update, a newer build.
     pub said: Option<String>,
+    /// Live counted Play step detail, shown in the status line under the Play row while Play
+    /// downloads or prepares.
+    pub play_detail: Option<String>,
+    /// "{build} is available", while Update game is the action: Home draws it with its button
+    /// in the played line's place, above the Play row.
+    pub offer: Option<String>,
     /// That sentence is a problem.
     pub failed: bool,
     pub act: Option<Act>,
@@ -283,6 +291,10 @@ impl Facts {
             .as_ref()
             .filter(|_| !busy && !self.running);
         let failed = (recovery.is_some() || brief.is_some()) && !self.building;
+        let play_detail = self
+            .play_detail
+            .clone()
+            .filter(|_| busy && !self.building && !failed);
         let said = recovery
             .map(|_| tr("A mod install couldn't be finished.").into())
             .or(brief)
@@ -294,6 +306,7 @@ impl Facts {
             Some(Step::Build) => self.build_gone.filter(|_| !busy).map(WayOut::Newest),
             _ => None,
         };
+        let offer = update.map(|build| trf("{build} is available", &[("build", build)]));
         let act = if self.building {
             Some(Act::StopBuild)
         } else if let Some((home, detail)) = recovery {
@@ -310,6 +323,7 @@ impl Facts {
         } else {
             update.map(|_| Act::Update)
         };
+        let offer = offer.filter(|_| matches!(act, Some(Act::Update)));
         // Mods the game was made without are no problem to raise: one quiet line, at most.
         let mods_off =
             (said.is_none() && !self.building && self.mods_off > 0).then_some(self.mods_off);
@@ -320,6 +334,8 @@ impl Facts {
                 busy && !matches!(main, Main::RegistryInstall(_, true)),
             ),
             said,
+            play_detail,
+            offer,
             failed,
             act,
             mods_off,
@@ -330,18 +346,14 @@ impl Facts {
 impl Main {
     pub(crate) fn label(self) -> SharedString {
         match self {
-            Main::Installing(progress) => trf(
-                "Installing · {percent}%",
-                &[("percent", &format!("{:.0}", 100. * progress))],
-            )
-            .into(),
+            Main::Installing(phase) => crate::mods_page::install::stage_label(phase.into()).into(),
             Main::Preparing => tr("Preparing…").into(),
             Main::Building => tr("Building mods…").into(),
             Main::Starting => tr("Starting…").into(),
             Main::Step(backend::PlayStep::Assets) => tr("Checking game files…").into(),
             Main::Step(backend::PlayStep::Mods) => tr("Updating mods…").into(),
             Main::Step(backend::PlayStep::Download) => tr("Downloading the game…").into(),
-            Main::Step(backend::PlayStep::Prepare) => tr("Getting ready…").into(),
+            Main::Step(backend::PlayStep::Prepare) => tr("Preparing…").into(),
             Main::Step(backend::PlayStep::Native) => tr("Building mods…").into(),
             Main::Step(backend::PlayStep::SignIn) => tr("Signing in…").into(),
             Main::ChangingMods => tr("Changing mods…").into(),
@@ -395,6 +407,15 @@ impl Act {
     }
 }
 
+/// What Update game saves with the switch: a profile kept on one build is kept on the new one;
+/// one that follows its channel goes on following it (nothing saved), so the channel's next
+/// build still reaches it.
+pub(crate) fn update_choice(
+    pinned: bool,
+) -> Option<sunrise_launcher::browser::sunrise::BuildChoice> {
+    pinned.then_some(sunrise_launcher::browser::sunrise::BuildChoice::Keep)
+}
+
 impl StripAct {
     pub(crate) fn label(&self) -> &'static str {
         match self {
@@ -423,7 +444,13 @@ impl View {
                 }
                 _ => StripAct::Home,
             };
-            return Some((self.main.label(), act));
+            return Some((
+                self.play_detail
+                    .clone()
+                    .map(Into::into)
+                    .unwrap_or_else(|| self.main.label()),
+                act,
+            ));
         }
         match (&self.said, &self.act) {
             (Some(said), Some(act @ (Act::BuildResult | Act::Notice { .. }))) if self.failed => {
@@ -462,12 +489,24 @@ impl Launcher {
     }
 
     pub(super) fn launch_activity(&self) -> Facts {
+        let play_detail = if self.installing.is_some() {
+            self.install_detail.clone()
+        } else if self.preparing {
+            self.prepare_detail.clone()
+        } else if self.native_step.is_some() {
+            None
+        } else if self.starting_client.is_some() || self.play_admission.is_some() {
+            self.play_detail.clone()
+        } else {
+            None
+        };
         Facts {
             installing: self.installing.as_ref().map(|(_, progress)| *progress),
             preparing: self.preparing,
             building: self.native_step.is_some(),
             starting: self.starting_client.is_some() || self.play_admission.is_some(),
             step: self.play_step,
+            play_detail,
             mutating: self.mutating() || self.switch_busy(),
             registry: self.registry_stage(),
             registry_accepts_play: self.registry_accepts_play(),
@@ -527,9 +566,15 @@ impl Launcher {
             Act::BuildResult => self.open_sheet(Sheet::ModBuild),
             Act::Notice { text, way_out } => self.open_notice(text.clone(), way_out.clone()),
             Act::Resolve => self.open_sheet(Sheet::Resolve),
+            // One press: download, prepare and switch to the channel's newest build, in the
+            // switch dialog, as the channel rows do. A following profile keeps following; one
+            // that stays on a build stays on the new one.
             Act::Update => {
                 if let Some(tag) = self.game_update().map(|release| release.tag.clone()) {
-                    self.open_update_picker(tag);
+                    let pinned = self
+                        .selected_instance()
+                        .is_some_and(|i| i.version.is_some());
+                    self.begin_switch(tag, update_choice(pinned));
                 }
             }
         }
@@ -556,16 +601,30 @@ impl Launcher {
                     self.play_download = Some(fraction);
                 }
             }
+            Msg::PlayDetail(detail) => {
+                // A switch's steps come as SwitchDetail, from its own operation.
+                if self.starting_client.is_some() {
+                    self.play_detail = Some(detail);
+                }
+            }
+            Msg::PrepareDetail(detail) => {
+                if self.preparing {
+                    self.prepare_detail = Some(detail);
+                }
+            }
             Msg::PlayStep(step) => {
                 if self.starting_client.is_some() {
                     self.play_step = Some(step);
                     self.play_download = None;
+                    self.play_detail = None;
                 }
-                if step == backend::PlayStep::SignIn && self.native_step.take().is_some() {
+                if crate::launcher_messages::finish_play_build_at_handoff(
+                    self.mods_state.build.as_mut(),
+                    step,
+                ) || (step == backend::PlayStep::SignIn && self.native_step.take().is_some())
+                {
+                    self.native_step = None;
                     self.native_progress = None;
-                    if let Some(run) = &mut self.mods_state.build {
-                        run.done();
-                    }
                     if self.ui.sheet == Some(crate::sheets::Sheet::ModBuild) {
                         self.close_sheet();
                     }
@@ -611,10 +670,17 @@ impl Launcher {
                     })
                 });
                 let mut captured_build_error = false;
+                let mut close_build_sheet = false;
                 if let (Some(run), Err(error)) = (&mut self.mods_state.build, result.as_ref()) {
                     if active_play_build {
-                        captured_build_error = settle_play_build_error(run, error, cancelled);
+                        (captured_build_error, close_build_sheet) =
+                            crate::launcher_messages::route_active_play_build_error(
+                                run, error, cancelled,
+                            );
                     }
+                }
+                if close_build_sheet && self.ui.sheet == Some(crate::sheets::Sheet::ModBuild) {
+                    self.close_sheet();
                 }
                 if !self.mods_state.build.as_ref().is_some_and(|run| {
                     run.for_play && matches!(run.end, Some(crate::mods::build_run::End::Stopped(_)))
@@ -624,6 +690,7 @@ impl Launcher {
                 self.starting_client = None;
                 self.play_step = None;
                 self.play_download = None;
+                self.play_detail = None;
                 self.accounts = Accounts::load();
                 self.load_auth_statuses(false);
                 match *result {
@@ -671,7 +738,11 @@ impl Launcher {
                     }
                     Err(StartError::Hook(error)) => self.client_error = Some(error.to_string()),
                     Err(StartError::Other(_)) if captured_build_error => (),
-                    Err(StartError::UnknownSpawn(error) | StartError::Other(error)) => {
+                    Err(
+                        StartError::UnknownSpawn(error)
+                        | StartError::Snapshot(error)
+                        | StartError::Other(error),
+                    ) => {
                         self.client_error = Some(error);
                     }
                 }
@@ -697,34 +768,6 @@ impl Launcher {
             _ => unreachable!("not a play message"),
         }
     }
-}
-
-fn settle_play_build_error(
-    run: &mut crate::mods::build_run::Run,
-    error: &StartError,
-    cancelled: bool,
-) -> bool {
-    match error {
-        _ if cancelled => run.cancelled(),
-        StartError::Native(error, build) => {
-            run.failed_build = build.clone();
-            run.native_failed(error, &[]);
-        }
-        StartError::Other(error) => {
-            run.stopped(
-                tr("The build could not finish. No game was started.").into(),
-                error.clone(),
-            );
-            return true;
-        }
-        StartError::Journal(error) => run.stopped(error.summary().into(), error.details()),
-        StartError::Account(refused) => run.stopped(refused.in_window(), String::new()),
-        _ => run.stopped(
-            tr("The build could not be published.").into(),
-            String::new(),
-        ),
-    }
-    false
 }
 
 #[cfg(test)]

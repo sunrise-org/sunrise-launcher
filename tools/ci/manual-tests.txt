@@ -11,3 +11,4 @@ sunrise-launcher rust_toolchain::tests::managed_arm64_toolchain_builds_the_game 
 sunrise-launcher downloads::tests::benchmark_download_pipeline by-hand manual # local download throughput benchmark; run explicitly in a fresh process per mode
 sunrise-launcher-smod holder::game_entry::tests::write_missing_registration_actor subprocess manual # fixture writer subprocess only
 sunrise-launcher-telemetry payload::tests::what_this_machine_sends by-hand manual # prints what this machine would send; run with --ignored --nocapture
+sunrise-launcher browser::sunrise::registry_install::update_tests::build_switch::capture_fixture by-hand manual # writes a window capture fixture when SUNRISE_CAPTURE_CASE and the fixture root are set; the capture job runs it

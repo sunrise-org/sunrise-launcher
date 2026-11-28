@@ -258,6 +258,7 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
 struct Query {
     home: PathBuf,
     version: Option<String>,
+    profile: native_mods::Profile,
 }
 
 /// Just the facts about installed mods needed to draw Play and its strip. The launch and
@@ -266,6 +267,9 @@ struct Query {
 pub(crate) struct LaunchSummary {
     pub(crate) mods_off: usize,
     pub(crate) pending_mods: bool,
+    /// Mods an earlier switch held off while the player had them on: Home looks for a build
+    /// with releases for them too.
+    pub(crate) held_on: usize,
 }
 
 #[derive(Default)]
@@ -279,12 +283,21 @@ fn stamp(query: &Query) -> String {
     let build = query.version.as_deref().and_then(|version| {
         std::fs::metadata(backend::version_dir(version).join("native-mods.json")).ok()
     });
+    // The picked versions and the switch's holds change which builds the mods have releases
+    // for (Home's suggestion), without touching a mod file.
+    let changed = |path: PathBuf| {
+        std::fs::metadata(path)
+            .ok()
+            .map(|m| (m.len(), m.modified().ok()))
+    };
     format!(
-        "{}\n{}\n{}\n{:?}",
+        "{}\n{}\n{}\n{:?}\n{:?}\n{:?}",
         native_status::fingerprint(home, query.version.as_deref()),
         packs::stamp(home),
         native_mods::kept_stamp(home),
         build.map(|m| (m.len(), m.modified().ok())),
+        changed(home.join("mod-browser/chosen-versions.json")),
+        changed(home.join("mod-browser/active-build.json")),
     )
 }
 
@@ -297,7 +310,16 @@ fn read_changed(query: &Query, known: &str) -> Option<(String, Snapshot)> {
     let active = sunrise_launcher::managed_play::Active::read_pointer(&query.home)
         .ok()
         .flatten();
-    let pending_mods = !native_status::pending(&query.home, active.as_ref()).is_empty();
+    let pending_mods = !native_status::pending_for(
+        &query.home,
+        active.as_ref(),
+        query.profile,
+        query.version.as_deref(),
+    )
+    .is_empty();
+    let held_on = active.as_ref().map_or(0, |active| {
+        active.holds().filter(|hold| hold.enabled_before()).count()
+    });
     let build = query
         .version
         .as_deref()
@@ -329,6 +351,7 @@ fn read_changed(query: &Query, known: &str) -> Option<(String, Snapshot)> {
             launch: LaunchSummary {
                 mods_off,
                 pending_mods,
+                held_on,
             },
         },
     ))
@@ -359,6 +382,11 @@ const WATCH: Duration = Duration::from_secs(2);
 impl Inventory {
     pub(crate) fn launch(&self) -> Option<&LaunchSummary> {
         self.snapshot.as_deref().map(|snapshot| &snapshot.launch)
+    }
+
+    /// Changes each time Home publishes a new read: its mods, archives, pins or holds changed.
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Starts a read only if needed. Returns the generation and the stamp to read against.
@@ -441,6 +469,7 @@ impl Launcher {
         let query = Query {
             home: instance.home.clone(),
             version: self.version_of(instance).cloned(),
+            profile: instance.native_profile,
         };
         let mods = &mut self.ui.home.mods;
         if mods.query.as_ref() != Some(&query) {
@@ -744,6 +773,7 @@ mod tests {
         Query {
             home: path.into(),
             version: None,
+            profile: native_mods::Profile::default(),
         }
     }
 

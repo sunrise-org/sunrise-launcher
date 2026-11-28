@@ -107,7 +107,7 @@ fn in_a_scratch_launcher(name: &str, test: impl FnOnce(&mut Launcher, &mut Conte
         return;
     }
     let mut app = gpui::TestAppContext::single();
-    let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+    let (shell, cx) = app.add_window_view(crate::window_root::Shell::new_for_test);
     let launcher = shell.read_with(cx, |shell, _| shell.launcher());
     launcher.update(cx, |l, cx| {
         l.accounts.accounts.push(account::Account {

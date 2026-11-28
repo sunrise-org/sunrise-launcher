@@ -374,7 +374,7 @@ pub(crate) fn copy_quietly(cx: &mut App, item: gpui::ClipboardItem) {
             _ => item.text().unwrap_or_default().into_bytes(),
         };
         if let Err(e) = std::fs::write(&file, bytes) {
-            eprintln!("{}: {e}", file.display());
+            sunrise_launcher::elog!("{}: {e}", file.display());
         }
         return;
     }

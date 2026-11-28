@@ -109,7 +109,7 @@ impl Launcher {
             return false;
         }
         let home = self.mods_home();
-        let key = self.mods_state.fingerprints.read(&home, None, now);
+        let (key, _, _) = self.mods_snapshot_key(&home, now);
         self.mods_state
             .snapshot
             .as_ref()

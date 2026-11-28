@@ -1640,3 +1640,30 @@ fn copy_home_preserves_chosen_versions_pins_and_skips_caches() {
     );
     assert!(!target.join("mod-browser/sunrise-index.json").exists());
 }
+
+#[test]
+fn storage_profile_snapshot_stops_when_cancelled_mid_discovery() {
+    let root = scratch("cancel-snapshot");
+    let (home, data) = (root.join("home"), root.join("data"));
+    let own = home.join(OWN);
+    fs::create_dir_all(&own).unwrap();
+    // Use regular files so `own` stays empty and downstream loops run only 4 checks in total
+    // (entry, `registry_pack::list_in_until`, and the two `found` loops over `DEFAULT`).
+    // Cancelling on the 5th call (`count >= 4`) can only be reached inside the `read_dir` loop.
+    for index in 0..8 {
+        fs::write(own.join(format!("not-a-profile-{index}")), b"").unwrap();
+    }
+    let checks = std::cell::Cell::new(0usize);
+    let result = list_snapshot_until(&home, &data, Store::default(), true, false, &|| {
+        let count = checks.get();
+        checks.set(count + 1);
+        count >= 4
+    });
+    assert!(result.is_none());
+    assert_eq!(
+        checks.get(),
+        5,
+        "must stop inside the profile discovery loop"
+    );
+    fs::remove_dir_all(root).unwrap();
+}

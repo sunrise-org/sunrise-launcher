@@ -13,7 +13,7 @@ pub(super) fn run() {
         .stack_size(16 * 1024 * 1024)
         .spawn(run_launcher)
         .unwrap_or_else(|error| {
-            eprintln!(
+            sunrise_launcher::elog!(
                 "{}",
                 trf(
                     "Could not start the launcher: {error}",
@@ -36,7 +36,7 @@ pub(super) fn run() {
 fn run_launcher() {
     sunrise_launcher_smod::holder::retain_capability();
     if let Err(error) = console::attach_for_cli() {
-        eprintln!(
+        sunrise_launcher::elog!(
             "{}",
             trf(
                 "Could not restore the launcher's terminal streams: {error}",
@@ -51,7 +51,7 @@ fn run_launcher() {
     // A broken pointer may open Settings with Retry/Use the default folder; failing to
     // acquire the lease is different. Never run a writer while Move owns the data roots.
     if let Err(error) = sunrise_launcher::data_location::startup() {
-        eprintln!("{error}");
+        sunrise_launcher::elog!("{error}");
         std::process::exit(1);
     }
     // The player's language, as soon as their settings can be read: the update hand-off, the
@@ -71,6 +71,9 @@ fn run_launcher() {
     } else {
         None
     };
+    if location_error.is_none() && carry_over_error.is_none() {
+        sunrise_launcher::launcher_log::init(&backend::data_dir().join("logs"));
+    }
     perf::process_started();
     backend::exe_path();
     if let Some(code) = sunrise_launcher::update_handoff::run() {
@@ -99,7 +102,7 @@ fn run_launcher() {
         if location_error.is_none() && carry_over_error.is_none() {
             backend::recover_game_installations();
             if let Err(error) = sunrise_launcher::instances::initialize_default() {
-                eprintln!("{error}");
+                sunrise_launcher::elog!("{error}");
             }
         }
         if let Some(code) = cli::run() {

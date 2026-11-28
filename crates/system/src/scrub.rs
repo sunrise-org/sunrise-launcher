@@ -11,8 +11,12 @@ pub const PRIVATE: &str = "<private>";
 
 #[derive(Clone, Debug, Default)]
 pub struct Scrubber {
-    /// Exact terms to hide, longest first.
+    /// Normalized path roots to hide across path aliases (before IP rewriting), longest first.
+    paths: Vec<String>,
+    /// Terms to hide wherever they appear (any case), longest first.
     terms: Vec<String>,
+    /// Whole-word terms to hide (any case), longest first — used for 1–2 byte profile names.
+    word_terms: Vec<String>,
     user: Option<String>,
 }
 
@@ -23,7 +27,9 @@ impl Scrubber {
             .iter()
             .find_map(|k| std::env::var(k).ok().filter(|u| u.trim().len() >= 3));
         Self {
+            paths: Vec::new(),
             terms: Vec::new(),
+            word_terms: Vec::new(),
             user,
         }
     }
@@ -38,28 +44,77 @@ impl Scrubber {
         self
     }
 
-    /// Hides `term` wherever it appears. Terms under 3 characters are ignored: they would
-    /// blank out ordinary words.
+    /// Hides a filesystem root across separator, case, JSON-escape, and Windows verbatim aliases,
+    /// before IP rewriting so an IP-bearing root still matches whole.
+    pub fn path_term(mut self, path: impl Into<String>) -> Self {
+        if let Some(norm) = normalize_path_root(&path.into())
+            && !self
+                .paths
+                .iter()
+                .any(|existing| existing.to_lowercase() == norm.to_lowercase())
+        {
+            self.paths.push(norm);
+            self.paths.sort_by_key(|p| std::cmp::Reverse(p.len()));
+        }
+        self
+    }
+
+    /// Hides `term` wherever it appears (any case). Terms under 3 characters are ignored: they
+    /// would blank out ordinary words. Absolute path roots are routed through [`Self::path_term`].
     pub fn term(mut self, term: impl Into<String>) -> Self {
         let term = term.into();
-        if term.trim().len() >= 3 && !self.terms.contains(&term) {
+        if looks_like_path_root(&term) {
+            return self.path_term(term);
+        }
+        if term.trim().len() >= 3
+            && !self
+                .terms
+                .iter()
+                .any(|existing| existing.to_lowercase() == term.to_lowercase())
+        {
             self.terms.push(term);
             self.terms.sort_by_key(|t| std::cmp::Reverse(t.len()));
         }
         self
     }
 
+    /// Hides whole-word occurrences of `term` (any case), including 1–2 character names that
+    /// would blank out ordinary words if matched as substrings.
+    pub fn word_term(mut self, term: impl Into<String>) -> Self {
+        let term = term.into();
+        let trimmed = term.trim();
+        if !trimmed.is_empty()
+            && !self
+                .word_terms
+                .iter()
+                .any(|existing| existing.to_lowercase() == trimmed.to_lowercase())
+        {
+            self.word_terms.push(trimmed.to_owned());
+            self.word_terms.sort_by_key(|t| std::cmp::Reverse(t.len()));
+        }
+        self
+    }
+
     pub fn scrub(&self, text: &str) -> String {
         let mut out = text.to_owned();
-        for term in &self.terms {
-            out = out.replace(term.as_str(), PRIVATE);
+        // Registered path roots run before IP rewriting so an IP-bearing root (such as
+        // `/mnt/10.0.0.5/sunrise` or `\\10.0.0.5\share\sunrise`) still matches whole.
+        for path in &self.paths {
+            out = replace_path(&out, path, PRIVATE);
         }
-        out = user_folders(&out);
         out = replace_tokens(&out, email_at);
         out = replace_tokens(&out, ipv4_at);
         out = replace_tokens(&out, ipv6_at);
         out = replace_tokens(&out, uuid_at);
         out = connecting_host(&out);
+        // Private terms can be part of the text that identifies an address or credential.
+        for term in &self.terms {
+            out = replace_term(&out, term, PRIVATE);
+        }
+        for word in &self.word_terms {
+            out = replace_word(&out, word, PRIVATE);
+        }
+        out = user_folders(&out);
         if let Some(user) = &self.user {
             out = replace_word(&out, user, USER);
         }
@@ -67,10 +122,8 @@ impl Scrubber {
     }
 }
 
-/// The game's `Connecting to <host>, <port>` log line (vanilla's, which other launchers read to offer
-/// the server again): the host becomes [`PRIVATE`], unless another rule already replaced it, and the
-/// port stays. Only that exact shape matches: one word, a comma and a port (digits, or what a known
-/// term already replaced) to the end of the line.
+/// Hides the host in a connection record, keeping the port: vanilla writes `host, port`,
+/// and launcher connection lines may use `host:port`. Ordinary prose is left alone.
 fn connecting_host(text: &str) -> String {
     const HEAD: &str = "Connecting to ";
     let mut out = String::with_capacity(text.len());
@@ -80,21 +133,25 @@ fn connecting_host(text: &str) -> String {
         out.push_str(&rest[..from]);
         let after = &rest[from..];
         let line = after.find(['\r', '\n']).unwrap_or(after.len());
-        let comma = after[..line].rfind(", ").filter(|&comma| {
-            let port = after[comma + 2..line].trim_end();
-            !after[..comma].contains(char::is_whitespace)
-                && (port == PRIVATE
-                    || (!port.is_empty() && port.bytes().all(|b| b.is_ascii_digit())))
-        });
-        match comma {
-            Some(comma) => {
-                let host = &after[..comma];
+        let address = after[..line].trim_end();
+        let host = address
+            .rsplit_once(", ")
+            .or_else(|| address.rsplit_once(':'))
+            .and_then(|(host, port)| {
+                (!host.is_empty()
+                    && !host.contains(char::is_whitespace)
+                    && (port == PRIVATE
+                        || (!port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()))))
+                .then_some(host)
+            });
+        match host {
+            Some(host) => {
                 out.push_str(if host == IP || host == PRIVATE {
                     host
                 } else {
                     PRIVATE
                 });
-                rest = &after[comma..];
+                rest = &after[host.len()..];
             }
             None => rest = after,
         }
@@ -156,9 +213,9 @@ fn replace_tokens(
             out.push_str(label);
             i += len;
             copied = i;
-        } else {
-            i += 1;
+            continue;
         }
+        i += 1;
     }
     out.push_str(&text[copied..]);
     out
@@ -280,36 +337,80 @@ fn uuid_at(bytes: &[u8], i: usize) -> Option<(usize, &'static str)> {
     (hex(i..i + 32) && ends_token(bytes, i + 32)).then_some((32, UUID))
 }
 
-/// Whole-word occurrences of `word`, in any case.
-fn replace_word(text: &str, word: &str, label: &str) -> String {
+/// Lowercased views of `text` and `needle` when their byte boundaries align with `text`,
+/// falling back to ASCII-only folding for ASCII needles and exact matching otherwise.
+fn match_slices<'a>(
+    text: &'a str,
+    needle: &'a str,
+) -> (std::borrow::Cow<'a, str>, std::borrow::Cow<'a, str>) {
     let lower = text.to_lowercase();
-    let needle = word.to_lowercase();
-    // Lowercasing can change byte lengths outside ASCII: then match exactly instead. Equal total
-    // lengths aren't enough to stand one in for the other: a character can grow (`İ` is 2 bytes and
-    // lowercases to 3) while another shrinks (`K`, U+212A, is 3 and lowercases to 1), so the text
-    // keeps its length while its boundaries move, and a match's offsets in `lower` would slice the
-    // text mid-character.
+    let lower_needle = needle.to_lowercase();
+    // Lowercasing can change byte lengths outside ASCII: then match with ASCII folding (which
+    // preserves every boundary) or exactly instead. Equal total lengths aren't enough to stand one
+    // in for the other: a character can grow (`İ` is 2 bytes and lowercases to 3) while another
+    // shrinks (`K`, U+212A, is 3 and lowercases to 1), so the text keeps its length while its
+    // boundaries move, and a match's offsets in `lower` would slice the text mid-character.
     let aligned = lower.len() == text.len()
+        && lower_needle.len() == needle.len()
         && lower
             .char_indices()
             .map(|(at, _)| at)
             .eq(text.char_indices().map(|(at, _)| at));
-    let (hay, needle) = if aligned && needle.len() == word.len() {
-        (lower.as_str(), needle.as_str())
-    } else {
-        (text, word)
-    };
+    if aligned {
+        return (
+            std::borrow::Cow::Owned(lower),
+            std::borrow::Cow::Owned(lower_needle),
+        );
+    }
+    if needle.is_ascii() {
+        return (
+            std::borrow::Cow::Owned(text.to_ascii_lowercase()),
+            std::borrow::Cow::Owned(needle.to_ascii_lowercase()),
+        );
+    }
+    (
+        std::borrow::Cow::Borrowed(text),
+        std::borrow::Cow::Borrowed(needle),
+    )
+}
+
+/// Whether `start..end` overlaps an existing scrubber placeholder (`<user>`, `<private>`, …).
+fn inside_placeholder(bytes: &[u8], start: usize, end: usize) -> bool {
+    const LABELS: [&[u8]; 6] = [
+        USER.as_bytes(),
+        EMAIL.as_bytes(),
+        IP.as_bytes(),
+        UUID.as_bytes(),
+        PRIVATE.as_bytes(),
+        b"<secret>",
+    ];
+    let search_from = start.saturating_sub(PRIVATE.len());
+    bytes[search_from..end]
+        .iter()
+        .enumerate()
+        .filter(|&(_, &b)| b == b'<')
+        .any(|(rel, _)| {
+            let open = search_from + rel;
+            LABELS.iter().any(|label| {
+                bytes[open..].starts_with(label) && start < open + label.len() && end > open
+            })
+        })
+}
+
+/// Substring occurrences of `term`, in any case, without rewriting scrubber placeholders.
+fn replace_term(text: &str, term: &str, label: &str) -> String {
+    if term.is_empty() {
+        return text.to_owned();
+    }
+    let (hay, needle) = match_slices(text, term);
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
     let mut copied = 0;
     let mut from = 0;
-    while let Some(found) = hay[from..].find(needle) {
+    while let Some(found) = hay[from..].find(needle.as_ref()) {
         let start = from + found;
         let end = start + needle.len();
-        let alone = (start == 0 || !word_byte(bytes[start - 1])) && ends_token(bytes, end);
-        // A label put in earlier (`<user>` for a user named "user") stays as it is.
-        let label_inside = start > 0 && bytes[start - 1] == b'<' && bytes.get(end) == Some(&b'>');
-        if alone && !label_inside {
+        if !inside_placeholder(bytes, start, end) {
             out.push_str(&text[copied..start]);
             out.push_str(label);
             copied = end;
@@ -320,12 +421,270 @@ fn replace_word(text: &str, word: &str, label: &str) -> String {
     out
 }
 
+/// Whole-word occurrences of `word`, in any case.
+fn replace_word(text: &str, word: &str, label: &str) -> String {
+    if word.is_empty() {
+        return text.to_owned();
+    }
+    let (hay, needle) = match_slices(text, word);
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut copied = 0;
+    let mut from = 0;
+    while let Some(found) = hay[from..].find(needle.as_ref()) {
+        let start = from + found;
+        let end = start + needle.len();
+        let alone = (start == 0 || !word_byte(bytes[start - 1])) && ends_token(bytes, end);
+        // A label put in earlier (`<user>` for a user named "user") stays as it is.
+        if alone && !inside_placeholder(bytes, start, end) {
+            out.push_str(&text[copied..start]);
+            out.push_str(label);
+            copied = end;
+        }
+        from = end;
+    }
+    out.push_str(&text[copied..]);
+    out
+}
+
+fn looks_like_path_root(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    text.starts_with('/')
+        || text.starts_with(r"\\")
+        || (bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'/' | b'\\'))
+}
+
+fn strip_verbatim_unc(raw: &str) -> Option<&str> {
+    let rest = raw
+        .strip_prefix(r"\\?\")
+        .or_else(|| raw.strip_prefix(r"\\.\"))
+        .or_else(|| raw.strip_prefix("//?/"))
+        .or_else(|| raw.strip_prefix("//./"))?;
+    let head = rest.as_bytes().get(..4)?;
+    if head[..3].eq_ignore_ascii_case(b"UNC") && matches!(head[3], b'\\' | b'/') {
+        Some(&rest[4..])
+    } else {
+        None
+    }
+}
+
+fn collapse_slashes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        if ch != '/' || !out.ends_with('/') {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn strip_dot_prefixes(mut s: &str) -> &str {
+    while let Some(rest) = s.strip_prefix("./") {
+        s = rest;
+    }
+    s
+}
+
+/// Normalizes a filesystem path root into one canonical `/`-separated form (`//server/share/...`
+/// for UNC, `X:/...` for Windows drives, `/...` for Unix roots, `a/b/...` for multi-segment
+/// relative roots). Bare roots with no normal path component return `None`.
+fn normalize_path_root(raw: &str) -> Option<String> {
+    let (unc, rest) = if let Some(tail) = strip_verbatim_unc(raw) {
+        (true, tail)
+    } else if let Some(tail) = raw
+        .strip_prefix(r"\\?\")
+        .or_else(|| raw.strip_prefix(r"\\.\"))
+        .or_else(|| raw.strip_prefix("//?/"))
+        .or_else(|| raw.strip_prefix("//./"))
+    {
+        (false, tail)
+    } else if let Some(tail) = raw.strip_prefix(r"\\").or_else(|| raw.strip_prefix("//")) {
+        (true, tail)
+    } else {
+        (false, raw)
+    };
+    let body = collapse_slashes(&rest.replace('\\', "/"));
+    let body = body.trim_end_matches('/');
+    if unc {
+        let body = body.trim_start_matches('/');
+        let (server, share) = body.split_once('/')?;
+        if server.is_empty() || share.is_empty() {
+            return None;
+        }
+        return Some(format!("//{body}"));
+    }
+    if body.is_empty() || body == "/" {
+        return None;
+    }
+    let bytes = body.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        let after_drive = body[2..].trim_start_matches('/');
+        if after_drive.is_empty() {
+            return None;
+        }
+        return Some(format!("{}:/{after_drive}", &body[..1]));
+    }
+    if let Some(after_root) = body.strip_prefix('/') {
+        if after_root.is_empty() {
+            return None;
+        }
+        return Some(format!("/{after_root}"));
+    }
+    // Relative path roots require a separator so single-word relative names stay in `self.terms`
+    // (after `connecting_host`) rather than running ahead of address redaction.
+    let clean = strip_dot_prefixes(body);
+    if clean.len() < 3 || !clean.contains('/') {
+        return None;
+    }
+    Some(clean.to_owned())
+}
+
+fn match_sep(bytes: &[u8], i: usize) -> Option<usize> {
+    if !matches!(bytes.get(i), Some(b'/' | b'\\')) {
+        return None;
+    }
+    let mut end = i;
+    while matches!(bytes.get(end), Some(b'/' | b'\\')) {
+        end += 1;
+    }
+    Some(end)
+}
+
+fn match_verbatim_prefix(bytes: &[u8], i: usize) -> Option<usize> {
+    let first = *bytes.get(i)?;
+    if !matches!(first, b'\\' | b'/') || bytes.get(i + 1) != Some(&first) {
+        return None;
+    }
+    let after_lead = match_sep(bytes, i)?;
+    if !matches!(bytes.get(after_lead), Some(b'?' | b'.')) {
+        return None;
+    }
+    match_sep(bytes, after_lead + 1)
+}
+
+fn match_unc_prefix(bytes: &[u8], i: usize) -> Option<usize> {
+    if let Some(after_verb) = match_verbatim_prefix(bytes, i) {
+        let unc = bytes.get(after_verb..after_verb + 3)?;
+        if unc.eq_ignore_ascii_case(b"UNC") {
+            return match_sep(bytes, after_verb + 3);
+        }
+        return None;
+    }
+    let first = *bytes.get(i)?;
+    if matches!(first, b'\\' | b'/') && bytes.get(i + 1) == Some(&first) {
+        return match_sep(bytes, i);
+    }
+    None
+}
+
+fn match_segment_ci(text: &str, pos: usize, segment: &str) -> Option<usize> {
+    if segment.is_ascii() {
+        let end = pos + segment.len();
+        return text
+            .as_bytes()
+            .get(pos..end)
+            .filter(|slice| slice.eq_ignore_ascii_case(segment.as_bytes()))
+            .map(|_| end);
+    }
+    let mut end = pos;
+    let mut text_chars = text.get(pos..)?.chars();
+    for expected in segment.chars() {
+        let actual = text_chars.next()?;
+        if !actual.to_lowercase().eq(expected.to_lowercase()) {
+            return None;
+        }
+        end += actual.len_utf8();
+    }
+    Some(end)
+}
+
+fn match_path_body(text: &str, mut pos: usize, body: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    for (index, segment) in body.split('/').enumerate() {
+        if index > 0 {
+            pos = match_sep(bytes, pos)?;
+        }
+        pos = match_segment_ci(text, pos, segment)?;
+    }
+    Some(pos)
+}
+
+fn path_match_end(text: &str, start: usize, root: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    if let Some(body) = root.strip_prefix("//") {
+        let pos = match_unc_prefix(bytes, start)?;
+        return match_path_body(text, pos, body);
+    }
+    let rbytes = root.as_bytes();
+    if rbytes.len() >= 3 && rbytes[0].is_ascii_alphabetic() && rbytes[1] == b':' {
+        let pos = if let Some(after_verb) = match_verbatim_prefix(bytes, start) {
+            after_verb
+        } else if start > 0 && word_byte(bytes[start - 1]) {
+            return None;
+        } else {
+            start
+        };
+        let drive = *bytes.get(pos)?;
+        if !drive.eq_ignore_ascii_case(&rbytes[0]) || bytes.get(pos + 1) != Some(&b':') {
+            return None;
+        }
+        let after_drive = match_sep(bytes, pos + 2)?;
+        return match_path_body(text, after_drive, &root[3..]);
+    }
+    if let Some(body) = root.strip_prefix('/') {
+        if bytes.get(start) != Some(&b'/') {
+            return None;
+        }
+        return match_path_body(text, start + 1, body);
+    }
+    if start > 0 && word_byte(bytes[start - 1]) {
+        return None;
+    }
+    let mut pos = start;
+    if start == 0 || bytes[start - 1] != b'.' {
+        while bytes.get(pos) == Some(&b'.') {
+            let Some(after) = match_sep(bytes, pos + 1) else {
+                break;
+            };
+            pos = after;
+        }
+    }
+    match_path_body(text, pos, root)
+}
+
+/// Replaces every spelling of normalized `root` (separators, JSON escapes, case, Windows verbatim
+/// prefixes) with `label`.
+fn replace_path(text: &str, root: &str, label: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut copied = 0;
+    let mut i = 0;
+    while i < text.len() {
+        if let Some(end) = path_match_end(text, i, root)
+            && !inside_placeholder(bytes, i, end)
+        {
+            out.push_str(&text[copied..i]);
+            out.push_str(label);
+            copied = end;
+            i = end;
+            continue;
+        }
+        let ch = text[i..].chars().next().unwrap_or_default();
+        i += ch.len_utf8();
+    }
+    out.push_str(&text[copied..]);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// The game logs `Connecting to <host>, <port>` for every connection, as vanilla does: the
-    /// host is private, the port is not. Only that exact shape matches.
+    /// host is private, the port is not.
     #[test]
     fn the_host_of_a_connecting_line_is_private() {
         let s = Scrubber::bare();
@@ -471,7 +830,7 @@ mod tests {
     }
 
     #[test]
-    fn known_private_terms_go_first() {
+    fn known_private_terms_are_hidden() {
         let s = Scrubber::bare()
             .term("My World")
             .term("play.example.net")
@@ -479,6 +838,102 @@ mod tests {
         assert_eq!(
             s.scrub("Saving My World; joined play.example.net:25565, ab"),
             "Saving <private>; joined <private>:25565, ab"
+        );
+    }
+
+    #[test]
+    fn terms_match_any_case_and_word_terms_hide_short_names_safely() {
+        let s = Scrubber::bare()
+            .term("Private Profile")
+            .term("Private")
+            .term("Secret")
+            .word_term("TV")
+            .word_term("X")
+            .word_term("ip");
+        assert_eq!(
+            s.scrub("There is already a profile called PRIVATE PROFILE and private profile."),
+            "There is already a profile called <private> and <private>."
+        );
+        assert_eq!(
+            s.scrub("TV uses 26.3-0.1.0; activity stays; Could not make profile x: denied; example stays"),
+            "<private> uses 26.3-0.1.0; activity stays; Could not make profile <private>: denied; example stays"
+        );
+        assert_eq!(
+            s.scrub("access_token=<secret> from 10.0.0.1 for Private Profile"),
+            "access_token=<secret> from <ip> for <private>"
+        );
+        // A term containing `<` must still see an earlier enclosing placeholder.
+        let angle = Scrubber::bare().term("ate>foo<b").term("Private Profile");
+        assert_eq!(angle.scrub("Private Profilefoo<bar"), "<private>foo<bar");
+    }
+
+    #[test]
+    fn path_roots_with_ips_and_aliases_are_hidden_before_ip_rewriting() {
+        let unix = Scrubber::bare().path_term("/mnt/10.0.0.5/private/sunrise/");
+        assert_eq!(
+            unix.scrub("Could not open /mnt/10.0.0.5/private/sunrise/saves/World from 10.0.0.5"),
+            "Could not open <private>/saves/World from <ip>"
+        );
+        // Absolute path passed through `term` gets the same before-IP treatment.
+        assert_eq!(
+            Scrubber::bare()
+                .term("/mnt/10.0.0.5/private/sunrise")
+                .scrub("open /mnt/10.0.0.5/private/sunrise/logs"),
+            "open <private>/logs"
+        );
+
+        let drive = Scrubber::bare().path_term(r"D:\10.0.0.5\Private\Sunrise");
+        for sample in [
+            r"D:\10.0.0.5\Private\Sunrise\logs",
+            r"d:\10.0.0.5\private\sunrise\logs",
+            "D:/10.0.0.5/Private/Sunrise/logs",
+            r"d:/10.0.0.5\Private/Sunrise/logs",
+            r"\\?\D:\10.0.0.5\Private\Sunrise\logs",
+            r"\\.\d:\10.0.0.5\private\sunrise\logs",
+        ] {
+            let scrubbed = drive.scrub(sample);
+            assert!(
+                scrubbed == r"<private>\logs" || scrubbed == "<private>/logs",
+                "{sample} -> {scrubbed}"
+            );
+        }
+        assert_eq!(
+            drive.scrub(r#"{"path":"\\\\?\\d:\\10.0.0.5\\private\\sunrise\\logs"}"#),
+            r#"{"path":"<private>\\logs"}"#
+        );
+
+        let unc = Scrubber::bare().path_term(r"\\10.0.0.5\Private\Sunrise");
+        for sample in [
+            r"\\10.0.0.5\Private\Sunrise\saves",
+            r"\\?\UNC\10.0.0.5\private\sunrise\saves",
+            "//10.0.0.5/Private/Sunrise/saves",
+        ] {
+            let scrubbed = unc.scrub(sample);
+            assert!(
+                scrubbed == r"<private>\saves" || scrubbed == "<private>/saves",
+                "{sample} -> {scrubbed}"
+            );
+        }
+        assert_eq!(
+            unc.scrub(r#"{"unc":"\\\\?\\UNC\\10.0.0.5\\Private\\Sunrise\\saves"}"#),
+            r#"{"unc":"<private>\\saves"}"#
+        );
+
+        let rel = Scrubber::bare().path_term("./private-dir/10.0.0.5/sunrise");
+        assert_eq!(
+            rel.scrub(
+                "open ./private-dir/10.0.0.5/sunrise/saves and private-dir\\10.0.0.5\\sunrise\\logs"
+            ),
+            "open <private>/saves and <private>\\logs"
+        );
+        assert_eq!(
+            rel.scrub("open ../private-dir/10.0.0.5/sunrise/saves"),
+            "open ../<private>/saves"
+        );
+        // Standalone IPs and host rules remain intact.
+        assert_eq!(
+            unc.scrub("Connecting to 10.0.0.5, 25565"),
+            "Connecting to <ip>, 25565"
         );
     }
 }

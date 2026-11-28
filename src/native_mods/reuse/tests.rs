@@ -733,8 +733,8 @@ fn in_child(test: &str, child: &str) -> bool {
         return true;
     }
     let home = tempfile::tempdir().unwrap();
-    let status = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", test, "--nocapture"])
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--include-ignored", "--nocapture"])
         .env(child, "1")
         .env("SUNRISE_LAUNCHER_HOME", home.path().join("launcher"))
         .env("SUNRISE_HOME", home.path().join("home"))
@@ -749,9 +749,18 @@ fn in_child(test: &str, child: &str) -> bool {
         .env_remove(sdk_cache::BASE_VAR)
         .env_remove(sdk_cache::DEVELOPER_SDK)
         .env_remove(sdk_cache::DEVELOPER_TOOL)
-        .status()
+        .output()
         .unwrap();
-    assert!(status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("1 passed; 0 failed"),
+        "child did not run {test}: {stdout}"
+    );
     false
 }
 
@@ -897,6 +906,400 @@ fn the_default_build_uses_the_slot_with_the_planned_image() {
         set.found().as_deref(),
         Some(next.as_str()),
         "planning admitted the matching image"
+    );
+}
+
+#[test]
+fn switching_mixins_source_mode_selects_a_different_image() {
+    if !in_child(
+        "native_mods::reuse::tests::switching_mixins_source_mode_selects_a_different_image",
+        "SUNRISE_REUSE_MIXINS_MODE_CHILD",
+    ) {
+        return;
+    }
+    let set = Set::new("reuse-mode-switch");
+    let options = BuildOptions::default();
+    let release = set.install(&options);
+    assert_eq!(set.found().as_deref(), Some(release.as_str()));
+
+    mixins_from_source(true);
+    assert!(
+        set.found().is_none(),
+        "an ordinary image cannot prove a source build"
+    );
+    let source = set.install(&options);
+    assert_ne!(release, source);
+    assert_eq!(set.found().as_deref(), Some(source.as_str()));
+
+    mixins_from_source(false);
+    assert_eq!(set.found().as_deref(), Some(release.as_str()));
+    fs::remove_dir_all(backend::version_dir(release.as_str())).unwrap();
+    assert!(
+        set.found().is_none(),
+        "a source image cannot prove an ordinary build"
+    );
+}
+
+#[test]
+fn a_missing_developer_manifest_does_not_expose_its_path() {
+    if !in_child(
+        "native_mods::reuse::tests::a_missing_developer_manifest_does_not_expose_its_path",
+        "SUNRISE_REUSE_MANIFEST_ERROR_CHILD",
+    ) {
+        return;
+    }
+    for (shape, private_component) in [
+        ("home/private-unix-account/checkout", "private-unix-account"),
+        (
+            r"Users\private-windows-account\checkout",
+            "private-windows-account",
+        ),
+    ] {
+        let scratch = tempfile::tempdir().unwrap();
+        let folder = scratch.path().join(shape);
+        let failed = logged(&Cancellation::default(), &|| {}, |_| {
+            Chosen::select(Some(&folder), None, || unreachable!())
+        })
+        .unwrap_err();
+        let log = fs::read_to_string(super::super::build_log::log_path()).unwrap();
+        for text in [failed.to_string(), log] {
+            assert!(text.contains(PREBUILT_IDENTITY), "{text}");
+            assert!(
+                text.contains(&std::io::ErrorKind::NotFound.to_string()),
+                "{text}"
+            );
+            assert!(!text.contains(private_component), "{text}");
+        }
+    }
+}
+
+#[test]
+fn occupied_unproved_slots_refuse_with_a_fixed_build_reason() {
+    if !in_child(
+        "native_mods::reuse::tests::occupied_unproved_slots_refuse_with_a_fixed_build_reason",
+        "SUNRISE_REUSE_EXHAUSTED_CHILD",
+    ) {
+        return;
+    }
+    let set = Set::new("reuse-exhausted");
+    let options = BuildOptions::default();
+    let plan = derive(&set.request(&options), &set.copies()).unwrap();
+    let digests = scan_bundles(&set.folder)
+        .unwrap()
+        .iter()
+        .map(|bundle| (bundle.manifest.id.clone(), source_digest(bundle)))
+        .collect();
+    let contents = Contents {
+        revision: &plan.revision,
+        origin: &plan.origin,
+        mixins: &plan.mixins,
+        profile: Profile::Optimized,
+        kept: &plan.mods,
+        digests: &digests,
+        left_out: &plan.left_out,
+    };
+    let paths: Vec<_> = versions(&plan.version)
+        .map(|version| Target::Client.directory(&version))
+        .collect();
+    assert_eq!(paths.len(), 8);
+    for folder in &paths {
+        fs::create_dir_all(folder).unwrap();
+    }
+    crate::launcher_log::init(&set.root);
+    let (before, _) = crate::launcher_log::since(0);
+    assert!(installable(&plan.version, &contents, &plan.image).is_err());
+    let (_, lines) = crate::launcher_log::since(before);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].ends_with("Native build refused: no vacant or proved installed image slot"));
+    for folder in paths {
+        assert!(fs::read_dir(folder).unwrap().next().is_none());
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "daily; build the launcher binary first"]
+fn verified_native_publication_seals_once_and_reuses_without_the_tool() {
+    use std::os::unix::fs::PermissionsExt;
+    if !in_child(
+        "native_mods::reuse::tests::verified_native_publication_seals_once_and_reuses_without_the_tool",
+        "SUNRISE_REUSE_FIRST_SEAL_CHILD",
+    ) {
+        return;
+    }
+    const DEVELOPER: &str = "developer-first-seal";
+    let developer = format!(r#"{{"revision":"{PINNED}"}}"#);
+    let instance = install_base(DEVELOPER, &[("developer.json", developer)]);
+    let mut set = Set::developer("reuse-first-seal", DEVELOPER);
+    set.against("fixture package");
+    let sdk = set.local_sdk.as_deref().unwrap();
+    let runtime = sdk.join("runtime/bin");
+    fs::create_dir_all(&runtime).unwrap();
+    fs::write(runtime.join(backend::CLIENT), game_executable()).unwrap();
+    for id in ["alpha", "beta"] {
+        fs::write(set.folder.join(id).join("Cargo.lock"), b"version = 4\n").unwrap();
+    }
+    // Use local fixture inputs throughout: neither a Rust download nor a system linker probe
+    // should be needed to exercise launcher publication of the SDK's verified outputs.
+    let host = rust_toolchain::host().unwrap();
+    let rust = rust_toolchain::root().join(format!("{}-{}", rust_toolchain::VERSION, host.target));
+    fs::create_dir_all(&rust).unwrap();
+    fs::write(rust.join(".installed"), b"").unwrap();
+    for name in ["cc", "pkg-config"] {
+        let program = set.root.join(name);
+        fs::write(&program, b"#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let path = std::env::join_paths(
+        [set.root.clone()]
+            .into_iter()
+            .chain(std::env::split_paths(&path)),
+    )
+    .unwrap();
+    let tool = set.root.join("developer-tool");
+    fs::write(&tool, r#"#!/usr/bin/env python3
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+here = Path(__file__).parent
+with (here / 'tool-calls').open('a') as log:
+    print(sys.argv[1], file=log)
+plan = json.loads(input())
+if sys.argv[1] == 'native-layout':
+    sdk = Path(plan['prebuilt'])
+    print(json.dumps({'package': {name: str(sdk / name) for name in ('runtime', 'api', 'engine')}}))
+    sys.exit(0)
+assert sys.argv[1] == 'native-build'
+work = Path(plan['work'])
+work.mkdir(parents=True, exist_ok=True)
+records = []
+libraries = []
+for mod in ('alpha', 'beta'):
+    name = f'lib{mod}.so'
+    lib = work / name
+    lib.write_bytes(mod.encode())
+    libraries.append(str(lib))
+    records.append({'file': name, 'sha256': hashlib.sha256(mod.encode()).hexdigest(),
+                    'kind': 'mod', 'mod': mod,
+                    'identity': f'{(here / "revision").read_text()} {mod} 0.1.0 {(here / "rust-version").read_text()} unwind'})
+print(json.dumps({'event': 'built', 'route': 'prebuilt-api',
+                  'binary': str(Path(plan['package']['runtime']) / 'bin' / (here / 'client-name').read_text()),
+                  'libraries': libraries, 'records': records, 'mods': ['alpha', 'beta'], 'internals': {}}))
+"#).unwrap();
+    fs::set_permissions(&tool, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::write(set.root.join("revision"), PINNED).unwrap();
+    fs::write(set.root.join("rust-version"), rust_toolchain::VERSION).unwrap();
+    fs::write(set.root.join("client-name"), backend::CLIENT).unwrap();
+    std::env::set_var("PATH", path);
+    std::env::set_var(sdk_cache::DEVELOPER_SDK, sdk);
+    std::env::set_var(sdk_cache::DEVELOPER_TOOL, &tool);
+
+    let options = BuildOptions::default();
+    let derived = derive(&set.request(&options), &set.copies()).unwrap();
+    let version = derived.version;
+    let dest = Target::Client.directory(&version);
+    let failed = build(
+        DEVELOPER,
+        &set.folder,
+        &instance,
+        Some(Profile::Optimized),
+        false,
+        &Cancellation::default(),
+        |step| {
+            if step == Step::Install {
+                fs::create_dir(&dest).unwrap();
+                fs::write(dest.join("occupied"), b"keep").unwrap();
+            }
+        },
+        || None,
+    );
+    assert!(
+        failed.is_err(),
+        "an occupied publication destination was accepted"
+    );
+    assert_eq!(fs::read(dest.join("occupied")).unwrap(), b"keep");
+    assert!(!set.evidence(&version).exists());
+    assert!(set.found().is_none());
+    fs::remove_dir_all(&dest).unwrap();
+
+    let (built, _, steps) = build_default(&set, &instance);
+    assert!(
+        matches!(&built, Ok(ClientBuild::Native(found)) if found == &version),
+        "{built:?}"
+    );
+    assert!(steps.contains(&Step::Install));
+    assert!(
+        Evidence::read(&dest).unwrap().is_some(),
+        "publication did not write its first seal"
+    );
+    let calls = set.root.join("tool-calls");
+    let before = fs::read_to_string(&calls).unwrap();
+    assert_eq!(
+        before
+            .lines()
+            .filter(|call| *call == "native-build")
+            .count(),
+        2
+    );
+    let (built, checks, steps) = build_default(&set, &instance);
+    assert!(
+        matches!(&built, Ok(ClientBuild::Native(found)) if found == &version),
+        "{built:?}"
+    );
+    assert_eq!(checks, 0);
+    assert_eq!(steps, [Step::Plan(Plan::UpToDate, Profile::Optimized)]);
+    assert_eq!(fs::read_to_string(calls).unwrap(), before);
+}
+
+/// Re-enabling a mod whose set's sealed exact build is still kept on disk clears `pending`
+/// through Play's own `reuse::lookup`; a never-built set stays pending; removing the kept
+/// build in Storage invalidates `fingerprint` and brings `pending` back.
+#[test]
+fn pending_label_uses_reuse_lookup_across_reenable_never_built_and_storage_clear() {
+    if !in_child(
+        "native_mods::reuse::tests::pending_label_uses_reuse_lookup_across_reenable_never_built_and_storage_clear",
+        "SUNRISE_REUSE_PENDING_LABEL_CHILD",
+    ) {
+        return;
+    }
+    const DEVELOPER: &str = "developer-pending-reuse";
+    let developer = format!(r#"{{"revision":"{PINNED}"}}"#);
+    install_base(DEVELOPER, &[("developer.json", developer)]);
+    keep_index(PINNED, "2026-11-13");
+    let home = backend::game_home();
+    let mods_dir = home.join(INSTALLED);
+    fs::create_dir_all(&mods_dir).unwrap();
+    let pack = |id: &str, body: &str| {
+        let manifest = format!(
+            "id='{id}'\nname='{id}'\nversion='0.1.0'\napi='{}'\ncapabilities=['registries']\n[native]\ngame='26.3'\nsunrise='{PINNED}'\nmixins='{B}'\n",
+            sunrise_launcher_smod::manifest::API,
+        );
+        let bytes = sunrise_launcher_smod::manifest::Package::write_files(
+            &manifest,
+            &[
+                (
+                    "Cargo.toml",
+                    b"[package]\nname='example'\nversion='9.0.0'\n[dependencies]\nsunrise-client='0.1'\n"
+                        .as_slice(),
+                ),
+                ("src/lib.rs", body.as_bytes()),
+            ],
+        )
+        .unwrap();
+        fs::write(mods_dir.join(format!("{id}.smod")), bytes).unwrap();
+    };
+    pack("alpha", "pub fn alpha() {}\n");
+    pack("beta", "pub fn beta() {}\n");
+    pack("gamma", "pub fn gamma() {}\n");
+
+    let platform = platform_for_game(DEVELOPER).unwrap();
+    let seal_enabled = |name: &str| {
+        let root = dir(name);
+        let folder = stage_installed(&home, root.join("staged"), None)
+            .unwrap()
+            .unwrap();
+        let set = Set {
+            root,
+            folder,
+            base: DEVELOPER.into(),
+            built_on: None,
+            revision: PINNED,
+            origin: DEVELOPER.into(),
+            platform,
+            sdk_base: None,
+            local_sdk: None,
+        };
+        set.install(&BuildOptions {
+            exact_home: Some(&home),
+            ..BuildOptions::default()
+        })
+    };
+
+    // 1. Build and seal {alpha, beta}.
+    crate::browser::mod_list::set_enabled(&home, "alpha", true).unwrap();
+    crate::browser::mod_list::set_enabled(&home, "beta", true).unwrap();
+    let both = seal_enabled("pending-both");
+
+    // 2. Turn alpha off, build and seal {beta}, and make {beta} the active build.
+    crate::browser::mod_list::set_enabled(&home, "alpha", false).unwrap();
+    let beta_only = seal_enabled("pending-beta");
+    assert_ne!(both, beta_only);
+    fs::write(
+        backend::data_dir().join("settings.json"),
+        format!(r#"{{"selected":"{DEVELOPER}"}}"#),
+    )
+    .unwrap();
+    fs::write(
+        backend::data_dir().join("instances.json"),
+        format!(r#"{{"instances":{{"sunrise":{{"version":"{beta_only}"}}}}}}"#),
+    )
+    .unwrap();
+    let profile_id = [1u8; 16];
+    let zero = [0u8; 32];
+    let active: crate::managed_play::Active = serde_json::from_value(serde_json::json!({
+        "version": 1,
+        "profile": profile_id,
+        "generation": 1,
+        "base": { "tag": DEVELOPER, "executable": zero, "runtime": zero },
+        "executable": { "tag": beta_only, "executable": zero, "runtime": zero },
+        "resources": { "primary": zero, "accelerator": null },
+        "inputs": zero,
+        "receipts": [],
+    }))
+    .unwrap();
+
+    // Re-enable alpha: active build is still {beta}, but {alpha, beta} is kept and proved.
+    crate::browser::mod_list::set_enabled(&home, "alpha", true).unwrap();
+    assert_eq!(
+        crate::native_status::unbuilt(
+            &crate::native_status::enabled(&home),
+            crate::native_status::built(active.executable()).as_deref(),
+        ),
+        ["alpha"]
+    );
+    assert!(
+        crate::native_status::pending(&home, Some(&active)).is_empty(),
+        "re-enabled mod with kept sealed build must not promise a compile"
+    );
+    assert!(
+        crate::native_status::pending_for(&home, Some(&active), Profile::Optimized, None)
+            .is_empty()
+    );
+    let fingerprint_before = crate::native_status::fingerprint(&home, Some(active.executable()));
+
+    // A never-built set ({alpha, beta, gamma}) stays pending as today.
+    crate::browser::mod_list::set_enabled(&home, "gamma", true).unwrap();
+    let mut never_built = crate::native_status::pending(&home, Some(&active));
+    never_built.sort();
+    assert_eq!(never_built, ["alpha", "gamma"]);
+    crate::browser::mod_list::set_enabled(&home, "gamma", false).unwrap();
+    assert!(crate::native_status::pending(&home, Some(&active)).is_empty());
+
+    // Removing the kept {alpha, beta} build in Storage invalidates the fingerprint and brings
+    // the pending label and Build-and-play state back.
+    let report = crate::storage::Storage::open()
+        .unwrap()
+        .report(Some(crate::storage::Category::SpareGameBuilds), false)
+        .unwrap();
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.category == crate::storage::Category::SpareGameBuilds)
+        .unwrap();
+    assert!(row.kept.is_empty(), "spare build should clear cleanly");
+    assert!(!backend::version_dir(&both).exists());
+    assert!(backend::version_dir(&beta_only).exists());
+    assert_ne!(
+        crate::native_status::fingerprint(&home, Some(active.executable())),
+        fingerprint_before,
+        "removing a kept build in Storage must invalidate the Mods/Home fingerprint"
+    );
+    assert_eq!(
+        crate::native_status::pending(&home, Some(&active)),
+        ["alpha"]
     );
 }
 

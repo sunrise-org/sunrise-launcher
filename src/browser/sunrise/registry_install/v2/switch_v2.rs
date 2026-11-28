@@ -24,7 +24,7 @@ use crate::{
             v2 as catalogue_v2,
         },
     },
-    i18n::tr,
+    i18n::{tr, trf},
     managed_play::{Held, HeldReason, HeldRoot, HeldSource, Profile, Target},
     profile_txn::Identity,
     worlds::switch::{Fence, TargetAge},
@@ -42,49 +42,133 @@ pub struct V2SwitchHooks<'a> {
     pub switch: SwitchHooks<'a>,
     pub confirm_publisher_change: Option<super::ConfirmPublisherChange<'a>>,
     pub pin_dir: Option<PathBuf>,
+    /// Also offer again the registry mods an earlier switch held off that the player had on,
+    /// when the target has a release for them: Home's switch to the build the mods need.
+    /// Mods the player turned off themselves stay off.
+    pub recover_held: bool,
 }
 
-/// Read-only check: true when every enabled v2-owned mod in `home` has a non-revoked release of
-/// its SAME chosen project whose authoritative `fits` list names exact build `tag` (respecting any
-/// `chosen-versions.json` pin).
+/// Why one wanted mod keeps a profile from fitting a build. Each is about one project's signed
+/// verdicts: none proves the whole set of mods works together on it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum FitIssue {
+    /// Every release it could use is marked as not fitting the build, or there is none.
+    NoRelease,
+    /// Its releases are marked neither way for the build: not known yet.
+    Unproved,
+    /// Not from the registry (a local or source mod, a folder), so it can't be checked here.
+    NotFromRegistry,
+    /// The project, or every release it could use, was withdrawn from the registry.
+    Withdrawn,
+}
+
+/// One wanted mod that keeps a profile from fitting a build, by name (the project's, else the
+/// mod's own), and why.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Blocker {
+    pub name: String,
+    pub issue: FitIssue,
+}
+
+/// Read-only check: true when every wanted v2-owned mod in `home` (on, or held off by an
+/// earlier switch while it was on) has a non-revoked release of its SAME chosen project whose
+/// authoritative `fits` list names exact build `tag` (respecting any `chosen-versions.json`
+/// pin).
 pub fn checked_switch_fit_v2(index: &Index, home: &Path, tag: &str) -> bool {
-    let Ok(installed) = inventory_v2(home, index) else {
-        return false;
-    };
+    switch_fit_blockers_v2(index, home, tag).is_some_and(|blockers| blockers.is_empty())
+}
+
+/// The wanted mods in `home` that keep it from fitting build `tag`, as
+/// [`checked_switch_fit_v2`] decides, in inventory order. None when the profile's mods can't
+/// be read.
+pub fn switch_fit_blockers_v2(index: &Index, home: &Path, tag: &str) -> Option<Vec<Blocker>> {
+    let builds = [tag.to_owned()];
+    mods_fit_by_build_v2(index, home, &builds)?
+        .pop()
+        .map(|(_, blockers)| blockers)
+}
+
+/// [`switch_fit_blockers_v2`] for each of `builds`, in their order, reading and hashing the
+/// profile's mods once. None when they can't be read.
+pub fn mods_fit_by_build_v2(
+    index: &Index,
+    home: &Path,
+    builds: &[String],
+) -> Option<Vec<(String, Vec<Blocker>)>> {
+    let installed = inventory_v2(home, index).ok()?;
     let pins = chosen(home);
-    for (slot, item) in &installed {
-        if !item.enabled {
-            continue;
-        }
-        if item.package.directory {
-            return false;
-        }
-        if revoked_for_package(index, &item.ownership, &item.digest).is_some() {
-            return false;
-        }
-        let Some(project_id) = item.ownership.project_id() else {
-            // Unadopted/local mod cannot be proved against `tag` from the registry alone.
-            return false;
-        };
-        let Some(project) = index.project(project_id) else {
-            return false;
-        };
-        if index.revoked(&project.id, None).is_some() {
-            return false;
-        }
-        let pin = chosen_version_pin(&pins, &project.id, slot);
-        let fits = project.releases.iter().any(|release| {
-            pin.is_none_or(|p| release.version == p)
-                && release.fit_verdict(tag) == FitVerdict::Fits
-                && index
-                    .revoked(&project.id, Some(&release.file.sha256))
-                    .is_none()
-        });
-        if !fits {
-            return false;
+    let held_on: BTreeSet<String> = crate::managed_play::Active::read_pointer(home)
+        .ok()
+        .flatten()
+        .map(|active| {
+            active
+                .holds()
+                .filter(|hold| hold.enabled_before())
+                .map(|hold| hold.id().to_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    let wanted: Vec<_> = installed
+        .iter()
+        .filter(|(slot, item)| item.enabled || held_on.contains(slot.as_str()))
+        .collect();
+    Some(
+        builds
+            .iter()
+            .map(|tag| {
+                let blockers = wanted
+                    .iter()
+                    .filter_map(|(slot, item)| {
+                        fit_issue(index, &pins, slot, item, tag).map(|issue| Blocker {
+                            name: mod_name(index, slot, item),
+                            issue,
+                        })
+                    })
+                    .collect();
+                (tag.clone(), blockers)
+            })
+            .collect(),
+    )
+}
+
+/// What keeps one installed mod from fitting `tag`, or None when the switch would keep or
+/// replace it: the switch's own plan for the slot ([`plan_slot_for_build`]), so what Home and
+/// the picker say is what the switch then does. A mod not from the registry can't be checked.
+fn fit_issue(
+    index: &Index,
+    pins: &BTreeMap<String, String>,
+    slot: &str,
+    item: &InstalledV2Mod,
+    tag: &str,
+) -> Option<FitIssue> {
+    if item.package.directory
+        || item
+            .ownership
+            .project_id()
+            .and_then(|project_id| index.project(project_id))
+            .is_none()
+    {
+        return Some(FitIssue::NotFromRegistry);
+    }
+    match plan_slot_for_build(index, slot, item, tag, pins) {
+        SlotPlan::Keep | SlotPlan::Replace(..) => None,
+        SlotPlan::Revoked { .. } => Some(FitIssue::Withdrawn),
+        SlotPlan::Hold(HeldReason::Unproved { .. }) => Some(FitIssue::Unproved),
+        SlotPlan::Hold(HeldReason::NoFit { .. } | HeldReason::BuildFailed { .. }) => {
+            Some(FitIssue::NoRelease)
         }
     }
-    true
+}
+
+fn mod_name(index: &Index, slot: &str, item: &InstalledV2Mod) -> String {
+    item.ownership
+        .project_id()
+        .and_then(|project_id| index.project(project_id))
+        .map(|project| project.name.clone())
+        .filter(|name| !name.trim().is_empty())
+        .or_else(|| Some(item.package.manifest.name.clone()))
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| slot.to_owned())
 }
 
 /// Switch `instance` to exact prepared Sunrise build `tag` using the signed v2 registry.
@@ -146,7 +230,16 @@ pub(crate) fn switch_profile_build_v2_with(
         .active()?
         .map(|active| active.holds().cloned().collect())
         .unwrap_or_default();
-    let Some(edit) = profile.begin_switch(tag)? else {
+    let Some(edit) = profile.begin_switch_cancellable(tag, Some(cancellation))? else {
+        // Home's switch was worked out for a profile on another build. Another switch moved it
+        // here before this one was admitted, maybe with a wanted mod held off: saving the pin now
+        // would keep it on a build without that mod, so nothing is saved (review of #616).
+        if hooks.recover_held {
+            return Err(trf(
+                "This profile is already on {build}, so nothing changed.",
+                &[("build", tag)],
+            ));
+        }
         if let Some(choice) = choice {
             cancellation.begin_publication()?;
             target.save_build_choice(tag, choice)?;
@@ -340,7 +433,16 @@ fn switch_build_v2_edit(
     // Re-offer previously held local or source mods whose exact bytes are still present and not
     // revoked; their old holds are retired, and any that still fail `prove` below are held again
     // with today's target build and reason.
-    let rechecked = collect_rechecked_local_holds(previous_holds, &before, &index);
+    let mut rechecked = collect_rechecked_local_holds(previous_holds, &before, &index);
+    if hooks.recover_held {
+        rechecked.extend(recovered_registry_holds(
+            previous_holds,
+            &before,
+            &index,
+            tag,
+            &pins,
+        ));
+    }
     for slot in &rechecked {
         mod_list::set_enabled(next.path(), slot, true)?;
     }
@@ -556,11 +658,41 @@ fn switch_build_v2_edit(
         }),
     )?;
     let (held_names, unproved_names) = split_hold_names(&holds);
+    // What the player wants and this switch would leave out, checked against the staged result:
+    // every mod they had on, or that an earlier switch held off while it was on, that is not on
+    // in the staged copy or was removed from it. An already held-off mod counts too, so a
+    // revocation that removes it, or a hold that stays, is an omission (review of #616). A mod
+    // they turned off themselves is none.
+    let mut wanted_left_out = Vec::new();
+    for slot in holder
+        .wanted
+        .iter()
+        .filter(|slot| before.contains_key(*slot))
+    {
+        let name = if let Some((name, _)) = removed.get(slot) {
+            name.clone()
+        } else if !mod_list::is_enabled(next.path(), slot) {
+            holds
+                .iter()
+                .chain(previous_holds)
+                .find(|hold| hold.id() == slot)
+                .map_or_else(
+                    || before[slot].package.manifest.name.clone(),
+                    |hold| hold.title().to_owned(),
+                )
+        } else {
+            continue;
+        };
+        wanted_left_out.push(name);
+    }
+    wanted_left_out.sort();
+    wanted_left_out.dedup();
     let question = SwitchQuestion {
         build: tag.to_owned(),
         worlds,
         held: held_names,
         unproved: unproved_names,
+        wanted_left_out,
         reasons: holds
             .iter()
             .filter_map(|hold| Some((hold.title().to_owned(), hold.reason().detail()?.to_owned())))
@@ -568,11 +700,14 @@ fn switch_build_v2_edit(
         removed: removed.values().cloned().collect(),
     };
 
-    let decision = if question.needed() {
-        (hooks.switch.approve)(&question)?
-    } else {
-        SwitchDecision::TurnOff
-    };
+    // Home's switch asks its policy even when nothing else would be asked: a wanted mod that
+    // stays off is reason enough to stop.
+    let decision =
+        if question.needed() || (hooks.recover_held && !question.wanted_left_out.is_empty()) {
+            (hooks.switch.approve)(&question)?
+        } else {
+            SwitchDecision::TurnOff
+        };
     if decision == SwitchDecision::Cancel {
         return Ok(Switched::Stayed);
     }
@@ -896,6 +1031,41 @@ fn collect_rechecked_local_holds(
         rechecked.insert(hold.id().to_owned());
     }
     rechecked
+}
+
+/// Registry mods an earlier switch held off while the player had them on, that build `tag`
+/// has a usable release for: Home's switch to the build the mods need turns them back on.
+/// A mod the player turned off themselves has no such hold and stays off.
+fn recovered_registry_holds(
+    previous_holds: &[Held],
+    before: &BTreeMap<String, InstalledV2Mod>,
+    index: &Index,
+    tag: &str,
+    pins: &BTreeMap<String, String>,
+) -> BTreeSet<String> {
+    previous_holds
+        .iter()
+        .filter(|hold| {
+            hold.enabled_before() && matches!(hold.source(), HeldSource::Registry { .. })
+        })
+        .filter_map(|hold| {
+            let item = before.get(hold.id())?;
+            (held_archive_is(hold, item)
+                && !item.enabled
+                && fit_issue(index, pins, hold.id(), item, tag).is_none())
+            .then(|| hold.id().to_owned())
+        })
+        .collect()
+}
+
+/// Whether `item` is the exact archive registry hold `hold` was made for: the same project and
+/// the same bytes. A mod with the same id from elsewhere, or other bytes in its place, is not.
+fn held_archive_is(hold: &Held, item: &InstalledV2Mod) -> bool {
+    let HeldSource::Registry { project, .. } = hold.source() else {
+        return false;
+    };
+    item.ownership.project_id() == Some(project.as_str())
+        && sha256_bytes(&item.digest).is_ok_and(|digest| &digest == hold.digest())
 }
 
 /// Convert `native_mods::Failed::Mods` omissions into per-mod `HeldReason`s so a failing local,

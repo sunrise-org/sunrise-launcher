@@ -19,6 +19,26 @@ pub(super) use bound::sdk_target;
 pub use bound::NightlyReceiptWarning;
 pub(crate) use bound::{prove_release_files, BoundVariant, GameDownload, GameProof};
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum InstallPhase {
+    Checking,
+    Downloading(f32),
+    DownloadingUnknownLength,
+    Unpacking,
+    Finishing,
+    Preparing,
+}
+
+fn logged<T>(what: String, run: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let step = crate::launcher_log::step(what);
+    let result = run();
+    match &result {
+        Ok(_) => step.done(""),
+        Err(error) => step.failed(error),
+    }
+    result
+}
+
 const STAGE_PREFIX: &str = ".build-stage-";
 const REPAIR: &str = ".repair-";
 
@@ -123,7 +143,10 @@ pub fn recover_game_installations() {
             continue;
         };
         if let Err(error) = recover_replacement(tag) {
-            eprintln!("Could not recover game installation {tag}: {error}");
+            crate::elog!(
+                "Could not recover game installation {tag}: {}",
+                crate::launcher_log::safe_error(&error.to_string())
+            );
         }
     }
 }
@@ -195,7 +218,7 @@ pub(crate) fn install_as(
     requested_architecture: Option<GameArchitecture>,
     release_facts: Option<(&[u8], &str)>,
     intent: InstallIntent,
-    progress: impl Fn(f32),
+    progress: impl Fn(InstallPhase),
 ) -> Result<Option<ReceiptFailure>, String> {
     install_as_cancellable(
         release,
@@ -218,7 +241,7 @@ pub(crate) fn install_as_cancellable(
     requested_architecture: Option<GameArchitecture>,
     release_facts: Option<(&[u8], &str)>,
     intent: InstallIntent,
-    transfer: Transfer<'_, impl Fn(f32)>,
+    transfer: Transfer<'_, impl Fn(InstallPhase)>,
 ) -> Result<Option<ReceiptFailure>, String> {
     let Transfer { stop, progress } = transfer;
     let (url, size) = release.asset.as_ref().ok_or_else(|| {
@@ -229,14 +252,26 @@ pub(crate) fn install_as_cancellable(
         tag,
         intent,
         stop,
-        &progress,
         |target| Artifact::matches_archive(target, tag, sha256),
         |stage| {
             let archive = stage.join("download");
-            download_cancellable(url, *size, sha256, &archive, stop, &progress)?;
+            let reported_unknown_length = std::cell::Cell::new(false);
+            logged(format!("Downloading {tag} ({size} bytes)"), || {
+                download_cancellable(url, *size, sha256, &archive, stop, &|done, total| {
+                    if total > 0 {
+                        progress(InstallPhase::Downloading(
+                            (done as f32 / total as f32).min(1.0),
+                        ));
+                    } else if !reported_unknown_length.replace(true) {
+                        progress(InstallPhase::DownloadingUnknownLength);
+                    }
+                })
+            })?;
             let unpacked = stage.join("unpacked");
-            unpack(&archive, url, &unpacked, stop)?;
-            progress(0.97);
+            progress(InstallPhase::Unpacking);
+            logged(format!("Unpacking {tag}"), || {
+                unpack(&archive, url, &unpacked, stop)
+            })?;
             // The archives usually hold one top folder; install its contents.
             let entries: Vec<_> = fs::read_dir(&unpacked)
                 .and_then(|entries| entries.collect::<std::io::Result<_>>())
@@ -248,6 +283,7 @@ pub(crate) fn install_as_cancellable(
             let architecture = requested_architecture
                 .zip(architecture_for_asset(url))
                 .map(|(requested, binary)| InstalledGameArchitecture { requested, binary });
+            progress(InstallPhase::Finishing);
             finish_image(&top, architecture, release_facts)?;
             Artifact::record_archive(&top, tag, sha256)?;
             Ok(top)
@@ -292,7 +328,6 @@ fn install_image(
     tag: &str,
     intent: InstallIntent,
     stop: Option<&crate::native_mods::Cancellation>,
-    progress: &impl Fn(f32),
     matches: impl Fn(&Path) -> bool,
     stage_tree: impl FnOnce(&Path) -> Result<PathBuf, String>,
 ) -> Result<Option<ReceiptFailure>, String> {
@@ -303,10 +338,7 @@ fn install_image(
     let target = version_dir(tag);
     if intent == InstallIntent::Exact {
         match fs::symlink_metadata(&target) {
-            Ok(_) if matches(&target) => {
-                progress(1.0);
-                return Ok(None);
-            }
+            Ok(_) if matches(&target) => return Ok(None),
             Ok(_) => return Err(existing_build(tag)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.to_string()),
@@ -321,63 +353,72 @@ fn install_image(
     if let Some(stop) = stop {
         stop.check()?;
     }
-    intent.download().mark(&top)?;
-    crate::nightly::record_install_time(&top, release).map_err(|e| e.to_string())?;
-    // Transfer and unpack privately. Only the visibility boundary fences readers.
-    let registry = Registry::with_release(&data_dir(), LockRelease::Close)
-        .map_err(|e| crate::native_mods::cache_error(e.into()))?;
-    let mode = if intent == InstallIntent::Repair {
-        LockMode::Exclusive
-    } else {
-        LockMode::Shared
-    };
-    let _publication = registry
-        .publication(mode)
-        .map_err(|e| crate::native_mods::cache_error(e.into()))?;
-    if let Some(stop) = stop {
-        stop.check()?;
-    }
-    let replaced = if intent == InstallIntent::Repair {
-        // A pending First Play can reserve this name before its tree exists.
-        // Only the exact managed path may publish its frozen game image in that case.
-        crate::managed_play::require_unreferenced_build(tag)
-            .map_err(crate::native_mods::cache_error)?;
-        replace_installed(
-            &registry,
-            tag,
-            &top,
-            &target,
-            &root.join(format!("{REPAIR}{tag}")),
-        )?
-    } else {
-        false
-    };
-    if !replaced {
-        match crate::run_leases::publish_build(&top, &target) {
-            Ok(()) => {}
-            Err(crate::native_cache::Error::Io(ref e))
-                if e.kind() == std::io::ErrorKind::AlreadyExists =>
-            {
-                if !matches(&target) {
-                    return Err(existing_build(tag));
-                }
-                if intent == InstallIntent::Repair {
-                    intent.download().mark(&target)?;
-                }
-                progress(1.0);
-                return Ok(None);
-            }
-            Err(e) => return Err(crate::native_mods::cache_error(e)),
+    // Its own step, so a failure here is logged by name with its error (#607).
+    let publishing = crate::launcher_log::step(format!("Putting {tag} in place"));
+    let published = (|| -> Result<(Option<ReceiptFailure>, &'static str), String> {
+        intent.download().mark(&top)?;
+        crate::nightly::record_install_time(&top, release).map_err(|e| e.to_string())?;
+        // Transfer and unpack privately. Only the visibility boundary fences readers.
+        let registry = Registry::with_release(&data_dir(), LockRelease::Close)
+            .map_err(|e| crate::native_mods::cache_error(e.into()))?;
+        let mode = if intent == InstallIntent::Repair {
+            LockMode::Exclusive
+        } else {
+            LockMode::Shared
+        };
+        let _publication = registry
+            .publication(mode)
+            .map_err(|e| crate::native_mods::cache_error(e.into()))?;
+        if let Some(stop) = stop {
+            stop.check()?;
         }
+        let replaced = if intent == InstallIntent::Repair {
+            // A pending First Play can reserve this name before its tree exists.
+            // Only the exact managed path may publish its frozen game image in that case.
+            crate::managed_play::require_unreferenced_build(tag)
+                .map_err(crate::native_mods::cache_error)?;
+            replace_installed(
+                &registry,
+                tag,
+                &top,
+                &target,
+                &root.join(format!("{REPAIR}{tag}")),
+            )?
+        } else {
+            false
+        };
+        if !replaced {
+            match crate::run_leases::publish_build(&top, &target) {
+                Ok(()) => {}
+                Err(crate::native_cache::Error::Io(ref e))
+                    if e.kind() == std::io::ErrorKind::AlreadyExists =>
+                {
+                    if !matches(&target) {
+                        return Err(existing_build(tag));
+                    }
+                    if intent == InstallIntent::Repair {
+                        intent.download().mark(&target)?;
+                    }
+                    return Ok((None, "already in place"));
+                }
+                Err(e) => return Err(crate::native_mods::cache_error(e)),
+            }
+        }
+        // The tree is already committed. Failure of this independent receipt must not
+        // undo it, stop someone from playing it, or turn success into an install error.
+        let warning =
+            if release.nightly.as_deref() == Some(sunrise_launcher_release_verify::NIGHTLY) {
+                save_nightly_receipt(&root, tag)
+            } else {
+                None
+            };
+        Ok((warning, ""))
+    })();
+    match &published {
+        Ok((_, detail)) => publishing.done(detail),
+        Err(error) => publishing.failed(error),
     }
-    // The tree is already committed. Failure of this independent receipt must not
-    // undo it, stop someone from playing it, or turn success into an install error.
-    let warning = if release.nightly.as_deref() == Some(sunrise_launcher_release_verify::NIGHTLY) {
-        save_nightly_receipt(&root, tag)
-    } else {
-        None
-    };
-    progress(1.0);
+    let (warning, _) = published?;
     Ok(warning)
 }
 

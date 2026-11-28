@@ -175,9 +175,22 @@ fn the_sdk_a_build_compiles_against_is_part_of_its_image() {
     let mut set =
         Set::developer("reuse-sdk-identity", DEVELOPER).on(platform_for_game(DEVELOPER).unwrap());
 
+    let tool = set.root.join("developer-tool");
+    fs::write(&tool, b"tool one").unwrap();
+    // The environment belongs to this scratch child only.
+    unsafe { std::env::set_var(sdk_cache::DEVELOPER_TOOL, &tool) };
     // Only a build made against the developer's package exists: an ordinary build can't use it.
     set.against("package one");
     let local = set.install(&options);
+    assert_eq!(set.found().as_deref(), Some(local.as_str()));
+    fs::write(&tool, b"tool two").unwrap();
+    assert!(
+        set.found().is_none(),
+        "the local tool changed but the SDK did not"
+    );
+    fs::remove_file(&tool).unwrap();
+    assert!(set.found().is_none(), "the selected local tool is missing");
+    fs::write(&tool, b"tool one").unwrap();
     assert_eq!(set.found().as_deref(), Some(local.as_str()));
     let (built, _, steps) = build_default(&set, &instance);
     assert!(built.is_err(), "the next slot is built: {built:?}");

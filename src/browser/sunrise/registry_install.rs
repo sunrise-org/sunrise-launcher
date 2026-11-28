@@ -28,14 +28,17 @@ pub use source::{
     read_pasted_sources, PastedSource, PreparedSource, SourceDependency, SourceError, SourceHooks,
     SourceProof, SourceRequest,
 };
-pub use switch::{BuildChoice, SwitchDecision, SwitchHooks, SwitchQuestion, Switched};
+pub use switch::{
+    save_build_choice, BuildChoice, SwitchDecision, SwitchHooks, SwitchPolicy, SwitchQuestion,
+    Switched,
+};
 pub use v2::{
     checked_switch_fit_v2, classify_v2_ownership, install_registry_v2, inventory_v2,
-    plan_v2_install, plan_v2_update, switch_build_v2, switch_profile_build_v2, switch_provider_v2,
-    turn_off_revoked_v2, update_registry_v2, InstalledV2Mod, PlannedV2Release, ProviderCandidate,
-    ProviderChoiceNeeded, ProviderConflict, ProviderSwitchPreview, PublisherChangeQuestion,
-    V2AffectedDependent, V2Hooks, V2InstallOptions, V2Ownership, V2Plan, V2ProviderSwitchHooks,
-    V2SwitchHooks,
+    mods_fit_by_build_v2, plan_v2_install, plan_v2_update, switch_build_v2, switch_fit_blockers_v2,
+    switch_profile_build_v2, switch_provider_v2, turn_off_revoked_v2, update_registry_v2, Blocker,
+    FitIssue, InstalledV2Mod, PlannedV2Release, ProviderCandidate, ProviderChoiceNeeded,
+    ProviderConflict, ProviderSwitchPreview, PublisherChangeQuestion, V2AffectedDependent, V2Hooks,
+    V2InstallOptions, V2Ownership, V2Plan, V2ProviderSwitchHooks, V2SwitchHooks,
 };
 
 // Advisory only. Never use these in place of a fresh, admitted worker proof. Key by the
@@ -73,13 +76,16 @@ fn remember_unfit_sha256(base: &str, sha256: &str) {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InstallProgress {
+    CheckingBuild,
+    UnpackingBuild,
+    FinishingBuild,
     PreparingBuild,
     Checking,
     /// Another build or a cache cleanup holds the build folder: this install waits for it.
     Waiting,
     Downloading(f32),
     /// The game build's own download, before its Minecraft files are prepared.
-    DownloadingBuild(f32),
+    DownloadingBuild(Option<f32>),
     /// A game build's preparation: the step under way and, while Mojang's files download, how
     /// many of how many are done.
     Minecraft(crate::backend::PrepareStep, Option<(usize, usize)>),
@@ -92,6 +98,20 @@ pub enum InstallProgress {
     Building(Option<f32>),
     Publishing,
     Reviewing,
+}
+
+impl From<crate::backend::InstallPhase> for InstallProgress {
+    fn from(phase: crate::backend::InstallPhase) -> Self {
+        use crate::backend::InstallPhase;
+        match phase {
+            InstallPhase::Checking => Self::CheckingBuild,
+            InstallPhase::Downloading(fraction) => Self::DownloadingBuild(Some(fraction)),
+            InstallPhase::DownloadingUnknownLength => Self::DownloadingBuild(None),
+            InstallPhase::Unpacking => Self::UnpackingBuild,
+            InstallPhase::Finishing => Self::FinishingBuild,
+            InstallPhase::Preparing => Self::PreparingBuild,
+        }
+    }
 }
 
 #[derive(Debug)]

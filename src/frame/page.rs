@@ -53,6 +53,8 @@ pub(crate) struct State {
     pub sheets: crate::sheets::SheetsState,
     pub settings: crate::settings::SettingsView,
     pub cat: crate::cat::CatState,
+    /// The Logs panel: open or not, its tab and the lines it has read.
+    pub logs: crate::logs_panel::LogsPanel,
     pub last_server: Option<Page>,
     pub after_install: Option<(crate::launcher_play::PlayIntent, String)>,
     /// A Play (including a destination) that explicitly asked for the sign-in now under way.

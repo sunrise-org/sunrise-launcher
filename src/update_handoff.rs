@@ -161,7 +161,7 @@ pub fn run() -> Option<i32> {
     }
     let sha256 = std::env::var(SHA256_ENV).unwrap_or_default();
     let Some(request) = parse(args, sha256) else {
-        eprintln!(
+        crate::elog!(
             "usage: sunrise-launcher {COMMAND} <tag> <staged file> [{RESTART} [-- <arguments>]]"
         );
         return Some(2);

@@ -340,7 +340,7 @@ pub fn run_after_exit(launch: &Launch, dir: &std::path::Path, vars: &[(&'static 
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     if let Err(e) = cmd.status() {
-        eprintln!(
+        crate::elog!(
             "{}",
             crate::i18n::trf(
                 "The post-exit command didn't run: {error}",

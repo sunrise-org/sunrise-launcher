@@ -4,12 +4,75 @@ pub use crate::native_cache::Error;
 use crate::native_cache::{checked, known_link, linked, Cache};
 use cap_fs_ext::DirExt;
 use cap_std::fs::Dir;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 mod inventory;
-pub use inventory::{Report, Row};
+pub use inventory::{Eligibility, Kept, KeptKind, Report, Row};
+
+/// Path-free presentation for Storage surfaces, including fatal errors and kept units.
+pub fn error_message(error: Error) -> String {
+    use crate::i18n::tr;
+    match error {
+        Error::Unsafe(_) => tr("Storage found an unexpected file or link.").into(),
+        Error::ResourceDependent(_) => {
+            tr("Another build needs these resources, so they were kept.").into()
+        }
+        Error::Io(_) => tr(
+            "Sunrise couldn't access a file or folder. Close any programs using it and try again.",
+        )
+        .into(),
+        error => crate::native_mods::cache_error(error),
+    }
+}
+
+/// Path-free OS error detail for launcher logs so I/O failures retain their error kind and code
+/// while `error_message` stays plain player language.
+pub fn error_log_detail(error: &Error) -> Option<String> {
+    match error {
+        Error::Io(io) => Some(match io.raw_os_error() {
+            Some(code) => format!("{} (os error {code})", io.kind()),
+            None => io.kind().to_string(),
+        }),
+        _ => None,
+    }
+}
+
+// Do not let a caller accidentally disclose raw path data with a general cache formatter.
+fn redact_error(error: Error) -> Error {
+    match error {
+        Error::Unsafe(_) => Error::Unsafe(PathBuf::new()),
+        Error::ResourceDependent(_) => Error::ResourceDependent(String::new()),
+        Error::Io(error) => Error::Io(error.raw_os_error().map_or_else(
+            || std::io::Error::from(error.kind()),
+            std::io::Error::from_raw_os_error,
+        )),
+        error => error,
+    }
+}
+
+/// Stops a count running on a worker: whoever started it keeps a clone and sets it when the
+/// count is no longer wanted. It is never reset, so each count gets its own.
+#[derive(Clone, Debug, Default)]
+pub struct Cancel(Arc<AtomicBool>);
+
+impl Cancel {
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    /// Whether both are the same token, not merely both unset.
+    pub fn is(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
 
 /// Shared with the launcher's existing server storage display.
 pub fn format_bytes(n: u64) -> String {
@@ -20,7 +83,7 @@ pub fn format_bytes(n: u64) -> String {
     }
 }
 
-/// The five rows on the Storage page.
+/// The rows on the Storage page.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum Category {
@@ -28,9 +91,23 @@ pub enum Category {
     PrebuiltGames,
     SpareGameBuilds,
     RustCompiler,
+    ModBuildCache,
     OtherCaches,
 }
 
+impl Category {
+    pub fn label(self) -> &'static str {
+        use crate::i18n::tr;
+        match self {
+            Self::BuildFiles => tr("Build files"),
+            Self::PrebuiltGames => tr("Prebuilt games"),
+            Self::SpareGameBuilds => tr("Spare game builds"),
+            Self::RustCompiler => tr("Rust compiler"),
+            Self::ModBuildCache => tr("Mod build cache"),
+            Self::OtherCaches => tr("Other caches"),
+        }
+    }
+}
 /// Fixed build-home caches. Instance and version inventory adds its protected entries separately.
 #[derive(Clone, Copy, Debug)]
 pub enum BuildCache {
@@ -42,6 +119,7 @@ pub enum BuildCache {
     ServerBuilds,
     /// Mod libraries kept between native builds (`native_mods::kept`).
     KeptMods,
+    ModBuildCache,
     Rust,
     Cargo,
     Scratch,
@@ -57,6 +135,7 @@ impl BuildCache {
             Self::Prebuilt => "native/prebuilt",
             Self::ServerBuilds => "native/server-builds",
             Self::KeptMods => "native/kept-mods",
+            Self::ModBuildCache => "native/w",
             Self::Rust => "rust",
             Self::Cargo => "cargo",
             Self::Scratch => "tmp",
@@ -66,13 +145,16 @@ impl BuildCache {
     fn access(self, path: &Path) -> Result<Access, Error> {
         match self {
             // No game runs from kept mod libraries: a build copies them into its workspace.
-            Self::KeptMods | Self::Rust | Self::Cargo | Self::Scratch => Ok(Access::BuildTools),
+            Self::KeptMods | Self::ModBuildCache | Self::Rust | Self::Cargo | Self::Scratch => {
+                Ok(Access::BuildTools)
+            }
             _ => Access::for_unit(path),
         }
     }
 
     pub fn category(self) -> Category {
         match self {
+            Self::ModBuildCache => Category::ModBuildCache,
             Self::Prebuilt => Category::PrebuiltGames,
             Self::ServerBuilds => Category::SpareGameBuilds,
             Self::Rust | Self::Cargo | Self::Scratch => Category::RustCompiler,
@@ -99,6 +181,7 @@ impl Storage {
             crate::backend::data_dir(),
             crate::backend::game_home(),
         )
+        .map_err(redact_error)
     }
 
     /// A build folder of a test's own, with a data and a game folder of its own inside it, so
@@ -114,7 +197,7 @@ impl Storage {
         fs::create_dir_all(root)?;
         let directory = Dir::open_ambient_dir(root, cap_std::ambient_authority())?;
         let storage = Self {
-            root: root.canonicalize()?,
+            root: crate::backend::plain(root.canonicalize()?),
             directory,
             data,
             game,
@@ -131,7 +214,7 @@ impl Storage {
     fn path(&self, cache: BuildCache) -> Result<PathBuf, Error> {
         let mut path = self.root.clone();
         // Validate every ancestor, not only the final directory (Windows junctions included).
-        if path.canonicalize()? != path {
+        if crate::backend::plain(path.canonicalize()?) != path {
             return Err(Error::Unsafe(path));
         }
         for part in cache.relative().split('/') {
@@ -142,11 +225,29 @@ impl Storage {
     }
 
     pub fn bytes(&self, cache: BuildCache) -> Result<u64, Error> {
+        if matches!(cache, BuildCache::ModBuildCache) {
+            return Ok(self
+                .report(None, false)?
+                .rows
+                .into_iter()
+                .find(|row| row.category == cache.category())
+                .expect("complete report")
+                .bytes);
+        }
         allocated_bytes(&self.path(cache)?)
     }
 
     /// Detach on the same volume before removal. Failed removals remain for the next manual clear.
     pub fn clear(&self, cache: BuildCache) -> Result<u64, Error> {
+        if matches!(cache, BuildCache::ModBuildCache) {
+            return Ok(self
+                .report(Some(cache.category()), false)?
+                .rows
+                .into_iter()
+                .find(|row| row.category == cache.category())
+                .expect("complete report")
+                .freed_bytes);
+        }
         let _lease = self.build_lease()?;
         let path = self.path(cache)?;
         self.trash(&path, cache.access(&path)?)
@@ -196,14 +297,70 @@ impl Storage {
     }
 
     fn clear_entry(trash: &Dir, parent: &Dir, name: &Path) -> Result<(), Error> {
+        Self::clear_entry_bound(trash, parent, name, None)
+    }
+
+    fn clear_entry_bound(
+        trash: &Dir,
+        parent: &Dir,
+        name: &Path,
+        expected: Option<(u64, u64)>,
+    ) -> Result<(), Error> {
         let meta = parent.symlink_metadata(name)?;
         let plan = if meta.is_dir() && !meta.file_type().is_symlink() {
-            Plan::pin(&parent.open_dir_nofollow(name)?)?
+            let dir = parent.open_dir_nofollow(name)?;
+            if let Some(expected) = expected {
+                use cap_fs_ext::MetadataExt as _;
+                let dir_meta = dir.dir_metadata()?;
+                if (dir_meta.dev(), dir_meta.ino()) != expected {
+                    return Err(Error::Unsafe(name.to_owned()));
+                }
+            }
+            Plan::pin(&dir)?
         } else {
+            if let Some(expected) = expected {
+                check_entry_identity(parent, name, false, expected, name)?;
+            }
             Plan::pin_file(parent, name)?
         };
         plan.clear(trash)
     }
+}
+
+fn entry_identity(
+    parent: &Dir,
+    name: &Path,
+    is_dir: bool,
+    path: &Path,
+) -> Result<(u64, u64), Error> {
+    use cap_fs_ext::{FollowSymlinks, MetadataExt as _, OpenOptionsFollowExt};
+    use cap_std::fs::OpenOptions;
+    if is_dir {
+        let meta = parent.open_dir_nofollow(name)?.dir_metadata()?;
+        Ok((meta.dev(), meta.ino()))
+    } else {
+        let mut options = OpenOptions::new();
+        options.read(true).follow(FollowSymlinks::No);
+        let file = parent.open_with(name, &options)?;
+        let meta = file.metadata()?;
+        if !meta.is_file() {
+            return Err(Error::Unsafe(path.to_owned()));
+        }
+        Ok((meta.dev(), meta.ino()))
+    }
+}
+
+fn check_entry_identity(
+    parent: &Dir,
+    name: &Path,
+    is_dir: bool,
+    expected: (u64, u64),
+    path: &Path,
+) -> Result<(), Error> {
+    if entry_identity(parent, name, is_dir, path)? != expected {
+        return Err(Error::Unsafe(path.to_owned()));
+    }
+    Ok(())
 }
 
 pub fn allocated_bytes(path: &Path) -> Result<u64, Error> {
@@ -216,6 +373,13 @@ pub fn allocated_bytes(path: &Path) -> Result<u64, Error> {
 thread_local! {
     static ENTRIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static ACCESS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many units have had their executable use classified on this thread.
+#[cfg(test)]
+pub(crate) fn access_calls() -> usize {
+    ACCESS.with(|calls| calls.get())
 }
 #[cfg(test)]
 pub(crate) fn walks() -> usize {
@@ -227,34 +391,79 @@ pub(crate) fn entries_calls() -> usize {
     ENTRIES.with(|calls| calls.get())
 }
 
-/// One validated walk of a folder: every file and directory's allocated size and identity,
-/// refusing any link or file the launcher does not expect. Sizes are read from it afterwards,
-/// each with its own set of already-counted blocks, without touching the disk again.
-pub(crate) struct Tree(Option<Node>);
+/// Allocation identities from one validated walk, independent of directory shape.
+pub(crate) struct Tree {
+    allocations: HashMap<(u64, u64), u64>,
+    present: bool,
+    has_payload: bool,
+}
 
-struct Node {
-    id: (u64, u64),
-    bytes: u64,
-    children: Vec<Node>,
+#[cfg(test)]
+type WalkHook = Box<dyn Fn(&Path)>;
+#[cfg(test)]
+thread_local! {
+    static STATTED: std::cell::RefCell<Option<WalkHook>> = const { std::cell::RefCell::new(None) };
 }
 
 impl Tree {
     pub(crate) fn build(path: &Path) -> Result<Self, Error> {
-        #[cfg(test)]
-        WALKS.with(|walks| walks.set(walks.get() + 1));
-        Self::node(path).map(Self)
+        Self::walk(path, None, false)
     }
 
-    fn node(path: &Path) -> Result<Option<Node>, Error> {
+    /// Stops descending once `cancel` is set. What it returns then is partial, so a caller that
+    /// sees the token set afterwards must discard the tree.
+    pub(crate) fn build_until(path: &Path, cancel: &Cancel) -> Result<Self, Error> {
+        Self::walk(path, Some(cancel), false)
+    }
+
+    /// Mod work owns its link entries, not the directories or files they point to.
+    fn mod_work(path: &Path, cancel: &Cancel) -> Result<Self, Error> {
+        Self::walk(path, Some(cancel), true)
+    }
+
+    fn walk(path: &Path, cancel: Option<&Cancel>, skip_links: bool) -> Result<Self, Error> {
+        #[cfg(test)]
+        WALKS.with(|walks| walks.set(walks.get() + 1));
+        let mut tree = Self {
+            allocations: HashMap::new(),
+            present: false,
+            has_payload: false,
+        };
+        tree.present = tree.visit(path, cancel, skip_links)?;
+        Ok(tree)
+    }
+
+    fn visit(
+        &mut self,
+        path: &Path,
+        cancel: Option<&Cancel>,
+        skip_links: bool,
+    ) -> Result<bool, Error> {
+        if cancel.is_some_and(Cancel::is_cancelled) {
+            return Ok(false);
+        }
         let meta = match fs::symlink_metadata(path) {
             Ok(meta) => meta,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
             Err(error) => return Err(error.into()),
         };
+        #[cfg(test)]
+        STATTED.with(|hook| {
+            if let Some(hook) = &*hook.borrow() {
+                hook(path);
+            }
+        });
         if linked(&meta) {
-            // A known link holds nothing of its own, and what it points at is not this cache's.
+            if skip_links {
+                self.has_payload = true;
+                return Ok(true);
+            }
             return match fs::read_link(path) {
-                Ok(target) if known_link(&target) => Ok(None),
+                Ok(target) if known_link(&target) => {
+                    self.has_payload = true;
+                    Ok(true)
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
                 _ => Err(Error::Unsafe(path.to_owned())),
             };
         }
@@ -264,46 +473,46 @@ impl Tree {
         let (id, bytes) = match allocation(path, &meta) {
             Ok(allocated) => allocated,
             Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(None);
+                return Ok(false)
             }
             Err(error) => return Err(error),
         };
-        let mut children = Vec::new();
         if meta.is_dir() {
             let entries = match fs::read_dir(path) {
                 Ok(entries) => entries,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
                 Err(error) => return Err(error.into()),
             };
             for entry in entries {
+                if cancel.is_some_and(Cancel::is_cancelled) {
+                    break;
+                }
                 let entry = match entry {
                     Ok(entry) => entry,
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                     Err(error) => return Err(error.into()),
                 };
-                children.extend(Self::node(&entry.path())?);
+                self.visit(&entry.path(), cancel, skip_links)?;
             }
+        } else if path
+            .file_name()
+            .is_some_and(|name| !crate::cache_cleanup::reserved(Path::new(name)))
+        {
+            self.has_payload = true;
         }
-        Ok(Some(Node {
-            id,
-            bytes,
-            children,
-        }))
+        self.allocations.entry(id).or_insert(bytes);
+        Ok(true)
     }
 
-    /// The allocated bytes not already in `seen`: a block reached twice (a hard link, or a file
-    /// shared with an earlier folder using the same set) counts once, and a directory already
-    /// counted is not entered again.
+    /// The allocated bytes not already in `seen`, including links shared across units.
     pub(crate) fn size(&self, seen: &mut HashSet<(u64, u64)>) -> u64 {
-        fn count(node: &Node, seen: &mut HashSet<(u64, u64)>) -> u64 {
-            if !seen.insert(node.id) {
-                return 0;
+        self.allocations.iter().fold(0u64, |total, (&id, &bytes)| {
+            if seen.insert(id) {
+                total.saturating_add(bytes)
+            } else {
+                total
             }
-            node.children.iter().fold(node.bytes, |total, child| {
-                total.saturating_add(count(child, seen))
-            })
-        }
-        self.0.as_ref().map_or(0, |node| count(node, seen))
+        })
     }
 }
 

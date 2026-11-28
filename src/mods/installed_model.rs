@@ -57,7 +57,11 @@ pub(super) enum InstalledReadError {
 pub(super) type InstalledRead = Result<Option<(InstalledRows, Option<String>)>, InstalledReadError>;
 
 impl InstalledRows {
-    pub(super) fn read(home: &Path) -> InstalledRead {
+    pub(super) fn read(
+        home: &Path,
+        profile: native_mods::Profile,
+        base: Option<&str>,
+    ) -> InstalledRead {
         use sunrise_launcher::managed_play::{try_display_active, DisplayActiveError};
 
         // Resolve the hard game journal before the advisory or the visible rows.
@@ -114,7 +118,7 @@ impl InstalledRows {
             })
             .map(|hold| hold.id().to_owned())
             .collect();
-        let unbuilt = native_status::pending(home, active.as_ref())
+        let unbuilt = native_status::pending_for(home, active.as_ref(), profile, base)
             .into_iter()
             .collect();
         Ok(Some((

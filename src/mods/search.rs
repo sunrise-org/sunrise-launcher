@@ -45,6 +45,8 @@ impl Launcher {
     /// rows, a question waiting for its answer, filters) is not carried in: the player sees
     /// what they asked for, and nothing they can't see is acted on.
     pub(crate) fn open_installed(&mut self, to: Installed) {
+        let before = self.ui.page;
+        self.multiplayer.target = None;
         self.leave_section(!matches!(
             to,
             Installed::Mods | Installed::ModsOff | Installed::Mod(_) | Installed::ModNamed(_)
@@ -53,6 +55,7 @@ impl Launcher {
         self.game_packs.confirm_remove = None;
         self.game_packs.stale();
         self.mods_refresh();
+        self.finish_page_change(before);
     }
 }
 
@@ -92,7 +95,7 @@ impl Reveal {
 
 impl ModsState {
     /// Starts Installed afresh at `to`: the page to show.
-    pub(super) fn enter(&mut self, to: &Installed) -> Page {
+    pub(crate) fn enter(&mut self, to: &Installed) -> Page {
         self.selection.clear();
         self.anchor = None;
         self.menu = None;

@@ -19,6 +19,11 @@ harness = false
 # (`SUNRISE_LAUNCHER_FRAME_OVERLAY`) and each frame's work in `sunrise-launcher benchmark`
 # (README, Performance log). Off in every published build.
 frame-stats = ["gpui/profiler"]
+# Window captures against fixture data: the mod registry trusts only the disposable key given
+# at build time in SUNRISE_CAPTURE_REGISTRY_KEY, never the production one. A debug build only:
+# a release build with it does not compile (`browser/sunrise/v2.rs`). Off in every published
+# build.
+capture-registry-key = []
 
 [dependencies]
 # GPUI Fast (longbridge/gpui-fast): Zed's GPUI with retained views and cached scroll layers, under

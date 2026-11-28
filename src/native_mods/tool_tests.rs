@@ -428,7 +428,7 @@ fn leader_success_or_blamed_failure_is_not_a_compiler_handoff() {
         let unproved = compiler_handoff(terminal(), false).unwrap_err();
         assert!(unproved
             .error
-            .contains("couldn't prove all native build workers stopped"));
+            .contains("Part of the mod build may still be running"));
         assert!(unproved.blame.is_none());
         assert_eq!(compiler_handoff(terminal(), true).is_ok(), success);
     }
@@ -797,4 +797,41 @@ fn a_one_line_command_gets_its_name_and_a_contract_and_answers_one_line() {
         (Some(2), Some(true))
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A Cancel that wins before a piped preparer is registered ends it through its job alone: what
+/// the leader left running in the job ends, and no `taskkill` runs, so nothing waits on one
+/// (review of #670). Only Windows CI runs this.
+#[cfg(windows)]
+#[test]
+fn a_stop_before_a_preparers_registration_ends_its_job_without_taskkill() {
+    let lock = tempfile::tempfile().unwrap();
+    let command = crate::process::leases::job_fixture_leader(1, false);
+    let mut child =
+        crate::process::leases::spawn_preparer(command, Some(&lock), None, true).unwrap();
+    let job = child
+        .preparer_job()
+        .expect("a piped preparer runs in a job of its own");
+    let pid = child.id();
+    let _ = child.wait();
+    let active = || job.accounting().unwrap().ActiveProcesses;
+    let waiting = Instant::now();
+    while active() == 0 && waiting.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        active() >= 1,
+        "setup: the leader ended and left its helper running in its job"
+    );
+    let stop = Cancellation::default();
+    stop.stop();
+    let kills = KILLS.with(std::cell::Cell::get);
+    let result = stop.track_preparer(pid, Some(Arc::clone(&job)));
+    assert_eq!(result.err().as_deref(), Some(crate::native_mods::CANCELLED));
+    assert_eq!(KILLS.with(std::cell::Cell::get), kills, "a taskkill ran");
+    let waiting = Instant::now();
+    while active() != 0 && waiting.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(active(), 0, "the job ended, with what the leader left");
 }

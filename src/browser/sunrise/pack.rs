@@ -35,14 +35,30 @@ pub fn list() -> Vec<Installed> {
 }
 
 pub(crate) fn list_in(dir: &Path) -> Vec<Installed> {
-    let mut packs: Vec<Installed> = fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|e| read(&e.path()))
-        .collect();
+    list_in_until(dir, &|| false).unwrap_or_default()
+}
+
+pub(crate) fn list_in_until(dir: &Path, cancelled: &dyn Fn() -> bool) -> Option<Vec<Installed>> {
+    if cancelled() {
+        return None;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Some(Vec::new());
+    };
+    let mut packs = Vec::new();
+    for entry in entries {
+        if cancelled() {
+            return None;
+        }
+        let Ok(entry) = entry else {
+            continue;
+        };
+        if let Some(pack) = read(&entry.path()) {
+            packs.push(pack);
+        }
+    }
     packs.sort_by_key(|p| p.name.to_lowercase());
-    packs
+    Some(packs)
 }
 
 fn read(work: &Path) -> Option<Installed> {

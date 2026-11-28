@@ -95,7 +95,7 @@ fn resolve(
                                 mod_id: Some(bundle.manifest.id.clone()),
                             },
                             other => trf(
-                                "{id}: could not resolve [native] mixins: {error}",
+                                "{id}: couldn't find the mixin tool version this mod needs: {error}",
                                 &[("id", &bundle.manifest.id), ("error", &other.to_string())],
                             )
                             .into(),
@@ -128,7 +128,7 @@ pub(super) fn for_key(
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| {
                     trf(
-                        "Can't tell which of the mods' horizon-mixins revisions is newest: {error}",
+                        "Couldn't tell which version of the mixin tool is newest: {error}",
                         &[("error", &e.to_string())],
                     )
                 })

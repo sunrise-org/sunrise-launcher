@@ -22,6 +22,12 @@ elif command == "native-check":
     print(json.dumps({"contract": 2, "route": "prebuilt-api",
                       "mods": [{"id": mod["id"], "verdict": {"kind": "made-for"}}
                                for mod in mods]}))
+elif command == "native-lock":
+    lock = Path(plan["mods"]) / "Cargo.lock"
+    lock.write_text("version = 4\n")
+    with (root / "locked").open("a") as seen:
+        print(tomllib.loads((lock.parent / "sunrise-mod.toml").read_text())["id"], file=seen)
+    print(json.dumps({"contract": 2, "lock": str(lock)}))
 elif command == "native-build":
     rust_version = (root / "rust-version").read_text().strip()
     cfg = ["--cfg", "fixture_switch_target"] if (root / "fixture-switch-target").exists() else []
@@ -29,6 +35,10 @@ elif command == "native-build":
     for source in sorted(Path(plan["mods"]).iterdir()):
         manifest = tomllib.loads((source / "sunrise-mod.toml").read_text())
         mod_id, version = manifest["id"], manifest["version"]
+        # As the SDK's tool: the prebuilt route compiles a mod only with its registry lock.
+        if not (source / "Cargo.lock").is_file():
+            print(json.dumps({"event": "failed", "error": f"{mod_id}: {source / 'Cargo.lock'}: No such file or directory (os error 2)"}))
+            sys.exit(1)
         with (root / "compiled").open("a") as seen:
             print(version, file=seen)
         library = Path(plan["work"]) / f"lib{mod_id}.so"

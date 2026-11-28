@@ -15,7 +15,7 @@ pub(super) fn native_permission(trust: bool) -> Result<(), String> {
 pub(super) fn trust_unreviewed_builds() {
     native_mods::ask_unreviewed_with(|found| {
         let names: Vec<&str> = found.iter().map(|p| p.name.as_str()).collect();
-        eprintln!(
+        sunrise_launcher::elog!(
             "{}",
             trf(
                 "Building native code nobody reviewed: {mods}",
@@ -60,7 +60,7 @@ fn github_native_from(
     let identity = target.identity();
     println!("{}", found.label());
     println!("Source, to read: {}", found.source_url());
-    eprintln!("{}", github_mods::WARNING);
+    sunrise_launcher::elog!("{}", github_mods::WARNING);
     native_permission(trust)?;
     let mods = fetch(found)?;
     let mut fresh = Vec::new();

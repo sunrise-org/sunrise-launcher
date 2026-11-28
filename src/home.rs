@@ -41,6 +41,8 @@ pub(crate) struct HomeState {
     hero: Rc<Cell<Option<Bounds<gpui::Pixels>>>>,
     /// What the selected profile has installed.
     pub(crate) mods: crate::home_mods::Inventory,
+    /// Which build the profile's mods need, when its own leaves some out.
+    pub(crate) fit: crate::home_fit::ModsFit,
     tabs: tabs::Tabs,
 }
 
@@ -293,6 +295,7 @@ impl Launcher {
             Some((time, last)) => format!("{time}  ·  {last}"),
             None => tr("Not played yet").to_string(),
         };
+        let fit = self.mods_fit(cx);
         let p = palette();
         let scenery = self.settings.scenery();
         let text = rgb(if scenery { p.hero.text } else { p.text });
@@ -328,15 +331,90 @@ impl Launcher {
                             .child(instance.name.clone()),
                     ),
             )
-            .child(
-                div()
+            .child({
+                // A newer build takes the played line's place, with its button, until the game is
+                // updated; then the played line comes back (Isloka, 2026-11-26). Before it, the
+                // build the profile's mods have releases for, when its own leaves some out:
+                // updating would not bring those back. When no build has them all, Update game
+                // stays (a newer build may bring some back) with a way to see which builds fit.
+                let offer = self.launch_facts().view().offer;
+                // One line at one height whatever it says, so Play never moves when the offer or
+                // an answer comes or goes.
+                let line = div()
                     .mt(px(if compact { 5. } else { 10. }))
+                    .h(px(tokens::CONTROL))
                     .max_w_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(12.))
                     .text_size(px(tokens::BODY))
-                    .text_color(text)
-                    .truncate()
-                    .child(played),
-            );
+                    .text_color(text);
+                let said = |text: String| div().min_w_0().truncate().child(text);
+                // The details are written when they are asked for, from the shared answer: a frame
+                // copies nothing of it.
+                let blocked = match fit.as_deref() {
+                    Some(crate::home_fit::Fit::Blocked { .. }) => {
+                        let answer = fit.clone();
+                        Some(
+                            crate::frame::button("home-fit-details", tr("Which builds fit"))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if let Some(crate::home_fit::Fit::Blocked { checked, builds }) =
+                                        answer.as_deref()
+                                    {
+                                        let details =
+                                            crate::home_fit::blocked_details(*checked, builds);
+                                        this.open_info(tr("Which builds fit").into(), details);
+                                    }
+                                    cx.notify();
+                                })),
+                        )
+                    }
+                    _ => None,
+                };
+                match (fit.as_deref(), offer) {
+                    (Some(crate::home_fit::Fit::Needs(tag)), _) => {
+                        let tag = tag.clone();
+                        let build = crate::sheets::build_name(&tag);
+                        line.child(
+                            crate::frame::button(
+                                "home-fit-switch",
+                                trf("Switch to {build}", &[("build", &build)]),
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    // Kept, not followed, with every wanted mod or not at all.
+                                    this.begin_mods_switch(tag.clone());
+                                    cx.notify();
+                                },
+                            )),
+                        )
+                        .child(said(trf(
+                            "Your mods have releases for {build}",
+                            &[("build", &build)],
+                        )))
+                    }
+                    (_, Some(offer)) => line
+                        .child(
+                            crate::frame::button(
+                                "alt-update",
+                                crate::launch_state::Act::Update.label(),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.launch_act(&crate::launch_state::Act::Update);
+                                cx.notify();
+                            })),
+                        )
+                        .child(said(offer))
+                        .children(blocked),
+                    (Some(crate::home_fit::Fit::Blocked { .. }), None) => line
+                        .child(said(
+                            tr("No build has a release of every mod you use").into(),
+                        ))
+                        .children(blocked),
+                    (None, None) => line.child(said(played)),
+                }
+            });
         let receipt =
             instance.kind != instances::Kind::Pack && self.check_build_changes(&instance.home, cx);
         div()
@@ -347,6 +425,7 @@ impl Launcher {
                 self.play_row(instance, compact, window, cx)
                     .mt(px(if compact { 12. } else { 18. })),
             )
+            .children(self.play_status_line(scenery))
             .children(receipt.then(|| {
                 crate::frame::button("home-build-changes", tr("Build changes"))
                     .self_center()
@@ -412,7 +491,15 @@ impl Launcher {
                 d.tooltip(crate::glass_ui::tip(text))
             })
             .when(idle, |d| d.child(blocks::icon("play", 17., on.into())))
-            .child(view.main.label())
+            .child(
+                if view.play_detail.is_some()
+                    && matches!(view.main, Main::Step(backend::PlayStep::Assets))
+                {
+                    tr("Preparing…").into()
+                } else {
+                    view.main.label()
+                },
+            )
             .when(view.enabled, |d| {
                 d.cursor_pointer()
                     .hover(move |s| {
@@ -426,7 +513,7 @@ impl Launcher {
                     }))
             })
             .reach_edge();
-        let icon_button = |id, icon, label| {
+        let icon_button = |id, icon, label: Option<&'static str>| {
             crate::frame::input(false)
                 .id(id)
                 .flex_none()
@@ -436,51 +523,63 @@ impl Launcher {
                 .cursor_pointer()
                 .hover(move |s| s.bg(rgb(p.hover)))
                 .reach_edge()
-                .tooltip(crate::glass_ui::tip(label))
+                .when_some(label, |d, label| d.tooltip(crate::glass_ui::tip(label)))
                 .child(crate::glass_ui::icon(icon, 21., rgb(p.text).into()))
         };
         // One button for the profile's own options (Sunrise Extras, its folder), in a menu
         // like the build chooser's. Mods has its tab in the top bar.
         let at = self.ui.home.menu.clone();
-        let menu = icon_button("alt-quick-menu", "settings-01", tr("Profile options"))
-            .when(self.ui.sheet == Some(Sheet::ProfileMenu), |d| {
-                d.bg(rgb(p.hover))
-            })
-            .child(
-                gpui::canvas(
-                    move |bounds, window, cx| {
-                        if at.replace(Some(bounds)) != Some(bounds) {
-                            // An open menu follows it, in the frame after this one.
-                            let window = window.window_handle();
-                            cx.defer(move |cx| {
-                                window.update(cx, |_, window, _| window.refresh()).ok();
-                            });
-                        }
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .inset_0(),
+        // Its tooltip waits while its menu is open, as the build button's does: it would sit
+        // over the menu's first row.
+        let menu_open = self.ui.sheet == Some(Sheet::ProfileMenu);
+        let menu = icon_button(
+            "alt-quick-menu",
+            "settings-01",
+            (!menu_open).then(|| tr("Profile options")),
+        )
+        .debug_selector(|| "home-profile-menu".into())
+        .when(self.ui.sheet == Some(Sheet::ProfileMenu), |d| {
+            d.bg(rgb(p.hover))
+        })
+        .child(
+            gpui::canvas(
+                move |bounds, window, cx| {
+                    if at.replace(Some(bounds)) != Some(bounds) {
+                        // An open menu follows it, in the frame after this one.
+                        let window = window.window_handle();
+                        cx.defer(move |cx| {
+                            window.update(cx, |_, window, _| window.refresh()).ok();
+                        });
+                    }
+                },
+                |_, _, _, _| {},
             )
-            .on_click(cx.listener(|this, _, _, cx| {
-                if this.ui.sheet == Some(Sheet::ProfileMenu) {
-                    this.close_sheet();
-                } else {
-                    this.open_sheet(Sheet::ProfileMenu);
-                }
-                cx.notify();
-            }));
-        let act = view.act.clone().map(|act| {
-            let id = match act {
-                crate::launch_state::Act::StopBuild => "alt-build-stop",
-                crate::launch_state::Act::Update => "alt-update",
-                _ => "alt-fix",
-            };
-            button(id, act.label()).on_click(cx.listener(move |this, _, _, cx| {
-                this.launch_act(&act);
-                cx.notify();
-            }))
-        });
+            .absolute()
+            .inset_0(),
+        )
+        .on_click(cx.listener(|this, _, _, cx| {
+            if this.ui.sheet == Some(Sheet::ProfileMenu) {
+                this.close_sheet();
+            } else {
+                this.open_sheet(Sheet::ProfileMenu);
+            }
+            cx.notify();
+        }));
+        // Update game sits above the row, with what it updates to (`profile_header`).
+        let act = view
+            .act
+            .clone()
+            .filter(|act| *act != crate::launch_state::Act::Update)
+            .map(|act| {
+                let id = match act {
+                    crate::launch_state::Act::StopBuild => "alt-build-stop",
+                    _ => "alt-fix",
+                };
+                button(id, act.label()).on_click(cx.listener(move |this, _, _, cx| {
+                    this.launch_act(&act);
+                    cx.notify();
+                }))
+            });
         let p = palette();
         let (text, warning, link_ink) = if self.settings.scenery() {
             (p.hero.text, p.hero.warning, p.hero.link)
@@ -523,7 +622,11 @@ impl Launcher {
             .children(self.build_line(cx))
             .children(self.build_said())
             .children(other_running)
-            .children(view.said.clone().filter(|_| !recovering))
+            .children(
+                view.said
+                    .clone()
+                    .filter(|said| !recovering && view.offer.as_ref() != Some(said)),
+            )
             // Nothing to act on here: the row under Mods says why and what to do.
             .children(view.mods_off.map(|count| {
                 div()
@@ -548,31 +651,16 @@ impl Launcher {
         // button stands in its way.
         let cat_beside = act.is_none();
         let (lane, _) = self.cat(cat_beside, false, window, cx);
-        let has_status = view.said.is_some()
+        let has_status = (view.said.is_some() && view.said != view.offer)
             || view.mods_off.is_some()
             || self.build_said().is_some()
             || self.native_step.is_some()
             || other_elsewhere;
-        // The update target is part of the offer. On a narrow Home, put the whole offer
-        // below Play instead of squeezing the target between the button and the edge.
-        let narrow_update = matches!(&view.act, Some(crate::launch_state::Act::Update))
-            && f32::from(window.viewport_size().width) < 920.;
-        let (act, says, update_below) = if narrow_update {
-            let line = div()
-                .flex()
-                .items_center()
-                .gap(px(12.))
-                .mt(px(8.))
-                .children(act)
-                .child(says);
-            (None, None, Some(line))
-        } else {
-            (act, Some(says), None)
-        };
         // A compact Home says it under Play, where the row has room for it.
-        let (beside, under) = match says {
-            Some(says) if compact && has_status => (None, Some(says.mt(px(6.)))),
-            says => (says, None),
+        let (beside, under) = if compact && has_status {
+            (None, Some(says.mt(px(6.))))
+        } else {
+            (Some(says), None)
         };
         div()
             .flex()
@@ -609,8 +697,40 @@ impl Launcher {
                     .child(lane.ml(px(12.)).mb(px(-GAP - crate::cat::BELOW_FEET))),
             )
             .children(under)
-            .children(update_below)
             .children(recovery.map(|line| line.mt(px(8.))))
+    }
+
+    /// One short line under the Play row while a build downloads or prepares: a switch's own
+    /// (Update game, a channel, a picked build), which carries its step's count, or else Play's,
+    /// an install's or a preparation's counted step, or else the preparation's step by name.
+    /// All in the player's language: the preparer's own output stays in the Logs panel. It is
+    /// there only then, so it moves what is under it down by one line rather than holding a
+    /// gap open.
+    fn play_status_line(&self, scenery: bool) -> Option<Div> {
+        let line = self.switch_line().or_else(|| {
+            let view = self.launch_facts().view();
+            view.play_detail.or_else(|| {
+                matches!(view.main, Main::Preparing).then(|| {
+                    crate::mods_page::install::stage_label(
+                        sunrise_launcher::browser::sunrise::InstallProgress::Minecraft(
+                            backend::prepare_step(),
+                            None,
+                        ),
+                    )
+                })
+            })
+        })?;
+        let p = palette();
+        let line = div()
+            .mt(px(8.))
+            .self_center()
+            .max_w_full()
+            .font_family(theme::MONO)
+            .text_size(px(tokens::LABEL))
+            .text_color(rgb(if scenery { p.hero.text } else { p.muted }))
+            .truncate()
+            .child(line);
+        Some(self.ui.home.shade_behind(line, scenery))
     }
 
     /// The build the profile plays. Press to see how it follows new ones.
@@ -650,7 +770,12 @@ impl Launcher {
         let at = self.ui.home.picker.clone();
         div()
             .id("alt-build")
-            .when_some(version, |d, tag| d.tooltip(crate::glass_ui::tip(tag)))
+            .debug_selector(|| "home-build".into())
+            // Not while its menu is open: the tag would sit over the menu's heading.
+            .when_some(
+                version.filter(|_| self.ui.sheet != Some(Sheet::Build)),
+                |d, tag| d.tooltip(crate::glass_ui::tip(tag)),
+            )
             .min_w(px(120.))
             .max_w(px(340.))
             .rounded(crate::tokens::r(crate::tokens::R_CONTROL))

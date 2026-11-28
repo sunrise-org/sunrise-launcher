@@ -12,10 +12,13 @@ impl Home {
         ));
         fs::create_dir(&path).unwrap();
         // Canonical, as Storage::at stores it: Windows temp paths are 8.3 short names.
-        Self(path.canonicalize().unwrap())
+        Self(crate::backend::plain(path.canonicalize().unwrap()))
     }
     pub(super) fn seed(&self, path: &str) -> PathBuf {
-        let path = self.0.join(path);
+        let path = path
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .fold(self.0.clone(), |path, part| path.join(part));
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, vec![7; 8192]).unwrap();
         path
@@ -387,4 +390,132 @@ fn allocated_total_includes_directory_metadata() {
         directory_bytes + entries_bytes
     );
     eprintln!("independent directory allocation: {directory_bytes} bytes");
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn clear_mod_build_slots_unlinks_directory_links_without_touching_their_target() {
+    let home = Home::new();
+    let outside = Home::new();
+    let canary = outside.seed("sentinel/canary");
+    home.seed("native/w/slot/output");
+    let work = home.0.join("native").join("w");
+    let bytes = allocated_bytes(&work.join("slot")).unwrap();
+    let sentinel = outside.0.join("sentinel");
+    for link in [work.join("slot").join("link"), work.join("linked-slot")] {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&sentinel, &link).unwrap();
+        #[cfg(windows)]
+        assert!(std::process::Command::new("cmd.exe")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(crate::backend::plain(link))
+            .arg(crate::backend::plain(sentinel.clone()))
+            .status()
+            .unwrap()
+            .success());
+    }
+    let storage = Storage::at(&home.0).unwrap();
+    let report = storage.report(None, false).unwrap();
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.category == Category::ModBuildCache)
+        .unwrap();
+    assert_eq!(row.bytes, bytes);
+    assert!(bytes > 0);
+    let report = storage
+        .report(Some(Category::ModBuildCache), false)
+        .unwrap();
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.category == Category::ModBuildCache)
+        .unwrap();
+    assert_eq!(row.remaining_bytes, 0);
+    assert_eq!(row.freed_bytes, bytes);
+    assert!(!work.join("slot").exists());
+    assert!(fs::symlink_metadata(work.join("linked-slot")).is_err());
+    assert_eq!(fs::read(canary).unwrap(), vec![7; 8192]);
+}
+
+#[cfg(unix)]
+#[test]
+fn rows_distinguish_zero_byte_candidates_from_wholly_refused_and_mixed_reasons() {
+    let home = Home::new();
+    let canary = home.seed("outside/player-data");
+    fs::create_dir_all(home.0.join("native/w")).unwrap();
+    let slot = home.0.join("native/w/only-link");
+    std::os::unix::fs::symlink(&canary, &slot).unwrap();
+    let broken = home.seed("rust/broken/output");
+    std::os::unix::fs::symlink(&canary, broken.with_file_name("unexpected-link")).unwrap();
+    let storage = Storage::at(&home.0).unwrap();
+    let count = storage.report(None, false).unwrap();
+    let row = |category| {
+        count
+            .rows
+            .iter()
+            .find(|row| row.category == category)
+            .unwrap()
+    };
+    let link_only = row(Category::ModBuildCache);
+    assert_eq!(link_only.measured_bytes(), Some(0));
+    assert_eq!(link_only.eligibility(), Eligibility::Candidate);
+    let refused = row(Category::RustCompiler);
+    assert_eq!(refused.measured_bytes(), Some(0));
+    assert_eq!(refused.eligibility(), Eligibility::WhollyRefused);
+    assert!(refused.only_kept_kind(KeptKind::Unsafe));
+
+    let lockpath = home.seed("cargo/.package-cache");
+    let lock = fs::File::options()
+        .read(true)
+        .write(true)
+        .open(lockpath)
+        .unwrap();
+    lock.lock().unwrap();
+    let cleared = storage.report(Some(Category::RustCompiler), false).unwrap();
+    let mixed = cleared
+        .rows
+        .iter()
+        .find(|row| row.category == Category::RustCompiler)
+        .unwrap();
+    assert!(mixed.kept.iter().any(|unit| unit.kind == KeptKind::Unsafe));
+    assert!(mixed.kept.iter().any(|unit| unit.kind == KeptKind::Busy));
+    assert!(!mixed.only_kept_kind(KeptKind::Unsafe));
+    assert!(!mixed.older_build_kept);
+    let unselected = cleared
+        .rows
+        .iter()
+        .find(|row| row.category == Category::ModBuildCache)
+        .unwrap();
+    assert_eq!(unselected.measured_bytes(), None);
+    assert_eq!(unselected.eligibility(), Eligibility::NotMeasured);
+    storage
+        .report(Some(Category::ModBuildCache), false)
+        .unwrap();
+    assert!(fs::symlink_metadata(slot).is_err());
+    assert!(canary.is_file());
+}
+
+#[test]
+fn storage_io_error_message_stays_plain_while_log_detail_keeps_kind_and_code() {
+    let coded = Error::Io(std::io::Error::from_raw_os_error(13));
+    let detail = error_log_detail(&coded).expect("I/O detail");
+    assert!(detail.contains("(os error 13)"), "{detail}");
+    assert!(
+        detail.contains(&std::io::Error::from_raw_os_error(13).kind().to_string()),
+        "{detail}"
+    );
+    let plain = error_message(coded);
+    assert_eq!(
+        plain,
+        "Sunrise couldn't access a file or folder. Close any programs using it and try again."
+    );
+    assert!(!plain.contains("os error"));
+
+    let kind_only = Error::Io(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+    assert_eq!(
+        error_log_detail(&kind_only).as_deref(),
+        Some("permission denied")
+    );
+    assert_eq!(error_log_detail(&Error::Busy), None);
 }

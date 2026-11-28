@@ -182,6 +182,21 @@ impl Registry {
         path: &Path,
         authorize: impl FnOnce(&Dir, bool) -> Result<(), E>,
     ) -> Result<(), E> {
+        self.remove_unit_with_contexts(path, &[], None, authorize)
+    }
+
+    /// Like [`Self::remove_unit`], also claiming exclusive runtime leases on `contexts` (such as
+    /// a profile's game/home roots leased by a running game) under the publication fence across
+    /// authorization and removal, and binding the opened unit to `expected` `(dev, ino)` when
+    /// provided so a unit swapped after inventory selection is refused. Context roots remain on
+    /// disk and are never retired.
+    pub fn remove_unit_with_contexts<E: From<Error> + From<io::Error>>(
+        self: &Arc<Self>,
+        path: &Path,
+        contexts: &[&Path],
+        expected: Option<(u64, u64)>,
+        authorize: impl FnOnce(&Dir, bool) -> Result<(), E>,
+    ) -> Result<(), E> {
         let parent_path = path
             .parent()
             .ok_or_else(|| Error::Unsafe(path.to_owned()))?;
@@ -190,6 +205,9 @@ impl Registry {
         checked(path, meta.is_dir())?;
         let path = path.canonicalize()?;
         let path = path.as_path();
+        let name = path
+            .file_name()
+            .ok_or_else(|| Error::Unsafe(path.to_owned()))?;
         let is_directory = meta.is_dir();
         let tree_path = if is_directory {
             path
@@ -198,19 +216,66 @@ impl Registry {
                 .ok_or_else(|| Error::Unsafe(path.to_owned()))?
         };
         let _publication = self.publication(LockMode::Exclusive)?;
-        let directory = open_directory(tree_path)?;
-        let claim = self.lock(&directory, LockMode::Exclusive)?;
-        let current = open_directory(tree_path)?;
+        let directory = if is_directory {
+            Dir::from_std_file(retained(parent.open_dir_nofollow(name)?.into_std_file())?)
+        } else {
+            parent.try_clone()?
+        };
         let before = directory.dir_metadata()?;
+        if let Some(expected) = expected
+            && is_directory
+            && (before.dev(), before.ino()) != expected
+        {
+            return Err(Error::Unsafe(path.to_owned()).into());
+        }
+        let claim = self.lock(&directory, LockMode::Exclusive)?;
+        let current = if is_directory {
+            parent.open_dir_nofollow(name)?
+        } else {
+            open_directory(tree_path)?
+        };
         let after = current.dir_metadata()?;
         if (before.dev(), before.ino()) != (after.dev(), after.ino()) {
             return Err(Error::Unsafe(path.to_owned()).into());
         }
         drop(current);
+        let mut claimed = vec![(before.dev(), before.ino())];
+        let mut context_claims = Vec::new();
+        for context in contexts {
+            checked(context, true)?;
+            let context = context.canonicalize()?;
+            let context_dir = open_directory(&context)?;
+            let context_meta = context_dir.dir_metadata()?;
+            let identity = (context_meta.dev(), context_meta.ino());
+            if claimed.contains(&identity) {
+                continue;
+            }
+            let context_claim = self.lock(&context_dir, LockMode::Exclusive)?;
+            let recheck = open_directory(&context)?.dir_metadata()?;
+            if (recheck.dev(), recheck.ino()) != identity {
+                return Err(Error::Unsafe(context).into());
+            }
+            // Release the directory handle before rename on Windows while keeping the lease held.
+            drop(context_dir);
+            claimed.push(identity);
+            context_claims.push(context_claim);
+        }
+        if !is_directory {
+            let mut options = OpenOptions::new();
+            options.read(true).follow(FollowSymlinks::No);
+            let file = parent.open_with(name, &options)?;
+            let file_meta = file.metadata()?;
+            if !file_meta.is_file() {
+                return Err(Error::Unsafe(path.to_owned()).into());
+            }
+            if let Some(expected) = expected
+                && (file_meta.dev(), file_meta.ino()) != expected
+            {
+                return Err(Error::Unsafe(path.to_owned()).into());
+            }
+            drop(file);
+        }
         authorize(&directory, is_directory)?;
-        let name = path
-            .file_name()
-            .ok_or_else(|| Error::Unsafe(path.to_owned()))?;
         if is_directory {
             match directory.remove_file(".installed") {
                 Ok(()) => {}
@@ -237,6 +302,7 @@ impl Registry {
         if result.is_ok() && is_directory {
             claim.retire()?;
         }
+        drop(context_claims);
         result.map_err(|error| removal_error(error).into())
     }
 

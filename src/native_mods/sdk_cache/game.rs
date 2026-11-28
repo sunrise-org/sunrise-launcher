@@ -1,5 +1,6 @@
 //! Install the two signed SDK slices that make up a playable game without a Rust toolchain.
 use super::*;
+use crate::backend::InstallPhase;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -98,7 +99,10 @@ pub(crate) fn stage_game(
     triple: &str,
     (game_index, digest): (&[u8], &str),
     (base, keys): (&Base, &[PublicKey]),
-    (stop, progress): (Option<&crate::native_mods::Cancellation>, &dyn Fn(f32)),
+    (stop, progress): (
+        Option<&crate::native_mods::Cancellation>,
+        &dyn Fn(InstallPhase),
+    ),
 ) -> Result<(PathBuf, GameSlices), Refusal> {
     if let Some(stop) = stop {
         stop.check().map_err(|why| Refusal::Refused {
@@ -135,12 +139,19 @@ pub(crate) fn stage_game(
         fetched.total = fetched.total.saturating_add(asset.size);
         receipt.slices.insert(name.clone(), asset.sha256.clone());
     }
-    let report = |p: Fetched| progress(0.9 * (p.done as f32 / p.total.max(1) as f32).min(1.0));
+    let report = |phase| match phase {
+        SliceProgress::Downloading(bytes) if bytes.total > 0 => progress(
+            InstallPhase::Downloading((bytes.done as f32 / bytes.total as f32).min(1.0)),
+        ),
+        SliceProgress::Downloading(_) => {}
+        SliceProgress::Unpacking => progress(InstallPhase::Unpacking),
+    };
     // Always unpack into the private installation stage. SDK cache stamps check sizes, not
     // file hashes, and are not proof of the bytes in a newly installed game.
     for (name, into) in &wanted {
         fetch_into_cancellable(&sdk, base, name, into, &mut fetched, stop, &report)?;
     }
+    progress(InstallPhase::Finishing);
     let [(_, runtime), (_, programs)] = wanted;
     let bin = runtime.join("bin");
     let io = |error: std::io::Error| Refusal::Cache(error.to_string());

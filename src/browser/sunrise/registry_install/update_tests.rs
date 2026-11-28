@@ -8,6 +8,7 @@ use sunrise_launcher_smod::index_v2::{self, Kind as V2Kind};
 use sunrise_launcher_smod::Package;
 use v2::{install_registry_v2_with, update_registry_v2_with, V2EditRequest, V2Transfer};
 
+mod build_switch;
 #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
 mod native;
 #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
@@ -304,7 +305,7 @@ impl Fixture {
         let cancel = native_mods::Cancellation::default();
         let mut profile = Profile::open(self.home(), None).unwrap();
         if profile
-            .refresh(self.instance.native_profile, &cancel, |_| {}, None, None)
+            .refresh_for_play(self.instance.native_profile, &cancel, |_| {}, None, None)
             .unwrap()
             .is_some()
         {

@@ -37,3 +37,7 @@ game=$(mktemp -d)
 tools/ci/game_at.sh "$(cat tools/ci/sunrise-commit)" "$game"
 SUNRISE_GAME_DIR="$game" python3 -m unittest tools/tests/test_game_copies.py
 ```
+
+## Releasing
+
+See [`docs/releasing.md`](docs/releasing.md) for the release workflow, testing checklist, and publishing steps.

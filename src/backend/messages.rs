@@ -1,6 +1,6 @@
 use super::{
-    version_storage, InstallOutcome, Job, LauncherCheckError, Links, NightlyReceiptWarning,
-    PlayStep, Release, StageUpdateError, Staged, Updates,
+    version_storage, InstallOutcome, InstallPhase, Job, LauncherCheckError, Links,
+    NightlyReceiptWarning, PlayStep, Release, StageUpdateError, Staged, Updates,
 };
 use std::path::PathBuf;
 use std::process::Command;
@@ -8,10 +8,15 @@ use std::sync::Arc;
 
 pub enum Msg {
     Playing(Option<u64>),
-    Storage(Result<Box<crate::storage::Report>, String>),
+    Storage(
+        crate::storage::Cancel,
+        Result<Box<crate::storage::Report>, String>,
+    ),
     Releases(Result<Vec<Release>, String>),
     Links(Links),
-    Progress(String, f32),
+    Progress(String, InstallPhase),
+    /// Live detail line for a standalone game build install (`(tag, text)`).
+    InstallDetail(String, String),
     Installed(String, Result<InstallOutcome, String>),
     NightlyReceiptRetried(Arc<NightlyReceiptWarning>, Result<(), String>),
     /// A Storage removal finished; any failed removal names its build.
@@ -83,6 +88,10 @@ pub enum Msg {
     PlayStep(PlayStep),
     /// How far Play's download of the game build is, for the status strip's row.
     PlayDownload(f32),
+    /// Live detail line under "Preparing…" while Play is working (e.g. file counts).
+    PlayDetail(String),
+    /// Live detail line for a standalone preparation (`prepare_version_cancellable`).
+    PrepareDetail(String),
     ManagedBuild {
         instance: String,
         profile: String,
@@ -104,6 +113,9 @@ pub enum Msg {
         Result<(), crate::browser::installed::GameInstallProblem>,
     ),
     SwitchProgress(crate::browser::sunrise::InstallProgress),
+    /// A counted line from inside a switch's step ("Checking the game files: 120 of 4000"), from
+    /// the play-detail sink the switch worker holds while it runs.
+    SwitchDetail(String),
     SwitchQuestion(
         Box<crate::browser::sunrise::SwitchQuestion>,
         std::sync::mpsc::Sender<crate::browser::sunrise::SwitchDecision>,
