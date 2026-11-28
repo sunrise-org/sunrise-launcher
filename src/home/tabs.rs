@@ -23,16 +23,72 @@ pub(super) enum Tab {
     #[default]
     Worlds,
     Packs,
+    Shaders,
     Servers,
     Logs,
 }
 
+/// A list of the profile's files that is ticked, searched and switched card by card: the Mods
+/// tab, the Packs tab (resource packs) or the Shaders tab (shader packs).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum Collection {
+    Mods,
+    Resource,
+    Shader,
+}
+
+impl Collection {
+    /// The tab that lists it.
+    fn tab(self) -> Tab {
+        match self {
+            Self::Mods => Tab::Mods,
+            Self::Resource => Tab::Packs,
+            Self::Shader => Tab::Shaders,
+        }
+    }
+
+    /// Its place among `Tabs::picks`.
+    fn pick_slot(self) -> usize {
+        match self {
+            Self::Mods => 0,
+            Self::Resource => 1,
+            Self::Shader => 2,
+        }
+    }
+
+    /// The kind of pack it lists; None for the mods.
+    pub(crate) fn pack_kind(self) -> Option<sunrise_launcher::packs::Kind> {
+        match self {
+            Self::Mods => None,
+            Self::Resource => Some(sunrise_launcher::packs::Kind::Resource),
+            Self::Shader => Some(sunrise_launcher::packs::Kind::Shader),
+        }
+    }
+
+    /// The collection of packs of `kind`.
+    pub(crate) fn of_packs(kind: sunrise_launcher::packs::Kind) -> Self {
+        match kind {
+            sunrise_launcher::packs::Kind::Resource => Self::Resource,
+            sunrise_launcher::packs::Kind::Shader => Self::Shader,
+        }
+    }
+
+    /// Whether it lists packs, not mods.
+    pub(crate) fn is_packs(self) -> bool {
+        self != Self::Mods
+    }
+}
+
+/// The place of the Worlds tab's ticks among `Tabs::picks`.
+const WORLDS_PICK: usize = 3;
+
 impl Tab {
     /// In the order the profile's tabs stand under its banner.
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::Mods,
         Self::Worlds,
         Self::Packs,
+        Self::Shaders,
         Self::Servers,
         Self::Logs,
     ];
@@ -41,11 +97,22 @@ impl Tab {
         self as usize
     }
 
+    /// The list it shows, if it is one of the ticked and switched kind.
+    fn collection(self) -> Option<Collection> {
+        match self {
+            Self::Mods => Some(Collection::Mods),
+            Self::Packs => Some(Collection::Resource),
+            Self::Shaders => Some(Collection::Shader),
+            _ => None,
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             Self::Servers => tr("Saved servers"),
             Self::Worlds => tr("Worlds"),
             Self::Packs => tr("Packs"),
+            Self::Shaders => tr("Shaders"),
             Self::Mods => tr("Mods"),
             Self::Logs => tr("Logs"),
         }
@@ -63,13 +130,14 @@ struct View {
 pub(crate) struct Tabs {
     profile: Option<String>,
     selected: Tab,
-    views: [View; 5],
+    views: [View; 6],
     logs: logs::Logs,
     opener: Option<FocusHandle>,
     /// Stable even as a virtual row is recycled. Cleared when leaving the selected profile.
     rows: HashMap<SharedString, FocusHandle>,
-    /// The ticked rows of the Mods tab, the Packs tab and the Worlds tab, in that order.
-    picks: [Selection; 3],
+    /// The ticked rows of the Mods tab, the Packs tab, the Shaders tab and the Worlds tab, in
+    /// that order.
+    picks: [Selection; 4],
     /// The hover of each card, easing in and out, by card id: a card's tick box fades up while
     /// the pointer is on the card.
     fades: HashMap<SharedString, crate::motion::Fade>,
@@ -83,11 +151,11 @@ pub(crate) struct Tabs {
     /// What each mod's card says beyond the name, read from Installed once per change.
     pub(crate) facts: crate::mods::selection::item::CardCache,
     /// What each tab's search field holds, by tab: kept while the profile stays selected.
-    search: [LineEdit; 5],
-    search_focus: [Option<FocusHandle>; 5],
+    search: [LineEdit; 6],
+    search_focus: [Option<FocusHandle>; 6],
     /// Switches flipped on a card and not yet confirmed by a fresh read of the files: the card
     /// shows the flip at once, and the read replaces it.
-    pub(crate) flipped: HashMap<(bool, String), Flip>,
+    pub(crate) flipped: HashMap<(Collection, String), Flip>,
     /// The pack whose details sheet is open (`home_mods::details`).
     pub(crate) pack_details: Option<crate::home_mods::Item>,
 }
@@ -102,9 +170,9 @@ pub(crate) struct Flip {
 }
 
 impl Tabs {
-    /// The words the Mods tab (or the Packs tab) is searched for, lower-cased; empty for all.
-    pub(crate) fn query(&self, packs: bool) -> String {
-        self.query_of(if packs { Tab::Packs } else { Tab::Mods })
+    /// The words the tab of `collection` is searched for, lower-cased; empty for all.
+    pub(crate) fn query(&self, collection: Collection) -> String {
+        self.query_of(collection.tab())
     }
 
     fn query_of(&self, tab: Tab) -> String {
@@ -152,8 +220,8 @@ impl Tabs {
 
 /// How a row takes part in ticking: which list it is in, and what the list and its ticks are.
 pub(crate) struct Pick {
-    /// The Packs tab, else the Mods tab.
-    pub(crate) packs: bool,
+    /// The list the row is in.
+    pub(crate) collection: Collection,
     pub(crate) key: String,
     /// Every row's key in the order shown, for a Shift range.
     pub(crate) order: std::rc::Rc<Vec<String>>,
@@ -217,7 +285,10 @@ impl Launcher {
             Tab::Logs => return self.home_logs(strip, instance, inset, window, cx),
             Tab::Servers => self.home_servers(instance, compact, cx),
             Tab::Worlds => self.home_worlds(instance, window, cx),
-            Tab::Packs | Tab::Mods => self.home_installed_tab(active == Tab::Packs, cx),
+            Tab::Packs | Tab::Shaders | Tab::Mods => {
+                let collection = active.collection().unwrap_or(Collection::Mods);
+                self.home_installed_tab(collection, cx)
+            }
         };
         // An empty tab says so in its body; "0 worlds" over it says nothing more.
         let searchable = count.is_some_and(|count| count > 0) && active != Tab::Logs;
@@ -315,39 +386,35 @@ impl Launcher {
             .children(menu)
     }
 
-    /// Picks Home's Mods tab (or its Packs tab), without leaving the page shown.
-    pub(crate) fn select_home_tab(&mut self, packs: bool) {
-        self.ui.home.tabs.selected = if packs { Tab::Packs } else { Tab::Mods };
+    /// Picks Home's tab for `collection` (Mods, Packs or Shaders), without leaving the page
+    /// shown.
+    pub(crate) fn select_home_tab(&mut self, collection: Collection) {
+        self.ui.home.tabs.selected = collection.tab();
     }
 
-    /// Goes to Home with the Mods tab (or the Packs tab) showing: where what used to be
-    /// Mods › Installed and the installed packs are listed now.
-    pub(crate) fn show_home_tab(&mut self, packs: bool) {
-        self.select_home_tab(packs);
+    /// Goes to Home with the tab of `collection` showing: where what used to be Mods ›
+    /// Installed and the installed packs and shaders are listed now.
+    pub(crate) fn show_home_tab(&mut self, collection: Collection) {
+        self.select_home_tab(collection);
         self.navigate(Page::Home);
     }
 
-    /// Which list the Home tab shown ticks rows in: the Packs tab (true) or the Mods tab
-    /// (false). None on any other tab or page.
-    pub(crate) fn home_pick_scope(&self) -> Option<bool> {
+    /// Which list the Home tab shown ticks rows in. None on any other tab or page.
+    pub(crate) fn home_pick_scope(&self) -> Option<Collection> {
         if self.ui.page != Page::Home {
             return None;
         }
-        match self.ui.home.tabs.selected {
-            Tab::Mods => Some(false),
-            Tab::Packs => Some(true),
-            _ => None,
-        }
+        self.ui.home.tabs.selected.collection()
     }
 
-    /// The ticked rows of the Packs tab (true) or the Mods tab (false).
-    pub(crate) fn home_pick(&mut self, packs: bool) -> &mut Selection {
-        &mut self.ui.home.tabs.picks[usize::from(packs)]
+    /// The ticked rows of the tab of `collection`.
+    pub(crate) fn home_pick(&mut self, collection: Collection) -> &mut Selection {
+        &mut self.ui.home.tabs.picks[collection.pick_slot()]
     }
 
     /// The ticked rows of the Worlds tab.
     pub(crate) fn home_worlds_pick(&mut self) -> &mut Selection {
-        &mut self.ui.home.tabs.picks[2]
+        &mut self.ui.home.tabs.picks[WORLDS_PICK]
     }
 
     /// Whether Home is showing the Worlds tab, whose rows tick as the Mods tab's do.
@@ -362,10 +429,10 @@ impl Launcher {
 
     pub(crate) fn home_installed_list(
         &self,
-        packs: bool,
+        collection: Collection,
         count: usize,
     ) -> (std::ops::Range<usize>, impl FnOnce(Div) -> Div + use<>) {
-        let view = &self.ui.home.tabs.views[if packs { Tab::Packs } else { Tab::Mods }.index()];
+        let view = &self.ui.home.tabs.views[collection.tab().index()];
         view.near
             .list(&view.scroll, count, 1, WORLD_ROW, WORLD_ROW_GAP)
     }

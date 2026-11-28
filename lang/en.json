@@ -2921,5 +2921,9 @@
   "Type": "Type",
   "State": "State",
   "File": "File",
-  "Location": "Location"
+  "Location": "Location",
+  "Shaders": "Shaders",
+  "Search shaders": "Search shaders",
+  "No shaders yet": "No shaders yet",
+  "Shader packs you add to this profile show up here.": "Shader packs you add to this profile show up here."
 }

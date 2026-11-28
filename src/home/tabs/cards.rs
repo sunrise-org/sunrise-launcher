@@ -1,5 +1,5 @@
-//! The Mods and Packs tabs' rows, drawn as the Worlds tab draws its own: a bordered card of one
-//! height with a picture, a name over a muted line, and on the right a switch and a "…" menu.
+//! The Mods, Packs and Shaders tabs' rows, drawn as the Worlds tab draws its own: a bordered card
+//! of one height with a picture, a name over a muted line, and on the right a switch and a "…" menu.
 //! Pressing the card opens the item; the switch and the menu take their own presses. The tick
 //! box of a multi-selection has a column left of the picture, always drawn faintly and at full
 //! strength under the pointer.
@@ -50,7 +50,7 @@ pub(crate) struct MenuEntry {
 /// The card whose "…" menu is open, and where its button was drawn (window coordinates).
 #[derive(Clone)]
 pub(crate) struct ItemMenu {
-    pub(crate) packs: bool,
+    pub(crate) collection: Collection,
     pub(crate) key: String,
     button: gpui::Bounds<gpui::Pixels>,
 }
@@ -105,12 +105,16 @@ impl Launcher {
     /// Opens the "…" menu of the card `key`, hung from `button`.
     pub(crate) fn open_item_menu(
         &mut self,
-        packs: bool,
+        collection: Collection,
         key: String,
         button: gpui::Bounds<gpui::Pixels>,
     ) {
         self.close_menus();
-        self.ui.home.tabs.menu = Some(ItemMenu { packs, key, button });
+        self.ui.home.tabs.menu = Some(ItemMenu {
+            collection,
+            key,
+            button,
+        });
     }
 
     /// Shuts the card menu if it is up. True when it was.
@@ -122,13 +126,13 @@ impl Launcher {
         was
     }
 
-    fn item_menu_open(&self, packs: bool, key: &str) -> bool {
+    fn item_menu_open(&self, collection: Collection, key: &str) -> bool {
         self.ui
             .home
             .tabs
             .menu
             .as_ref()
-            .is_some_and(|menu| menu.packs == packs && menu.key == key)
+            .is_some_and(|menu| menu.collection == collection && menu.key == key)
     }
 
     /// The layer over the window for the open card menu, if one is up on this tab.
@@ -138,13 +142,13 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let menu = self.ui.home.tabs.menu.clone()?;
-        let here = matches!(active, Tab::Mods | Tab::Packs) && menu.packs == (active == Tab::Packs);
+        let here = active.collection() == Some(menu.collection);
         // A dialog over the page, or another tab, takes the menu with it.
         if !here || self.layer_open() {
             self.close_item_menu();
             return None;
         }
-        let entries = self.home_item_entries(menu.packs, &menu.key);
+        let entries = self.home_item_entries(menu.collection, &menu.key);
         if entries.is_empty() {
             self.close_item_menu();
             return None;
@@ -163,12 +167,13 @@ impl Launcher {
                         .into_any_element(),
                 );
             }
-            let (action, key, packs) = (entry.action.clone(), menu.key.clone(), menu.packs);
+            let (action, key, collection) =
+                (entry.action.clone(), menu.key.clone(), menu.collection);
             rows.push(menu_row(
                 entry,
                 cx.listener(move |this, _, _, cx| {
                     this.close_item_menu();
-                    this.home_item_run(packs, &key, action.clone(), cx);
+                    this.home_item_run(collection, &key, action.clone(), cx);
                     cx.notify();
                 }),
             ));
@@ -296,14 +301,14 @@ impl Launcher {
 
     /// A mod or pack card's tick box.
     fn card_check(&mut self, id: &SharedString, pick: &Pick, cx: &mut Context<Self>) -> AnyElement {
-        let (packs, key, order) = (pick.packs, pick.key.clone(), pick.order.clone());
+        let (collection, key, order) = (pick.collection, pick.key.clone(), pick.order.clone());
         self.tick_column(
             id,
             pick.ticked,
             pick.any,
             cx.listener(move |this, ev: &ClickEvent, _, cx| {
                 cx.stop_propagation();
-                this.home_pick(packs)
+                this.home_pick(collection)
                     .click(&order, &key, ev.modifiers().shift);
                 cx.notify();
             }),
@@ -312,7 +317,7 @@ impl Launcher {
 
     /// The card's switch and "…" button.
     fn card_controls(&mut self, id: &SharedString, card: &Card, cx: &mut Context<Self>) -> Div {
-        let (packs, key) = (card.pick.packs, card.pick.key.clone());
+        let (collection, key) = (card.pick.collection, card.pick.key.clone());
         let switchable = card.switchable;
         let flip = key.clone();
         let switch = switch(SharedString::from(format!("{id}-switch")), card.on)
@@ -325,7 +330,7 @@ impl Launcher {
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();
                 if switchable {
-                    this.home_item_toggle(packs, &flip, cx);
+                    this.home_item_toggle(collection, &flip, cx);
                 }
                 cx.notify();
             }));
@@ -337,7 +342,7 @@ impl Launcher {
             "more-horizontal",
             tr("More actions"),
             Style::Ghost,
-            self.item_menu_open(packs, &key),
+            self.item_menu_open(collection, &key),
         )
         // The card is already lit under the pointer: the button's own light is a step brighter,
         // or it would not show on it.
@@ -349,7 +354,7 @@ impl Launcher {
         )
         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
             cx.stop_propagation();
-            this.open_item_menu(packs, key.clone(), read.get());
+            this.open_item_menu(collection, key.clone(), read.get());
             cx.notify();
         }));
         div()
@@ -417,7 +422,7 @@ impl Launcher {
             .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
                 let gesture = Gesture::of(&ev.modifiers());
                 if gesture.selects() {
-                    this.home_pick(pick.packs)
+                    this.home_pick(pick.collection)
                         .click(&pick.order, &pick.key, gesture.range);
                     cx.notify();
                     return;

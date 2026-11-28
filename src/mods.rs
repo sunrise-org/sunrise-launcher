@@ -50,7 +50,6 @@ pub(crate) mod selection;
 mod ui;
 pub(crate) mod updates;
 pub(crate) use data_packs::names;
-pub(crate) use search::Installed;
 mod viewer;
 
 mod catalog;

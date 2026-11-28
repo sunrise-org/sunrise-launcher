@@ -1,4 +1,4 @@
-//! What a card on the Mods or Packs tab opens. A registry mod, and a local or from-source mod,
+//! What a card on the Mods, Packs or Shaders tab opens. A registry mod, and a local or from-source mod,
 //! open their own page (`mods`): the page a mod has in Discover, or the installed row's page.
 //! A pack has no page of its own in the registry, so its card opens this sheet: what it is,
 //! where it lies, and what can be done to it.
@@ -17,36 +17,34 @@ impl Launcher {
                     ));
                 }
             }
-            Open::Pack(_, file) => self.open_pack_details(&file),
+            Open::Pack(kind, file) => self.open_pack_details(Collection::of_packs(kind), &file),
         }
     }
 
-    /// Opens the sheet of the resource pack that is this file.
-    pub(crate) fn open_pack_details(&mut self, file: &str) {
-        let Some(item) = self.home_item(true, file) else {
+    /// Opens the sheet of the pack of `collection` that is this file.
+    pub(crate) fn open_pack_details(&mut self, collection: Collection, file: &str) {
+        let Some(item) = self.home_item(collection, file) else {
             return;
         };
         self.ui.home.tabs.pack_details = Some(item);
         self.open_sheet(crate::sheets::Sheet::PackDetails);
     }
 
-    /// The search's pack: Home's Packs tab, with the pack's sheet open when it is listed.
+    /// The search's pack: Home's Packs or Shaders tab, with the pack's sheet open when it is
+    /// listed.
     pub(crate) fn open_pack_named(&mut self, kind: PackKind, title: String) {
-        if kind == PackKind::Shader {
-            self.open_installed(crate::mods::Installed::PackNamed(kind, title));
-            return;
-        }
-        self.show_home_tab(true);
+        let collection = Collection::of_packs(kind);
+        self.show_home_tab(collection);
         let file = self.ui.home.mods.snapshot.as_ref().and_then(|snapshot| {
             snapshot
                 .tabs
-                .resources
+                .items(collection)
                 .iter()
                 .find(|item| item.name == title || item.id == title)
                 .map(|item| item.id.clone())
         });
         if let Some(file) = file {
-            self.open_pack_details(&file);
+            self.open_pack_details(collection, &file);
         }
     }
 
@@ -55,9 +53,14 @@ impl Launcher {
     /// elsewhere removed it).
     pub(crate) fn pack_details_sheet(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let shown = self.ui.home.tabs.pack_details.clone()?;
-        let item = self.home_item(true, &shown.id)?;
+        let collection = match shown.kind {
+            Kind::Shader => Collection::Shader,
+            _ => Collection::Resource,
+        };
+        let item = self.home_item(collection, &shown.id)?;
         let home = self.home_item_home()?;
-        let path = home.join(PackKind::Resource.folder()).join(&item.id);
+        let kind = collection.pack_kind()?;
+        let path = home.join(kind.folder()).join(&item.id);
         let p = crate::paint::palette();
         let row = |key: &'static str, value: String, mono: bool| {
             div()
@@ -92,7 +95,7 @@ impl Launcher {
                     .child(crate::sheets::title(item.name.clone())),
             );
         let state = if item.on { tr("On") } else { tr("Off") };
-        let actions = self.pack_actions(&item, path.clone(), cx);
+        let actions = self.pack_actions(collection, &item, path.clone(), cx);
         let body = div()
             .flex()
             .flex_col()
@@ -101,7 +104,15 @@ impl Launcher {
                 div()
                     .flex()
                     .flex_col()
-                    .child(row(tr("Type"), tr("Resource pack").to_owned(), false))
+                    .child(row(
+                        tr("Type"),
+                        match kind {
+                            PackKind::Resource => tr("Resource pack"),
+                            PackKind::Shader => tr("Shader pack"),
+                        }
+                        .to_owned(),
+                        false,
+                    ))
                     .child(row(tr("State"), state.to_owned(), false))
                     .child(row(tr("File"), item.id.clone(), true))
                     .child(row(tr("Location"), path.display().to_string(), true)),
@@ -111,7 +122,13 @@ impl Launcher {
     }
 
     /// The row of buttons under a pack's sheet: Show in folder, the switch, Remove and Close.
-    fn pack_actions(&mut self, item: &Item, path: PathBuf, cx: &mut Context<Self>) -> Div {
+    fn pack_actions(
+        &mut self,
+        collection: Collection,
+        item: &Item,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let key = item.id.clone();
         let toggle_key = key.clone();
         let remove_key = key.clone();
@@ -126,7 +143,7 @@ impl Launcher {
             if item.on { tr("Disable") } else { tr("Enable") },
         )
         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-            this.home_item_toggle(true, &toggle_key, cx);
+            this.home_item_toggle(collection, &toggle_key, cx);
             this.close_sheet();
             cx.notify();
         })));
@@ -134,7 +151,7 @@ impl Launcher {
             danger("home-pack-remove", tr("Remove…")).on_click(cx.listener(
                 move |this, _: &ClickEvent, _, cx| {
                     this.close_sheet();
-                    this.home_pack_remove(&remove_key);
+                    this.home_pack_remove(collection, &remove_key);
                     cx.notify();
                 },
             )),

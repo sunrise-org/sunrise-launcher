@@ -45,6 +45,7 @@ impl Launcher {
             Tab::Mods => tr_key("Search mods"),
             Tab::Worlds => tr_key("Search worlds"),
             Tab::Packs => tr_key("Search packs"),
+            Tab::Shaders => tr_key("Search shaders"),
             Tab::Servers => tr_key("Search servers"),
             Tab::Logs => tr_key("Search the log"),
         };
@@ -107,11 +108,12 @@ impl Tabs {
     /// The search of tab `index` changed: nothing stays ticked out of sight, and the list starts
     /// from its top.
     fn searched(&mut self, index: usize) {
-        if let Some(picks) = self.picks.get_mut(match index {
-            i if i == Tab::Mods.index() => 0,
-            i if i == Tab::Packs.index() => 1,
-            _ => 2,
-        }) {
+        let slot = Tab::ALL
+            .iter()
+            .find(|tab| tab.index() == index)
+            .and_then(|tab| tab.collection())
+            .map_or(WORLDS_PICK, Collection::pick_slot);
+        if let Some(picks) = self.picks.get_mut(slot) {
             picks.clear();
         }
         self.views[index]

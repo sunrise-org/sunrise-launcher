@@ -1,6 +1,7 @@
 //! Discover's header and filter row: the title, the kind tabs, the search field, the profile
 //! picker, the category chips and the sort menu, and the count line above the list.
 use super::*;
+use crate::home::tabs::Collection;
 use crate::widgets::button::{button, icon_button, Look, Size, Style};
 use crate::widgets::dropdown::{Dropdown, Item};
 use std::rc::Rc;
@@ -144,8 +145,8 @@ impl Launcher {
         self.choose_view(Page::PackFind);
     }
 
-    /// The way to what is installed: Home's Mods or Packs tab, or the shelf of the shader or
-    /// data packs on show.
+    /// The way to what is installed: Home's Mods, Packs or Shaders tab, or the shelf of the
+    /// data packs.
     fn installed_link(&self, tab: KindTab, cx: &mut Context<Self>) -> Stateful<Div> {
         button(
             "alt-discover-installed",
@@ -154,9 +155,10 @@ impl Launcher {
         )
         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
             match tab {
-                KindTab::Mods => this.show_home_tab(false),
-                KindTab::Resource => this.show_home_tab(true),
-                KindTab::Shader | KindTab::Data => this.choose_view(Page::Packs),
+                KindTab::Mods => this.show_home_tab(Collection::Mods),
+                KindTab::Resource => this.show_home_tab(Collection::Resource),
+                KindTab::Shader => this.show_home_tab(Collection::Shader),
+                KindTab::Data => this.choose_view(Page::Packs),
             }
             cx.notify();
         }))

@@ -218,7 +218,7 @@ impl Launcher {
             Target::World => self.navigate(Page::Home),
             Target::Mod(title) => {
                 if !self.open_mod_named(&title) {
-                    self.show_home_tab(false);
+                    self.show_home_tab(crate::home::tabs::Collection::Mods);
                 }
             }
             Target::Pack(kind, title) => self.open_pack_named(kind, title),

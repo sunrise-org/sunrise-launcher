@@ -208,9 +208,10 @@ impl Launcher {
         cx.notify();
     }
 
-    /// Add file on the Packs tab: picks pack files and copies them into the profile's
-    /// `resourcepacks/`, as the shelf's "Import from file" does, and says the result in a toast.
-    pub(crate) fn add_pack_files(&mut self, cx: &mut Context<Self>) {
+    /// Add file on the Packs or Shaders tab: picks pack files and copies them into the
+    /// profile's pack folder for `kind`, as the shelf's "Import from file" does, and says the
+    /// result in a toast.
+    pub(crate) fn add_pack_files(&mut self, kind: PackKind, cx: &mut Context<Self>) {
         let Some(home) = self
             .selected_instance()
             .map(|instance| instance.home.clone())
@@ -229,7 +230,7 @@ impl Launcher {
         });
         cx.spawn(async move |this, cx| {
             if let Ok(Ok(Some(paths))) = pick.await {
-                let _ = this.update(cx, |this, cx| this.add_pack_paths(home, paths, cx));
+                let _ = this.update(cx, |this, cx| this.add_pack_paths(home, kind, paths, cx));
             }
         })
         .detach();
@@ -237,14 +238,20 @@ impl Launcher {
 
     /// Copies the picked `paths` in the background, under the profile's lock. The dialog may
     /// outlive the moment it was asked in, so the profile is checked again.
-    fn add_pack_paths(&mut self, home: PathBuf, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+    fn add_pack_paths(
+        &mut self,
+        home: PathBuf,
+        kind: PackKind,
+        paths: Vec<PathBuf>,
+        cx: &mut Context<Self>,
+    ) {
         if paths.is_empty() || self.pack_refusal(&home).is_some() {
             return;
         }
         self.mods_state.busy = Some((tr("Importing packs…").to_string(), 0.));
         let task = cx
             .background_executor()
-            .spawn(async move { import_packs(&home, &paths) });
+            .spawn(async move { import_packs(&home, kind, &paths) });
         cx.spawn(async move |this, cx| {
             let said = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -324,7 +331,7 @@ impl Launcher {
                     return true;
                 }
                 let picks = match self.home_pick_scope() {
-                    Some(packs) => self.home_pick(packs),
+                    Some(collection) => self.home_pick(collection),
                     None if self.home_on_worlds() => self.home_worlds_pick(),
                     None => return false,
                 };
@@ -352,11 +359,11 @@ impl Launcher {
                     self.home_worlds_pick().select_all(&ids);
                     return !ids.is_empty();
                 }
-                let Some(packs) = self.home_pick_scope() else {
+                let Some(collection) = self.home_pick_scope() else {
                     return false;
                 };
-                let ids = self.home_list_ids(packs);
-                self.home_pick(packs).select_all(&ids);
+                let ids = self.home_list_ids(collection);
+                self.home_pick(collection).select_all(&ids);
                 !ids.is_empty()
             }
             _ => false,
@@ -372,16 +379,16 @@ fn counted(count: usize, one: &'static str, many: &'static str) -> String {
     }
 }
 
-/// Copies the pack files `paths` into the profile's resource pack folder, under the profile's
-/// lock, and says what happened. A file that fails doesn't stop the rest.
-fn import_packs(home: &Path, paths: &[PathBuf]) -> Result<String, String> {
+/// Copies the pack files `paths` into the profile's folder for `kind` packs, under the
+/// profile's lock, and says what happened. A file that fails doesn't stop the rest.
+fn import_packs(home: &Path, kind: PackKind, paths: &[PathBuf]) -> Result<String, String> {
     let _lock = sunrise_launcher::browser::try_lock_home(home).ok_or_else(|| {
         tr("This profile is busy. Try again when the operation finishes.").to_string()
     })?;
     let mut added = Vec::new();
     let mut refused = Vec::new();
     for path in paths {
-        match packs::add_local(home, PackKind::Resource, path) {
+        match packs::add_local(home, kind, path) {
             Ok(pack) => added.push(pack.title),
             Err(why) => refused.push(why),
         }

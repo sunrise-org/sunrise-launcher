@@ -5,7 +5,7 @@
 //! change ([`stamp`]).
 use super::*;
 use crate::frame::Page;
-use crate::home::tabs::{self, Content};
+use crate::home::tabs::{self, Collection, Content};
 use crate::mod_icons::tile;
 use crate::widgets::button::secondary;
 use gpui::RenderImage;
@@ -20,6 +20,7 @@ use sunrise_launcher::packs::{self, Kind as PackKind};
 pub(crate) enum Kind {
     Mod,
     Resource,
+    Shader,
 }
 
 /// Where a row's picture comes from.
@@ -135,7 +136,8 @@ pub(crate) struct Item {
     mod_version: Option<String>,
 }
 
-/// Order is carried in from the inventory: mods by name; packs by priority, then name.
+/// Order is carried in from the inventory: mods by name; resource packs by priority, then name;
+/// shader packs as the folder lists them.
 #[derive(Default)]
 struct Collections {
     /// The mods that are on: what the launch summary and the "enabled" count read.
@@ -144,6 +146,18 @@ struct Collections {
     /// Every mod, on or off, by name: the Mods tab lists them all, each with its switch.
     all_mods: Vec<Item>,
     resources: Vec<Item>,
+    shaders: Vec<Item>,
+}
+
+impl Collections {
+    /// The rows of the tab of `collection`, every mod or pack on it.
+    fn items(&self, collection: Collection) -> &[Item] {
+        match collection {
+            Collection::Mods => &self.all_mods,
+            Collection::Resource => &self.resources,
+            Collection::Shader => &self.shaders,
+        }
+    }
 }
 
 impl FromIterator<Item> for Collections {
@@ -160,6 +174,7 @@ impl FromIterator<Item> for Collections {
                     tabs.mods_off += 1;
                 }
                 Kind::Resource => tabs.resources.push(item),
+                Kind::Shader => tabs.shaders.push(item),
             }
         }
         tabs
@@ -236,7 +251,10 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
     }
     mods.sort_by_key(|item| item.name.to_lowercase());
     let pack = |pack: packs::Pack| Item {
-        kind: Kind::Resource,
+        kind: match pack.kind {
+            PackKind::Resource => Kind::Resource,
+            PackKind::Shader => Kind::Shader,
+        },
         picture: Picture::Pack(Arc::new(PackPicture {
             path: pack.path,
             kind: pack.kind,
@@ -257,8 +275,10 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
         .map(|(i, file)| (file, i))
         .collect();
     resource.sort_by_key(|p| rank.get(&p.file).copied().unwrap_or(usize::MAX));
+    let shaders = packs::list_with(home, PackKind::Shader, packs::Pictures::None);
     mods.into_iter()
         .chain(resource.into_iter().map(pack))
+        .chain(shaders.into_iter().map(pack))
         .collect()
 }
 
@@ -439,7 +459,7 @@ fn keep_order(old: &[Item], new: &mut [Item]) {
 
 /// Release superseded pack thumbnails from the window's sprite atlas on its next frame.
 fn retire(snapshot: &Snapshot, pictures: &mut crate::picture_cache::Pictures) {
-    for item in &snapshot.tabs.resources {
+    for item in snapshot.tabs.resources.iter().chain(&snapshot.tabs.shaders) {
         if let Picture::Pack(art) = &item.picture {
             if let Thumbnail::Ready(Some(image)) = &*recover(&art.thumbnail) {
                 pictures.retire(image.clone());

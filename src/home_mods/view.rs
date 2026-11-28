@@ -85,18 +85,22 @@ impl Launcher {
     /// Home reads the same row facts as Installed, once per inventory or registry change. Each
     /// mod or pack is a card as the Worlds tab has them, and Add file stands where Worlds has
     /// Add world.
-    pub(crate) fn home_installed_tab(&mut self, packs: bool, cx: &mut Context<Self>) -> Content {
+    pub(crate) fn home_installed_tab(
+        &mut self,
+        collection: Collection,
+        cx: &mut Context<Self>,
+    ) -> Content {
         let add = self.add_file_button(
-            packs,
-            if packs {
-                "home-packs-add"
-            } else {
-                "home-mods-add"
+            collection,
+            match collection {
+                Collection::Mods => "home-mods-add",
+                Collection::Resource => "home-packs-add",
+                Collection::Shader => "home-shaders-add",
             },
             cx,
         );
         // Mods have updates to check for; packs come from no registry, so they have none.
-        let add = if packs {
+        let add = if collection.is_packs() {
             add
         } else {
             self.home_manage(add, cx)
@@ -108,27 +112,23 @@ impl Launcher {
                 items: div(),
             };
         };
-        let full = if packs {
-            &snapshot.tabs.resources
-        } else {
-            &snapshot.tabs.all_mods
-        };
+        let full = snapshot.tabs.items(collection);
         if full.is_empty() {
             return Content {
                 count: Some(0),
                 // The empty state has its own Add file.
                 manage: None,
-                items: self.home_installed_empty(packs, cx),
+                items: self.home_installed_empty(collection, cx),
             };
         }
         // The rows as the screen has them: a switch just flipped is already in its new place.
         self.home_settle_flips(cx);
         let all: Vec<Item> = full
             .iter()
-            .map(|item| self.home_flipped(packs, item))
+            .map(|item| self.home_flipped(collection, item))
             .collect();
         let count = all.len();
-        let query = self.ui.home.tabs.query(packs);
+        let query = self.ui.home.tabs.query(collection);
         let list: Vec<Item> = all
             .iter()
             .filter(|item| home_item_matches(item, &query))
@@ -136,7 +136,7 @@ impl Launcher {
             .collect();
         // Rows already gone drop out of the ticks; the rest keep them as the list changes.
         let every: Vec<String> = all.iter().map(|item| item.id.clone()).collect();
-        self.home_pick(packs).retain(&every);
+        self.home_pick(collection).retain(&every);
         if list.is_empty() {
             return Content {
                 count: Some(count),
@@ -146,8 +146,8 @@ impl Launcher {
         }
         let order: std::rc::Rc<Vec<String>> =
             std::rc::Rc::new(list.iter().map(|item| item.id.clone()).collect());
-        let rows = self.home_cards(packs, &list, &all, &order, cx);
-        let pick_bar = self.home_pick_bar(packs, &all, &order, cx);
+        let rows = self.home_cards(collection, &list, &all, &order, cx);
+        let pick_bar = self.home_pick_bar(collection, &all, &order, cx);
         self.home_set_bar(pick_bar);
         Content {
             count: Some(count),
@@ -158,9 +158,15 @@ impl Launcher {
 
     /// `item` as the card shows it: on or off as the player just flipped it, until the files
     /// say so themselves.
-    fn home_flipped(&self, packs: bool, item: &Item) -> Item {
+    fn home_flipped(&self, collection: Collection, item: &Item) -> Item {
         let mut item = item.clone();
-        if let Some(flip) = self.ui.home.tabs.flipped.get(&(packs, item.id.clone())) {
+        if let Some(flip) = self
+            .ui
+            .home
+            .tabs
+            .flipped
+            .get(&(collection, item.id.clone()))
+        {
             item.on = flip.on;
         }
         item
@@ -198,20 +204,21 @@ impl Launcher {
     /// of `all`.
     fn home_cards(
         &mut self,
-        packs: bool,
+        collection: Collection,
         list: &[Item],
         all: &[Item],
         order: &std::rc::Rc<Vec<String>>,
         cx: &mut Context<Self>,
     ) -> Div {
         let revision = self.ui.home.mods.revision;
+        let packs = collection.is_packs();
         let facts = (!packs).then(|| {
             (
                 self.home_mod_facts(revision),
                 self.home_card_facts(revision),
             )
         });
-        let (built, place) = self.home_installed_list(packs, list.len());
+        let (built, place) = self.home_installed_list(collection, list.len());
         // No catalogue read yet this run: fetch it so registry mods get their icons, as the Mods
         // pages do.
         if !packs
@@ -222,23 +229,26 @@ impl Launcher {
         {
             self.ensure_v2_catalog(false);
         }
-        // A pack's place in the stack is its place among the packs that are on, the whole list
-        // over, not among those the search leaves.
+        // A resource pack's place in the stack is its place among the packs that are on, the whole
+        // list over, not among those the search leaves. Shader packs have no stack.
         let mut before: HashMap<&str, usize> = HashMap::new();
-        if packs {
+        if collection == Collection::Resource {
             let mut on = 0;
             for item in all {
                 before.insert(item.id.as_str(), on);
                 on += usize::from(item.on);
             }
         }
-        let ticked = self.home_pick(packs).clone();
+        let ticked = self.home_pick(collection).clone();
         let mut rows = div().flex().flex_col().gap(px(tabs::GAP));
         for item in &list[built] {
             let (detail, switchable) = match &facts {
                 None => {
                     let mut priority = before.get(item.id.as_str()).copied().unwrap_or(0);
-                    (Self::home_pack_detail(item, &mut priority), true)
+                    (
+                        Self::home_pack_detail(collection, item, &mut priority),
+                        true,
+                    )
                 }
                 Some((labels, facts)) => {
                     let fact = facts.get(&item.id);
@@ -257,7 +267,7 @@ impl Launcher {
                 on: item.on,
                 switchable,
                 pick: tabs::Pick {
-                    packs,
+                    collection,
                     key: item.id.clone(),
                     order: order.clone(),
                     ticked: ticked.contains(&item.id),
@@ -273,12 +283,12 @@ impl Launcher {
     /// The bar under the list while rows are ticked, offering what applies to them.
     fn home_pick_bar(
         &mut self,
-        packs: bool,
+        collection: Collection,
         list: &[Item],
         order: &std::rc::Rc<Vec<String>>,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let ticked = self.home_pick(packs).clone();
+        let ticked = self.home_pick(collection).clone();
         if ticked.is_empty() {
             return None;
         }
@@ -290,13 +300,13 @@ impl Launcher {
         .on_click({
             let order = order.clone();
             cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.home_pick(packs).toggle_all(&order);
+                this.home_pick(collection).toggle_all(&order);
                 cx.notify();
             })
         });
         let mut actions: Vec<AnyElement> = Vec::new();
         // What the ticked rows allow: a pack's state is on the row; a mod's comes from Installed.
-        let (on, off, updates, removable) = if packs {
+        let (on, off, updates, removable) = if collection.is_packs() {
             let count = |on: bool| {
                 list.iter()
                     .filter(|item| item.on == on && ticked.contains(&item.id))
@@ -314,13 +324,14 @@ impl Launcher {
             actions.push(
                 bar::action(id, label, true, destructive)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.home_pick_run(packs, op, cx);
+                        this.home_pick_run(collection, op, cx);
                         cx.notify();
                     }))
                     .into_any_element(),
             );
         };
-        if off > 0 {
+        // One shader pack is on at a time: turning several on has no meaning.
+        if off > 0 && (collection != Collection::Shader || ticked.len() == 1) {
             push(
                 "home-pick-enable",
                 tr("Enable").into(),
@@ -358,12 +369,13 @@ impl Launcher {
 
     /// Does `op` to the ticked rows as one change. Remove asks once first: the same press on
     /// the same ticks confirms it.
-    fn home_pick_run(&mut self, packs: bool, op: ModOp, cx: &mut Context<Self>) {
-        let keys = self.home_pick(packs).keys().clone();
-        if keys.is_empty() || (op == ModOp::Remove && !self.home_pick(packs).confirm_removal()) {
+    fn home_pick_run(&mut self, collection: Collection, op: ModOp, cx: &mut Context<Self>) {
+        let keys = self.home_pick(collection).keys().clone();
+        if keys.is_empty() || (op == ModOp::Remove && !self.home_pick(collection).confirm_removal())
+        {
             return;
         }
-        if packs {
+        if let Some(kind) = collection.pack_kind() {
             let Some(home) = self
                 .selected_instance()
                 .map(|instance| instance.home.clone())
@@ -376,25 +388,23 @@ impl Launcher {
                 ModOp::Remove => crate::mods::selection::PackOp::Remove,
                 ModOp::Update => return,
             };
-            self.run_pack_op(home, PackKind::Resource, keys.into_iter().collect(), op, cx);
+            self.run_pack_op(home, kind, keys.into_iter().collect(), op, cx);
         } else {
             self.run_mod_op(op, &keys);
         }
-        self.home_pick(packs).clear();
+        self.home_pick(collection).clear();
     }
 
-    /// The ids of the rows the Mods or Packs tab shows now (its search applied), in order.
-    pub(crate) fn home_list_ids(&self, packs: bool) -> Vec<String> {
+    /// The ids of the rows the tab of `collection` shows now (its search applied), in order.
+    pub(crate) fn home_list_ids(&self, collection: Collection) -> Vec<String> {
         let Some(snapshot) = &self.ui.home.mods.snapshot else {
             return Vec::new();
         };
-        let list = if packs {
-            &snapshot.tabs.resources
-        } else {
-            &snapshot.tabs.all_mods
-        };
-        let query = self.ui.home.tabs.query(packs);
-        list.iter()
+        let query = self.ui.home.tabs.query(collection);
+        snapshot
+            .tabs
+            .items(collection)
+            .iter()
             .filter(|item| home_item_matches(item, &query))
             .map(|item| item.id.clone())
             .collect()

@@ -444,7 +444,7 @@ impl Launcher {
             "home" => crate::frame::Page::Home,
             "discover" => crate::frame::Page::Discover,
             // Mods › Installed is Home's Mods tab now.
-            "installed" => return self.show_home_tab(false),
+            "installed" => return self.show_home_tab(crate::home::tabs::Collection::Mods),
             "packs" => crate::frame::Page::Packs,
             "pack-find" => crate::frame::Page::PackFind,
             "join" => crate::frame::Page::Join,

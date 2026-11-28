@@ -43,10 +43,10 @@ impl Launcher {
         self.multiplayer.target = None;
         match page {
             Page::Discover => self.open_mods(),
-            // The profile's resource packs are Home's Packs tab; the shelves of shader and data
-            // packs open from Discover's "Installed" link for those kinds.
+            // The profile's resource packs are Home's Packs tab; the shelf of the data packs
+            // opens from Discover's "Installed" link for that kind.
             Page::Packs => {
-                self.select_home_tab(true);
+                self.select_home_tab(crate::home::tabs::Collection::Resource);
                 self.ui.page = Page::Home;
             }
             Page::Join | Page::Hosting => {

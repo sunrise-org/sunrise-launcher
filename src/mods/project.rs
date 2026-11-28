@@ -259,14 +259,22 @@ impl Launcher {
             .flex_col()
             .gap(px(8.))
             .children(manual_badge.map(|badge| {
+                // The note wraps beside its badge instead of running off the panel.
                 div()
                     .flex()
-                    .items_center()
+                    .items_start()
                     .gap(px(8.))
-                    .child(tag(badge.label(), chip::Kind::Neutral))
-                    .child(muted(tr(
-                        "No automatic updates. Refresh via Add from source.",
-                    )))
+                    .child(
+                        div()
+                            .flex_none()
+                            .child(tag(badge.label(), chip::Kind::Neutral)),
+                    )
+                    .child(
+                        muted(tr("No automatic updates. Refresh via Add from source."))
+                            .flex_1()
+                            .min_w_0()
+                            .pt(px(4.)),
+                    )
             }))
             .children(status)
             .children(
@@ -274,10 +282,11 @@ impl Launcher {
                     .and_then(|reason| reason.detail())
                     .map(|detail| note(detail.to_owned())),
             )
+            // The switch and its state on a line of their own: "Turned on" and "Turned off"
+            // differ in width, and the buttons must not move when it flips.
             .child(
                 div()
                     .flex()
-                    .flex_wrap()
                     .items_center()
                     .gap(px(8.))
                     .child(toggle)
@@ -285,7 +294,14 @@ impl Launcher {
                         tr("Turned on")
                     } else {
                         tr("Turned off")
-                    }))
+                    })),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(8.))
                     .children(manual_refresh)
                     .children(remove),
             )

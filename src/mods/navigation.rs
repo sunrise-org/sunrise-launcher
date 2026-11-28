@@ -124,9 +124,17 @@ impl Launcher {
     }
 
     pub(crate) fn show_resource_pack_discover(&mut self) {
+        self.show_pack_discover(Shelf::Resource);
+    }
+
+    pub(crate) fn show_shader_pack_discover(&mut self) {
+        self.show_pack_discover(Shelf::Shader);
+    }
+
+    fn show_pack_discover(&mut self, shelf: Shelf) {
         self.leave_section(true);
         // Enter Discover with the requested kind, not the shelf we last left open.
-        self.mods_state.shelf = Shelf::Resource;
+        self.mods_state.shelf = shelf;
         // Force one fresh search for the cleared query even when Resource was already selected.
         self.mods_state.packs.status = pack_discover::Status::Idle;
         self.choose_view(Page::PackFind);
@@ -152,7 +160,7 @@ impl Launcher {
 
     /// The play bar's quiet line about them: Home's Mods tab, where each says why.
     pub(crate) fn show_installed_mods(&mut self) {
-        self.show_home_tab(false);
+        self.show_home_tab(crate::home::tabs::Collection::Mods);
     }
 
     /// Mods › Discover itself, whatever Mods last showed.

@@ -371,3 +371,53 @@ fn the_light_theme_is_the_only_light_choice() {
     assert_eq!(accent_key(Some("dawn_light")), "dawn_light");
     assert_eq!(own_accent(Some("dawn_light")).rgb(), 0xc2552d);
 }
+
+#[test]
+fn hsv_and_rgb_agree_on_the_primaries_and_greys() {
+    use super::hsv::Hsv;
+    let hsv = |rgb| Hsv::from_rgb(rgb);
+    assert_eq!(hsv(0xff0000), Hsv { h: 0., s: 1., v: 1. });
+    assert_eq!(hsv(0x00ff00), Hsv { h: 120., s: 1., v: 1. });
+    assert_eq!(hsv(0x0000ff), Hsv { h: 240., s: 1., v: 1. });
+    assert_eq!(hsv(0xffffff), Hsv { h: 0., s: 0., v: 1. });
+    assert_eq!(hsv(0x000000), Hsv { h: 0., s: 0., v: 0. });
+    assert_eq!(Hsv { h: 60., s: 1., v: 1. }.to_rgb(), 0xffff00);
+    assert_eq!(Hsv { h: 180., s: 1., v: 1. }.to_rgb(), 0x00ffff);
+    assert_eq!(Hsv { h: 300., s: 1., v: 1. }.to_rgb(), 0xff00ff);
+    // A hue past a full turn, or below zero, is the same hue.
+    assert_eq!(Hsv { h: 480., s: 1., v: 1. }.to_rgb(), 0x00ff00);
+    assert_eq!(Hsv { h: -120., s: 1., v: 1. }.to_rgb(), 0x0000ff);
+    assert_eq!(Hsv::pure(0.), 0xff0000);
+}
+
+#[test]
+fn every_rgb_survives_the_trip_through_hsv() {
+    use super::hsv::Hsv;
+    for r in (0..=255u32).step_by(15) {
+        for g in (0..=255u32).step_by(17) {
+            for b in (0..=255u32).step_by(5) {
+                let rgb = r << 16 | g << 8 | b;
+                assert_eq!(Hsv::from_rgb(rgb).to_rgb(), rgb, "{rgb:06x}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_pointer_on_a_bar_is_a_share_of_it_held_to_the_bar() {
+    use super::hsv::{fraction, hue_pick, square_pick};
+    assert_eq!(fraction(110., 10., 200.), 0.5);
+    assert_eq!(fraction(-5., 10., 200.), 0.);
+    assert_eq!(fraction(900., 10., 200.), 1.);
+    assert_eq!(fraction(5., 10., 0.), 0.);
+    assert_eq!(hue_pick(10., 10., 360.), 0.);
+    assert_eq!(hue_pick(190., 10., 360.), 180.);
+    assert!(hue_pick(5000., 10., 360.) < 360.);
+    // Top right of the square is the pure hue; bottom left is black; the left edge is grey.
+    let top_right = square_pick(120., (110., 20.), (10., 20.), (100., 50.));
+    assert_eq!(top_right.to_rgb(), 0x00ff00);
+    let bottom_left = square_pick(120., (10., 70.), (10., 20.), (100., 50.));
+    assert_eq!(bottom_left.to_rgb(), 0x000000);
+    let left_middle = square_pick(120., (10., 45.), (10., 20.), (100., 50.));
+    assert_eq!((left_middle.s, left_middle.v), (0., 0.5));
+}

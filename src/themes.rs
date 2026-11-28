@@ -11,6 +11,7 @@ use sunrise_launcher_theme::night::{Land, Mood, Night, SkyArt};
 use sunrise_launcher_theme::{contrast, Blocks};
 
 mod builtin;
+pub mod hsv;
 pub mod library;
 pub mod share;
 pub use builtin::*;

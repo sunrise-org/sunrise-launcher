@@ -70,8 +70,16 @@ impl Launcher {
         parts.join(" · ")
     }
 
-    /// The muted line under a pack's name: whether it is on, and its place in the stack.
-    pub(super) fn home_pack_detail(item: &Item, priority: &mut usize) -> String {
+    /// The muted line under a pack's name: whether it is on, and for a resource pack its place
+    /// in the stack. Shader packs have no stack: one is on, or none.
+    pub(super) fn home_pack_detail(
+        collection: Collection,
+        item: &Item,
+        priority: &mut usize,
+    ) -> String {
+        if collection == Collection::Shader {
+            return if item.on { tr("On") } else { tr("Off") }.to_owned();
+        }
         if item.on {
             *priority += 1;
             trf(

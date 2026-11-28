@@ -1,21 +1,17 @@
-//! A card's "…" menu on the Mods and Packs tabs: which rows it has for the mod or pack, and
-//! what each does. A change goes through the same actions and locks as the Mods pages, and its
+//! A card's "…" menu on the Mods, Packs and Shaders tabs: which rows it has for the mod or
+//! pack, and what each does. A change goes through the same actions and locks as the Mods pages, and its
 //! refusal or failure is told in a toast.
 use super::*;
 use crate::home::tabs::{Flip, ItemAction, MenuEntry};
 use crate::mods::selection::PackOp;
 
 impl Launcher {
-    pub(super) fn home_item(&self, packs: bool, key: &str) -> Option<Item> {
+    pub(super) fn home_item(&self, collection: Collection, key: &str) -> Option<Item> {
         let snapshot = self.ui.home.mods.snapshot.as_ref()?;
-        let list = if packs {
-            &snapshot.tabs.resources
-        } else {
-            &snapshot.tabs.all_mods
-        };
+        let list = snapshot.tabs.items(collection);
         let mut item = list.iter().find(|item| item.id == key).cloned()?;
         // A switch just flipped counts as flipped, as its card shows it.
-        if let Some(flip) = self.ui.home.tabs.flipped.get(&(packs, key.to_owned())) {
+        if let Some(flip) = self.ui.home.tabs.flipped.get(&(collection, key.to_owned())) {
             item.on = flip.on;
         }
         Some(item)
@@ -30,12 +26,17 @@ impl Launcher {
     /// The card's switch: turns the mod or pack on or off. The card shows the flip at once; when
     /// the change fails the files bring it back. Nothing is said when it works (the switch shows
     /// it); a refusal or a failure is.
-    pub(crate) fn home_item_toggle(&mut self, packs: bool, key: &str, cx: &mut Context<Self>) {
-        let Some(item) = self.home_item(packs, key) else {
+    pub(crate) fn home_item_toggle(
+        &mut self,
+        collection: Collection,
+        key: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(item) = self.home_item(collection, key) else {
             return;
         };
         let was_busy = self.mutating();
-        if packs {
+        if let Some(kind) = collection.pack_kind() {
             let Some(home) = self.home_item_home() else {
                 return;
             };
@@ -49,23 +50,16 @@ impl Launcher {
                 PackOp::Enable
             };
             self.ui.home.tabs.quiet = true;
-            self.run_pack_change(
-                home,
-                PackKind::Resource,
-                vec![item.id.clone()],
-                op,
-                false,
-                cx,
-            );
+            self.run_pack_change(home, kind, vec![item.id.clone()], op, false, cx);
         } else {
             self.home_mod_toggle(key);
         }
         // Only a change that began is shown ahead of the files; a refusal leaves the card be.
         if !was_busy && self.mutating() {
             let revision = self.ui.home.mods.revision;
-            self.ui.home.mods.keep_order |= packs;
+            self.ui.home.mods.keep_order |= collection == Collection::Resource;
             self.ui.home.tabs.flipped.insert(
-                (packs, item.id),
+                (collection, item.id),
                 Flip {
                     on: !item.on,
                     revision,
@@ -100,8 +94,12 @@ impl Launcher {
 
     /// The rows of the menu of the card `key`, only those that apply. While the game runs the
     /// rows that change something stay, dimmed, with the reason as their tooltip.
-    pub(crate) fn home_item_entries(&mut self, packs: bool, key: &str) -> Vec<MenuEntry> {
-        let Some(item) = self.home_item(packs, key) else {
+    pub(crate) fn home_item_entries(
+        &mut self,
+        collection: Collection,
+        key: &str,
+    ) -> Vec<MenuEntry> {
+        let Some(item) = self.home_item(collection, key) else {
             return Vec::new();
         };
         let locked: Option<SharedString> = self.mods_locked().map(Into::into);
@@ -117,10 +115,10 @@ impl Launcher {
             ItemAction::Details,
         )];
         // On and off is the card's own switch, so the menu leaves it out.
-        let remove = if packs {
+        let remove = if let Some(kind) = collection.pack_kind() {
             let folder = self
                 .home_item_home()
-                .map(|home| home.join(PackKind::Resource.folder()).join(&item.id));
+                .map(|home| home.join(kind.folder()).join(&item.id));
             rows.extend(folder.map(Self::folder_entry));
             true
         } else {
@@ -180,14 +178,14 @@ impl Launcher {
     /// Does what a row of the card's menu says.
     pub(crate) fn home_item_run(
         &mut self,
-        packs: bool,
+        collection: Collection,
         key: &str,
         action: ItemAction,
         cx: &mut Context<Self>,
     ) {
         match action {
             ItemAction::Details => {
-                if let Some(item) = self.home_item(packs, key) {
+                if let Some(item) = self.home_item(collection, key) {
                     self.ui.home.tabs.remember(None);
                     self.open_home_item(item.open);
                 }
@@ -198,16 +196,16 @@ impl Launcher {
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(name));
             }
             ItemAction::OpenPage(url) => Launcher::open_url(&url, cx),
-            ItemAction::Remove if packs => self.home_pack_remove(key),
+            ItemAction::Remove if collection.is_packs() => self.home_pack_remove(collection, key),
             ItemAction::Remove => self.home_mod_remove(key),
         }
     }
 
     /// Remove… on a pack: ticks it alone and asks once, so the selection bar offers "Confirm:
     /// remove 1", as it does for ticked packs.
-    pub(super) fn home_pack_remove(&mut self, key: &str) {
-        let order = self.home_list_ids(true);
-        let picks = self.home_pick(true);
+    pub(super) fn home_pack_remove(&mut self, collection: Collection, key: &str) {
+        let order = self.home_list_ids(collection);
+        let picks = self.home_pick(collection);
         picks.clear();
         picks.click(&order, key, false);
         picks.confirm_removal();

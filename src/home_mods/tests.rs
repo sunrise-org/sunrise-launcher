@@ -67,6 +67,20 @@ fn the_mod_tab_lists_enabled_mods_and_keeps_off_packs_in_the_pack_tab() {
     assert!(!tabs.resources[1].on);
 }
 
+#[test]
+fn shader_packs_have_their_own_list() {
+    let tabs: Collections = [
+        item("Soft Edges", Kind::Resource, true),
+        item("Bliss", Kind::Shader, true),
+        item("Noir", Kind::Shader, false),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(names(tabs.items(Collection::Resource)), ["Soft Edges"]);
+    assert_eq!(names(tabs.items(Collection::Shader)), ["Bliss", "Noir"]);
+    assert!(tabs.items(Collection::Mods).is_empty());
+}
+
 fn query(path: impl Into<PathBuf>) -> Query {
     Query {
         home: path.into(),
