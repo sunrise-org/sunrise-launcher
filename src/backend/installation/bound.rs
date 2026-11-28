@@ -249,10 +249,6 @@ impl GameDownload {
         Ok(())
     }
 
-    pub(crate) fn prove(&self, tag: &str) -> Result<GameProof, String> {
-        self.prove_cancellable(tag, None)
-    }
-
     pub(crate) fn prove_cancellable(
         &self,
         tag: &str,
@@ -291,17 +287,8 @@ impl GameDownload {
         )
     }
 
-    pub(crate) fn install(
-        &self,
-        tag: &str,
-        proof: &GameProof,
-        progress: impl Fn(f32),
-    ) -> Result<(), String> {
-        self.install_cancellable(tag, proof, None, progress)
-    }
-
-    /// [`Self::install`], which stops at the next safe point once `stop` is asked: nothing
-    /// half unpacked is published, and what was downloaded stays resumable.
+    /// Installs the proved build `tag`, stopping at the next safe point once `stop` is asked:
+    /// nothing half unpacked is published, and what was downloaded stays resumable.
     pub(crate) fn install_cancellable(
         &self,
         tag: &str,

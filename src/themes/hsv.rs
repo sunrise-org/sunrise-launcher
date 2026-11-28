@@ -27,7 +27,11 @@ impl Hsv {
         } else {
             60. * ((r - g) / spread + 4.)
         };
-        let s = if max <= f32::EPSILON { 0. } else { spread / max };
+        let s = if max <= f32::EPSILON {
+            0.
+        } else {
+            spread / max
+        };
         Hsv { h, s, v: max }
     }
 

@@ -25,6 +25,9 @@ impl Launcher {
         );
         let account = self.account_chip(compact_account, cx);
         let drag = titlebar::drag_area(window, cx);
+        let over_page =
+            self.settings.header_align == sunrise_launcher::backend::HeaderAlign::CenterPanel;
+        let rail = crate::rail::rail_width(self.rail_open());
         div()
             .relative()
             .flex()
@@ -40,11 +43,13 @@ impl Launcher {
             .when(cfg!(target_os = "macos"), |bar| bar.pl(px(78.)))
             .font_family(sunrise_launcher_theme::glass::FONT)
             .bg(rgb(p.chrome))
-            // The search field sits in the bar's middle, whatever stands either side of it.
+            // The search field sits in the bar's middle, whatever stands either side of it; with
+            // the Home header centred on the page, in the page's middle over it instead.
             .child(
                 div()
                     .absolute()
                     .inset_0()
+                    .when(over_page, |d| d.pl(px(rail)))
                     .flex()
                     .items_center()
                     .justify_center()

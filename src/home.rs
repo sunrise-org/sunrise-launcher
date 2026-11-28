@@ -2,7 +2,6 @@
 use super::*;
 use crate::frame::Reach as _;
 use crate::paint::palette;
-use crate::widgets::button::secondary;
 use crate::worlds_page;
 use gpui::rgb;
 use std::cell::Cell;
@@ -21,8 +20,6 @@ const WORLD_ROW: f32 = 52.;
 const WORLD_ROW_GAP: f32 = 4.;
 /// And as a tile: its 64 pixels, doubled.
 const WORLD_TILE: f32 = 128.;
-/// How much of a tile's data packs button shows while nothing points at the tile.
-const PACKS_AT_REST: f32 = 0.6;
 /// How far the tabs and their content stand in from the panel's edge: as far as the banner's
 /// own padding insets the profile (Figma: 24).
 const INSET: f32 = 24.;
@@ -289,85 +286,154 @@ impl Launcher {
         )
     }
 
-    /// One world as a tile: its picture, which plays it, with what it is under it. Its data
-    /// packs button sits on the picture, faint until the pointer is over the tile or the
-    /// keyboard is on the picture or on the button.
+    /// One world as a tile: its picture, with the row's controls on it. A tick box stands at its
+    /// top-left (faint until the pointer is over the tile, always there while ticked), the "…"
+    /// menu at the bottom-left and Play at the bottom-right, both 32 px and 8 px from the edges.
+    /// Under it, what the world is. A press ticks while anything is ticked (or with Ctrl or
+    /// Shift), and plays otherwise.
     fn world_tile(
         &mut self,
         world: &World,
-        window: &Window,
+        ticks: &crate::mods::selection::Selection,
+        order: &Rc<Vec<String>>,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let (folder, path) = (world.folder.clone(), world.path.clone());
+        let folder = world.folder.clone();
         let focus = self
             .worlds
             .tile_focus
             .entry(world.folder.clone())
             .or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
             .clone();
-        let group = SharedString::from(format!("alt-world-tile-{}", world.folder));
+        let id = SharedString::from(format!("alt-world:{}", world.folder));
+        let (ticked, any) = (ticks.contains(&world.folder), !ticks.is_empty());
+        let radius = crate::tokens::r(crate::tokens::R_CONTROL);
+        // Translucent dark squares with a white glyph, so they read on any picture.
+        let control = |id: SharedString, glyph: &'static str| {
+            div()
+                .id(id)
+                .absolute()
+                .bottom(px(8.))
+                .size(px(32.))
+                .rounded(radius)
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+                .occlude()
+                .bg(gpui::hsla(0., 0., 0., 0.55))
+                .hover(|s| s.bg(gpui::hsla(0., 0., 0., 0.75)))
+                .child(blocks::icon(glyph, 16., gpui::white()))
+        };
+        let (key, order_of) = (world.folder.clone(), order.clone());
         let picture = div()
             .id("alt-world-play")
             .track_focus(&focus)
             .relative()
             .cursor_pointer()
-            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+            .rounded(radius)
             .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
             .seen()
             .child(self.world_icon(world, WORLD_TILE))
-            // What a press does, said on the picture itself.
-            .child(
-                div()
-                    .absolute()
-                    .right(px(8.))
-                    .bottom(px(8.))
-                    .size(px(32.))
-                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .bg(rgb(palette().text))
-                    .child(blocks::icon("play", 15., rgb(palette().background).into())),
-            )
             .tooltip(crate::glass_ui::tip(trf(
                 "Play {world}",
                 &[("world", &world.name)],
             )))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.play_to("--world", folder.clone());
+            .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
+                let gesture = crate::mods::selection::Gesture::of(&ev.modifiers());
+                if gesture.selects() || any {
+                    this.home_worlds_pick()
+                        .click(&order_of, &key, gesture.range);
+                } else {
+                    this.play_to("--world", folder.clone());
+                }
                 cx.notify();
             }));
-        let packs = secondary(
-            SharedString::from(format!("alt-world-packs-{}", world.folder)),
-            "",
+        let play_folder = world.folder.clone();
+        let play = control(
+            SharedString::from(format!("alt-world-play-{}", world.folder)),
+            "play",
         )
-        .absolute()
-        .left(px(8.))
-        .bottom(px(8.))
-        .size(px(32.))
-        .px_0()
-        .bg(rgb(palette().raised))
-        .occlude()
-        .when(!focus.is_focused(window), |d| d.opacity(PACKS_AT_REST))
-        .group_hover(group.clone(), |s| s.opacity(1.))
-        .focus_visible(|s| s.opacity(1.).border_color(rgb(palette().focus)))
-        .child(blocks::icon("archive", 17., rgb(palette().text).into()))
-        .tooltip(crate::glass_ui::tip(tr("Data packs")))
-        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.ui.home.tabs.remember(window.focused(cx));
-            this.show_world_packs(path.clone());
+        .right(px(8.))
+        .tooltip(crate::glass_ui::tip(trf(
+            "Play {world}",
+            &[("world", &world.name)],
+        )))
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            cx.stop_propagation();
+            this.play_to("--world", play_folder.clone());
             cx.notify();
         }));
-        div()
+        // Where the "…" was drawn, for the menu that hangs from it.
+        let drawn = Rc::new(std::cell::Cell::new(gpui::Bounds::<gpui::Pixels>::default()));
+        let (write, read) = (drawn.clone(), drawn);
+        let menu_of = world.clone();
+        let more = control(
+            SharedString::from(format!("alt-world-more-{}", world.folder)),
+            "more-horizontal",
+        )
+        .left(px(8.))
+        .child(
+            gpui::canvas(move |bounds, _, _| write.set(bounds), |_, _, _, _| {})
+                .absolute()
+                .inset_0(),
+        );
+        let more = (if self.world_menu_open(&world.folder) {
+            more
+        } else {
+            more.tooltip(crate::glass_ui::tip(tr("More actions")))
+        })
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            cx.stop_propagation();
+            this.open_world_menu(&menu_of, read.get());
+            cx.notify();
+        }));
+        let (pick_key, pick_order) = (world.folder.clone(), order.clone());
+        let check = self.tick_column(&id, ticked, any, {
+            cx.listener(move |this, ev: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                this.home_worlds_pick()
+                    .click(&pick_order, &pick_key, ev.modifiers().shift);
+                cx.notify();
+            })
+        });
+        let check = div()
+            .absolute()
+            .left(px(8.))
+            .top(px(8.))
+            .size(px(24.))
+            .rounded(radius)
+            .flex()
+            .items_center()
+            .justify_center()
+            .occlude()
+            .bg(gpui::hsla(0., 0., 0., 0.45))
+            .child(check);
+        let tile = div()
+            .relative()
+            .rounded(radius)
+            .child(picture)
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded(radius)
+                    .when(ticked, |d| d.border_2().border_color(rgb(palette().focus))),
+            )
+            .child(check)
+            .child(more)
+            .child(play);
+        let lit = id.clone();
+        let outer = div()
             // The tile's own id scopes what is in it: no world's control is another's.
-            .id(SharedString::from(format!("alt-world:{}", world.folder)))
+            .id(id)
             .flex_none()
             .w(px(WORLD_TILE))
             .h(px(TILE_TALL))
             .flex()
             .flex_col()
             .gap(px(8.))
-            .child(div().group(group).relative().child(picture).child(packs))
+            .child(tile)
             .child(
                 div()
                     .flex()
@@ -385,7 +451,8 @@ impl Launcher {
                             .tooltip(crate::glass_ui::tip(world.name.clone())),
                     )
                     .child(muted(Self::world_facts(world))),
-            )
+            );
+        Self::watch_hover(outer, &lit, cx)
     }
 
     /// Every destination goes through `play_game`, which runs the sign-in, install, prepare,

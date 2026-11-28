@@ -1,37 +1,49 @@
 //! Settings › Appearance: the section's state and defaults, and the look a change is saved
 //! against.
 use super::*;
+use crate::widgets::colour_picker::{Areas, Part};
 use gpui::RenderImage;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use sunrise_launcher::appearance::Behind;
 use sunrise_launcher::theme_files::Roles;
+use sunrise_launcher::themes::hsv::Hsv;
+use sunrise_launcher::themes::library;
 use sunrise_launcher::themes::Accent;
 
 type BehindKey = (Option<String>, Option<String>, bool);
 
-/// What the theme library's one open panel is doing.
+/// What the theme library's one open dialog (a sheet over the window) is for.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) enum Panel {
+pub(super) enum Dialog {
     /// Naming the colours being edited, to keep them.
     Save,
     /// Giving the theme in this folder another name.
     Rename(String),
-    /// Asking before the themes in these folders are deleted.
-    Delete(Vec<String>),
-    /// Showing the code for this many themes.
-    Export(String, usize),
     /// Taking a pasted code.
     Import,
+    /// Showing the code for these themes.
+    Export {
+        code: String,
+        themes: Vec<library::Custom>,
+    },
 }
 
 pub(crate) struct State {
-    /// The hex of the colour being typed, and which colour that is (an index into
-    /// `themes::library::SLOTS`).
+    /// The hex of the colour being picked, and which colour that is (an index into
+    /// `themes::library::SLOTS`): the colour whose picker is open.
     pub(super) hex: line_edit::LineEdit,
     pub(super) hex_focus: Option<FocusHandle>,
     pub(super) editing: Option<usize>,
+    /// The open picker: its colour as hue, saturation and value (a grey keeps its hue), the
+    /// colour it was when it opened, where its square and bar were drawn, the part being
+    /// dragged and where the keyboard is while it is open.
+    pub(super) hsv: Hsv,
+    pub(super) before: u32,
+    pub(super) areas: Areas,
+    pub(super) dragging: Option<Part>,
+    pub(super) picker_focus: Option<FocusHandle>,
     /// Whether the hex field had the keyboard when last drawn: leaving it takes what is typed.
     pub(super) hex_was_focused: bool,
     /// Colours typed that can't be read on each other yet: shown, not painted, until they can.
@@ -41,7 +53,11 @@ pub(crate) struct State {
     pub(super) name_focus: Option<FocusHandle>,
     pub(super) code: line_edit::LineEdit,
     pub(super) code_focus: Option<FocusHandle>,
-    pub(super) panel: Option<Panel>,
+    pub(super) dialog: Option<Dialog>,
+    /// Why the dialog's button failed, said in the dialog.
+    pub(super) dialog_error: Option<String>,
+    /// The dialog just opened: its text box takes the keyboard when it is first drawn.
+    pub(super) dialog_focus: bool,
     /// The library's themes ticked for export, by folder.
     pub(super) ticked: BTreeSet<String>,
     /// The folder whose "…" menu is open, and whether Home header's menu is.
@@ -74,6 +90,15 @@ impl Default for State {
             hex: line_edit::LineEdit::new(String::new(), 8, 9),
             hex_focus: None,
             editing: None,
+            hsv: Hsv {
+                h: 0.,
+                s: 0.,
+                v: 0.,
+            },
+            before: 0,
+            areas: Areas::default(),
+            dragging: None,
+            picker_focus: None,
             hex_was_focused: false,
             draft: None,
             name: line_edit::LineEdit::new(String::new(), 64, 40),
@@ -81,7 +106,9 @@ impl Default for State {
             // A code for a few themes is a few hundred characters.
             code: line_edit::LineEdit::new(String::new(), 40_000, 60),
             code_focus: None,
-            panel: None,
+            dialog: None,
+            dialog_error: None,
+            dialog_focus: false,
             ticked: BTreeSet::new(),
             more: None,
             header_open: false,

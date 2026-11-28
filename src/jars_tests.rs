@@ -659,3 +659,28 @@ fn a_server_export_writes_the_jar_its_mod_lists_into_the_export_with_a_stub_down
     assert_eq!(fs::read(export.0.join("jars").join(&name)).unwrap(), bytes);
     assert_eq!(fs::read(home.0.join("jars").join(name)).unwrap(), bytes);
 }
+
+#[test]
+fn a_stopped_transport_refuses_requests_and_cuts_a_body_read() {
+    use std::io::Read as _;
+    let stop = crate::native_mods::Cancellation::default();
+    let transport = Transport {
+        stop: Some(stop.clone()),
+    };
+    let mut body = transport.guard(Box::new(&b"jar bytes"[..]));
+    let mut first = [0u8; 3];
+    assert_eq!(body.read(&mut first).unwrap(), 3);
+    stop.stop();
+    assert!(
+        body.read(&mut first).is_err(),
+        "the next read checks the stop"
+    );
+    assert_eq!(
+        transport
+            .get("https://cdn.modrinth.com/x.jar")
+            .err()
+            .as_deref(),
+        Some(crate::native_mods::CANCELLED)
+    );
+    assert!(Transport::default().check().is_ok());
+}

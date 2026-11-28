@@ -2006,3 +2006,35 @@ fn v2_an_installed_marked_release_with_its_jar_cached_is_not_flagged() {
     assert_eq!(plan.steps.len(), 1);
     assert_eq!(plan.steps[0].version, "1.1.0");
 }
+
+#[test]
+fn a_stopped_release_fetch_ends_before_it_asks_the_network() {
+    let stop = native_mods::Cancellation::default();
+    stop.stop();
+    // The URL is not even allowed: a stopped fetch must answer the stop, not the refusal.
+    let error = fetch_release_bytes_cancellable("https://example.invalid/x", 1 << 20, Some(&stop))
+        .unwrap_err();
+    assert_eq!(error, native_mods::CANCELLED);
+}
+
+#[test]
+fn an_error_while_stopped_is_the_stop_and_otherwise_stays_the_error() {
+    let stop = native_mods::Cancellation::default();
+    assert!(matches!(
+        stopped_or(Some(&stop), InstallError::Download("offline".into())),
+        InstallError::Download(text) if text == "offline"
+    ));
+    assert!(matches!(
+        stopped_or(None, String::from("plain")),
+        InstallError::Unproved(text) if text == "plain"
+    ));
+    stop.stop();
+    assert!(matches!(
+        stopped_or(Some(&stop), InstallError::Download("offline".into())),
+        InstallError::Cancelled
+    ));
+    assert!(matches!(
+        stopped_or(Some(&stop), String::from(native_mods::CANCELLED)),
+        InstallError::Cancelled
+    ));
+}

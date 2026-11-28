@@ -44,10 +44,10 @@ pub enum HeaderAlign {
     Left,
     /// At the banner's right padding.
     Right,
-    /// On the banner's own middle.
+    /// On the banner's own middle (the default), with the top bar's search over it.
+    #[default]
     CenterPanel,
     /// On the whole window's middle, the sidebar included.
-    #[default]
     CenterWindow,
 }
 

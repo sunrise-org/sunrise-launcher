@@ -67,6 +67,9 @@ pub(crate) enum Sheet {
     ModUpdates,
     /// A pack's details, opened from its card on Home's Packs tab (`home_mods::details`).
     PackDetails,
+    /// The theme library's dialog: save, rename, import or export themes
+    /// (`settings::appearance`).
+    ThemeDialog,
 }
 
 /// The way out of a problem the play bar raised, as the Notice sheet's one action.
@@ -519,6 +522,13 @@ impl Launcher {
             }
             Some(Sheet::Worlds) => {
                 let sheet = self.world_pick_sheet(cx);
+                if sheet.is_none() {
+                    self.ui.sheet = None;
+                }
+                sheet
+            }
+            Some(Sheet::ThemeDialog) => {
+                let sheet = self.theme_dialog(window, cx);
                 if sheet.is_none() {
                     self.ui.sheet = None;
                 }

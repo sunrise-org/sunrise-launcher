@@ -1,26 +1,25 @@
 //! Settings › Appearance: the look (Sunrise or Light), the colour editor and Home's header.
 //!
-//! Every colour of a theme is one row of the editor: its swatch and the hex it is typed in, and
-//! a change is painted as soon as it is made. What a row does comes from the table of colours,
+//! Every colour of a theme is one row of the editor: its swatch and its hex. Pressing the row
+//! opens a colour picker under the swatch (`widgets::colour_picker`), and a change is painted as
+//! soon as it is made, dragged or typed. What a row does comes from the table of colours,
 //! `themes::library::SLOTS`.
 use super::inputs::HEX;
 use super::*;
 use crate::widgets::button::secondary;
 use crate::widgets::choice::choices;
+use crate::widgets::colour_picker::{self, Handlers, Part, Spec};
 use crate::widgets::dropdown::{Dropdown, Item};
 use gpui::SharedString;
+use std::rc::Rc;
 use sunrise_launcher::theme_files;
-use sunrise_launcher::themes::{
-    self,
-    library::{self, SLOTS},
-};
+use sunrise_launcher::themes::hsv::Hsv;
+use sunrise_launcher::themes::library::SLOTS;
 
-/// A preset accent swatch's size, its ring included.
-const SWATCH: f32 = 26.;
 /// A colour's swatch in the editor.
 const CHIP: f32 = 22.;
-/// What [`themes::SWATCHES`] are called, in their order.
-const ACCENT_NAMES: [&str; 7] = ["Violet", "Blue", "Teal", "Green", "Amber", "Red", "Pink"];
+/// How far under a swatch its picker starts.
+const DROP: f32 = CHIP + 6.;
 
 impl Launcher {
     /// Sunrise's night or its day: the two looks every theme starts from.
@@ -97,7 +96,7 @@ impl Launcher {
     /// The colour editor: a row per colour of a theme, the accent's presets under its row, and
     /// the way back to Sunrise's own colours.
     pub(super) fn colours_row(&mut self, window: &Window, cx: &mut Context<Self>) -> Div {
-        // Leaving the hex field takes what was typed in it.
+        // Leaving the hex field takes what was typed in it; the picker stays open.
         let state = &mut self.ui.settings.appearance;
         let focus = state
             .hex_focus
@@ -106,7 +105,7 @@ impl Launcher {
         let focused = focus.is_focused(window);
         let left = std::mem::replace(&mut state.hex_was_focused, focused) && !focused;
         if left && state.editing.is_some() {
-            self.colour_commit(window);
+            self.hex_apply(window);
             cx.notify();
         }
         let roles = self.editor_roles();
@@ -114,9 +113,6 @@ impl Launcher {
         for (i, slot) in SLOTS.iter().enumerate() {
             let shown = (slot.get)(&roles);
             lines = lines.child(self.colour_line(i, slot.label, shown, window, cx));
-            if i == library::ACCENT {
-                lines = lines.child(self.accent_presets(shown, cx));
-            }
         }
         let own = self
             .settings
@@ -141,7 +137,7 @@ impl Launcher {
         };
         let head = self.wide_row(
             tr("Colours"),
-            tr("Click a colour to type its hex. Every change is painted as you make it."),
+            tr("Click a colour to pick it or type its hex. Every change is painted as you make it."),
             div().child(reset),
         );
         div()
@@ -152,7 +148,7 @@ impl Launcher {
             .child(lines)
     }
 
-    /// One colour: its swatch, its name and its hex, which is a text box while it is typed in.
+    /// One colour: its swatch, its name and its hex. Pressing the row opens its picker.
     fn colour_line(
         &mut self,
         i: usize,
@@ -160,8 +156,8 @@ impl Launcher {
         shown: u32,
         window: &Window,
         cx: &mut Context<Self>,
-    ) -> Div {
-        let editing = self.ui.settings.appearance.editing == Some(i);
+    ) -> Stateful<Div> {
+        let open = self.ui.settings.appearance.editing == Some(i);
         let chip = div()
             .id(("alt-colour-swatch", i))
             .flex_none()
@@ -169,74 +165,108 @@ impl Launcher {
             .rounded(crate::tokens::r(crate::tokens::R_SMALL))
             .border_1()
             .border_color(rgb(palette().line))
-            .bg(rgb(shown))
+            .bg(rgb(shown));
+        let anchor = div()
+            .relative()
+            .flex_none()
+            .size(px(CHIP))
+            .child(chip)
+            .children(
+                open.then(|| self.colour_picker(shown, window, cx))
+                    .into_iter()
+                    .flatten(),
+            );
+        let hex = div()
+            .flex_none()
+            .w(px(130.))
+            .font_family(theme::MONO)
+            .text_size(px(tokens::LABEL))
+            .text_color(rgb(palette().muted))
+            .child(format!("#{shown:06x}"));
+        div()
+            .id(("alt-colour-row", i))
+            .flex()
+            .items_center()
+            .gap(px(12.))
             .cursor_pointer()
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.colour_start(i, window, cx);
                 cx.notify();
-            }));
-        let field = if editing {
-            self.text_input(HEX, Self::colour_enter, window, cx)
-        } else {
-            crate::widgets::field::field_box(false, false)
-                .id(("alt-colour-field", i))
-                .tab_index(0)
-                .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
-                .font_family(theme::MONO)
-                .text_size(px(tokens::LABEL))
-                .cursor_text()
-                .child(format!("#{shown:06x}"))
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.colour_start(i, window, cx);
-                    cx.notify();
-                }))
-        };
-        div()
-            .flex()
-            .items_center()
-            .gap(px(12.))
-            .child(chip)
+            }))
+            .child(anchor)
             .child(div().flex_1().min_w_0().truncate().child(tr(label)))
-            .child(field.w(px(130.)).flex_none())
+            .child(hex)
     }
 
-    /// The named accents, under the accent's row: one press sets the accent to that colour.
-    fn accent_presets(&mut self, now: u32, cx: &mut Context<Self>) -> Div {
-        let mut swatches = div()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap(px(8.))
-            .pl(px(CHIP + 12.));
-        for (i, colour) in themes::SWATCHES.into_iter().enumerate() {
-            let on = colour == now;
-            let swatch = div()
-                .id(("alt-accent-swatch", i))
-                .flex_none()
-                .size(px(SWATCH))
-                .rounded_full()
-                .p(px(3.))
-                .border_2()
-                .border_color(if on {
-                    rgb(palette().text).into()
-                } else {
-                    gpui::transparent_black()
-                })
-                .reach_edge()
-                .tooltip(crate::glass_ui::tip(tr(ACCENT_NAMES[i])))
-                .child(div().size_full().rounded_full().bg(rgb(colour)));
-            swatches = swatches.child(if on {
-                swatch.cursor_default()
-            } else {
-                swatch
-                    .cursor_pointer()
-                    .hover(|s| s.border_color(rgb(palette().muted)))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        this.colour_set(library::ACCENT, colour, window);
-                        cx.notify();
-                    }))
-            });
+    /// The open picker's popover: its parts, and the hex field that goes with it.
+    fn colour_picker(
+        &mut self,
+        shown: u32,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> [gpui::Deferred; 2] {
+        let state = &mut self.ui.settings.appearance;
+        // A colour changed from outside the picker (the hex, a failed save) is read again; one
+        // the picker made keeps its hue and the grey it may be on.
+        if state.hsv.to_rgb() != shown {
+            state.hsv = Hsv::from_rgb(shown);
         }
-        swatches
+        let (now, before, areas) = (state.hsv, state.before, state.areas.clone());
+        let focus = state
+            .picker_focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        let hex = self.text_input(HEX, Self::colour_enter, window, cx);
+        let this = cx.entity();
+        let handlers = Handlers {
+            press: Rc::new({
+                let this = this.clone();
+                move |part: Part,
+                      at: gpui::Point<gpui::Pixels>,
+                      window: &mut Window,
+                      cx: &mut App| {
+                    this.update(cx, |this, cx| {
+                        this.picker_press(part, at, window);
+                        cx.notify();
+                    })
+                }
+            }),
+            drag: Rc::new({
+                let this = this.clone();
+                move |ev: &gpui::MouseMoveEvent, window: &mut Window, cx: &mut App| {
+                    this.update(cx, |this, cx| {
+                        this.picker_drag(ev, window);
+                        cx.notify();
+                    })
+                }
+            }),
+            release: Rc::new({
+                let this = this.clone();
+                move |_: &mut Window, cx: &mut App| {
+                    this.update(cx, |this, cx| {
+                        this.ui.settings.appearance.dragging = None;
+                        cx.notify();
+                    })
+                }
+            }),
+            close: Rc::new(move |window: &mut Window, cx: &mut App| {
+                this.update(cx, |this, cx| {
+                    this.colour_commit(window);
+                    cx.notify();
+                })
+            }),
+        };
+        colour_picker::popover(
+            Spec {
+                id: "alt-colour-picker",
+                now,
+                before,
+                drop: DROP,
+                areas: &areas,
+                focus: &focus,
+            },
+            hex,
+            &handlers,
+        )
     }
 }

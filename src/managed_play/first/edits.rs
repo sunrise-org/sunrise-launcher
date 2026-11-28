@@ -44,11 +44,18 @@ pub(crate) struct CandidateImage {
 }
 
 impl Profile {
-    pub(crate) fn begin_edit(
+    /// Begins an edit of the profile, the game build downloaded first when it has none; the
+    /// download stops once `stop` is asked. Nothing is published then, and what was downloaded
+    /// stays resumable.
+    pub(crate) fn begin_edit_cancellable(
         &mut self,
         choose: impl FnOnce() -> Result<FirstBuild, String>,
         download: impl Fn(f32),
+        stop: Option<&native_mods::Cancellation>,
     ) -> Result<Edit<'_>, String> {
+        if let Some(stop) = stop {
+            stop.check()?;
+        }
         let home = self.home().to_owned();
         let manifest = game_lock(&home)?;
         let before = inputs(&home)?;
@@ -65,13 +72,15 @@ impl Profile {
                 let first = if self.0.has_bootstrap()? {
                     // An interrupted Play already accepted this build; honor it.
                     drop(manifest);
-                    self.begin_first(choose, download)?
+                    self.begin_first_cancellable(choose, download, stop)?
                 } else {
                     // A cancelled Install must not bind later Play to its attempted build.
                     // Reserve the images before transfer without creating a resumable Play selection.
                     let choice = choose()?;
                     let proof = match &choice.selection {
-                        Selection::Download { archive } => Some(archive.prove(&choice.base)?),
+                        Selection::Download { archive } => {
+                            Some(archive.prove_cancellable(&choice.base, stop)?)
+                        }
                         Selection::Cached { .. } => None,
                     };
                     let bound = Bound {
@@ -94,9 +103,10 @@ impl Profile {
                     };
                     drop(manifest);
                     if let Selection::Download { archive } = &bound.selection {
-                        archive.install(
+                        archive.install_cancellable(
                             &bound.base,
                             bound.proof.as_ref().expect("proved download"),
+                            stop,
                             download,
                         )?;
                     }
@@ -282,9 +292,14 @@ impl Edit<'_> {
         Ok(candidate)
     }
 
-    pub(crate) fn prepare_first(&self, log: &dyn Fn(String)) -> Result<(), String> {
+    /// Prepares a first build's resources; the preparer is stopped once `stop` is asked.
+    pub(crate) fn prepare_first_cancellable(
+        &self,
+        log: &dyn Fn(String),
+        stop: Option<&native_mods::Cancellation>,
+    ) -> Result<(), String> {
         if let Basis::First(first) = &self.basis {
-            first.prepare(log)?;
+            first.prepare_cancellable(log, stop)?;
         }
         Ok(())
     }

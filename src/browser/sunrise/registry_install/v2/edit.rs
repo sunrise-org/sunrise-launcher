@@ -19,6 +19,8 @@ pub fn install_registry_v2(
 ) -> Result<InstalledBatch, InstallError> {
     let catalog =
         catalogue_v2::change_index().map_err(|error| InstallError::Unproved(error.to_string()))?;
+    let stop = hooks.install.cancellation;
+    let fetch = |url: &str, max: u64| fetch_release_bytes_cancellable(url, max, stop);
     install_registry_v2_with(
         V2EditRequest {
             target,
@@ -26,7 +28,7 @@ pub fn install_registry_v2(
             index: local_fit_filled(&catalog.index),
             options,
             transfer: V2Transfer {
-                fetch_bytes: &fetch_release_bytes,
+                fetch_bytes: &fetch,
                 verify_release: &attestation::verify_release,
             },
         },
@@ -49,6 +51,8 @@ pub fn update_registry_v2(
 ) -> Result<InstalledBatch, InstallError> {
     let catalog =
         catalogue_v2::change_index().map_err(|error| InstallError::Unproved(error.to_string()))?;
+    let stop = hooks.install.cancellation;
+    let fetch = |url: &str, max: u64| fetch_release_bytes_cancellable(url, max, stop);
     update_registry_v2_with(
         V2EditRequest {
             target,
@@ -56,7 +60,7 @@ pub fn update_registry_v2(
             index: local_fit_filled(&catalog.index),
             options,
             transfer: V2Transfer {
-                fetch_bytes: &fetch_release_bytes,
+                fetch_bytes: &fetch,
                 verify_release: &attestation::verify_release,
             },
         },
@@ -124,14 +128,18 @@ fn v2_edit_with(
 
     let mut profile =
         Profile::open_for(target.home(), None, Some(identity)).map_err(String::from)?;
-    let edit = profile.begin_edit(choose, |f| {
-        (hooks.install.progress)(InstallProgress::Downloading(f))
-    })?;
+    let default_cancelled = native_mods::Cancellation::default();
+    let cancelled = hooks.install.cancellation.unwrap_or(&default_cancelled);
+    let edit = profile
+        .begin_edit_cancellable(
+            choose,
+            |f| (hooks.install.progress)(InstallProgress::Downloading(f)),
+            Some(cancelled),
+        )
+        .map_err(|error| stopped_or(Some(cancelled), error))?;
     // The game build is in: say the checks that follow, not its last percentage.
     (hooks.install.progress)(InstallProgress::Checking);
     let base_build = edit.base().to_owned();
-    let default_cancelled = native_mods::Cancellation::default();
-    let cancelled = hooks.install.cancellation.unwrap_or(&default_cancelled);
     let old = edit.candidate()?;
     let before = inventory_v2(old.path(), &index)?;
     let chosen_pins = chosen(target.home());
@@ -170,6 +178,9 @@ fn v2_edit_with(
     let mut retired_holds: BTreeSet<String> = BTreeSet::new();
 
     for (slot_idx, step) in plan.steps.iter().enumerate() {
+        // Stop between releases: nothing staged so far is published, and the candidate is
+        // dropped with the edit.
+        cancelled.check().map_err(|_| InstallError::Cancelled)?;
         (hooks.install.progress)(InstallProgress::Downloading(
             slot_idx as f32 / plan.steps.len().max(1) as f32,
         ));
@@ -181,7 +192,14 @@ fn v2_edit_with(
             &options.accepted_publisher_changes,
             hooks.confirm_publisher_change,
             transfer,
-        )?;
+        )
+        .map_err(|error| {
+            if matches!(error, InstallError::Download(_)) {
+                stopped_or(Some(cancelled), error)
+            } else {
+                error
+            }
+        })?;
         // Preserve player-owned dependency flag if previously explicitly installed.
         if let Ok(Some(prev_row)) = doc.row(&step.mod_id) {
             if prev_row["dependency"].as_bool() == Some(false) {
@@ -227,7 +245,7 @@ fn v2_edit_with(
         if let Some(error) = native_mods::known_host_block(Some(&base_build)) {
             return Err(InstallError::Host(error));
         }
-        cancelled.check().map_err(InstallError::Unproved)?;
+        cancelled.check().map_err(|_| InstallError::Cancelled)?;
     }
 
     // Every original jar the new set of registry mods lists is in this profile's cache (the game
@@ -246,12 +264,17 @@ fn v2_edit_with(
             }),
     )
     .map_err(|error| InstallError::Refused(jars::LaunchError::Conflict(error).to_string()))?;
-    jars::fetch_listed(target.home(), &listed)
-        .map_err(|error| InstallError::Download(error.to_string()))?;
+    cancelled.check().map_err(|_| InstallError::Cancelled)?;
+    jars::fetch_listed_cancellable(target.home(), &listed, Some(cancelled))
+        .map_err(|error| stopped_or(Some(cancelled), InstallError::Download(error.to_string())))?;
+    cancelled.check().map_err(|_| InstallError::Cancelled)?;
 
     (hooks.install.progress)(InstallProgress::Preparing);
-    edit.prepare_first(&super::preparation_line(hooks.install.progress))
-        .map_err(InstallError::Unproved)?;
+    edit.prepare_first_cancellable(
+        &super::preparation_line(hooks.install.progress),
+        Some(cancelled),
+    )
+    .map_err(|error| stopped_or(Some(cancelled), InstallError::Unproved(error)))?;
     let proof = match prove_edit(&edit, next.path(), target, cancelled, &hooks.install) {
         Ok(proof) => proof,
         Err(native_mods::Failed::Mods {

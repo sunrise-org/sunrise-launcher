@@ -376,17 +376,92 @@ fn the_light_theme_is_the_only_light_choice() {
 fn hsv_and_rgb_agree_on_the_primaries_and_greys() {
     use super::hsv::Hsv;
     let hsv = |rgb| Hsv::from_rgb(rgb);
-    assert_eq!(hsv(0xff0000), Hsv { h: 0., s: 1., v: 1. });
-    assert_eq!(hsv(0x00ff00), Hsv { h: 120., s: 1., v: 1. });
-    assert_eq!(hsv(0x0000ff), Hsv { h: 240., s: 1., v: 1. });
-    assert_eq!(hsv(0xffffff), Hsv { h: 0., s: 0., v: 1. });
-    assert_eq!(hsv(0x000000), Hsv { h: 0., s: 0., v: 0. });
-    assert_eq!(Hsv { h: 60., s: 1., v: 1. }.to_rgb(), 0xffff00);
-    assert_eq!(Hsv { h: 180., s: 1., v: 1. }.to_rgb(), 0x00ffff);
-    assert_eq!(Hsv { h: 300., s: 1., v: 1. }.to_rgb(), 0xff00ff);
+    assert_eq!(
+        hsv(0xff0000),
+        Hsv {
+            h: 0.,
+            s: 1.,
+            v: 1.
+        }
+    );
+    assert_eq!(
+        hsv(0x00ff00),
+        Hsv {
+            h: 120.,
+            s: 1.,
+            v: 1.
+        }
+    );
+    assert_eq!(
+        hsv(0x0000ff),
+        Hsv {
+            h: 240.,
+            s: 1.,
+            v: 1.
+        }
+    );
+    assert_eq!(
+        hsv(0xffffff),
+        Hsv {
+            h: 0.,
+            s: 0.,
+            v: 1.
+        }
+    );
+    assert_eq!(
+        hsv(0x000000),
+        Hsv {
+            h: 0.,
+            s: 0.,
+            v: 0.
+        }
+    );
+    assert_eq!(
+        Hsv {
+            h: 60.,
+            s: 1.,
+            v: 1.
+        }
+        .to_rgb(),
+        0xffff00
+    );
+    assert_eq!(
+        Hsv {
+            h: 180.,
+            s: 1.,
+            v: 1.
+        }
+        .to_rgb(),
+        0x00ffff
+    );
+    assert_eq!(
+        Hsv {
+            h: 300.,
+            s: 1.,
+            v: 1.
+        }
+        .to_rgb(),
+        0xff00ff
+    );
     // A hue past a full turn, or below zero, is the same hue.
-    assert_eq!(Hsv { h: 480., s: 1., v: 1. }.to_rgb(), 0x00ff00);
-    assert_eq!(Hsv { h: -120., s: 1., v: 1. }.to_rgb(), 0x0000ff);
+    assert_eq!(
+        Hsv {
+            h: 480.,
+            s: 1.,
+            v: 1.
+        }
+        .to_rgb(),
+        0x00ff00
+    );
+    assert_eq!(
+        Hsv {
+            h: -120.,
+            s: 1.,
+            v: 1.
+        }
+        .to_rgb(),
+        0x0000ff
+    );
     assert_eq!(Hsv::pure(0.), 0xff0000);
 }
 

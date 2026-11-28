@@ -760,6 +760,7 @@ fn act_button(act: Act, cx: &mut Context<Launcher>) -> Stateful<Div> {
     let (id, style) = match act {
         Act::StopBuild => ("alt-build-stop", Style::Secondary),
         Act::Update => ("alt-update", Style::Primary),
+        Act::SignIn => ("alt-sign-in", Style::Primary),
         _ => ("alt-fix", Style::Secondary),
     };
     let label = act.label();

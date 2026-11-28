@@ -45,7 +45,7 @@ fn play_says_each_state_in_the_order_they_win() {
     }
     assert_eq!(Main::Play.label(), "Play");
     // Signed out, Play is still "Play": Home has no second "Sign in with Microsoft".
-    assert_eq!(Main::SignIn.label(), "Play");
+    assert_eq!(Main::SignIn.label(), "Sign in to play");
     assert_eq!(Main::Installing(0.42).label(), "Installing · 42%");
 }
 
@@ -157,7 +157,7 @@ fn a_chosen_build_that_isnt_the_one_played_turns_play_into_its_install_action() 
 }
 
 #[test]
-fn signed_out_play_signs_in_first_and_only_its_tooltip_says_so() {
+fn signed_out_play_says_sign_in_and_signs_in_first() {
     let out = Facts {
         signed_in: false,
         ..idle()
@@ -165,7 +165,8 @@ fn signed_out_play_signs_in_first_and_only_its_tooltip_says_so() {
     .view();
     assert_eq!(out.main, Main::SignIn);
     assert!(out.enabled, "pressing it signs in, then plays");
-    assert_eq!(out.main.tooltip().as_deref(), Some("Sign in to play"));
+    assert_eq!(out.main.label(), "Sign in to play");
+    assert_eq!(out.main.tooltip(), None, "the label says it, not a tooltip");
     // Signed in: the normal Play, no tooltip.
     let signed_in = idle().view();
     assert_eq!(signed_in.main, Main::Play);

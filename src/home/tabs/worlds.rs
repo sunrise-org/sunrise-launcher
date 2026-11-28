@@ -99,7 +99,7 @@ impl Launcher {
             if tiles {
                 rows = rows.flex_wrap();
                 for world in &worlds {
-                    rows = rows.child(self.world_tile(world, window, cx));
+                    rows = rows.child(self.world_tile(world, &ticks, &order, cx));
                 }
             } else {
                 rows = rows.flex_col();
@@ -118,12 +118,8 @@ impl Launcher {
         }
     }
 
-    /// The folders of the worlds Ctrl+A ticks: those the search leaves, in the list layout (the
-    /// tiles have no tick boxes).
+    /// The folders of the worlds Ctrl+A ticks: those the search leaves, in either layout.
     pub(crate) fn home_world_ids(&self) -> Vec<String> {
-        if self.settings.world_layout == backend::WorldLayout::Tiles {
-            return Vec::new();
-        }
         let query = self.ui.home.tabs.query_of(Tab::Worlds);
         self.worlds
             .list

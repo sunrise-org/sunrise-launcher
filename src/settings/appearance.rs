@@ -8,9 +8,11 @@ use super::*;
 
 mod actions;
 mod colours;
+mod dialogs;
 mod handlers;
 mod inputs;
 mod photo;
+mod preview;
 mod rows;
 mod state;
 #[cfg(test)]

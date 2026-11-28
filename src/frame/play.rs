@@ -23,12 +23,25 @@ impl Launcher {
         if self.refuse_pack_play(kind) {
             return;
         }
-        if intent.account.is_none() && !sunrise_launcher::developer_offline::selected() {
+        if !self.account_ready() {
             self.sign_in_to_play();
             self.ui.after_sign_in = Some(intent);
             return;
         }
         self.resume_play(intent);
+    }
+
+    /// Whether Play has an account to play with: one is chosen and its sign-in still holds (the
+    /// chip says "Signed out" otherwise), or the developer's offline Play is on.
+    pub(crate) fn account_ready(&self) -> bool {
+        if sunrise_launcher::developer_offline::selected() {
+            return true;
+        }
+        self.accounts.selected().is_some_and(|account| {
+            !self.auth_status.get(&account.uuid).is_some_and(|status| {
+                status.state == sunrise_launcher::account::session::State::SignInRequired
+            })
+        })
     }
 
     /// Continue the same accepted Play after a launch step; never recapture the account.

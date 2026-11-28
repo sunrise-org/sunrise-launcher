@@ -42,7 +42,7 @@ fn v2_profile_switch_refuses_pack_without_fetching_index() {
         Some(BuildChoice::Follow(Channel::Dev)),
         hooks,
         || panic!("pack refusal must happen before fetching v2 index"),
-        &fetch_release_bytes,
+        &super::super::stage::fetch_release_bytes,
         &attestation::verify_release,
     ) else {
         panic!("expected pack refusal error");

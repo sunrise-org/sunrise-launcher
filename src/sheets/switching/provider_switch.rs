@@ -69,7 +69,7 @@ impl Launcher {
                                 let _ = tx.send(Msg::ProviderSwitchProgress(stage));
                             },
                             continue_after_failure: &|_| false,
-                            cancellation: None,
+                            cancellation: Some(&stop),
                         },
                         choose_provider: Some(&|need| {
                             let (answer, reply) = std::sync::mpsc::channel();

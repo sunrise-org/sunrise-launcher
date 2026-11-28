@@ -329,6 +329,14 @@ pub fn remove(root: &Path, slug: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Moves the theme `slug`'s whole folder (its colours and its picture) to the system's trash,
+/// where the player can still get it back.
+pub fn trash(root: &Path, slug: &str) -> Result<(), String> {
+    find(root, slug)?;
+    let folder = root.join(slug);
+    crate::desktop_seams::to_trash(&folder).map_err(|e| said(&folder, e))
+}
+
 /// The themes `slugs` name, in the order of the library, for a share code.
 pub fn take(root: &Path, slugs: &[String]) -> Vec<Custom> {
     saved(root)

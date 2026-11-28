@@ -179,7 +179,7 @@ pub(super) fn edit_github(
         .map(|source| source.cancellation)
         .or(hooks.cancellation)
         .unwrap_or(&legacy_cancellation);
-    cancellation.check()?;
+    cancellation.check().map_err(|_| InstallError::Cancelled)?;
     (hooks.progress)(InstallProgress::Checking);
     let mut profile =
         Profile::open_for(target.home(), None, Some(identity)).map_err(String::from)?;
@@ -198,9 +198,13 @@ pub(super) fn edit_github(
         }
         predecessors(target.home(), packages)?
     };
-    let edit = profile.begin_edit(choose, |f| {
-        (hooks.progress)(InstallProgress::Downloading(f))
-    })?;
+    let edit = profile
+        .begin_edit_cancellable(
+            choose,
+            |f| (hooks.progress)(InstallProgress::Downloading(f)),
+            Some(cancellation),
+        )
+        .map_err(|error| stopped_or(Some(cancellation), error))?;
     // The game build is in: say the checks that follow, not its last percentage.
     (hooks.progress)(InstallProgress::Checking);
     if matches!(check, Check::Base(base) if edit.base() != base) {
@@ -297,7 +301,7 @@ pub(super) fn edit_github(
         }
         Ok(())
     };
-    cancellation.check()?;
+    cancellation.check().map_err(|_| InstallError::Cancelled)?;
     if let Some(source) = source {
         if !(source.authorize)(&additions.dependencies)? {
             return Err(InstallError::Cancelled);
@@ -313,7 +317,8 @@ pub(super) fn edit_github(
             })
             .map_err(Into::into);
     }
-    edit.prepare_first(&super::preparation_line(hooks.progress))?;
+    edit.prepare_first_cancellable(&super::preparation_line(hooks.progress), Some(cancellation))
+        .map_err(|error| stopped_or(Some(cancellation), error))?;
     let tools = std::cell::Cell::new(false);
     let progress = |progress: InstallProgress| {
         tools.set(matches!(
@@ -380,7 +385,7 @@ pub(super) fn edit_github(
     }
     unchanged_candidate()?;
     let proof = prove()?;
-    cancellation.check()?;
+    cancellation.check().map_err(|_| InstallError::Cancelled)?;
     edit.publish_install_at(
         proof,
         cancellation,

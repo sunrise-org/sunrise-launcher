@@ -195,6 +195,18 @@ pub enum UpdateRequest {
     Bulk(Vec<String>),
 }
 
+/// An error that arrives while `stop` is asked is the stop itself, not a failure to report.
+fn stopped_or(
+    stop: Option<&native_mods::Cancellation>,
+    error: impl Into<InstallError>,
+) -> InstallError {
+    if stop.is_some_and(native_mods::Cancellation::is_stopped) {
+        InstallError::Cancelled
+    } else {
+        error.into()
+    }
+}
+
 fn prove_edit(
     edit: &managed_play::Edit<'_>,
     candidate: &Path,

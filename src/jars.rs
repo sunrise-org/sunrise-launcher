@@ -20,10 +20,38 @@ const MODRINTH: Modrinth<'static> = Modrinth {
 
 /// `sunrise-launcher-jar-fetch`'s transport: the launcher's proxy settings, and no hop off the
 /// requested `https` host.
-struct Transport;
+#[derive(Default)]
+struct Transport {
+    /// Checked before each request and each read, so a stopped install ends within a chunk.
+    stop: Option<crate::native_mods::Cancellation>,
+}
+
+/// A body whose every read first checks the stop.
+struct Stoppable<R>(crate::native_mods::Cancellation, R);
+
+impl<R: io::Read> io::Read for Stoppable<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.0.check().map_err(io::Error::other)?;
+        self.1.read(buf)
+    }
+}
+
+impl Transport {
+    fn guard(&self, body: Box<dyn io::Read>) -> Box<dyn io::Read> {
+        match &self.stop {
+            Some(stop) => Box::new(Stoppable(stop.clone(), body)),
+            None => body,
+        }
+    }
+
+    fn check(&self) -> Result<(), String> {
+        self.stop.as_ref().map_or(Ok(()), |stop| stop.check())
+    }
+}
 
 impl Http for Transport {
     fn get(&self, url: &str) -> Result<Option<Box<dyn io::Read>>, String> {
+        self.check()?;
         // The CDN host check lives in sunrise_launcher_jar_fetch::download; this host list only
         // blocks redirects to another host.
         let host = url::Url::parse(url)
@@ -31,10 +59,11 @@ impl Http for Transport {
             .and_then(|url| url.host_str().map(str::to_owned))
             .ok_or_else(|| format!("{url}: no host"))?;
         Ok(crate::net::get_from_hosts(url, &[&host])?
-            .map(|response| -> Box<dyn io::Read> { response.into_reader() }))
+            .map(|response| self.guard(response.into_reader())))
     }
 
     fn post_json(&self, url: &str, body: &str) -> Result<Box<dyn io::Read>, String> {
+        self.check()?;
         let response =
             crate::proxy::agent("jar-version-files", url, |builder| builder.redirects(0))?
                 .post(url)
@@ -50,7 +79,7 @@ impl Http for Transport {
                 &[("url", url), ("status", &status.to_string())],
             ));
         }
-        Ok(response.into_reader())
+        Ok(self.guard(response.into_reader()))
     }
 }
 
@@ -175,6 +204,21 @@ pub fn prepare(
     registry_mods: &BTreeSet<String>,
     permission: Permission<'_>,
 ) -> Result<(), PrepareError> {
+    prepare_cancellable(home, jars, registry_mods, permission, None)
+}
+
+/// [`prepare`], whose downloads stop at the next chunk once `stop` is asked. A half-read jar is
+/// never kept.
+pub fn prepare_cancellable(
+    home: &Path,
+    jars: &[JarRequirement],
+    registry_mods: &BTreeSet<String>,
+    permission: Permission<'_>,
+    stop: Option<&crate::native_mods::Cancellation>,
+) -> Result<(), PrepareError> {
+    let transport = Transport {
+        stop: stop.cloned(),
+    };
     prepare_with(
         home,
         jars,
@@ -182,10 +226,10 @@ pub fn prepare(
         permission,
         |missing| {
             let hashes: Vec<&str> = missing.iter().map(|jar| jar.sha512()).collect();
-            sunrise_launcher_jar_fetch::file_urls(&Transport, MODRINTH, &hashes)
+            sunrise_launcher_jar_fetch::file_urls(&transport, MODRINTH, &hashes)
         },
         |url, jar, dest| {
-            sunrise_launcher_jar_fetch::download(&Transport, MODRINTH, url, jar.sha512(), dest)
+            sunrise_launcher_jar_fetch::download(&transport, MODRINTH, url, jar.sha512(), dest)
         },
     )
 }
@@ -200,7 +244,16 @@ fn jar_owners(jars: &[JarRequirement]) -> BTreeSet<String> {
 /// asks nothing: each listing mod is a reviewed registry release. A jar Modrinth no longer has
 /// fails with [`PrepareError::NoLongerOnModrinth`].
 pub fn fetch_listed(home: &Path, jars: &[JarRequirement]) -> Result<(), PrepareError> {
-    prepare(home, jars, &jar_owners(jars), Permission::Refuse)
+    fetch_listed_cancellable(home, jars, None)
+}
+
+/// [`fetch_listed`], which stops at the next chunk once `stop` is asked.
+pub fn fetch_listed_cancellable(
+    home: &Path,
+    jars: &[JarRequirement],
+    stop: Option<&crate::native_mods::Cancellation>,
+) -> Result<(), PrepareError> {
+    prepare_cancellable(home, jars, &jar_owners(jars), Permission::Refuse, stop)
 }
 
 #[cfg(test)]

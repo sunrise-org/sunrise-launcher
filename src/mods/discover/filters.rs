@@ -192,8 +192,10 @@ impl Launcher {
         .track_focus(focus)
         .seen()
         .flex_1()
-        .min_w(px(140.))
+        // Room for the icon and the whole placeholder on one line.
+        .min_w(px(190.))
         .max_w(px(360.))
+        .whitespace_nowrap()
         .h(px(tokens::FIELD))
         .text_size(px(tokens::BODY))
         .cursor_text()
@@ -303,11 +305,13 @@ impl Launcher {
             .items_center()
             .justify_between()
             .gap(px(12.))
+            // Search and categories keep their own widths: with too little room the switch and
+            // the sort wrap to a line of their own, instead of the fields squeezing under them.
             .child(
                 div()
                     .flex()
-                    .flex_1()
-                    .min_w_0()
+                    .flex_auto()
+                    .flex_shrink_0()
                     .items_center()
                     .gap(px(12.))
                     .child(search)

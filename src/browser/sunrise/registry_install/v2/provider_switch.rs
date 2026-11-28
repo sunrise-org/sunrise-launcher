@@ -15,6 +15,8 @@ pub fn switch_provider_v2(
 ) -> Result<InstalledBatch, InstallError> {
     let catalog =
         catalogue_v2::change_index().map_err(|error| InstallError::Unproved(error.to_string()))?;
+    let stop = hooks.install.install.cancellation;
+    let fetch = |url: &str, max: u64| fetch_release_bytes_cancellable(url, max, stop);
     switch_provider_v2_with(
         V2EditRequest {
             target,
@@ -22,7 +24,7 @@ pub fn switch_provider_v2(
             index: local_fit_filled(&catalog.index),
             options,
             transfer: V2Transfer {
-                fetch_bytes: &fetch_release_bytes,
+                fetch_bytes: &fetch,
                 verify_release: &attestation::verify_release,
             },
         },
@@ -82,18 +84,22 @@ pub(crate) fn switch_provider_v2_with(
     (hooks.install.install.progress)(InstallProgress::Checking);
     let mut profile =
         Profile::open_for(target.home(), None, Some(identity)).map_err(String::from)?;
-    let edit = profile.begin_edit(choose, |f| {
-        (hooks.install.install.progress)(InstallProgress::Downloading(f))
-    })?;
-    // The game build is in: say the checks that follow, not its last percentage.
-    (hooks.install.install.progress)(InstallProgress::Checking);
-    let base_build = edit.base().to_owned();
     let default_cancelled = native_mods::Cancellation::default();
     let cancelled = hooks
         .install
         .install
         .cancellation
         .unwrap_or(&default_cancelled);
+    let edit = profile
+        .begin_edit_cancellable(
+            choose,
+            |f| (hooks.install.install.progress)(InstallProgress::Downloading(f)),
+            Some(cancelled),
+        )
+        .map_err(|error| stopped_or(Some(cancelled), error))?;
+    // The game build is in: say the checks that follow, not its last percentage.
+    (hooks.install.install.progress)(InstallProgress::Checking);
+    let base_build = edit.base().to_owned();
     let old = edit.candidate()?;
     let before = inventory_v2(old.path(), &index)?;
 
@@ -256,6 +262,7 @@ pub(crate) fn switch_provider_v2_with(
     let mut native = false;
 
     for planned_step in std::iter::once(&step).chain(dep_steps.iter()) {
+        cancelled.check().map_err(|_| InstallError::Cancelled)?;
         let (entry, pin) = stage_and_verify_v2_release(
             &index,
             next.path(),
@@ -264,7 +271,14 @@ pub(crate) fn switch_provider_v2_with(
             &options.accepted_publisher_changes,
             hooks.install.confirm_publisher_change,
             transfer,
-        )?;
+        )
+        .map_err(|error| {
+            if matches!(error, InstallError::Download(_)) {
+                stopped_or(Some(cancelled), error)
+            } else {
+                error
+            }
+        })?;
         doc.replace(&entry)?;
         mod_list::set_enabled(next.path(), &planned_step.mod_id, true)?;
         native |= planned_step.kind == V2Kind::NativeMod;
@@ -281,12 +295,15 @@ pub(crate) fn switch_provider_v2_with(
         if let Some(error) = native_mods::known_host_block(Some(&base_build)) {
             return Err(InstallError::Host(error));
         }
-        cancelled.check().map_err(InstallError::Unproved)?;
+        cancelled.check().map_err(|_| InstallError::Cancelled)?;
     }
 
     (hooks.install.install.progress)(InstallProgress::Preparing);
-    edit.prepare_first(&super::preparation_line(hooks.install.install.progress))
-        .map_err(InstallError::Unproved)?;
+    edit.prepare_first_cancellable(
+        &super::preparation_line(hooks.install.install.progress),
+        Some(cancelled),
+    )
+    .map_err(|error| stopped_or(Some(cancelled), InstallError::Unproved(error)))?;
     let proof = prove_edit(
         &edit,
         next.path(),

@@ -11,8 +11,8 @@
 
 use super::{
     at, guard_replacements, held_change_refusal, known_unfit_updates, manifest_conflict,
-    missing_required, mutations, prove_edit, remember_unfit_sha256, ChangeImpact, Document,
-    InstallError, InstallHooks, InstallProgress, InstalledBatch, UpdateRequest,
+    missing_required, mutations, prove_edit, remember_unfit_sha256, stopped_or, ChangeImpact,
+    Document, InstallError, InstallHooks, InstallProgress, InstalledBatch, UpdateRequest,
 };
 use crate::{
     attestation::{self, ExpectedRelease, PublisherChange, PublisherPin, VerifiedRelease},

@@ -6,9 +6,9 @@
 
 use super::{
     check_staged_v2_candidate, chosen_version_pin, commit_pending_pins, compare_versions,
-    fetch_release_bytes, inventory_v2, revoked_for_package, stage_and_verify_v2_release,
-    BytesFetcher, InstalledV2Mod, PendingPin, PlannedV2Release, ReleaseVerifier, V2Ownership,
-    V2Transfer,
+    fetch_release_bytes_cancellable, inventory_v2, revoked_for_package,
+    stage_and_verify_v2_release, BytesFetcher, InstalledV2Mod, PendingPin, PlannedV2Release,
+    ReleaseVerifier, V2Ownership, V2Transfer,
 };
 use crate::{
     attestation::{self, PublisherChange},
@@ -105,6 +105,8 @@ pub fn switch_profile_build_v2(
     choice: Option<BuildChoice>,
     hooks: V2SwitchHooks<'_>,
 ) -> Result<Switched, String> {
+    let stop = hooks.switch.cancellation;
+    let fetch = |url: &str, max: u64| fetch_release_bytes_cancellable(url, max, Some(stop));
     switch_profile_build_v2_with(
         target,
         identity,
@@ -116,7 +118,7 @@ pub fn switch_profile_build_v2(
                 .map(|c| c.index)
                 .map_err(|e| e.to_string())
         },
-        &fetch_release_bytes,
+        &fetch,
         &attestation::verify_release,
     )
 }
@@ -349,6 +351,8 @@ fn switch_build_v2_edit(
         match plan_slot_for_build(&index, slot, item, tag, &pins) {
             SlotPlan::Keep => {}
             SlotPlan::Replace(project, release) => {
+                // Stop between releases; the staged candidate is dropped with the edit.
+                hooks.switch.cancellation.check()?;
                 let step = PlannedV2Release {
                     project_id: project.id.clone(),
                     slug: project.slug.clone(),

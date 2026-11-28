@@ -608,7 +608,7 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
         ));
         assert!(sunrise_launcher_smod::mod_list::is_enabled(&home, "moths"));
         let edit = profile
-            .begin_edit(|| panic!("the build is already committed"), |_| {})
+            .begin_edit_cancellable(|| panic!("the build is already committed"), |_| {}, None)
             .unwrap();
         let candidate = edit.candidate().unwrap();
         let replacement = package("fireflies", "Fireflies", "2.0");

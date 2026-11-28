@@ -8,6 +8,49 @@ const MAX_ATTESTATION_BYTES: u64 = 1 << 20;
 /// Default production HTTPS byte fetcher for v2 release `.smod` archives and `.sigstore.json`
 /// attestation bundles.
 pub(crate) fn fetch_release_bytes(url: &str, max_bytes: u64) -> Result<Vec<u8>, String> {
+    read_release_bytes(url, max_bytes, None)
+}
+
+/// [`fetch_release_bytes`], which gives up within about 50 ms of `stop` being asked: the
+/// request runs on a worker the caller stops waiting for, and the body is read in chunks that
+/// each check `stop`, so the worker ends soon after and nothing is kept.
+pub(crate) fn fetch_release_bytes_cancellable(
+    url: &str,
+    max_bytes: u64,
+    stop: Option<&native_mods::Cancellation>,
+) -> Result<Vec<u8>, String> {
+    let Some(stop) = stop else {
+        return read_release_bytes(url, max_bytes, None);
+    };
+    stop.check()?;
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let worker_url = url.to_owned();
+    let worker_stop = stop.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(read_release_bytes(
+            &worker_url,
+            max_bytes,
+            Some(&worker_stop),
+        ));
+    });
+    loop {
+        stop.check()?;
+        match rx.recv_timeout(std::time::Duration::from_millis(50)) {
+            Ok(result) => return result,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                stop.check()?;
+                return Err(crate::i18n::tr("Download worker stopped unexpectedly").into());
+            }
+        }
+    }
+}
+
+fn read_release_bytes(
+    url: &str,
+    max_bytes: u64,
+    stop: Option<&native_mods::Cancellation>,
+) -> Result<Vec<u8>, String> {
     if !download::github_release_asset(url) {
         return Err(trf(
             "{url} is not a GitHub release asset URL allowed by the Sunrise v2 registry.",
@@ -21,9 +64,21 @@ pub(crate) fn fetch_release_bytes(url: &str, max_bytes: u64) -> Result<Vec<u8>, 
             &[("url", url), ("error", &e.to_string())],
         )
     })?;
-    let mut limited = response.into_reader().take(max_bytes.saturating_add(1));
+    let limited = response.into_reader().take(max_bytes.saturating_add(1));
     let mut bytes = Vec::new();
-    limited.read_to_end(&mut bytes).map_err(|e| {
+    let read = match stop {
+        Some(stop) => stop.reader(limited).read_to_end(&mut bytes),
+        None => {
+            let mut limited = limited;
+            limited.read_to_end(&mut bytes)
+        }
+    };
+    read.map_err(|e| {
+        if let Some(stop) = stop {
+            if let Err(stopped) = stop.check() {
+                return stopped;
+            }
+        }
         trf(
             "reading {url}: {error}",
             &[("url", url), ("error", &e.to_string())],

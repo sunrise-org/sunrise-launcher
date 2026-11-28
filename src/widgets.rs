@@ -6,6 +6,7 @@ pub(crate) mod button;
 pub(crate) mod check;
 pub(crate) mod chip;
 pub(crate) mod choice;
+pub(crate) mod colour_picker;
 pub(crate) mod copies;
 pub(crate) mod dropdown;
 pub(crate) mod feedback;

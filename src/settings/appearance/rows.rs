@@ -19,7 +19,7 @@ impl Launcher {
         let mut rows = vec![
             self.look_row(cx),
             self.colours_row(window, cx),
-            self.library_row(window, cx),
+            self.library_row(cx),
         ];
         rows.extend(self.unusable_themes());
         rows.push(self.folder_row(cx));

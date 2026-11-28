@@ -506,12 +506,17 @@ pub fn remove_mods(
     (hooks.progress)(InstallProgress::Checking);
     let mut profile =
         Profile::open_for(target.home(), None, Some(identity)).map_err(String::from)?;
-    let edit = profile.begin_edit(choose, |f| {
-        (hooks.progress)(InstallProgress::Downloading(f))
-    })?;
+    let edit = profile
+        .begin_edit_cancellable(
+            choose,
+            |f| (hooks.progress)(InstallProgress::Downloading(f)),
+            hooks.cancellation,
+        )
+        .map_err(|error| super::stopped_or(hooks.cancellation, error))?;
     // The game build is in: say the checks that follow, not its last percentage.
     (hooks.progress)(InstallProgress::Checking);
-    edit.prepare_first(&super::preparation_line(hooks.progress))?;
+    edit.prepare_first_cancellable(&super::preparation_line(hooks.progress), hooks.cancellation)
+        .map_err(|error| super::stopped_or(hooks.cancellation, error))?;
     let old = edit.candidate()?;
     let next = edit.candidate()?;
     let home = next.path();

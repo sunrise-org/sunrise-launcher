@@ -2879,7 +2879,7 @@
   "Reset to Light": "Reset to Light",
   "Reset to Sunrise": "Reset to Sunrise",
   "Colours": "Colours",
-  "Click a colour to type its hex. Every change is painted as you make it.": "Click a colour to type its hex. Every change is painted as you make it.",
+  "Click a colour to pick it or type its hex. Every change is painted as you make it.": "Click a colour to pick it or type its hex. Every change is painted as you make it.",
   "Theme library": "Theme library",
   "Colours you saved or imported. Apply loads a theme's colours into the editor above. Tick several to share them in one code.": "Colours you saved or imported. Apply loads a theme's colours into the editor above. Tick several to share them in one code.",
   "No saved themes yet. Save the colours above, or import a code.": "No saved themes yet. Save the colours above, or import a code.",
@@ -2925,5 +2925,17 @@
   "Shaders": "Shaders",
   "Search shaders": "Search shaders",
   "No shaders yet": "No shaders yet",
-  "Shader packs you add to this profile show up here.": "Shader packs you add to this profile show up here."
+  "Shader packs you add to this profile show up here.": "Shader packs you add to this profile show up here.",
+  "Rename theme": "Rename theme",
+  "Save as theme": "Save as theme",
+  "Import themes": "Import themes",
+  "Import": "Import",
+  "Import {count}": "Import {count}",
+  "Paste a theme code to see the themes in it.": "Paste a theme code to see the themes in it.",
+  "Share {name}": "Share {name}",
+  "Share {count} themes": "Share {count} themes",
+  "Deleted {name}": "Deleted {name}",
+  "Deleted {count} themes": "Deleted {count} themes",
+  "Before": "Before",
+  "Now": "Now"
 }

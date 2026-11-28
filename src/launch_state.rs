@@ -102,6 +102,8 @@ pub(crate) enum Act {
     Resolve,
     /// "Update game".
     Update,
+    /// "Sign in": a start refused for want of a signed-in account opens the sign-in.
+    SignIn,
 }
 
 /// Work Play waits for that Stop ends: a game download, a preparation, or the start of the
@@ -336,6 +338,8 @@ impl Facts {
                 text: detail.clone(),
                 way_out: Some(WayOut::ProfileFolder(home.clone())),
             })
+        } else if failed_at == Some(Step::Start) && !self.signed_in {
+            Some(Act::SignIn)
         } else if failed_at == Some(Step::Build) && self.build_result.is_some() {
             Some(Act::BuildResult)
         } else if let Some(text) = problem.filter(|_| way_out.is_some() || more) {
@@ -390,9 +394,9 @@ impl Main {
             Main::ChangingMods => tr("Changing mods…").into(),
             Main::RegistryInstall(stage, _) => crate::mods_page::install::stage_label(stage).into(),
             Main::Stop => tr("Stop game").into(),
-            // Signed out, Play keeps its name: the account chip is the one "Sign in with
-            // Microsoft". Pressing it signs in first and then plays (`play_game`).
-            Main::SignIn => tr("Play").into(),
+            // Signed out, Play says so before it is pressed; pressing it signs in first and
+            // then plays (`play_game`).
+            Main::SignIn => tr("Sign in to play").into(),
             Main::Install => tr("Install and play").into(),
             Main::InstallBuild => tr("Install build").into(),
             Main::SwitchBuild => tr("Switch build").into(),
@@ -405,7 +409,6 @@ impl Main {
     /// added to the page.
     pub(crate) fn tooltip(self) -> Option<SharedString> {
         match self {
-            Main::SignIn => Some(tr("Sign in to play").into()),
             Main::RegistryInstall(_, true) => Some(tr("Play when the install is ready").into()),
             _ => None,
         }
@@ -436,6 +439,7 @@ impl Act {
             | Act::Resolve => tr("Fix…"),
             Act::BuildResult | Act::Notice { way_out: None, .. } => tr("Details…"),
             Act::Update => tr("Update game"),
+            Act::SignIn => tr("Sign in"),
         }
     }
 }
@@ -563,8 +567,7 @@ impl Launcher {
         let held = self.held_update();
         let pending = active.and_then(|i| self.pending_build(i));
         Facts {
-            signed_in: self.accounts.selected().is_some()
-                || sunrise_launcher::developer_offline::selected(),
+            signed_in: self.account_ready(),
             installed: active.and_then(|i| self.version_of(i)).is_some(),
             switch_build: pending.as_ref().map(|tag| !self.installed.contains(tag)),
             located: !self.location_unavailable,
@@ -618,6 +621,7 @@ impl Launcher {
             Act::BuildResult => self.open_sheet(Sheet::ModBuild),
             Act::Notice { text, way_out } => self.open_notice(text.clone(), way_out.clone()),
             Act::Resolve => self.open_sheet(Sheet::Resolve),
+            Act::SignIn => self.sign_in_to_play(),
             Act::Update => {
                 if let Some(tag) = self.game_update().map(|release| release.tag.clone()) {
                     self.open_update_picker(tag);
